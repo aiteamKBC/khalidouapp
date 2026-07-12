@@ -157,14 +157,18 @@ export function enqueuePendingEvent(options: {
   persist();
 }
 
-export function getDuePendingEvents(limit = 25) {
+export function getDuePendingEvents(
+  limit = 25,
+  options: { force?: boolean } = {},
+) {
+  const ignoreNextAttempt = options.force === true;
   return rows<PendingEvent>(
     `select id, method, endpoint, payload_json as payloadJson, attempts
      from pending_events
-     where status in ('pending', 'failed') and next_attempt_at <= ?
+     where status in ('pending', 'failed')${ignoreNextAttempt ? '' : ' and next_attempt_at <= ?'}
      order by created_at asc
      limit ?`,
-    [new Date().toISOString(), limit],
+    ignoreNextAttempt ? [limit] : [new Date().toISOString(), limit],
   );
 }
 

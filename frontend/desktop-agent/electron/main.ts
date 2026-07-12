@@ -149,8 +149,8 @@ let screenshotWindowEndsAt: number | null = null;
 let syncTimer: ReturnType<typeof setInterval> | null = null;
 let automaticTrackingRetryTimer: ReturnType<typeof setTimeout> | null = null;
 let isStartingTrackingAutomatically = false;
-let idleStartedAt: number | null = null;
 let idleSecondsBeforeCurrentIdle = 0;
+let lastDurationTickAt: number | null = null;
 let workedTodayBaseSeconds = 0;
 let trackingPausedByUser = false;
 let isHandlingWindowClose = false;
@@ -441,41 +441,60 @@ function syncRuntimeFromSession(session: WorkSession) {
     return;
   }
   const changedSession = currentSessionId !== session.id;
+  const localActiveSeconds = changedSession ? 0 : runtimeStatus.activeSeconds;
+  const localIdleSeconds = changedSession ? 0 : runtimeStatus.idleSeconds;
   currentSessionId = session.id;
   runtimeStatus.sessionStartedAt = session.started_at;
   runtimeStatus.trackingStatus =
     session.status === "ended" ? "offline" : session.status;
-  runtimeStatus.activeSeconds = session.active_seconds;
-  runtimeStatus.idleSeconds = session.idle_seconds;
+  runtimeStatus.activeSeconds = Math.max(
+    session.active_seconds,
+    localActiveSeconds,
+  );
+  runtimeStatus.idleSeconds = Math.max(session.idle_seconds, localIdleSeconds);
   runtimeStatus.workedTodaySeconds =
-    workedTodayBaseSeconds + session.active_seconds;
+    workedTodayBaseSeconds + runtimeStatus.activeSeconds;
   if (changedSession) {
-    idleStartedAt = null;
+    lastDurationTickAt = Date.now();
     idleSecondsBeforeCurrentIdle = session.idle_seconds;
   }
   selectRuntimeTask(session.task_id);
 }
 
 function recalculateWorkedTime() {
-  if (!runtimeStatus.sessionStartedAt || !runtimeStatus.enrolled) {
+  if (
+    !currentSessionId ||
+    !runtimeStatus.sessionStartedAt ||
+    !runtimeStatus.enrolled ||
+    trackingPausedByUser
+  ) {
+    lastDurationTickAt = null;
+    return;
+  }
+
+  const now = Date.now();
+  if (lastDurationTickAt === null) {
+    lastDurationTickAt = now;
     return;
   }
 
   const elapsedSeconds = Math.max(
     0,
-    Math.floor(
-      (Date.now() - new Date(runtimeStatus.sessionStartedAt).getTime()) / 1000,
-    ),
+    Math.floor((now - lastDurationTickAt) / 1000),
   );
-  if (idleStartedAt) {
-    runtimeStatus.idleSeconds =
-      idleSecondsBeforeCurrentIdle +
-      Math.max(0, Math.floor((Date.now() - idleStartedAt) / 1000));
+  if (elapsedSeconds === 0) {
+    return;
   }
-  runtimeStatus.activeSeconds = Math.max(
-    0,
-    elapsedSeconds - runtimeStatus.idleSeconds,
-  );
+  lastDurationTickAt += elapsedSeconds * 1000;
+
+  if (runtimeStatus.trackingStatus === "idle") {
+    runtimeStatus.idleSeconds += elapsedSeconds;
+  } else if (
+    runtimeStatus.trackingStatus === "active" ||
+    runtimeStatus.trackingStatus === "offline"
+  ) {
+    runtimeStatus.activeSeconds += elapsedSeconds;
+  }
   runtimeStatus.workedTodaySeconds =
     workedTodayBaseSeconds + runtimeStatus.activeSeconds;
   rebuildTrayMenu();
@@ -582,7 +601,11 @@ async function sendStateEvent(
       eventType,
       payload: payload.payload,
     });
+    const latestLocalStatus = runtimeStatus.trackingStatus;
     syncRuntimeFromSession(result.session);
+    if (latestLocalStatus !== status) {
+      runtimeStatus.trackingStatus = latestLocalStatus;
+    }
     await refreshWorkedTodayTotal();
     runtimeStatus.connectionStatus = "online";
     runtimeStatus.lastSuccessfulSyncAt = new Date().toISOString();
@@ -625,7 +648,7 @@ function startIdleMonitor() {
       idleSeconds >= thresholdSeconds &&
       runtimeStatus.trackingStatus !== "idle"
     ) {
-      idleStartedAt = Date.now() - idleSeconds * 1000;
+      recalculateWorkedTime();
       idleSecondsBeforeCurrentIdle = runtimeStatus.idleSeconds;
       void sendStateEvent("idle_started", "idle");
     } else if (
@@ -637,7 +660,6 @@ function startIdleMonitor() {
         0,
         runtimeStatus.idleSeconds - idleSecondsBeforeCurrentIdle,
       );
-      idleStartedAt = null;
       idleSecondsBeforeCurrentIdle = runtimeStatus.idleSeconds;
       showIdleLossAlert(lostSeconds);
       void sendStateEvent("idle_ended", "active");
@@ -676,7 +698,11 @@ async function heartbeatTick() {
       activeSeconds: runtimeStatus.activeSeconds,
       agentVersion: runtimeStatus.agentVersion,
     });
+    const latestLocalStatus = runtimeStatus.trackingStatus;
     syncRuntimeFromSession(result.session);
+    if (latestLocalStatus !== status) {
+      runtimeStatus.trackingStatus = latestLocalStatus;
+    }
     await refreshWorkedTodayTotal();
     runtimeStatus.connectionStatus = "online";
     runtimeStatus.lastSuccessfulSyncAt = new Date().toISOString();
@@ -698,6 +724,9 @@ async function heartbeatTick() {
 }
 
 function startTimers() {
+  if (lastDurationTickAt === null) {
+    lastDurationTickAt = Date.now();
+  }
   if (!durationTimer) {
     durationTimer = setInterval(recalculateWorkedTime, 1000);
   }
@@ -718,6 +747,7 @@ function startTimers() {
 }
 
 function clearRuntimeTimers() {
+  lastDurationTickAt = null;
   if (heartbeatTimer) {
     clearInterval(heartbeatTimer);
     heartbeatTimer = null;
@@ -885,12 +915,12 @@ async function captureAndUploadScreenshot() {
   });
 }
 
-async function syncPendingQueues() {
+async function syncPendingQueues(forcePendingEvents = false) {
   if (!runtimeStatus.enrolled) {
     return;
   }
 
-  for (const event of getDuePendingEvents()) {
+  for (const event of getDuePendingEvents(25, { force: forcePendingEvents })) {
     try {
       await sendQueuedRequest(
         event.method,
@@ -1021,10 +1051,19 @@ async function startTrackingAutomatically() {
     automaticTrackingRetryTimer = null;
   }
   try {
+    await syncPendingQueues(true);
     trackingConfig = normalizeTrackingConfig(await getAgentConfig());
     await refreshTasks();
     const current = await getCurrentSession();
-    const session = current ?? (await startSession()).session;
+    if (current) {
+      await endSession({
+        sessionId: current.id,
+        activeSeconds: current.active_seconds,
+        idleSeconds: current.idle_seconds,
+        reason: "Previous Khaliduo run closed before automatic restart",
+      });
+    }
+    const session = (await startSession()).session;
     syncRuntimeFromSession(session);
     await refreshWorkedTodayTotal();
     runtimeStatus.connectionStatus = "online";
@@ -1049,16 +1088,20 @@ async function startTrackingAutomatically() {
 }
 
 async function pauseTracking(reason = "Paused by employee") {
+  recalculateWorkedTime();
   trackingPausedByUser = true;
   runtimeStatus.trackingPaused = true;
   saveTrackingPreferences();
-  recalculateWorkedTime();
   clearRuntimeTimers();
   screenshotQueue = [];
   screenshotWindowEndsAt = null;
   saveScreenshotSchedule(null);
 
   const sessionId = currentSessionId;
+  const eventId = randomUUID();
+  const endedAt = new Date().toISOString();
+  const activeSeconds = runtimeStatus.activeSeconds;
+  const idleSeconds = runtimeStatus.idleSeconds;
   currentSessionId = null;
   runtimeStatus.sessionStartedAt = null;
   runtimeStatus.trackingStatus = "paused";
@@ -1071,14 +1114,33 @@ async function pauseTracking(reason = "Paused by employee") {
   try {
     await endSession({
       sessionId,
-      activeSeconds: runtimeStatus.activeSeconds,
-      idleSeconds: runtimeStatus.idleSeconds,
+      activeSeconds,
+      idleSeconds,
       reason,
+      endedAt,
+      eventId,
     });
+    await refreshWorkedTodayTotal();
     runtimeStatus.connectionStatus = "online";
     runtimeStatus.lastSuccessfulSyncAt = new Date().toISOString();
     return { success: true };
   } catch (error) {
+    enqueuePendingEvent({
+      id: eventId,
+      method: "POST",
+      endpoint: `/agent/sessions/${sessionId}/end`,
+      payload: {
+        event_id: eventId,
+        ended_at: endedAt,
+        active_seconds: activeSeconds,
+        idle_seconds: idleSeconds,
+        reason,
+      },
+      idempotencyKey: eventId,
+    });
+    if (!syncTimer) {
+      syncTimer = setInterval(() => void syncPendingQueues(), 30_000);
+    }
     runtimeStatus.connectionStatus = "offline";
     log.warn(
       "Tracking paused locally, but session end could not be synced",
@@ -1446,26 +1508,26 @@ function configureAutoUpdater() {
 
 function wireSystemEvents() {
   powerMonitor.on("lock-screen", () => {
-    idleStartedAt = null;
+    recalculateWorkedTime();
     void sendStateEvent("screen_locked", "locked");
     log.info("Windows lock detected");
   });
 
   powerMonitor.on("unlock-screen", () => {
-    idleStartedAt = null;
+    lastDurationTickAt = Date.now();
     idleSecondsBeforeCurrentIdle = runtimeStatus.idleSeconds;
     void sendStateEvent("screen_unlocked", "active");
     log.info("Windows unlock detected");
   });
 
   powerMonitor.on("suspend", () => {
-    idleStartedAt = null;
+    recalculateWorkedTime();
     void sendStateEvent("system_suspended", "sleeping");
     log.info("System suspend detected");
   });
 
   powerMonitor.on("resume", () => {
-    idleStartedAt = null;
+    lastDurationTickAt = Date.now();
     idleSecondsBeforeCurrentIdle = runtimeStatus.idleSeconds;
     void sendStateEvent("system_resumed", "active");
     log.info("System resume detected");
@@ -1491,11 +1553,46 @@ app.on("before-quit", (event) => {
 
   event.preventDefault();
   quitNotificationSent = true;
-  clearRuntimeTimers();
   recalculateWorkedTime();
-  void sendStateEvent("agent_stopped", "offline")
+  const sessionId = currentSessionId;
+  const eventId = randomUUID();
+  const endedAt = new Date().toISOString();
+  const activeSeconds = runtimeStatus.activeSeconds;
+  const idleSeconds = runtimeStatus.idleSeconds;
+  clearRuntimeTimers();
+  currentSessionId = null;
+  runtimeStatus.sessionStartedAt = null;
+  runtimeStatus.trackingStatus = "offline";
+
+  const finishSession = sessionId
+    ? endSession({
+        sessionId,
+        activeSeconds,
+        idleSeconds,
+        reason: "Khaliduo quit",
+        endedAt,
+        eventId,
+      })
+    : Promise.resolve();
+
+  void finishSession
     .catch((error) => {
-      log.warn("Failed to mark agent offline before quitting", error);
+      if (sessionId) {
+        enqueuePendingEvent({
+          id: eventId,
+          method: "POST",
+          endpoint: `/agent/sessions/${sessionId}/end`,
+          payload: {
+            event_id: eventId,
+            ended_at: endedAt,
+            active_seconds: activeSeconds,
+            idle_seconds: idleSeconds,
+            reason: "Khaliduo quit",
+          },
+          idempotencyKey: eventId,
+        });
+      }
+      log.warn("Failed to close the work session before quitting", error);
     })
     .finally(() => {
       app.quit();

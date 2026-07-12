@@ -352,6 +352,9 @@ def end_session(
     payload: SessionEndRequest,
 ) -> dict[str, Any]:
     session = get_owned_session(db, device, session_id)
+    if session.ended_at is not None:
+        return {"session": serialize_session(session)}
+
     ended_at = utc(payload.ended_at)
     session.ended_at = ended_at
     session.status = "ended"

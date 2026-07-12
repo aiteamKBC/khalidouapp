@@ -28,6 +28,8 @@ dist-*.locked-*/
 
 # Local data
 storage/
+!backend/app/storage/
+!backend/app/storage/*.py
 logs/
 *.sqlite
 *.sqlite3

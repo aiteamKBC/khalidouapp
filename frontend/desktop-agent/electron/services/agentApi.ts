@@ -273,12 +273,14 @@ export async function endSession(options: {
   activeSeconds: number;
   idleSeconds: number;
   reason: string;
+  endedAt?: string;
+  eventId?: string;
 }) {
   const response = await axios.post<ApiSuccess<{ session: WorkSession }>>(
     `${getApiBaseUrl()}/agent/sessions/${options.sessionId}/end`,
     {
-      event_id: randomUUID(),
-      ended_at: new Date().toISOString(),
+      event_id: options.eventId ?? randomUUID(),
+      ended_at: options.endedAt ?? new Date().toISOString(),
       active_seconds: options.activeSeconds,
       idle_seconds: options.idleSeconds,
       reason: options.reason,
