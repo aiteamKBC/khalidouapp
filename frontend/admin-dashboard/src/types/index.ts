@@ -1,0 +1,241 @@
+export type Role = "general_admin" | "team_owner";
+
+export type EmployeeStatus = "active" | "idle" | "locked" | "sleeping" | "offline";
+export type DeviceStatus = "online" | "offline" | "revoked";
+export type TeamStatus = "active" | "archived";
+export type UserStatus = "active" | "inactive";
+export type EnrollmentCodeStatus = "active" | "used" | "expired" | "revoked";
+
+export interface User {
+  id: string;
+  employeeId?: string;
+  name: string;
+  email: string;
+  role: Role;
+  permissions: string[];
+  assignedTeamIds: string[];
+  status: UserStatus;
+  lastLogin?: string;
+  avatarUrl?: string;
+}
+
+export interface Team {
+  id: string;
+  name: string;
+  description?: string;
+  status: TeamStatus;
+  ownerIds: string[];
+  employeeIds: string[];
+  createdAt: string;
+}
+
+export interface Project {
+  id: string;
+  teamId: string;
+  name: string;
+  description?: string;
+  status: "active" | "archived";
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Task {
+  id: string;
+  projectId: string;
+  projectName: string;
+  teamId: string;
+  teamName: string;
+  assigneeEmployeeId?: string;
+  collaboratorEmployeeIds: string[];
+  position: number;
+  completedAt?: string;
+  startDate?: string;
+  deadline?: string;
+  estimatedMinutes?: number;
+  labels: string[];
+  recurrenceRule?: string;
+  priority: "low" | "medium" | "high" | "urgent";
+  createdByEmployeeId?: string;
+  blockedReason?: string;
+  blockedAt?: string;
+  blockedByEmployeeId?: string;
+  blockedByAdminUserId?: string;
+  blockResolutionNote?: string;
+  reviewNote?: string;
+  completionNote?: string;
+  reviewedAt?: string;
+  checklist: TaskChecklistItem[];
+  name: string;
+  description?: string;
+  status: "active" | "archived";
+  stage: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TaskChecklistItem {
+  id: string;
+  title: string;
+  completed: boolean;
+  position: number;
+  assigneeEmployeeId?: string;
+}
+
+export interface Employee {
+  id: string;
+  name: string;
+  code: string;
+  email: string;
+  department: string;
+  teamIds: string[];
+  status: EmployeeStatus;
+  sessionStart?: string;
+  workedTodayMinutes: number;
+  activeMinutes: number;
+  idleMinutes: number;
+  lastHeartbeat?: string;
+  lastScreenshotAt?: string;
+  currentDeviceId?: string;
+  currentTeamId?: string;
+  currentProjectId?: string;
+  currentTaskId?: string;
+  active: boolean;
+  portalAccessEnabled: boolean;
+  portalAccessKeyHint?: string;
+  portalLastLoginAt?: string;
+  portalLastLoginIp?: string;
+  portalLastUserAgent?: string;
+  weeklyCapacityMinutes: number;
+}
+
+export interface EnrollmentCode {
+  id: string;
+  employeeId: string;
+  codeHint: string;
+  status: EnrollmentCodeStatus;
+  expiresAt: string;
+  usedAt?: string;
+  createdAt: string;
+  code?: string;
+}
+
+export interface Device {
+  id: string;
+  name: string;
+  employeeId: string;
+  os: string;
+  agentVersion: string;
+  status: DeviceStatus;
+  lastSeen?: string;
+  registeredAt: string;
+  tokenStatus: "valid" | "revoked";
+  windowsUsername?: string;
+  lastIpAddress?: string;
+}
+
+export interface WorkSession {
+  id: string;
+  employeeId: string;
+  deviceId: string;
+  teamId?: string;
+  projectId?: string;
+  taskId?: string;
+  startedAt: string;
+  endedAt?: string;
+  activeMinutes: number;
+  idleMinutes: number;
+  screenshotCount: number;
+}
+
+export interface ActivityEvent {
+  id: string;
+  employeeId: string;
+  type: string;
+  at: string;
+  meta?: Record<string, string>;
+}
+
+export interface Screenshot {
+  id: string;
+  employeeId: string;
+  teamId: string;
+  projectId?: string;
+  taskId?: string;
+  sessionId: string;
+  deviceId: string;
+  capturedAt: string;
+  thumbnailUrl: string;
+  fullUrl: string;
+  isIdle: boolean;
+  displayId?: string;
+  displayName?: string;
+}
+
+export interface Timesheet {
+  id: string;
+  employeeId: string;
+  teamId: string;
+  date: string;
+  startTime?: string;
+  endTime?: string;
+  totalMinutes: number;
+  activeMinutes: number;
+  idleMinutes: number;
+  adjustmentMinutes: number;
+  deductedMinutes: number;
+  points: number;
+  screenshotCount: number;
+  status: "complete" | "in_progress" | "missing";
+}
+
+export interface TrackingSettings {
+  screenshotsEnabled: boolean;
+  screenshotIntervalMinutes: 5 | 10 | 15 | 20 | 30;
+  screenshotsPerInterval: number;
+  idleThresholdMinutes: number;
+  captureDuringIdle: boolean;
+  offlineThresholdMinutes: number;
+  screenshotRetentionDays: number;
+}
+
+export interface DashboardSummary {
+  totalEmployees: number;
+  onlineEmployees: number;
+  activeEmployees: number;
+  idleEmployees: number;
+  offlineEmployees: number;
+  teams: number;
+  hoursTrackedToday: number;
+  screenshotsToday: number;
+}
+
+export interface AuditLogEntry {
+  id: string;
+  at: string;
+  userId: string;
+  userName: string;
+  action: string;
+  entityType: string;
+  entityName: string;
+  ip: string;
+  details?: string;
+}
+
+export type TimeAdjustmentStatus = "pending" | "approved" | "rejected";
+
+export interface TimeAdjustmentRequest {
+  id: string;
+  employeeId: string;
+  employeeName: string;
+  deviceId?: string;
+  workSessionId?: string;
+  requestedDate: string;
+  requestedMinutes: number;
+  approvedMinutes?: number;
+  reason: string;
+  status: TimeAdjustmentStatus;
+  reviewedByName?: string;
+  reviewedAt?: string;
+  adminNote?: string;
+  createdAt: string;
+}

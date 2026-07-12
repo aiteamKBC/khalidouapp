@@ -1,0 +1,43 @@
+# Dependencies
+node_modules/
+.venv/
+venv/
+__pycache__/
+.pytest_cache/
+
+# Build outputs
+dist/
+dist-electron/
+dist-khaliduo/
+dist-electron-khaliduo/
+release/
+release-khaliduo/
+build/
+*.tsbuildinfo
+.output*/
+dist-*.locked-*/
+.tmp/
+.tanstack/
+.wrangler/
+/employee-tracker/
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# Local data
+storage/
+logs/
+*.sqlite
+*.sqlite3
+*.db
+
+# External/reference clones
+lovable-dashboard/
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

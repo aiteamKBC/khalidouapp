@@ -1,0 +1,12 @@
+{
+  "name": "khaliduo-frontend",
+  "private": true,
+  "scripts": {
+    "dev": "npm run dev:admin",
+    "dev:admin": "npm --prefix admin-dashboard run dev -- --host localhost --port 5174",
+    "dev:desktop": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev-desktop.ps1",
+    "build:installer": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-desktop-installer.ps1",
+    "build": "npm --prefix admin-dashboard run build && npm --prefix desktop-agent run build",
+    "lint": "npm --prefix admin-dashboard run lint && npm --prefix desktop-agent run lint"
+  }
+}

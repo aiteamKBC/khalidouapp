@@ -1,0 +1,15 @@
+services:
+  backend-api:
+    build:
+      context: .
+    env_file:
+      - ./.env
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./storage/screenshots:/app/storage/screenshots
+      - ../frontend/desktop-agent/release-khaliduo:/app/downloads:ro
+    environment:
+      DESKTOP_INSTALLER_PATH: /app/downloads/KhaliduoSetup.exe
+      DESKTOP_UPDATE_DIRECTORY: /app/downloads
+    restart: unless-stopped

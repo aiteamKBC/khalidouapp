@@ -1,0 +1,84 @@
+{
+  "name": "khaliduo",
+  "private": true,
+  "version": "1.1.4",
+  "type": "module",
+  "description": "Khaliduo desktop app by Kent Consultancy.",
+  "main": "dist-electron-khaliduo/main.js",
+  "author": "Kent Consultancy",
+  "scripts": {
+    "dev": "concurrently -k \"vite --host 127.0.0.1\" \"wait-on http://127.0.0.1:5173 && cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron .\"",
+    "build": "tsc -b && vite build && tsc -p tsconfig.electron.json",
+    "dist": "powershell -NoProfile -ExecutionPolicy Bypass -File ../scripts/build-desktop-installer.ps1",
+    "lint": "oxlint src electron",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "axios": "^1.18.1",
+    "dotenv": "^17.4.2",
+    "electron-log": "^5.4.4",
+    "electron-updater": "^6.8.9",
+    "form-data": "^4.0.6",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "sql.js": "^1.14.1",
+    "sweetalert2": "^11.26.25",
+    "uuid": "^14.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.3",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@types/sql.js": "^1.4.11",
+    "@vitejs/plugin-react": "^6.0.3",
+    "concurrently": "^10.0.3",
+    "cross-env": "^10.1.0",
+    "electron": "^43.1.0",
+    "electron-builder": "^26.15.3",
+    "oxlint": "^1.71.0",
+    "typescript": "~6.0.2",
+    "vite": "^8.1.1",
+    "wait-on": "^9.0.10"
+  },
+  "build": {
+    "appId": "com.kentconsultancy.khaliduo",
+    "productName": "Khaliduo",
+    "copyright": "Copyright © 2026 Kent Consultancy",
+    "directories": {
+      "output": "release-khaliduo"
+    },
+    "publish": [
+      {
+        "provider": "generic",
+        "url": "${env.KHALIDUO_UPDATE_URL}"
+      }
+    ],
+    "electronUpdaterCompatibility": ">=2.16",
+    "files": [
+      "dist-khaliduo/**/*",
+      "dist-electron-khaliduo/**/*",
+      "node_modules/sql.js/dist/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "build-runtime.env",
+        "to": "khaliduo-runtime.env"
+      }
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "public/khaliduo-icon.png",
+      "artifactName": "KhaliduoSetup.exe"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": true,
+      "include": "installer/installer.nsh",
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Khaliduo"
+    }
+  }
+}

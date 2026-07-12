@@ -1,0 +1,32 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: employee_tracker
+      POSTGRES_USER: employee_tracker
+      POSTGRES_PASSWORD: employee_tracker_dev_password
+    volumes:
+      - postgres_dev_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  backend-api:
+    build:
+      context: .
+    env_file:
+      - ./.env
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./app:/app/app
+      - ./storage/screenshots:/app/storage/screenshots
+      - ../frontend/desktop-agent/release-khaliduo:/app/downloads:ro
+    environment:
+      DESKTOP_INSTALLER_PATH: /app/downloads/KhaliduoSetup.exe
+      DESKTOP_UPDATE_DIRECTORY: /app/downloads
+    depends_on:
+      - postgres
+    restart: unless-stopped
+
+volumes:
+  postgres_dev_data:

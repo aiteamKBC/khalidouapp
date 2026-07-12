@@ -1,0 +1,8 @@
+{
+  "name": "khaliduo-backend",
+  "private": true,
+  "scripts": {
+    "dev": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev-backend.ps1",
+    "test": ".\\.venv\\Scripts\\python.exe -m pytest"
+  }
+}

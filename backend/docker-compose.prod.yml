@@ -1,0 +1,61 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-employee_tracker}
+      POSTGRES_USER: ${POSTGRES_USER:-employee_tracker}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    volumes:
+      - khaliduo_postgres:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  backend-api:
+    build:
+      context: .
+    env_file:
+      - ./.env
+    expose:
+      - "8000"
+    volumes:
+      - khaliduo_screenshots:/app/storage/screenshots
+      - ../frontend/desktop-agent/release-khaliduo:/app/downloads:ro
+    environment:
+      DESKTOP_INSTALLER_PATH: /app/downloads/KhaliduoSetup.exe
+      DESKTOP_UPDATE_DIRECTORY: /app/downloads
+    depends_on:
+      - postgres
+    restart: unless-stopped
+
+  admin-dashboard:
+    build:
+      context: ../frontend/admin-dashboard
+      args:
+        VITE_API_BASE_URL: ${PUBLIC_API_BASE_URL:?PUBLIC_API_BASE_URL is required}
+        VITE_DESKTOP_DOWNLOAD_URL: ${PUBLIC_DESKTOP_DOWNLOAD_URL:?PUBLIC_DESKTOP_DOWNLOAD_URL is required}
+    expose:
+      - "3000"
+    depends_on:
+      - backend-api
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:1.27-alpine
+    depends_on:
+      - backend-api
+      - admin-dashboard
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deployment/nginx.conf:/etc/nginx/templates/default.conf.template:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+      - ./deployment/certbot-webroot:/var/www/certbot:ro
+    environment:
+      API_DOMAIN: ${API_DOMAIN:?API_DOMAIN is required}
+      DASHBOARD_DOMAIN: ${DASHBOARD_DOMAIN:?DASHBOARD_DOMAIN is required}
+      NGINX_ENVSUBST_FILTER: ^(API_DOMAIN|DASHBOARD_DOMAIN)$$
+    restart: unless-stopped
+
+volumes:
+  khaliduo_postgres:
+  khaliduo_screenshots:
