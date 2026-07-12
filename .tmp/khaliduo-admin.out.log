@@ -1,0 +1,13 @@
+
+> khaliduo@1.0.0 dev:admin
+> npm --prefix admin-dashboard run dev -- --host localhost --port 5174 --host localhost --port 5174
+
+
+> dev
+> vite dev --host localhost --port 5174 --host localhost --port 5174
+
+[2m3:12:06 PM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m Re-optimizing dependencies because vite config has changed
+
+  [32m[1mVITE[22m v8.1.4[39m  [2mready in [0m[1m3508[22m[2m[0m ms[22m
+
+  [32m➜[39m  [1mLocal[22m:   [36mhttp://localhost:[1m5174[22m/[39m
