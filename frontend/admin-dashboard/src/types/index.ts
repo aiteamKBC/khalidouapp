@@ -1,6 +1,9 @@
 export type Role = "general_admin" | "team_owner";
+export type PermissionMode = "role" | "custom";
+export type DataScope = "company" | "assigned_teams";
 
 export type EmployeeStatus = "active" | "idle" | "locked" | "sleeping" | "offline";
+export type EmployeeAccountStatus = "invited" | "active" | "inactive";
 export type DeviceStatus = "online" | "offline" | "revoked";
 export type TeamStatus = "active" | "archived";
 export type UserStatus = "active" | "inactive";
@@ -14,6 +17,11 @@ export interface User {
   role: Role;
   permissions: string[];
   assignedTeamIds: string[];
+  permissionMode: PermissionMode;
+  dataScope: DataScope;
+  teamLeadTeamIds: string[];
+  trackAsEmployee: boolean;
+  trackedEmployeeId?: string;
   status: UserStatus;
   lastLogin?: string;
   avatarUrl?: string;
@@ -100,6 +108,12 @@ export interface Employee {
   currentProjectId?: string;
   currentTaskId?: string;
   active: boolean;
+  accountStatus: EmployeeAccountStatus;
+  invitation?: {
+    id: string;
+    status: "pending" | "accepted" | "expired" | "revoked";
+    expiresAt: string;
+  };
   portalAccessEnabled: boolean;
   portalAccessKeyHint?: string;
   portalLastLoginAt?: string;

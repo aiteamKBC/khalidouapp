@@ -20,6 +20,7 @@ from app.api.v1.admin_utils import (
     serialize_work_session,
 )
 from app.api.v1.team_auth import apply_employee_scope, ensure_employee_access, ensure_team_access, require_general_admin
+from app.core.config import settings
 from app.core.exceptions import ApiError
 from app.core.responses import success_response
 from app.core.security import hash_password
@@ -38,6 +39,10 @@ from app.schemas.admin import EmployeeCreate, EmployeeUpdate, EnrollmentCodeCrea
 from app.services.audit import record_audit_log
 from app.services.email import (
     enqueue_employee_invitation_email,
+)
+from app.services.employee_invitations import (
+    issue_employee_invitation,
+    latest_employee_invitations,
 )
 
 router = APIRouter(tags=["employees"])
@@ -74,8 +79,12 @@ def list_employees(
     statement = statement.order_by(sort_column)
     total = count_for(db, statement)
     employees = db.scalars(apply_pagination(statement, page, page_size)).all()
+    invitations = latest_employee_invitations(db, [employee.id for employee in employees])
     return success_response(
-        data=[serialize_employee(employee) for employee in employees],
+        data=[
+            serialize_employee(employee, invitations.get(employee.id))
+            for employee in employees
+        ],
         meta=pagination_meta(total, page, page_size),
     )
 
@@ -170,6 +179,7 @@ def list_employee_overviews(
     rows = db.execute(statement).all()
 
     employee_ids = [row[0].id for row in rows]
+    invitations_by_employee = latest_employee_invitations(db, employee_ids)
     teams_by_employee: dict[UUID, list[str]] = {item: [] for item in employee_ids}
     if employee_ids:
         memberships = db.execute(
@@ -210,7 +220,9 @@ def list_employee_overviews(
         idle_seconds = int(idle_seconds or 0)
         data.append(
             {
-                "employee": serialize_employee(employee),
+                "employee": serialize_employee(
+                    employee, invitations_by_employee.get(employee.id)
+                ),
                 "online_status": "online" if online else "offline",
                 "activity_status": session_status if session_id and online else "offline",
                 "current_session": (
@@ -256,11 +268,12 @@ def create_employee(
         employee_code=payload.employee_code or f"EMP-{uuid4().hex[:8].upper()}",
         department=payload.department,
         timezone=payload.timezone,
-        status=payload.status,
+        status="invited",
+        weekly_capacity_minutes=payload.weekly_capacity_minutes,
     )
     db.add(employee)
-    db.commit()
-    db.refresh(employee)
+    db.flush()
+    invitation, raw_invitation_token = issue_employee_invitation(db, employee)
     record_audit_log(
         db,
         current_admin,
@@ -272,14 +285,19 @@ def create_employee(
         request=request,
     )
     db.commit()
-    enqueue_employee_invitation_email(
+    db.refresh(employee)
+    email_queued = enqueue_employee_invitation_email(
         db,
         background_tasks,
         company_id=current_admin.company_id,
         to=employee.email,
         name=employee.name,
+        token=raw_invitation_token,
+        expires_in_hours=settings.employee_invitation_expire_hours,
     )
-    return success_response(data=serialize_employee(employee))
+    data = serialize_employee(employee, invitation)
+    data["email_queued"] = email_queued
+    return success_response(data=data)
 
 
 def get_employee_or_404(
@@ -322,7 +340,9 @@ def serialize_enrollment_code(code: EnrollmentCode, include_plain_code: str | No
 
 @router.get("/employees/{employee_id}")
 def get_employee(employee_id: UUID, current_admin: Annotated[AdminUser, Depends(get_current_admin)], db: Annotated[Session, Depends(get_db)]):
-    return success_response(data=serialize_employee(get_employee_or_404(db, current_admin, employee_id)))
+    employee = get_employee_or_404(db, current_admin, employee_id)
+    invitation = latest_employee_invitations(db, [employee.id]).get(employee.id)
+    return success_response(data=serialize_employee(employee, invitation))
 
 
 @router.post("/employees/{employee_id}/portal-access-key")
@@ -495,7 +515,18 @@ def update_employee(
 ):
     require_general_admin(current_admin)
     employee = get_employee_or_404(db, current_admin, employee_id)
-    for key, value in payload.model_dump(exclude_unset=True).items():
+    changes = payload.model_dump(exclude_unset=True)
+    if (
+        changes.get("status") == "active"
+        and employee.status == "invited"
+        and not employee.portal_password_hash
+    ):
+        raise ApiError(
+            "EMPLOYEE_INVITATION_REQUIRED",
+            "The employee must accept the invitation before the account can be activated.",
+            409,
+        )
+    for key, value in changes.items():
         setattr(employee, key, value.lower() if key == "email" and isinstance(value, str) else value)
     db.add(employee)
     db.commit()

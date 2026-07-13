@@ -71,7 +71,8 @@ export function EmployeesList({ embedded = false }: { embedded?: boolean }) {
           return false;
         if (teamId !== "all" && !employee.teamIds.includes(teamId)) return false;
         if (dept !== "all" && employee.department !== dept) return false;
-        if (status !== "all" && employee.status !== status) return false;
+        const displayStatus = employee.accountStatus === "invited" ? "invited" : employee.status;
+        if (status !== "all" && displayStatus !== status) return false;
         return true;
       }),
     [emps.data, q, teamId, dept, status],
@@ -139,6 +140,7 @@ export function EmployeesList({ embedded = false }: { embedded?: boolean }) {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All statuses</SelectItem>
+              <SelectItem value="invited">Invited</SelectItem>
               <SelectItem value="active">Active</SelectItem>
               <SelectItem value="idle">Idle</SelectItem>
               <SelectItem value="locked">Locked</SelectItem>
@@ -179,7 +181,9 @@ export function EmployeesList({ embedded = false }: { embedded?: boolean }) {
                   <TableCell className="font-mono text-xs">{employee.code}</TableCell>
                   <TableCell>{employee.department || "-"}</TableCell>
                   <TableCell>
-                    <StatusBadge status={employee.status} />
+                    <StatusBadge
+                      status={employee.accountStatus === "invited" ? "invited" : employee.status}
+                    />
                   </TableCell>
                   <TableCell>{formatMinutes(employee.workedTodayMinutes)}</TableCell>
                   <TableCell>{formatMinutes(employee.activeMinutes)}</TableCell>

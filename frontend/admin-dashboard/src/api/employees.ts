@@ -1,5 +1,5 @@
 import { apiFetch, toMinutes, withQuery } from "./client";
-import type { Employee, EmployeeStatus, EnrollmentCode } from "@/types";
+import type { Employee, EmployeeAccountStatus, EmployeeStatus, EnrollmentCode } from "@/types";
 
 type BackendEmployee = {
   id: string;
@@ -9,6 +9,11 @@ type BackendEmployee = {
   department?: string | null;
   timezone: string;
   status: string;
+  invitation?: {
+    id: string;
+    status: "pending" | "accepted" | "expired" | "revoked";
+    expires_at: string;
+  } | null;
   portal_access_enabled?: boolean;
   portal_access_key_hint?: string | null;
   portal_last_login_at?: string | null;
@@ -66,6 +71,11 @@ function normalizeEmployeeStatus(value?: string | null): EmployeeStatus {
   return "active";
 }
 
+function normalizeEmployeeAccountStatus(value?: string | null): EmployeeAccountStatus {
+  if (value === "invited" || value === "inactive") return value;
+  return "active";
+}
+
 function mapEmployee(status: BackendEmployeeStatus, teamIds: string[]): Employee {
   const employee = status.employee;
   return {
@@ -87,6 +97,14 @@ function mapEmployee(status: BackendEmployeeStatus, teamIds: string[]): Employee
     currentProjectId: status.current_session?.project_id ?? undefined,
     currentTaskId: status.current_session?.task_id ?? undefined,
     active: employee.status === "active",
+    accountStatus: normalizeEmployeeAccountStatus(employee.status),
+    invitation: employee.invitation
+      ? {
+          id: employee.invitation.id,
+          status: employee.invitation.status,
+          expiresAt: employee.invitation.expires_at,
+        }
+      : undefined,
     portalAccessEnabled: employee.portal_access_enabled === true,
     portalAccessKeyHint: employee.portal_access_key_hint ?? undefined,
     portalLastLoginAt: employee.portal_last_login_at ?? undefined,

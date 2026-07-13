@@ -15,6 +15,7 @@ type AnyStatus =
   | TeamStatus
   | UserStatus
   | TimeAdjustmentStatus
+  | "invited"
   | "revoked"
   | "complete"
   | "in_progress"
@@ -34,6 +35,7 @@ const styles: Record<string, string> = {
   expired: "bg-warning/15 text-warning-foreground ring-warning/40",
   missing: "bg-warning/15 text-warning-foreground ring-warning/40",
   pending: "bg-warning/15 text-warning-foreground ring-warning/40",
+  invited: "bg-info/15 text-info ring-info/30",
   approved: "bg-success/15 text-success ring-success/30",
   rejected: "bg-destructive/15 text-destructive ring-destructive/30",
   offline: "bg-destructive/15 text-destructive ring-destructive/30",
@@ -53,7 +55,7 @@ export function StatusBadge({ status, className }: { status: AnyStatus; classNam
         className={cn("h-1.5 w-1.5 rounded-full", {
           "bg-success": ["active", "online", "complete", "approved"].includes(status),
           "bg-warning": ["idle", "missing", "pending", "expired"].includes(status),
-          "bg-info": status === "in_progress",
+          "bg-info": ["in_progress", "invited"].includes(status),
           "bg-muted-foreground": ["locked", "sleeping", "inactive", "archived", "used"].includes(
             status,
           ),

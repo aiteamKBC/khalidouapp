@@ -21,34 +21,75 @@ import { BrandLogo } from "@/components/ui/brand-logo";
 import { cn } from "@/lib/utils";
 import type { Role } from "@/types";
 import type { LucideIcon } from "lucide-react";
+import { permissions, type PermissionKey } from "@/lib/permissions";
 
 interface NavItem {
   to: string;
   label: string;
   icon: LucideIcon;
   roles?: Role[];
+  permission?: PermissionKey;
 }
 
 const items: NavItem[] = [
-  { to: "/dashboard", label: "Overview", icon: LayoutDashboard },
-  { to: "/teams", label: "Teams", icon: Users },
-  { to: "/projects", label: "Projects & Tasks", icon: BriefcaseBusiness },
-  { to: "/notifications", label: "Notifications", icon: Bell },
+  {
+    to: "/dashboard",
+    label: "Overview",
+    icon: LayoutDashboard,
+    permission: permissions.dashboardView,
+  },
+  { to: "/teams", label: "Teams", icon: Users, permission: permissions.teamsView },
+  {
+    to: "/projects",
+    label: "Projects & Tasks",
+    icon: BriefcaseBusiness,
+    permission: permissions.projectsView,
+  },
+  {
+    to: "/notifications",
+    label: "Notifications",
+    icon: Bell,
+    permission: permissions.notificationsView,
+  },
   { to: "/profile", label: "My Profile", icon: CircleUserRound },
-  { to: "/people", label: "People", icon: UsersRound },
-  { to: "/screenshots", label: "Screenshots", icon: Camera },
-  { to: "/timesheets", label: "Timesheets", icon: Clock },
-  { to: "/time-adjustments", label: "Time Requests", icon: ClockPlus },
-  { to: "/devices", label: "Devices", icon: MonitorSmartphone },
-  { to: "/reports", label: "Reports", icon: BarChart3 },
-  { to: "/settings/tracking", label: "Tracking Settings", icon: Settings },
-  { to: "/audit-log", label: "Audit Log", icon: ScrollText, roles: ["general_admin"] },
+  { to: "/people", label: "People", icon: UsersRound, permission: permissions.peopleView },
+  {
+    to: "/screenshots",
+    label: "Screenshots",
+    icon: Camera,
+    permission: permissions.screenshotsView,
+  },
+  { to: "/timesheets", label: "Timesheets", icon: Clock, permission: permissions.timesheetsView },
+  {
+    to: "/time-adjustments",
+    label: "Time Requests",
+    icon: ClockPlus,
+    permission: permissions.timeRequestsView,
+  },
+  {
+    to: "/devices",
+    label: "Devices",
+    icon: MonitorSmartphone,
+    permission: permissions.devicesView,
+  },
+  { to: "/reports", label: "Reports", icon: BarChart3, permission: permissions.reportsView },
+  {
+    to: "/settings/tracking",
+    label: "Tracking Settings",
+    icon: Settings,
+    permission: permissions.settingsView,
+  },
+  { to: "/audit-log", label: "Audit Log", icon: ScrollText, permission: permissions.auditView },
 ];
 
 export function AppSidebar({ onNavigate }: { onNavigate?: () => void }) {
-  const { user, logout } = useAuth();
+  const { user, logout, can } = useAuth();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
-  const visible = items.filter((i) => !i.roles || (user && i.roles.includes(user.role)));
+  const visible = items.filter(
+    (item) =>
+      (!item.roles || (user && item.roles.includes(user.role))) &&
+      (!item.permission || can(item.permission)),
+  );
 
   return (
     <aside className="flex h-full w-64 flex-col bg-sidebar text-sidebar-foreground">
@@ -96,7 +137,10 @@ export function AppSidebar({ onNavigate }: { onNavigate?: () => void }) {
           <div className="mb-2 rounded-md px-3 py-2 text-xs text-sidebar-foreground/80">
             <div className="font-medium text-sidebar-foreground truncate">{user.name}</div>
             <div className="truncate">
-              {user.role === "team_owner" ? "Team manager" : "General admin"}
+              {user.role === "team_owner" ? "Team lead" : "General admin"}
+              {user.role === "general_admin" && user.teamLeadTeamIds.length > 0
+                ? " · Team lead"
+                : ""}
             </div>
           </div>
         )}

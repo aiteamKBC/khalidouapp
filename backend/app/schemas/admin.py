@@ -11,7 +11,6 @@ class EmployeeCreate(BaseModel):
     employee_code: str | None = Field(default=None, max_length=80)
     department: str | None = Field(default=None, max_length=255)
     timezone: str = Field(default="UTC", max_length=80)
-    status: str = Field(default="active", max_length=50)
     weekly_capacity_minutes: int = Field(default=2400, ge=60, le=10080)
 
 
@@ -180,6 +179,16 @@ class PersonInvitationCreate(BaseModel):
     team_ids: list[UUID] = Field(default_factory=list)
     department: str | None = Field(default=None, max_length=255)
     timezone: str = Field(default="Africa/Cairo", max_length=80)
+    track_as_employee: bool = False
+
+
+class AdminAccessUpdate(BaseModel):
+    role: Literal["general_admin", "team_owner"] | None = None
+    permission_mode: Literal["role", "custom"] | None = None
+    data_scope: Literal["company", "assigned_teams"] | None = None
+    permission_overrides: dict[str, bool] | None = None
+    team_lead_team_ids: list[UUID] | None = None
+    track_as_employee: bool | None = None
 
 
 class TimeAdjustmentReview(BaseModel):

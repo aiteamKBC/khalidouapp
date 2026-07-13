@@ -3,10 +3,12 @@ from app.models.audit_log import AuditLog
 from app.models.admin_refresh_token import AdminRefreshToken
 from app.models.admin_password_reset_token import AdminPasswordResetToken
 from app.models.admin_user import AdminUser
+from app.models.admin_permission_override import AdminPermissionOverride
 from app.models.company import Company
 from app.models.device import Device
 from app.models.device_token import DeviceToken
 from app.models.employee import Employee
+from app.models.employee_invitation import EmployeeInvitation
 from app.models.email_delivery import EmailDelivery
 from app.models.enrollment_code import EnrollmentCode
 from app.models.project import Project
@@ -33,10 +35,12 @@ __all__ = [
     "AdminRefreshToken",
     "AdminPasswordResetToken",
     "AdminUser",
+    "AdminPermissionOverride",
     "Company",
     "Device",
     "DeviceToken",
     "Employee",
+    "EmployeeInvitation",
     "EmailDelivery",
     "EnrollmentCode",
     "Project",

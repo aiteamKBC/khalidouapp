@@ -5,7 +5,7 @@ from uuid import UUID
 import secrets
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Request
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 import jwt
 
@@ -66,25 +66,52 @@ def normalize_portal_access_key(value: str) -> str:
 
 @router.post("/login")
 def login(payload: EmployeePortalLogin, request: Request, db: Annotated[Session, Depends(get_db)]):
-    normalized_access_key = normalize_portal_access_key(payload.access_key)
+    normalized_access_key = (
+        normalize_portal_access_key(payload.access_key) if payload.access_key else None
+    )
     candidates = db.scalars(
         select(Employee).where(
             func.lower(Employee.email) == payload.email.lower(),
             Employee.status == "active",
-            Employee.portal_access_key_hash.is_not(None),
+            or_(
+                Employee.portal_password_hash.is_not(None),
+                Employee.portal_access_key_hash.is_not(None),
+            ),
         )
     ).all()
     employee = next(
         (
             candidate
             for candidate in candidates
-            if candidate.portal_access_key_hash
-            and verify_password(normalized_access_key, candidate.portal_access_key_hash)
+            if (
+                candidate.portal_password_hash
+                and (
+                    (
+                        payload.password
+                        and verify_password(
+                            payload.password, candidate.portal_password_hash
+                        )
+                    )
+                    or (
+                        payload.access_key
+                        and verify_password(payload.access_key, candidate.portal_password_hash)
+                    )
+                )
+            )
+            or (
+                candidate.portal_access_key_hash
+                and normalized_access_key
+                and verify_password(normalized_access_key, candidate.portal_access_key_hash)
+            )
         ),
         None,
     )
     if employee is None:
-        raise ApiError("INVALID_EMPLOYEE_LOGIN", "Email or employee access key is incorrect.", 401)
+        raise ApiError(
+            "INVALID_EMPLOYEE_LOGIN",
+            "Email or employee password/access key is incorrect.",
+            401,
+        )
 
     record_employee_portal_login(employee, request, db)
     return success_response(data=employee_login_response(employee))

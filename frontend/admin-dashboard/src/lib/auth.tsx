@@ -12,6 +12,7 @@ import {
   changePassword as apiChangePassword,
   login as apiLogin,
   logout as apiLogout,
+  me as apiMe,
   updateProfile as apiUpdateProfile,
 } from "@/api/auth";
 
@@ -23,7 +24,10 @@ interface AuthState {
   login: (email: string, password: string, remember?: boolean) => Promise<User>;
   logout: () => Promise<void>;
   hasRole: (role: Role) => boolean;
+  can: (permission: string) => boolean;
+  canAny: (...permissions: string[]) => boolean;
   scopedTeamIds: () => string[] | undefined;
+  refreshUser: () => Promise<User>;
   changePassword: (currentPassword: string, newPassword: string) => Promise<void>;
   updateProfile: (input: { name?: string; avatarUrl?: string | null }) => Promise<User>;
 }
@@ -35,6 +39,11 @@ interface Persisted {
   user: User;
   accessToken: string;
   refreshToken: string;
+}
+
+function persistUser(user: User, accessToken: string, refreshToken: string) {
+  const storage = localStorage.getItem(STORAGE_KEY) ? localStorage : sessionStorage;
+  storage.setItem(STORAGE_KEY, JSON.stringify({ user, accessToken, refreshToken }));
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -50,23 +59,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    try {
-      const raw =
-        typeof window !== "undefined"
-          ? (localStorage.getItem(STORAGE_KEY) ?? sessionStorage.getItem(STORAGE_KEY))
-          : null;
-      if (raw) {
-        const parsed = JSON.parse(raw) as Persisted;
-        setState({
-          user: parsed.user,
-          accessToken: parsed.accessToken,
-          refreshToken: parsed.refreshToken,
-        });
+    let cancelled = false;
+    async function restore() {
+      try {
+        const raw =
+          typeof window !== "undefined"
+            ? (localStorage.getItem(STORAGE_KEY) ?? sessionStorage.getItem(STORAGE_KEY))
+            : null;
+        if (raw) {
+          const parsed = JSON.parse(raw) as Persisted;
+          const user = await apiMe();
+          if (!cancelled) {
+            persistUser(user, parsed.accessToken, parsed.refreshToken);
+            setState({ user, accessToken: parsed.accessToken, refreshToken: parsed.refreshToken });
+          }
+        }
+      } catch {
+        localStorage.removeItem(STORAGE_KEY);
+        sessionStorage.removeItem(STORAGE_KEY);
+        if (!cancelled) setState({ user: null, accessToken: null, refreshToken: null });
+      } finally {
+        if (!cancelled) setLoading(false);
       }
-    } catch {
-      /* ignore */
     }
-    setLoading(false);
+    void restore();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -80,6 +99,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         ).detail ?? {};
       if (!accessToken || !refreshToken) return;
       setState((current) => ({ ...current, accessToken, refreshToken }));
+      void apiMe(accessToken).then((user) => {
+        persistUser(user, accessToken, refreshToken);
+        setState((current) => ({ ...current, user, accessToken, refreshToken }));
+      });
     };
     const onSessionExpired = () => {
       setState({ user: null, accessToken: null, refreshToken: null });
@@ -114,6 +137,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setState({ user: null, accessToken: null, refreshToken: null });
     }
   }, [state.refreshToken]);
+
+  const refreshUser = useCallback(async () => {
+    const user = await apiMe();
+    setState((current) => {
+      if (current.accessToken && current.refreshToken) {
+        persistUser(user, current.accessToken, current.refreshToken);
+      }
+      return { ...current, user };
+    });
+    return user;
+  }, []);
 
   const updateProfile = useCallback(
     async (input: { name?: string; avatarUrl?: string | null }) => {
@@ -154,12 +188,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       login,
       logout,
       hasRole: (role) => state.user?.role === role,
+      can: (permission) => state.user?.permissions.includes(permission) === true,
+      canAny: (...required) =>
+        required.some((permission) => state.user?.permissions.includes(permission) === true),
       scopedTeamIds: () =>
-        state.user?.role === "team_owner" ? state.user.assignedTeamIds : undefined,
+        state.user?.dataScope === "assigned_teams"
+          ? state.user.teamLeadTeamIds.length
+            ? state.user.teamLeadTeamIds
+            : state.user.assignedTeamIds
+          : undefined,
+      refreshUser,
       changePassword,
       updateProfile,
     }),
-    [state, loading, login, logout, changePassword, updateProfile],
+    [state, loading, login, logout, refreshUser, changePassword, updateProfile],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

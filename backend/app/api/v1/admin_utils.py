@@ -37,8 +37,8 @@ def count_for(db: Session, statement: Select[tuple[Any]]) -> int:
     return db.scalar(select(func.count()).select_from(statement.subquery())) or 0
 
 
-def serialize_employee(employee: Employee) -> dict[str, Any]:
-    return {
+def serialize_employee(employee: Employee, invitation=None) -> dict[str, Any]:
+    data = {
         "id": str(employee.id),
         "company_id": str(employee.company_id),
         "name": employee.name,
@@ -49,7 +49,9 @@ def serialize_employee(employee: Employee) -> dict[str, Any]:
         "status": employee.status,
         "weekly_capacity_minutes": employee.weekly_capacity_minutes,
         "avatar_url": employee.avatar_url,
-        "portal_access_enabled": bool(employee.portal_access_key_hash),
+        "portal_access_enabled": bool(
+            employee.portal_password_hash or employee.portal_access_key_hash
+        ),
         "portal_access_key_hint": employee.portal_access_key_hint,
         "portal_last_login_at": employee.portal_last_login_at.isoformat() if employee.portal_last_login_at else None,
         "portal_last_login_ip": employee.portal_last_login_ip,
@@ -57,6 +59,11 @@ def serialize_employee(employee: Employee) -> dict[str, Any]:
         "created_at": employee.created_at.isoformat(),
         "updated_at": employee.updated_at.isoformat(),
     }
+    if invitation is not None:
+        from app.services.employee_invitations import serialize_employee_invitation
+
+        data["invitation"] = serialize_employee_invitation(invitation)
+    return data
 
 
 def serialize_device(device: Device) -> dict[str, Any]:

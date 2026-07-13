@@ -34,6 +34,12 @@ type EnrollmentResponse = {
   settings: Record<string, unknown>;
 };
 
+type EmployeeLoginResponse = {
+  access_token: string;
+  token_type: "bearer";
+  expires_in_seconds: number;
+};
+
 export type WorkSession = {
   id: string;
   company_id: string;
@@ -118,6 +124,17 @@ export function getApiBaseUrl() {
   return process.env.VITE_API_BASE_URL ?? "http://localhost:8000/api/v1";
 }
 
+function getDeviceInfo(agentVersion: string) {
+  const identity = loadIdentity();
+  return {
+    installation_id: identity.installationId,
+    device_name: os.hostname(),
+    operating_system: `Windows ${os.release()}`,
+    agent_version: agentVersion,
+    windows_username: os.userInfo().username,
+  };
+}
+
 function getAuthHeaders() {
   const token = getDeviceToken();
   if (!token) {
@@ -132,17 +149,54 @@ export async function enrollDevice(
   enrollmentCode: string,
   agentVersion: string,
 ) {
-  const identity = loadIdentity();
   const response = await axios.post<ApiSuccess<EnrollmentResponse>>(
     `${getApiBaseUrl()}/agent/enroll`,
     {
       enrollment_code: enrollmentCode.trim(),
-      device: {
-        installation_id: identity.installationId,
-        device_name: os.hostname(),
-        operating_system: `Windows ${os.release()}`,
-        agent_version: agentVersion,
-        windows_username: os.userInfo().username,
+      device: getDeviceInfo(agentVersion),
+    },
+  );
+
+  const data = response.data.data;
+  return saveEnrollmentIdentity({
+    companyId: data.company_id,
+    employeeId: data.employee.id,
+    employeeName: data.employee.name,
+    deviceId: data.device.id,
+    deviceName: data.device.name,
+    deviceToken: data.device_token,
+  });
+}
+
+/**
+ * Authenticates the employee, immediately exchanges that short-lived portal
+ * session for a device token, and persists only the encrypted device token.
+ * The password and employee access token never leave the Electron main process
+ * after this function returns.
+ *
+ * The backend still needs to implement POST /agent/enroll-authenticated. It
+ * must authenticate the employee bearer token and return EnrollmentResponse.
+ */
+export async function enrollDeviceWithCredentials(
+  email: string,
+  password: string,
+  agentVersion: string,
+) {
+  const loginResponse = await axios.post<ApiSuccess<EmployeeLoginResponse>>(
+    `${getApiBaseUrl()}/employee-auth/login`,
+    {
+      email: email.trim(),
+      password,
+    },
+  );
+
+  const employeeAccessToken = loginResponse.data.data.access_token;
+  const response = await axios.post<ApiSuccess<EnrollmentResponse>>(
+    `${getApiBaseUrl()}/agent/enroll-authenticated`,
+    { device: getDeviceInfo(agentVersion) },
+    {
+      headers: {
+        Authorization: `Bearer ${employeeAccessToken}`,
       },
     },
   );

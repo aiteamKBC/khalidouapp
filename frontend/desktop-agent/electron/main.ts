@@ -11,6 +11,7 @@ import { fileURLToPath } from "node:url";
 
 import {
   enrollDevice,
+  enrollDeviceWithCredentials,
   endSession,
   getAgentConfig,
   getAgentSummary,
@@ -39,6 +40,7 @@ import {
   type WorkSession,
 } from "./services/agentApi.js";
 import { isEnrolled, loadIdentity } from "./services/identityStore.js";
+import type { StoredIdentity } from "./services/identityStore.js";
 import {
   enqueuePendingEvent,
   enqueuePendingScreenshot,
@@ -251,6 +253,23 @@ function hydrateIdentityStatus() {
   runtimeStatus.employeeName = identity.employeeName ?? "Not enrolled";
   runtimeStatus.deviceName =
     identity.deviceName ?? process.env.COMPUTERNAME ?? "Windows device";
+}
+
+async function activateEnrolledDevice(identity: StoredIdentity) {
+  runtimeStatus.enrolled = true;
+  runtimeStatus.employeeName = identity.employeeName ?? "Enrolled employee";
+  runtimeStatus.deviceName = identity.deviceName ?? runtimeStatus.deviceName;
+  runtimeStatus.trackingStatus = "active";
+  runtimeStatus.connectionStatus = "online";
+  trackingPausedByUser = false;
+  runtimeStatus.trackingPaused = false;
+  saveTrackingPreferences();
+  configureAutoStart(true);
+  tray?.setImage(createTrayImage("#1f7a4d"));
+  await startTrackingAutomatically();
+  await refreshTasks();
+  await refreshTimeAdjustmentRequests();
+  rebuildTrayMenu();
 }
 
 function getAppIconPath() {
@@ -1638,20 +1657,7 @@ ipcMain.handle("agent:get-status", () => ({
 ipcMain.handle("agent:enroll-device", async (_, enrollmentCode: string) => {
   try {
     const identity = await enrollDevice(enrollmentCode, app.getVersion());
-    runtimeStatus.enrolled = true;
-    runtimeStatus.employeeName = identity.employeeName ?? "Enrolled employee";
-    runtimeStatus.deviceName = identity.deviceName ?? runtimeStatus.deviceName;
-    runtimeStatus.trackingStatus = "active";
-    runtimeStatus.connectionStatus = "online";
-    trackingPausedByUser = false;
-    runtimeStatus.trackingPaused = false;
-    saveTrackingPreferences();
-    configureAutoStart(true);
-    tray?.setImage(createTrayImage("#1f7a4d"));
-    await startTrackingAutomatically();
-    await refreshTasks();
-    await refreshTimeAdjustmentRequests();
-    rebuildTrayMenu();
+    await activateEnrolledDevice(identity);
     return { success: true };
   } catch (error) {
     runtimeStatus.trackingStatus = "error";
@@ -1664,6 +1670,48 @@ ipcMain.handle("agent:enroll-device", async (_, enrollmentCode: string) => {
     };
   }
 });
+
+ipcMain.handle(
+  "agent:enroll-with-credentials",
+  async (_, email: string, password: string) => {
+    try {
+      if (
+        typeof email !== "string" ||
+        typeof password !== "string" ||
+        !email.trim() ||
+        !password
+      ) {
+        return { success: false, message: "Email and password are required." };
+      }
+
+      const identity = await enrollDeviceWithCredentials(
+        email,
+        password,
+        app.getVersion(),
+      );
+      await activateEnrolledDevice(identity);
+      return { success: true };
+    } catch (error) {
+      runtimeStatus.trackingStatus = "error";
+      tray?.setImage(createTrayImage("#b42318"));
+      rebuildTrayMenu();
+      log.error("Credential device enrollment failed", {
+        message: error instanceof Error ? error.message : "Unknown error",
+        code: axios.isAxiosError(error) ? error.code : undefined,
+        status: axios.isAxiosError(error) ? error.response?.status : undefined,
+      });
+      const unavailable =
+        axios.isAxiosError(error) &&
+        [404, 405, 501].includes(error.response?.status ?? 0);
+      return {
+        success: false,
+        message: unavailable
+          ? "Automatic device linking is not enabled on the server yet. Use an enrollment code instead."
+          : getUserFacingError(error, "Sign-in and device setup failed."),
+      };
+    }
+  },
+);
 
 ipcMain.handle("agent:pause-tracking", () => pauseTracking());
 

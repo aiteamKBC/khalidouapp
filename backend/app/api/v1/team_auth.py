@@ -5,16 +5,16 @@ from sqlalchemy.orm import Session
 
 from app.core.exceptions import ApiError
 from app.models import AdminUser, Employee, Team, TeamMember, TeamOwner
-from app.services.permissions import has_capability
+from app.services.permissions import has_capability, has_company_data_scope, require_capability
 
 
 def is_general_admin(admin: AdminUser) -> bool:
-    return has_capability(admin, "company.manage")
+    """Backward-compatible name for company-wide data scope checks."""
+    return has_company_data_scope(admin)
 
 
 def require_general_admin(admin: AdminUser) -> None:
-    if not is_general_admin(admin):
-        raise ApiError("FORBIDDEN", "General Admin access is required.", 403)
+    require_capability(admin, "company.manage")
 
 
 def ensure_team_owner_employee_membership(

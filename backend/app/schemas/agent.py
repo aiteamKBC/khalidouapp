@@ -16,6 +16,10 @@ class EnrollmentRequest(BaseModel):
     device: AgentDeviceInfo
 
 
+class AuthenticatedEnrollmentRequest(BaseModel):
+    device: AgentDeviceInfo
+
+
 class RefreshDeviceTokenRequest(BaseModel):
     rotate_reason: str | None = Field(default=None, max_length=120)
 

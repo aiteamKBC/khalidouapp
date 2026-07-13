@@ -1,5 +1,5 @@
 import { apiFetch } from "./client";
-import type { User } from "@/types";
+import type { DataScope, PermissionMode, User } from "@/types";
 
 type BackendAuthTokens = {
   access_token: string;
@@ -17,6 +17,11 @@ type BackendUser = {
   permissions?: string[];
   status: "active" | "inactive";
   assigned_team_ids?: string[];
+  permission_mode?: PermissionMode;
+  data_scope?: DataScope;
+  team_lead_team_ids?: string[];
+  track_as_employee?: boolean;
+  tracked_employee_id?: string | null;
   avatar_url?: string | null;
 };
 
@@ -35,6 +40,11 @@ export function mapUser(user: BackendUser): User {
     role: user.role,
     permissions: user.permissions ?? [],
     assignedTeamIds: user.assigned_team_ids ?? [],
+    permissionMode: user.permission_mode ?? "role",
+    dataScope: user.data_scope ?? (user.role === "general_admin" ? "company" : "assigned_teams"),
+    teamLeadTeamIds: user.team_lead_team_ids ?? user.assigned_team_ids ?? [],
+    trackAsEmployee: user.track_as_employee ?? Boolean(user.employee_id),
+    trackedEmployeeId: user.tracked_employee_id ?? user.employee_id ?? undefined,
     status: user.status,
     avatarUrl: user.avatar_url ?? undefined,
   };
@@ -53,7 +63,7 @@ export async function login(email: string, password: string): Promise<AuthRespon
   };
 }
 
-export async function me(token: string): Promise<User> {
+export async function me(token?: string): Promise<User> {
   return mapUser(await apiFetch<BackendUser>("/auth/me", {}, token));
 }
 

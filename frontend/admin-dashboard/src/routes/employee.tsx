@@ -116,9 +116,11 @@ function EmployeeLogin({
   initialError?: string | null;
 }) {
   const [email, setEmail] = useState("");
-  const [accessKey, setAccessKey] = useState("");
+  const [credential, setCredential] = useState("");
+  const [useLegacyKey, setUseLegacyKey] = useState(false);
   const login = useMutation({
-    mutationFn: () => employeeLogin(email, accessKey),
+    mutationFn: () =>
+      employeeLogin(email, useLegacyKey ? { accessKey: credential } : { password: credential }),
     onSuccess: (result) => {
       saveEmployeeToken(result.access_token);
       onLoggedIn(result.access_token);
@@ -154,34 +156,54 @@ function EmployeeLogin({
               />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="employee-key">Employee portal key</Label>
+              <Label htmlFor="employee-credential">
+                {useLegacyKey ? "Legacy employee portal key" : "Password"}
+              </Label>
               <Input
-                id="employee-key"
+                id="employee-credential"
                 type="password"
-                autoCapitalize="characters"
-                autoComplete="off"
+                autoCapitalize={useLegacyKey ? "characters" : "none"}
+                autoComplete={useLegacyKey ? "off" : "current-password"}
                 spellCheck={false}
-                placeholder="KHW-XXXXXXXXXXXXXXXX"
-                value={accessKey}
-                onChange={(e) => setAccessKey(e.target.value)}
+                placeholder={useLegacyKey ? "KHW-XXXXXXXXXXXXXXXX" : undefined}
+                value={credential}
+                onChange={(e) => setCredential(e.target.value)}
                 required
               />
               <p className="text-xs text-muted-foreground">
-                Use the key starting with KHW-. The KH- enrollment code is only for the Windows app.
+                {useLegacyKey
+                  ? "Use the old key starting with KHW-. The KH- enrollment code is only for linking the Windows app."
+                  : "Use the password you chose when accepting your email invitation."}
               </p>
+              {useLegacyKey && (
+                <>
+                  <button
+                    type="button"
+                    className="text-xs text-primary hover:underline"
+                    onClick={() => email.includes("@") && forgot.mutate()}
+                  >
+                    {forgot.isPending ? "Sending..." : "Forgot access key? Email me a new one"}
+                  </button>
+                  {forgot.isSuccess && (
+                    <p className="text-xs text-emerald-600">
+                      If the account exists, a new key was emailed.
+                    </p>
+                  )}
+                  {forgot.error && (
+                    <p className="text-xs text-destructive">{forgot.error.message}</p>
+                  )}
+                </>
+              )}
               <button
                 type="button"
-                className="text-xs text-primary hover:underline"
-                onClick={() => email.includes("@") && forgot.mutate()}
+                className="block text-xs text-primary hover:underline"
+                onClick={() => {
+                  setUseLegacyKey((current) => !current);
+                  setCredential("");
+                }}
               >
-                {forgot.isPending ? "Sending..." : "Forgot access key? Email me a new one"}
+                {useLegacyKey ? "Sign in with my password" : "Use a legacy portal key instead"}
               </button>
-              {forgot.isSuccess && (
-                <p className="text-xs text-emerald-600">
-                  If the account exists, a new key was emailed.
-                </p>
-              )}
-              {forgot.error && <p className="text-xs text-destructive">{forgot.error.message}</p>}
             </div>
             {login.error && <p className="text-sm text-destructive">{login.error.message}</p>}
             {initialError && <p className="text-sm text-destructive">{initialError}</p>}

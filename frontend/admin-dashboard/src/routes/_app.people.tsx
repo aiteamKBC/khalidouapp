@@ -1,6 +1,6 @@
-import { createFileRoute, Navigate, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import {
   Plus,
   Search,
@@ -10,9 +10,12 @@ import {
   KeyRound,
   Copy,
   ArrowLeft,
-  CheckCircle2,
   Activity,
   UsersRound,
+  Mail,
+  RefreshCw,
+  Archive,
+  ArchiveRestore,
 } from "lucide-react";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card } from "@/components/ui/card";
@@ -36,20 +39,29 @@ import {
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Switch } from "@/components/ui/switch";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { cn } from "@/lib/utils";
+import { createEnrollmentCode, getEmployee, listEmployees } from "@/api/employees";
+import { listUsers, updateUser } from "@/api/users";
+import { listTeams } from "@/api/teams";
 import {
-  createEnrollmentCode,
-  createPortalAccessKey,
-  getEmployee,
-  listEmployees,
-} from "@/api/employees";
-import { deactivateUser, listUsers, updateUser } from "@/api/users";
-import { addTeamOwner, listTeams, removeTeamOwner } from "@/api/teams";
-import { invitePerson } from "@/api/people";
+  archivePerson,
+  invitePerson,
+  resendPersonInvitation,
+  restorePerson,
+  type PersonInvitationSummary,
+} from "@/api/people";
+import {
+  getAdminAccess,
+  getPermissionCatalog,
+  updateAdminAccess,
+  type PermissionDefinition,
+} from "@/api/access";
 import { useAuth } from "@/lib/auth";
+import { permissions } from "@/lib/permissions";
 import { toast } from "sonner";
-import type { Employee, Role, Team, User, UserStatus } from "@/types";
+import type { DataScope, Employee, PermissionMode, Role, Team, User } from "@/types";
 import { EmployeesList } from "./_app.employees";
 import { LiveActivityPage } from "./_app.live-activity";
 
@@ -68,6 +80,8 @@ export const Route = createFileRoute("/_app/people")({
 // a password + role). This hub is the single place to create and manage both.
 type PersonKind = "employee" | "team_owner" | "general_admin";
 type TypeFilter = "all" | "employees" | "admins";
+type StatusFilter = "all" | "active" | "invited" | "archived";
+type AccessPreset = Role | "custom";
 
 type PersonRow = {
   id: string;
@@ -76,16 +90,17 @@ type PersonRow = {
   email: string;
   roleLabel: string;
   detail: string;
-  status: UserStatus;
+  status: "active" | "invited" | "expired" | "archived";
   employee?: Employee;
   user?: User;
 };
 
 function PeopleHubPage() {
-  const { hasRole } = useAuth();
+  const { can } = useAuth();
   const navigate = useNavigate();
   const search = Route.useSearch();
-  const tab = search.tab === "directory" && !hasRole("general_admin") ? "employees" : search.tab;
+  const tab =
+    search.tab === "live" && !can(permissions.liveActivityView) ? "directory" : search.tab;
 
   return (
     <div>
@@ -94,15 +109,13 @@ function PeopleHubPage() {
         description="Manage people, employee tracking, and live workforce activity from one place."
       />
       <div className="mb-5 flex gap-1 overflow-x-auto border-b border-border">
-        {hasRole("general_admin") && (
-          <Button
-            variant="ghost"
-            className={`rounded-none border-b-2 px-4 ${tab === "directory" ? "border-primary text-foreground" : "border-transparent text-muted-foreground"}`}
-            onClick={() => navigate({ to: "/people", search: { tab: "directory" } })}
-          >
-            <UsersRound className="mr-2 h-4 w-4" /> Directory
-          </Button>
-        )}
+        <Button
+          variant="ghost"
+          className={`rounded-none border-b-2 px-4 ${tab === "directory" ? "border-primary text-foreground" : "border-transparent text-muted-foreground"}`}
+          onClick={() => navigate({ to: "/people", search: { tab: "directory" } })}
+        >
+          <UsersRound className="mr-2 h-4 w-4" /> Directory
+        </Button>
         <Button
           variant="ghost"
           className={`rounded-none border-b-2 px-4 ${tab === "employees" ? "border-primary text-foreground" : "border-transparent text-muted-foreground"}`}
@@ -110,13 +123,15 @@ function PeopleHubPage() {
         >
           <UserCircle className="mr-2 h-4 w-4" /> Employees
         </Button>
-        <Button
-          variant="ghost"
-          className={`rounded-none border-b-2 px-4 ${tab === "live" ? "border-primary text-foreground" : "border-transparent text-muted-foreground"}`}
-          onClick={() => navigate({ to: "/people", search: { tab: "live" } })}
-        >
-          <Activity className="mr-2 h-4 w-4" /> Live Activity
-        </Button>
+        {can(permissions.liveActivityView) && (
+          <Button
+            variant="ghost"
+            className={`rounded-none border-b-2 px-4 ${tab === "live" ? "border-primary text-foreground" : "border-transparent text-muted-foreground"}`}
+            onClick={() => navigate({ to: "/people", search: { tab: "live" } })}
+          >
+            <Activity className="mr-2 h-4 w-4" /> Live Activity
+          </Button>
+        )}
       </div>
       {tab === "directory" ? (
         <PeopleDirectory embedded />
@@ -130,16 +145,26 @@ function PeopleHubPage() {
 }
 
 function PeopleDirectory({ embedded = false }: { embedded?: boolean }) {
-  const { hasRole } = useAuth();
+  const { can, canAny, user: currentUser, refreshUser } = useAuth();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
 
-  const users = useQuery({ queryKey: ["users"], queryFn: listUsers });
+  const users = useQuery({
+    queryKey: ["users"],
+    queryFn: listUsers,
+    enabled: can(permissions.accessManage),
+  });
   const employees = useQuery({ queryKey: ["employees"], queryFn: () => listEmployees() });
   const teams = useQuery({ queryKey: ["teams"], queryFn: () => listTeams() });
+  const catalog = useQuery({
+    queryKey: ["permission-catalog"],
+    queryFn: getPermissionCatalog,
+    enabled: can(permissions.accessManage),
+  });
 
   const [q, setQ] = useState("");
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [wizardOpen, setWizardOpen] = useState(false);
 
   // Admin edit ("manage access") state.
@@ -148,7 +173,29 @@ function PeopleDirectory({ embedded = false }: { embedded?: boolean }) {
   const [editEmail, setEditEmail] = useState("");
   const [editPassword, setEditPassword] = useState("");
   const [editRole, setEditRole] = useState<Role>("team_owner");
+  const [editPreset, setEditPreset] = useState<AccessPreset>("team_owner");
+  const [editPermissionMode, setEditPermissionMode] = useState<PermissionMode>("role");
+  const [editDataScope, setEditDataScope] = useState<DataScope>("assigned_teams");
   const [editTeamIds, setEditTeamIds] = useState<string[]>([]);
+  const [editTrackAsEmployee, setEditTrackAsEmployee] = useState(false);
+  const [editPermissions, setEditPermissions] = useState<string[]>([]);
+
+  const access = useQuery({
+    queryKey: ["admin-access", editUser?.id],
+    queryFn: () => getAdminAccess(editUser!.id),
+    enabled: Boolean(editUser) && can(permissions.accessManage),
+  });
+
+  useEffect(() => {
+    if (!access.data) return;
+    setEditRole(access.data.role);
+    setEditPreset(access.data.permissionMode === "custom" ? "custom" : access.data.role);
+    setEditPermissionMode(access.data.permissionMode);
+    setEditDataScope(access.data.dataScope);
+    setEditTeamIds(access.data.teamLeadTeamIds);
+    setEditTrackAsEmployee(access.data.trackAsEmployee);
+    setEditPermissions(access.data.effectivePermissions);
+  }, [access.data]);
 
   const teamNames = useMemo(
     () => new Map((teams.data ?? []).map((team) => [team.id, team.name])),
@@ -163,7 +210,14 @@ function PeopleDirectory({ embedded = false }: { embedded?: boolean }) {
       email: employee.email,
       roleLabel: "Employee",
       detail: employee.department || "—",
-      status: employee.active ? "active" : "inactive",
+      status:
+        employee.accountStatus === "invited"
+          ? employee.invitation?.status === "expired"
+            ? "expired"
+            : "invited"
+          : employee.active
+            ? "active"
+            : "archived",
       employee,
     }));
     const adminRows: PersonRow[] = (users.data ?? []).map((user) => ({
@@ -171,42 +225,64 @@ function PeopleDirectory({ embedded = false }: { embedded?: boolean }) {
       kind: "admin",
       name: user.name,
       email: user.email,
-      roleLabel: user.role === "general_admin" ? "General admin" : "Team manager",
-      detail:
+      roleLabel:
         user.role === "general_admin"
+          ? user.teamLeadTeamIds.length
+            ? "General admin · Team lead"
+            : "General admin"
+          : "Team lead",
+      detail:
+        user.dataScope === "company"
           ? "All teams"
-          : user.assignedTeamIds
+          : user.teamLeadTeamIds
               .map((id) => teamNames.get(id))
               .filter(Boolean)
               .join(", ") || "—",
-      status: user.status,
+      status: user.status === "active" ? "active" : "archived",
       user,
     }));
     const all = [...adminRows, ...employeeRows];
     return all.filter((row) => {
       if (typeFilter === "employees" && row.kind !== "employee") return false;
       if (typeFilter === "admins" && row.kind !== "admin") return false;
+      if (statusFilter === "active" && row.status !== "active") return false;
+      if (statusFilter === "invited" && row.status !== "invited" && row.status !== "expired")
+        return false;
+      if (statusFilter === "archived" && row.status !== "archived") return false;
       if (q && !`${row.name} ${row.email}`.toLowerCase().includes(q.toLowerCase())) return false;
       return true;
     });
-  }, [employees.data, users.data, teamNames, typeFilter, q]);
+  }, [employees.data, users.data, teamNames, typeFilter, statusFilter, q]);
 
   const updateMutation = useMutation({
     mutationFn: async () => {
       if (!editUser) throw new Error("Choose a person to manage.");
-      const updated = await updateUser(editUser.id, {
+      await updateUser(editUser.id, {
         name: editName,
         email: editEmail,
         password: editPassword || undefined,
-        role: editRole,
       });
-      const current = new Set(editUser.assignedTeamIds);
-      const next = new Set(editRole === "team_owner" ? editTeamIds : []);
-      await Promise.all([
-        ...[...current].filter((id) => !next.has(id)).map((id) => removeTeamOwner(id, editUser.id)),
-        ...[...next].filter((id) => !current.has(id)).map((id) => addTeamOwner(id, editUser.id)),
-      ]);
-      return updated;
+      const base = new Set(
+        editPermissionMode === "role" ? (catalog.data?.rolePresets[editRole] ?? []) : [],
+      );
+      const selected = new Set(editPermissions);
+      const overrides = Object.fromEntries(
+        (catalog.data?.permissions ?? [])
+          .filter((permission) =>
+            editPermissionMode === "custom"
+              ? selected.has(permission.key)
+              : selected.has(permission.key) !== base.has(permission.key),
+          )
+          .map((permission) => [permission.key, selected.has(permission.key)]),
+      );
+      return updateAdminAccess(editUser.id, {
+        role: editRole,
+        permissionMode: editPermissionMode,
+        dataScope: editDataScope,
+        permissionOverrides: overrides,
+        teamLeadTeamIds: editTeamIds,
+        trackAsEmployee: editTrackAsEmployee,
+      });
     },
     onSuccess: async () => {
       toast.success("Access updated");
@@ -215,23 +291,40 @@ function PeopleDirectory({ embedded = false }: { embedded?: boolean }) {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["users"] }),
         queryClient.invalidateQueries({ queryKey: ["teams"] }),
+        queryClient.invalidateQueries({ queryKey: ["admin-access"] }),
       ]);
+      if (editUser?.id === currentUser?.id) await refreshUser();
     },
     onError: (error) =>
       toast.error(error instanceof Error ? error.message : "Failed to update access"),
   });
 
-  const deactivateMutation = useMutation({
-    mutationFn: deactivateUser,
-    onSuccess: async () => {
-      toast.success("Admin deactivated");
-      await queryClient.invalidateQueries({ queryKey: ["users"] });
+  const archiveMutation = useMutation({
+    mutationFn: ({ row, archived }: { row: PersonRow; archived: boolean }) =>
+      archived ? archivePerson(row.kind, row.id) : restorePerson(row.kind, row.id),
+    onSuccess: async (result) => {
+      toast.success(result.archived ? "Person archived" : "Person restored");
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["users"] }),
+        queryClient.invalidateQueries({ queryKey: ["employees"] }),
+        queryClient.invalidateQueries({ queryKey: ["teams"] }),
+      ]);
     },
     onError: (error) =>
-      toast.error(error instanceof Error ? error.message : "Failed to deactivate"),
+      toast.error(error instanceof Error ? error.message : "Failed to change archive status"),
   });
 
-  if (!hasRole("general_admin")) return <Navigate to="/dashboard" />;
+  const resendMutation = useMutation({
+    mutationFn: resendPersonInvitation,
+    onSuccess: async ({ emailQueued }) => {
+      toast.success(
+        emailQueued ? "Invitation sent again" : "Invitation renewed, but email was not queued",
+      );
+      await queryClient.invalidateQueries({ queryKey: ["employees"] });
+    },
+    onError: (error) =>
+      toast.error(error instanceof Error ? error.message : "Failed to resend invitation"),
+  });
 
   function openEdit(user: User) {
     setEditUser(user);
@@ -239,7 +332,34 @@ function PeopleDirectory({ embedded = false }: { embedded?: boolean }) {
     setEditEmail(user.email);
     setEditPassword("");
     setEditRole(user.role);
-    setEditTeamIds(user.assignedTeamIds);
+    setEditPreset(user.permissionMode === "custom" ? "custom" : user.role);
+    setEditPermissionMode(user.permissionMode);
+    setEditDataScope(user.dataScope);
+    setEditTeamIds(user.teamLeadTeamIds);
+    setEditTrackAsEmployee(user.trackAsEmployee);
+    setEditPermissions(user.permissions);
+  }
+
+  function choosePreset(preset: AccessPreset) {
+    setEditPreset(preset);
+    if (preset === "custom") {
+      setEditPermissionMode("custom");
+      return;
+    }
+    setEditRole(preset);
+    setEditPermissionMode("role");
+    setEditDataScope(preset === "general_admin" ? "company" : "assigned_teams");
+    setEditPermissions(catalog.data?.rolePresets[preset] ?? []);
+  }
+
+  function changeArchiveStatus(row: PersonRow, archived: boolean) {
+    if (archived) {
+      const accepted = window.confirm(
+        `Archive ${row.name}? They will lose access and new tracking will stop, but their history will be kept.`,
+      );
+      if (!accepted) return;
+    }
+    archiveMutation.mutate({ row, archived });
   }
 
   return (
@@ -316,25 +436,43 @@ function PeopleDirectory({ embedded = false }: { embedded?: boolean }) {
                 <TableCell className="text-sm">{row.roleLabel}</TableCell>
                 <TableCell className="text-sm">{row.detail}</TableCell>
                 <TableCell className="text-xs text-muted-foreground">
-                  {row.kind === "employee" ? "Enrollment code + portal key" : "Password"}
+                  {row.kind === "employee"
+                    ? row.status === "invited" || row.status === "expired"
+                      ? "Email invitation"
+                      : "Password + device enrollment"
+                    : "Password"}
                 </TableCell>
                 <TableCell>
                   <StatusBadge status={row.status} />
                 </TableCell>
                 <TableCell className="space-x-1 text-right">
                   {row.kind === "employee" ? (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() =>
-                        navigate({
-                          to: "/employees/$employeeId",
-                          params: { employeeId: row.id },
-                        })
-                      }
-                    >
-                      Access & codes
-                    </Button>
+                    <>
+                      {(row.status === "invited" || row.status === "expired") &&
+                        row.employee?.invitation && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            disabled={resendMutation.isPending}
+                            onClick={() => resendMutation.mutate(row.employee!.invitation!.id)}
+                          >
+                            <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
+                            Resend invitation
+                          </Button>
+                        )}
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() =>
+                          navigate({
+                            to: "/employees/$employeeId",
+                            params: { employeeId: row.id },
+                          })
+                        }
+                      >
+                        Access & codes
+                      </Button>
+                    </>
                   ) : (
                     <>
                       <Button variant="ghost" size="sm" onClick={() => openEdit(row.user!)}>
@@ -473,17 +611,18 @@ function AddPersonWizard({
   onCreated: () => Promise<void>;
 }) {
   const navigate = useNavigate();
-  const [step, setStep] = useState<"type" | "form" | "credentials">("type");
+  const [step, setStep] = useState<"type" | "form" | "invited">("type");
   const [kind, setKind] = useState<PersonKind>("employee");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [department, setDepartment] = useState("");
   const [teamIds, setTeamIds] = useState<string[]>([]);
 
-  // Credentials step (employee only).
+  // Invitation confirmation and optional fallback enrollment (employee only).
   const [createdEmployee, setCreatedEmployee] = useState<Employee | null>(null);
+  const [createdInvitation, setCreatedInvitation] = useState<PersonInvitationSummary>();
+  const [invitationEmailQueued, setInvitationEmailQueued] = useState(false);
   const [enrollmentCode, setEnrollmentCode] = useState<string>();
-  const [portalKey, setPortalKey] = useState<string>();
 
   function reset() {
     setStep("type");
@@ -493,8 +632,9 @@ function AddPersonWizard({
     setDepartment("");
     setTeamIds([]);
     setCreatedEmployee(null);
+    setCreatedInvitation(undefined);
+    setInvitationEmailQueued(false);
     setEnrollmentCode(undefined);
-    setPortalKey(undefined);
   }
 
   function close() {
@@ -520,8 +660,14 @@ function AddPersonWizard({
       await onCreated();
       if (result.kind === "employee" && result.employee) {
         setCreatedEmployee(result.employee);
-        setStep("credentials");
-        toast.success("Employee created — now share their sign-in code");
+        setCreatedInvitation(result.invitation.invitation);
+        setInvitationEmailQueued(result.invitation.emailQueued);
+        setStep("invited");
+        toast.success(
+          result.invitation.emailQueued
+            ? "Employee invited"
+            : "Employee created, but the invitation email was not queued",
+        );
       } else {
         toast.success(
           result.invitation.emailQueued
@@ -545,14 +691,17 @@ function AddPersonWizard({
       toast.error(error instanceof Error ? error.message : "Failed to create code"),
   });
 
-  const keyMutation = useMutation({
-    mutationFn: () => createPortalAccessKey(createdEmployee!.id),
-    onSuccess: (result) => {
-      setPortalKey(result.accessKey);
-      toast.success("Portal key created");
+  const resendCreatedInvitationMutation = useMutation({
+    mutationFn: () => resendPersonInvitation(createdInvitation!.id),
+    onSuccess: ({ invitation, emailQueued }) => {
+      setCreatedInvitation(invitation);
+      setInvitationEmailQueued(emailQueued);
+      toast.success(
+        emailQueued ? "Invitation sent again" : "Invitation renewed, but email was not queued",
+      );
     },
     onError: (error) =>
-      toast.error(error instanceof Error ? error.message : "Failed to create portal key"),
+      toast.error(error instanceof Error ? error.message : "Failed to resend invitation"),
   });
 
   function submitForm(event: FormEvent) {
@@ -567,7 +716,7 @@ function AddPersonWizard({
           <DialogTitle>
             {step === "type" && "Add a person"}
             {step === "form" && `New ${kindLabel(kind).toLowerCase()}`}
-            {step === "credentials" && "Employee sign-in"}
+            {step === "invited" && "Invitation sent"}
           </DialogTitle>
         </DialogHeader>
 
@@ -581,7 +730,7 @@ function AddPersonWizard({
               onClick={() => setKind("employee")}
               icon={UserCircle}
               title="Employee"
-              subtitle="Tracked worker. Signs in on the desktop app with an enrollment code (and optional web portal key). No password, no dashboard access."
+              subtitle="Tracked worker. Receives an email invitation to choose a password. A desktop enrollment code remains available as a backup."
             />
             <TypeOption
               active={kind === "team_owner"}
@@ -638,6 +787,12 @@ function AddPersonWizard({
                   />
                 </div>
               )}
+              {kind === "employee" && (
+                <p className="self-end rounded-md border bg-muted/40 p-3 text-xs text-muted-foreground">
+                  We will email a secure, expiring link so the employee can choose their own
+                  password. You will not need to create or share a password.
+                </p>
+              )}
               {kind !== "employee" && (
                 <p className="self-end rounded-md border bg-muted/40 p-3 text-xs text-muted-foreground">
                   A secure temporary password will be generated and included in the invitation
@@ -680,41 +835,69 @@ function AddPersonWizard({
                   }
                 >
                   {createMutation.isPending
-                    ? "Creating..."
-                    : `Create ${kindLabel(kind).toLowerCase()}`}
+                    ? kind === "employee"
+                      ? "Sending..."
+                      : "Creating..."
+                    : kind === "employee"
+                      ? "Send invitation"
+                      : `Create ${kindLabel(kind).toLowerCase()}`}
                 </Button>
               </div>
             </div>
           </form>
         )}
 
-        {step === "credentials" && createdEmployee && (
+        {step === "invited" && createdEmployee && (
           <div className="space-y-4">
-            <div className="flex items-center gap-2 rounded-md border border-success/30 bg-success/10 p-3 text-sm">
-              <CheckCircle2 className="h-4 w-4 text-success" />
-              <span>
-                <span className="font-medium">{createdEmployee.name}</span> was created. Generate a
-                sign-in credential below and share it with them.
-              </span>
+            <div className="rounded-md border border-info/30 bg-info/10 p-4 text-sm">
+              <div className="flex items-center gap-2">
+                <Mail className="h-4 w-4 text-info" />
+                <span className="font-medium">{createdEmployee.name}</span>
+                <StatusBadge status="invited" />
+              </div>
+              <p className="mt-2 text-muted-foreground">
+                {invitationEmailQueued
+                  ? `We sent ${createdEmployee.email} a secure link to choose a password.`
+                  : `The account is ready, but the email to ${createdEmployee.email} was not queued. Try sending it again.`}
+              </p>
+              {createdInvitation && (
+                <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-xs text-muted-foreground">
+                    Link expires {new Date(createdInvitation.expiresAt).toLocaleString()}.
+                  </span>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={resendCreatedInvitationMutation.isPending}
+                    onClick={() => resendCreatedInvitationMutation.mutate()}
+                  >
+                    <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
+                    {resendCreatedInvitationMutation.isPending ? "Sending..." : "Resend invitation"}
+                  </Button>
+                </div>
+              )}
             </div>
 
-            <CredentialRow
-              title="Desktop enrollment code"
-              subtitle="Used once to link the desktop app. It is shown here only and is not sent by email."
-              value={enrollmentCode}
-              buttonLabel={enrollmentCode ? "Regenerate" : "Generate code"}
-              onGenerate={() => codeMutation.mutate()}
-              pending={codeMutation.isPending}
-            />
-
-            <CredentialRow
-              title="Web portal key (optional)"
-              subtitle="Lets them sign in at /employee. Share it securely; it is not sent by email."
-              value={portalKey}
-              buttonLabel={portalKey ? "Regenerate" : "Generate key"}
-              onGenerate={() => keyMutation.mutate()}
-              pending={keyMutation.isPending}
-            />
+            <details className="rounded-md border border-border p-3">
+              <summary className="cursor-pointer text-sm font-medium">
+                Backup: create a desktop enrollment code
+              </summary>
+              <p className="mt-2 text-xs text-muted-foreground">
+                Only use this after the employee accepts the invitation and if password-based
+                desktop enrollment is unavailable. The email invitation is the normal setup.
+              </p>
+              <div className="mt-3">
+                <CredentialRow
+                  title="Desktop enrollment code"
+                  subtitle="Used once to link the desktop app. Share it through a secure channel."
+                  value={enrollmentCode}
+                  buttonLabel={enrollmentCode ? "Regenerate" : "Generate backup code"}
+                  onGenerate={() => codeMutation.mutate()}
+                  pending={codeMutation.isPending}
+                />
+              </div>
+            </details>
 
             <div className="flex justify-between gap-2 pt-1">
               <Button

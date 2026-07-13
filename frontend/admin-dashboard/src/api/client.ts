@@ -13,6 +13,17 @@ type ApiEnvelope<T> = {
   };
 };
 
+export class ApiClientError extends Error {
+  constructor(
+    message: string,
+    readonly code: string,
+    readonly status: number,
+  ) {
+    super(message);
+    this.name = "ApiClientError";
+  }
+}
+
 type PersistedAuth = {
   accessToken: string;
   refreshToken: string;
@@ -152,7 +163,11 @@ export async function apiFetch<T>(
   }
 
   if (!res.ok || body?.success === false) {
-    throw new Error(body?.error?.message ?? `API ${res.status}: ${res.statusText}`);
+    throw new ApiClientError(
+      body?.error?.message ?? `API ${res.status}: ${res.statusText}`,
+      body?.error?.code ?? "API_ERROR",
+      res.status,
+    );
   }
   return (body?.data ?? ({} as T)) as T;
 }
@@ -168,7 +183,11 @@ export async function apiFetchWithMeta<T>(
     ({ res, body } = await request<T>(path, init, tokens.access_token));
   }
   if (!res.ok || body?.success === false) {
-    throw new Error(body?.error?.message ?? `API ${res.status}: ${res.statusText}`);
+    throw new ApiClientError(
+      body?.error?.message ?? `API ${res.status}: ${res.statusText}`,
+      body?.error?.code ?? "API_ERROR",
+      res.status,
+    );
   }
   return { data: (body?.data ?? ({} as T)) as T, meta: body?.meta ?? {} };
 }

@@ -110,6 +110,10 @@ declare global {
       enrollDevice: (
         enrollmentCode: string,
       ) => Promise<{ success: boolean; message?: string }>;
+      enrollWithCredentials: (
+        email: string,
+        password: string,
+      ) => Promise<{ success: boolean; message?: string }>;
       pauseTracking: () => Promise<{ success: boolean; message?: string }>;
       resumeTracking: () => Promise<{ success: boolean; message?: string }>;
       openEmployeeDashboard: () => Promise<{

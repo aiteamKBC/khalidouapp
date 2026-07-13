@@ -66,6 +66,8 @@ function localDateKey(value = new Date()) {
 
 function App() {
   const [status, setStatus] = useState<AgentStatus>(fallbackStatus);
+  const [employeeEmail, setEmployeeEmail] = useState("");
+  const [employeePassword, setEmployeePassword] = useState("");
   const [enrollmentCode, setEnrollmentCode] = useState("");
   const [enrollmentError, setEnrollmentError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -205,7 +207,42 @@ function App() {
     summaryPeriod,
   ]);
 
-  async function handleEnrollment(event: FormEvent<HTMLFormElement>) {
+  async function refreshStatusAfterEnrollment() {
+    const nextStatus = await window.khaliduo?.getAgentStatus();
+    if (nextStatus) {
+      setStatus(nextStatus);
+    }
+  }
+
+  async function handleCredentialEnrollment(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setEnrollmentError(null);
+    if (!window.khaliduo) {
+      setEnrollmentError(desktopRuntimeMessage);
+      return;
+    }
+
+    setIsSubmitting(true);
+    const password = employeePassword;
+    setEmployeePassword("");
+    try {
+      const result = await window.khaliduo.enrollWithCredentials(
+        employeeEmail,
+        password,
+      );
+      if (!result.success) {
+        setEnrollmentError(result.message ?? "Sign-in and setup failed.");
+        return;
+      }
+
+      setEmployeeEmail("");
+      await refreshStatusAfterEnrollment();
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  async function handleCodeEnrollment(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setEnrollmentError(null);
     if (!window.khaliduo) {
@@ -222,10 +259,7 @@ function App() {
       }
 
       setEnrollmentCode("");
-      const nextStatus = await window.khaliduo?.getAgentStatus();
-      if (nextStatus) {
-        setStatus(nextStatus);
-      }
+      await refreshStatusAfterEnrollment();
     } finally {
       setIsSubmitting(false);
     }
@@ -496,27 +530,76 @@ function App() {
       )}
 
       {!status.enrolled && (
-        <form className="enrollment" onSubmit={handleEnrollment}>
-          <label htmlFor="enrollment-code">Enrollment Code</label>
-          <div className="enrollment-row">
+        <section className="enrollment">
+          <div className="enrollment-heading">
+            <strong>Sign in to set up this computer</strong>
+            <span>Your device will be linked to your employee account.</span>
+          </div>
+          <form
+            className="credential-enrollment"
+            onSubmit={handleCredentialEnrollment}
+          >
+            <label htmlFor="employee-email">Work email</label>
             <input
-              id="enrollment-code"
-              value={enrollmentCode}
-              onChange={(event) => setEnrollmentCode(event.target.value)}
-              autoComplete="one-time-code"
-              placeholder="KH-XXXXXXXXXXXX"
+              id="employee-email"
+              type="email"
+              value={employeeEmail}
+              onChange={(event) => setEmployeeEmail(event.target.value)}
+              autoComplete="email"
+              placeholder="name@company.com"
+              disabled={isSubmitting}
+              required
+            />
+            <label htmlFor="employee-password">Password</label>
+            <input
+              id="employee-password"
+              type="password"
+              value={employeePassword}
+              onChange={(event) => setEmployeePassword(event.target.value)}
+              autoComplete="current-password"
+              placeholder="Employee password"
+              disabled={isSubmitting}
+              minLength={8}
               required
             />
             <button type="submit" disabled={isSubmitting || !isDesktopRuntime}>
-              {isSubmitting ? "Enrolling" : "Enroll"}
+              {isSubmitting ? "Signing in..." : "Sign in and link device"}
             </button>
-          </div>
-          <p className="enrollment-help">
-            Paste the full one-time KH- code generated from the employee profile
-            in the admin dashboard. The placeholder above is only an example.
-          </p>
+            <p className="enrollment-help">
+              Your password is used only for this sign-in and is never saved on
+              this computer. The device token is protected by Windows secure
+              storage.
+            </p>
+          </form>
+          <details className="enrollment-fallback">
+            <summary>Use a one-time enrollment code instead</summary>
+            <form onSubmit={handleCodeEnrollment}>
+              <label htmlFor="enrollment-code">Enrollment code</label>
+              <div className="enrollment-row">
+                <input
+                  id="enrollment-code"
+                  value={enrollmentCode}
+                  onChange={(event) => setEnrollmentCode(event.target.value)}
+                  autoComplete="one-time-code"
+                  placeholder="KH-XXXXXXXXXXXX"
+                  disabled={isSubmitting}
+                  required
+                />
+                <button
+                  type="submit"
+                  disabled={isSubmitting || !isDesktopRuntime}
+                >
+                  {isSubmitting ? "Enrolling" : "Enroll"}
+                </button>
+              </div>
+              <p className="enrollment-help">
+                Paste the full one-time KH- code generated from the employee
+                profile in the admin dashboard.
+              </p>
+            </form>
+          </details>
           {enrollmentError && <p className="form-error">{enrollmentError}</p>}
-        </form>
+        </section>
       )}
 
       {status.enrolled && (

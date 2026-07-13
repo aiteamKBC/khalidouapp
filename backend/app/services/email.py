@@ -298,14 +298,16 @@ def enqueue_employee_invitation_email(
     company_id: UUID,
     to: str,
     name: str,
+    token: str,
+    expires_in_hours: int,
 ) -> bool:
+    invitation_url = f"{settings.app_public_url.rstrip('/')}/accept-invitation?token={token}"
     subject = f"You have been invited to {settings.app_name}"
     body = (
         f"Hi {name},\n\nYour Khaliduo employee account has been created.\n\n"
-        f"Employee portal: {settings.app_public_url.rstrip('/')}/employee\n"
-        f"Desktop app: {settings.app_public_url.rstrip('/')}/download\n\n"
-        "Your administrator will share your one-time enrollment code or portal key with you "
-        "through a secure channel.\n\n"
+        f"Accept your invitation and choose your password: {invitation_url}\n\n"
+        f"This one-time link expires in {expires_in_hours} hours. If you did not expect this "
+        "invitation, you can ignore this message.\n\n"
         f"— {settings.app_name}"
     )
     return enqueue_email_once(

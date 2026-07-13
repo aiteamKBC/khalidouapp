@@ -26,9 +26,12 @@ class Employee(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     weekly_capacity_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=2400)
     portal_access_key_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
     portal_access_key_hint: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    portal_password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
     portal_last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     portal_last_login_ip: Mapped[str | None] = mapped_column(String(64), nullable=True)
     portal_last_user_agent: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    status_before_archive: Mapped[str | None] = mapped_column(String(50), nullable=True)
     avatar_url: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     company = relationship("Company", back_populates="employees")

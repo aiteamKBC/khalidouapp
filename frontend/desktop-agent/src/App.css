@@ -652,6 +652,45 @@ button:disabled {
   font-size: 9px;
   font-weight: 700;
 }
+.enrollment-heading {
+  margin-bottom: 10px;
+}
+.enrollment-heading strong,
+.enrollment-heading span {
+  display: block;
+}
+.enrollment-heading strong {
+  font-size: 11px;
+}
+.enrollment-heading span {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 8px;
+}
+.credential-enrollment {
+  display: grid;
+  gap: 6px;
+}
+.credential-enrollment label {
+  margin: 0;
+}
+.credential-enrollment button {
+  margin-top: 3px;
+}
+.enrollment-fallback {
+  margin-top: 10px;
+  padding-top: 9px;
+  border-top: 1px solid #f0e7f2;
+}
+.enrollment-fallback summary {
+  color: #6a3b64;
+  font-size: 8px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.enrollment-fallback form {
+  margin-top: 9px;
+}
 .enrollment-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 90px;

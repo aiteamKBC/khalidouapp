@@ -1,4 +1,4 @@
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
@@ -8,7 +8,9 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 from sqlalchemy import create_engine
 
-from app.core.security import create_jwt_token, hash_password
+from app.api.v1 import people as people_api
+from app.core.config import settings
+from app.core.security import create_jwt_token, hash_password, hash_token, verify_password
 from app.database.base import Base
 from app.database.session import get_db
 from app.main import app
@@ -18,6 +20,7 @@ from app.models import (
     Company,
     EmailDelivery,
     Employee,
+    EmployeeInvitation,
     Team,
     TeamMember,
     TeamOwner,
@@ -459,3 +462,380 @@ def test_invalid_team_invitation_creates_nothing(identity_client):
     finally:
         db.close()
     assert response.status_code == 400
+
+
+def test_employee_invitation_is_hashed_one_time_and_accepts_password(
+    identity_client, monkeypatch
+):
+    client, data = identity_client
+    raw_token = "employee-invitation-token-with-enough-random-looking-bytes-123"
+    monkeypatch.setattr(
+        "app.services.employee_invitations.secrets.token_urlsafe",
+        lambda _length: raw_token,
+    )
+
+    created = client.post(
+        "/api/v1/people/invitations",
+        headers=data["general_headers"],
+        json={
+            "name": "Invited Employee",
+            "email": "invited.employee@kentconsultancy.co",
+            "kind": "employee",
+            "team_ids": [str(data["team_a"].id)],
+        },
+    )
+    created_data = created.json()["data"]
+    assert created.status_code == 200
+    assert created_data["invitation"]["status"] == "pending"
+    assert created_data["email_queued"] is True
+
+    db: Session = data["session_factory"]()
+    try:
+        employee = db.scalar(
+            select(Employee).where(
+                Employee.email == "invited.employee@kentconsultancy.co"
+            )
+        )
+        invitation = db.scalar(
+            select(EmployeeInvitation).where(
+                EmployeeInvitation.employee_id == employee.id
+            )
+        )
+        assert employee.status == "invited"
+        assert employee.portal_password_hash is None
+        assert invitation.token_hash == hash_token(raw_token)
+        assert invitation.token_hash != raw_token
+        validity = invitation.expires_at - invitation.created_at
+        assert timedelta(hours=23, minutes=59) < validity < timedelta(hours=24, minutes=1)
+    finally:
+        db.close()
+
+    verified = client.get(f"/api/v1/people/invitations/{raw_token}")
+    before_accept_login = client.post(
+        "/api/v1/employee-auth/login",
+        json={
+            "email": "invited.employee@kentconsultancy.co",
+            "password": "ChosenPassword123!",
+        },
+    )
+    accepted = client.post(
+        f"/api/v1/people/invitations/{raw_token}",
+        json={"password": "ChosenPassword123!"},
+    )
+    reused = client.post(
+        f"/api/v1/people/invitations/{raw_token}",
+        json={"password": "DifferentPassword456!"},
+    )
+    login = client.post(
+        "/api/v1/employee-auth/login",
+        json={
+            "email": "invited.employee@kentconsultancy.co",
+            "password": "ChosenPassword123!",
+        },
+    )
+
+    assert verified.status_code == 200
+    assert verified.json()["data"]["valid"] is True
+    assert before_accept_login.status_code == 401
+    assert accepted.status_code == 200
+    assert accepted.json()["data"]["status"] == "accepted"
+    assert reused.status_code == 400
+    assert login.status_code == 200
+
+    db = data["session_factory"]()
+    try:
+        employee = db.scalar(
+            select(Employee).where(
+                Employee.email == "invited.employee@kentconsultancy.co"
+            )
+        )
+        invitation = db.scalar(
+            select(EmployeeInvitation).where(
+                EmployeeInvitation.employee_id == employee.id
+            )
+        )
+        assert employee.status == "active"
+        assert employee.portal_password_hash != "ChosenPassword123!"
+        assert verify_password("ChosenPassword123!", employee.portal_password_hash)
+        assert invitation.accepted_at is not None
+    finally:
+        db.close()
+
+
+def test_direct_employee_creation_is_invited_and_overview_exposes_invitation(
+    identity_client, monkeypatch
+):
+    client, data = identity_client
+    monkeypatch.setattr(
+        "app.services.employee_invitations.secrets.token_urlsafe",
+        lambda _length: "direct-employee-invitation-token-with-enough-length-123",
+    )
+    created = client.post(
+        "/api/v1/employees",
+        headers=data["general_headers"],
+        json={
+            "name": "Direct Employee",
+            "email": "direct.employee@kentconsultancy.co",
+            "timezone": "Africa/Cairo",
+            "status": "active",
+        },
+    )
+    employee_id = created.json()["data"]["id"]
+    overview = client.get(
+        f"/api/v1/employees-overview?employee_id={employee_id}",
+        headers=data["general_headers"],
+    )
+    premature_activation = client.patch(
+        f"/api/v1/employees/{employee_id}",
+        headers=data["general_headers"],
+        json={"status": "active"},
+    )
+
+    assert created.status_code == 200
+    assert created.json()["data"]["status"] == "invited"
+    assert created.json()["data"]["invitation"]["status"] == "pending"
+    assert overview.status_code == 200
+    assert premature_activation.status_code == 409
+    assert overview.json()["data"][0]["employee"]["status"] == "invited"
+    assert overview.json()["data"][0]["employee"]["invitation"]["id"] == (
+        created.json()["data"]["invitation"]["id"]
+    )
+
+def test_employee_invitation_resend_revokes_old_token(identity_client, monkeypatch):
+    client, data = identity_client
+    tokens = iter(
+        [
+            "first-employee-invitation-token-with-enough-length-123456",
+            "failed-employee-invitation-token-with-enough-length-000000",
+            "final-employee-invitation-token-with-enough-length-654321",
+        ]
+    )
+    monkeypatch.setattr(
+        "app.services.employee_invitations.secrets.token_urlsafe",
+        lambda _length: next(tokens),
+    )
+    created = client.post(
+        "/api/v1/people/invitations",
+        headers=data["general_headers"],
+        json={
+            "name": "Resent Employee",
+            "email": "resent.employee@kentconsultancy.co",
+            "kind": "employee",
+            "team_ids": [str(data["team_a"].id)],
+        },
+    )
+    invitation_id = created.json()["data"]["invitation"]["id"]
+
+    cooldown_blocked = client.post(
+        f"/api/v1/people/invitations/{invitation_id}/resend",
+        headers=data["general_headers"],
+    )
+    original_still_valid = client.get(
+        "/api/v1/people/invitations/first-employee-invitation-token-with-enough-length-123456"
+    )
+    assert cooldown_blocked.status_code == 429
+    assert original_still_valid.json()["data"]["valid"] is True
+
+    db: Session = data["session_factory"]()
+    try:
+        delivery = db.scalar(
+            select(EmailDelivery).where(
+                EmailDelivery.recipient == "resent.employee@kentconsultancy.co",
+                EmailDelivery.category == "employee_invitation",
+            )
+        )
+        delivery.created_at = datetime.now(UTC) - timedelta(
+            minutes=settings.email_cooldown_minutes + 1
+        )
+        db.add(delivery)
+        db.commit()
+    finally:
+        db.close()
+
+    real_enqueue = people_api.enqueue_employee_invitation_email
+    monkeypatch.setattr(
+        people_api,
+        "enqueue_employee_invitation_email",
+        lambda *args, **kwargs: False,
+    )
+    queue_failed = client.post(
+        f"/api/v1/people/invitations/{invitation_id}/resend",
+        headers=data["general_headers"],
+    )
+    old_after_queue_failure = client.get(
+        "/api/v1/people/invitations/first-employee-invitation-token-with-enough-length-123456"
+    )
+    assert queue_failed.status_code == 200
+    assert queue_failed.json()["data"]["email_queued"] is False
+    assert queue_failed.json()["data"]["invitation"]["id"] == invitation_id
+    assert old_after_queue_failure.json()["data"]["valid"] is True
+
+    monkeypatch.setattr(people_api, "enqueue_employee_invitation_email", real_enqueue)
+    resent = client.post(
+        f"/api/v1/people/invitations/{invitation_id}/resend",
+        headers=data["general_headers"],
+    )
+    old_verification = client.get(
+        "/api/v1/people/invitations/first-employee-invitation-token-with-enough-length-123456"
+    )
+    new_verification = client.get(
+        "/api/v1/people/invitations/final-employee-invitation-token-with-enough-length-654321"
+    )
+
+    assert resent.status_code == 200
+    assert resent.json()["data"]["invitation"]["status"] == "pending"
+    assert resent.json()["data"]["invitation"]["id"] != invitation_id
+    assert old_verification.json()["data"] == {"valid": False, "status": "revoked"}
+    assert new_verification.json()["data"]["valid"] is True
+
+    db: Session = data["session_factory"]()
+    try:
+        invitations = db.scalars(
+            select(EmployeeInvitation).order_by(EmployeeInvitation.created_at)
+        ).all()
+        assert len(invitations) == 3
+        assert invitations[0].revoked_at is not None
+        assert invitations[1].revoked_at is not None
+        assert invitations[2].revoked_at is None
+    finally:
+        db.close()
+
+
+def test_accepted_employee_can_enroll_desktop_with_employee_token(
+    identity_client, monkeypatch
+):
+    client, data = identity_client
+    raw_token = "desktop-invitation-token-with-enough-length-123456789"
+    monkeypatch.setattr(
+        "app.services.employee_invitations.secrets.token_urlsafe",
+        lambda _length: raw_token,
+    )
+    client.post(
+        "/api/v1/people/invitations",
+        headers=data["general_headers"],
+        json={
+            "name": "Desktop Employee",
+            "email": "desktop.employee@kentconsultancy.co",
+            "kind": "employee",
+            "team_ids": [str(data["team_a"].id)],
+        },
+    )
+    client.post(
+        f"/api/v1/people/invitations/{raw_token}",
+        json={"password": "DesktopPassword123!"},
+    )
+    portal_login = client.post(
+        "/api/v1/employee-auth/login",
+        json={
+            "email": "desktop.employee@kentconsultancy.co",
+            "password": "DesktopPassword123!",
+        },
+    )
+    employee_token = portal_login.json()["data"]["access_token"]
+    enrolled = client.post(
+        "/api/v1/agent/enroll-authenticated",
+        headers={"Authorization": f"Bearer {employee_token}"},
+        json={
+            "device": {
+                "installation_id": "desktop-installation-12345",
+                "device_name": "KBC Laptop",
+                "operating_system": "Windows 11",
+                "agent_version": "1.2.0",
+                "windows_username": "kbc-user",
+            }
+        },
+    )
+
+    assert portal_login.status_code == 200
+    assert enrolled.status_code == 200
+    assert enrolled.json()["data"]["device"]["installation_id"] == "desktop-installation-12345"
+    assert enrolled.json()["data"]["device_token"]
+    assert enrolled.json()["data"]["token_type"] == "bearer"
+
+
+def test_inviting_an_existing_active_employee_is_a_conflict(identity_client):
+    client, data = identity_client
+    db: Session = data["session_factory"]()
+    active_employee = Employee(
+        company_id=data["general_admin"].company_id,
+        name="Existing Employee",
+        email="existing.employee@kentconsultancy.co",
+        employee_code="EMP-EXISTING",
+        timezone="Africa/Cairo",
+        status="active",
+    )
+    db.add(active_employee)
+    db.commit()
+    db.close()
+
+    response = client.post(
+        "/api/v1/people/invitations",
+        headers=data["general_headers"],
+        json={
+            "name": "Existing Employee",
+            "email": "existing.employee@kentconsultancy.co",
+            "kind": "employee",
+            "team_ids": [str(data["team_a"].id)],
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "EMPLOYEE_EMAIL_EXISTS"
+    db = data["session_factory"]()
+    try:
+        assert db.scalar(
+            select(EmployeeInvitation.id).where(
+                EmployeeInvitation.employee_id == active_employee.id
+            )
+        ) is None
+        assert db.scalar(
+            select(EmailDelivery.id).where(
+                EmailDelivery.recipient == "existing.employee@kentconsultancy.co"
+            )
+        ) is None
+    finally:
+        db.close()
+
+
+def test_failed_invitation_queue_is_reported_and_can_be_resent(
+    identity_client, monkeypatch
+):
+    client, data = identity_client
+    tokens = iter(
+        [
+            "queue-failure-invitation-token-with-enough-length-123456",
+            "queue-recovery-invitation-token-with-enough-length-654321",
+        ]
+    )
+    monkeypatch.setattr(
+        "app.services.employee_invitations.secrets.token_urlsafe",
+        lambda _length: next(tokens),
+    )
+    real_enqueue = people_api.enqueue_employee_invitation_email
+    monkeypatch.setattr(
+        people_api,
+        "enqueue_employee_invitation_email",
+        lambda *args, **kwargs: False,
+    )
+    created = client.post(
+        "/api/v1/people/invitations",
+        headers=data["general_headers"],
+        json={
+            "name": "Queue Recovery Employee",
+            "email": "queue.recovery@kentconsultancy.co",
+            "kind": "employee",
+            "team_ids": [str(data["team_a"].id)],
+        },
+    )
+    assert created.status_code == 200
+    assert created.json()["data"]["email_queued"] is False
+    assert created.json()["data"]["invitation"]["status"] == "pending"
+
+    monkeypatch.setattr(people_api, "enqueue_employee_invitation_email", real_enqueue)
+    resent = client.post(
+        f"/api/v1/people/invitations/{created.json()['data']['invitation']['id']}/resend",
+        headers=data["general_headers"],
+    )
+    assert resent.status_code == 200
+    assert resent.json()["data"]["email_queued"] is True
+    assert resent.json()["data"]["invitation"]["status"] == "pending"

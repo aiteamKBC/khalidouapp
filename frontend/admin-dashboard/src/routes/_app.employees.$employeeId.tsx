@@ -1,7 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { ArrowLeft, Ban, Copy, KeyRound } from "lucide-react";
+import { ArrowLeft, Ban, Copy, KeyRound, RefreshCw } from "lucide-react";
 import { PageHeader } from "@/components/ui/page-header";
 import { ProtectedImage } from "@/components/ProtectedImage";
 import { Button } from "@/components/ui/button";
@@ -31,6 +31,7 @@ import { listScreenshots } from "@/api/screenshots";
 import { listTimesheets } from "@/api/timesheets";
 import { listDevices } from "@/api/devices";
 import { listTeams } from "@/api/teams";
+import { resendPersonInvitation, type PersonInvitationSummary } from "@/api/people";
 import { useAuth } from "@/lib/auth";
 import { formatMinutes, formatRelative, formatDateTime } from "@/lib/format";
 import { toast } from "sonner";
@@ -106,7 +107,7 @@ function EmployeeDetailPage() {
                 Set up access
               </Button>
             )}
-            <StatusBadge status={e.status} />
+            <StatusBadge status={e.accountStatus === "invited" ? "invited" : e.status} />
           </div>
         }
       />
@@ -145,7 +146,10 @@ function EmployeeDetailPage() {
                 <CardTitle>Current status</CardTitle>
               </CardHeader>
               <CardContent className="space-y-2 text-sm">
-                <Row k="Status" v={<StatusBadge status={e.status} />} />
+                <Row
+                  k="Status"
+                  v={<StatusBadge status={e.accountStatus === "invited" ? "invited" : e.status} />}
+                />
                 <Row k="Session start" v={formatDateTime(e.sessionStart)} />
                 <Row k="Worked today" v={formatMinutes(e.workedTodayMinutes)} />
                 <Row k="Active" v={formatMinutes(e.activeMinutes)} />
@@ -267,11 +271,18 @@ function EmployeeDetailPage() {
                 <CardHeader>
                   <CardTitle>Employee access</CardTitle>
                   <p className="text-sm text-muted-foreground">
-                    Employees do not use an admin password. Give them an access key for the browser
-                    portal and a separate single-use code for the Khaliduo desktop app.
+                    Employees normally choose their own password from the email invitation. Legacy
+                    portal keys and single-use desktop enrollment codes remain available as backups.
                   </p>
                 </CardHeader>
               </Card>
+              {e.invitation && e.accountStatus === "invited" && (
+                <InvitationAccessPanel
+                  employeeId={employeeId}
+                  email={e.email}
+                  invitation={e.invitation}
+                />
+              )}
               <PortalAccessPanel
                 employeeId={employeeId}
                 email={e.email}
@@ -283,6 +294,62 @@ function EmployeeDetailPage() {
         )}
       </Tabs>
     </div>
+  );
+}
+
+function InvitationAccessPanel({
+  employeeId,
+  email,
+  invitation,
+}: {
+  employeeId: string;
+  email: string;
+  invitation: PersonInvitationSummary;
+}) {
+  const queryClient = useQueryClient();
+  const resend = useMutation({
+    mutationFn: () => resendPersonInvitation(invitation.id),
+    onSuccess: async ({ emailQueued }) => {
+      toast.success(
+        emailQueued ? "Invitation sent again" : "Invitation renewed, but email was not queued",
+      );
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["employee", employeeId] }),
+        queryClient.invalidateQueries({ queryKey: ["employees"] }),
+      ]);
+    },
+    onError: (error) =>
+      toast.error(error instanceof Error ? error.message : "Failed to resend invitation"),
+  });
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2">
+              <CardTitle>Email invitation</CardTitle>
+              <StatusBadge status={invitation.status === "expired" ? "expired" : "invited"} />
+            </div>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {email} must accept the secure link and choose a password before signing in.
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Link expires {formatDateTime(invitation.expiresAt)}.
+            </p>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={resend.isPending}
+            onClick={() => resend.mutate()}
+          >
+            <RefreshCw className="mr-2 h-4 w-4" />
+            {resend.isPending ? "Sending..." : "Resend invitation"}
+          </Button>
+        </div>
+      </CardHeader>
+    </Card>
   );
 }
 
@@ -319,10 +386,10 @@ function PortalAccessPanel({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Employee browser access</CardTitle>
+        <CardTitle>Legacy browser access key</CardTitle>
         <p className="text-sm text-muted-foreground">
-          The employee signs in at <span className="font-mono">/employee</span> using their email
-          and this access key. The plain key is shown once and is not sent by email.
+          Backup for employees who cannot use their invitation password. The plain key is shown once
+          and is not sent by email.
         </p>
       </CardHeader>
       <CardContent className="space-y-4">

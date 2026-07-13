@@ -6,6 +6,8 @@ contextBridge.exposeInMainWorld("khaliduo", {
   getAgentStatus: () => ipcRenderer.invoke("agent:get-status"),
   enrollDevice: (enrollmentCode: string) =>
     ipcRenderer.invoke("agent:enroll-device", enrollmentCode),
+  enrollWithCredentials: (email: string, password: string) =>
+    ipcRenderer.invoke("agent:enroll-with-credentials", email, password),
   pauseTracking: () => ipcRenderer.invoke("agent:pause-tracking"),
   resumeTracking: () => ipcRenderer.invoke("agent:resume-tracking"),
   openEmployeeDashboard: () =>

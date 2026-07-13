@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as EmployeeRouteImport } from './routes/employee'
 import { Route as DownloadRouteImport } from './routes/download'
+import { Route as AcceptInvitationRouteImport } from './routes/accept-invitation'
 import { Route as AppRouteImport } from './routes/_app'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AppUsersRouteImport } from './routes/_app.users'
@@ -48,6 +49,11 @@ const EmployeeRoute = EmployeeRouteImport.update({
 const DownloadRoute = DownloadRouteImport.update({
   id: '/download',
   path: '/download',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AcceptInvitationRoute = AcceptInvitationRouteImport.update({
+  id: '/accept-invitation',
+  path: '/accept-invitation',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AppRoute = AppRouteImport.update({
@@ -162,6 +168,7 @@ const AppDevicesDeviceIdRoute = AppDevicesDeviceIdRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/accept-invitation': typeof AcceptInvitationRoute
   '/download': typeof DownloadRoute
   '/employee': typeof EmployeeRoute
   '/login': typeof LoginRoute
@@ -188,6 +195,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/accept-invitation': typeof AcceptInvitationRoute
   '/download': typeof DownloadRoute
   '/employee': typeof EmployeeRoute
   '/login': typeof LoginRoute
@@ -216,6 +224,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/_app': typeof AppRouteWithChildren
+  '/accept-invitation': typeof AcceptInvitationRoute
   '/download': typeof DownloadRoute
   '/employee': typeof EmployeeRoute
   '/login': typeof LoginRoute
@@ -244,6 +253,7 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/accept-invitation'
     | '/download'
     | '/employee'
     | '/login'
@@ -270,6 +280,7 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/accept-invitation'
     | '/download'
     | '/employee'
     | '/login'
@@ -297,6 +308,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/_app'
+    | '/accept-invitation'
     | '/download'
     | '/employee'
     | '/login'
@@ -325,6 +337,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AppRoute: typeof AppRouteWithChildren
+  AcceptInvitationRoute: typeof AcceptInvitationRoute
   DownloadRoute: typeof DownloadRoute
   EmployeeRoute: typeof EmployeeRoute
   LoginRoute: typeof LoginRoute
@@ -351,6 +364,13 @@ declare module '@tanstack/react-router' {
       path: '/download'
       fullPath: '/download'
       preLoaderRoute: typeof DownloadRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/accept-invitation': {
+      id: '/accept-invitation'
+      path: '/accept-invitation'
+      fullPath: '/accept-invitation'
+      preLoaderRoute: typeof AcceptInvitationRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/_app': {
@@ -601,6 +621,7 @@ const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AppRoute: AppRouteWithChildren,
+  AcceptInvitationRoute: AcceptInvitationRoute,
   DownloadRoute: DownloadRoute,
   EmployeeRoute: EmployeeRoute,
   LoginRoute: LoginRoute,

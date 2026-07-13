@@ -92,15 +92,34 @@ def enroll_device(
     if employee is None:
         raise ApiError("EMPLOYEE_NOT_ACTIVE", "Employee is not active.", 400)
 
+    code.status = "used"
+    code.used_at = datetime.now(UTC)
+    return enroll_employee_device(
+        db, employee, device_info, ip_address, allow_employee_relink=True
+    )
+
+
+def enroll_employee_device(
+    db: Session,
+    employee: Employee,
+    device_info: AgentDeviceInfo,
+    ip_address: str | None = None,
+    *,
+    allow_employee_relink: bool = False,
+) -> dict[str, Any]:
+    """Register or relink a device and issue the standard device bearer token."""
+    if employee.status != "active":
+        raise ApiError("EMPLOYEE_NOT_ACTIVE", "Employee is not active.", 400)
+
     device = db.scalar(
         select(Device).where(
-            Device.company_id == code.company_id,
+            Device.company_id == employee.company_id,
             Device.installation_id == device_info.installation_id,
         )
     )
     if device is None:
         device = Device(
-            company_id=code.company_id,
+            company_id=employee.company_id,
             employee_id=employee.id,
             device_name=device_info.device_name,
             installation_id=device_info.installation_id,
@@ -115,6 +134,12 @@ def enroll_device(
         db.flush()
     elif device.revoked_at is not None or device.status == "revoked":
         raise ApiError("DEVICE_REVOKED", "This device has been revoked.", 403)
+    elif device.employee_id != employee.id and not allow_employee_relink:
+        raise ApiError(
+            "DEVICE_ALREADY_ENROLLED",
+            "This installation is already linked to another employee.",
+            409,
+        )
     else:
         device.employee_id = employee.id
         device.device_name = device_info.device_name
@@ -125,15 +150,12 @@ def enroll_device(
         device.status = "active"
         device.last_seen_at = datetime.now(UTC)
 
-    code.status = "used"
-    code.used_at = datetime.now(UTC)
-
     token = issue_device_token(db, device)
-    settings_row = get_or_create_tracking_settings(db, code.company_id)
+    settings_row = get_or_create_tracking_settings(db, employee.company_id)
     db.commit()
 
     return {
-        "company_id": str(code.company_id),
+        "company_id": str(employee.company_id),
         "employee": {
             "id": str(employee.id),
             "name": employee.name,

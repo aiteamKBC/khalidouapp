@@ -8,7 +8,10 @@ import { defineConfig } from "@lovable.dev/vite-tanstack-config";
 
 export default defineConfig({
   nitro: {
-    output: { dir: process.env.KHALIDUO_OUTPUT_DIR ?? ".output-khaliduo" },
+    // Hostinger runs the regular npm build without the Dockerfile environment.
+    // Default to a persistent Node server so its LiteSpeed proxy has an upstream.
+    preset: process.env.NITRO_PRESET ?? "node-server",
+    output: { dir: process.env.KHALIDUO_OUTPUT_DIR ?? ".output" },
     ...{ buildDir: process.env.KHALIDUO_BUILD_DIR ?? "node_modules/.nitro-khaliduo" },
   },
   tanstackStart: {

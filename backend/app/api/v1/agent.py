@@ -8,14 +8,21 @@ from fastapi import APIRouter, Body, Depends, Request, UploadFile
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import DeviceAuthContext, get_current_device
+from app.api.deps import DeviceAuthContext, get_current_device, get_current_employee
 from app.api.v1.employee_portal import manual_request_status_seconds, period_summary
 from app.api.v1.timesheets import timesheet_rows
 from app.core.responses import success_response
 from app.core.security import create_employee_handoff_token
 from app.database.session import get_db
 from app.models import Employee, Project, Task, Team, TeamMember, TimeAdjustmentRequest
-from app.schemas.agent import AgentTaskCreate, AgentTaskUpdate, AgentTimeAdjustmentRequestCreate, EnrollmentRequest, RefreshDeviceTokenRequest
+from app.schemas.agent import (
+    AgentTaskCreate,
+    AgentTaskUpdate,
+    AgentTimeAdjustmentRequestCreate,
+    AuthenticatedEnrollmentRequest,
+    EnrollmentRequest,
+    RefreshDeviceTokenRequest,
+)
 from app.schemas.session import (
     ActivityEventRequest,
     HeartbeatRequest,
@@ -26,6 +33,7 @@ from app.schemas.session import (
 from app.schemas.screenshot import ScreenshotCompleteRequest, ScreenshotInitiateRequest
 from app.services.device_enrollment import (
     enroll_device,
+    enroll_employee_device,
     get_or_create_tracking_settings,
     refresh_device_token,
     serialize_tracking_settings,
@@ -66,6 +74,20 @@ router = APIRouter(prefix="/agent", tags=["desktop-agent"])
 def enroll(payload: EnrollmentRequest, request: Request, db: Annotated[Session, Depends(get_db)]):
     ip_address = request.client.host if request.client else None
     return success_response(data=enroll_device(db, payload.enrollment_code, payload.device, ip_address))
+
+
+@router.post("/enroll-authenticated")
+def enroll_authenticated(
+    payload: AuthenticatedEnrollmentRequest,
+    request: Request,
+    current_employee: Annotated[Employee, Depends(get_current_employee)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    """Link the desktop after employee email/password authentication."""
+    ip_address = request.client.host if request.client else None
+    return success_response(
+        data=enroll_employee_device(db, current_employee, payload.device, ip_address)
+    )
 
 
 @router.get("/config")

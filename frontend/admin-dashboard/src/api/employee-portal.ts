@@ -84,10 +84,18 @@ export function clearEmployeeToken() {
   localStorage.removeItem(STORAGE_KEY);
 }
 
-export async function employeeLogin(email: string, accessKey: string) {
+export async function employeeLogin(
+  email: string,
+  credential: { password: string } | { accessKey: string },
+) {
   return apiFetch<{ access_token: string; employee: PortalEmployee }>("/employee-auth/login", {
     method: "POST",
-    body: JSON.stringify({ email, access_key: accessKey }),
+    body: JSON.stringify({
+      email,
+      ...("password" in credential
+        ? { password: credential.password }
+        : { access_key: credential.accessKey }),
+    }),
   });
 }
 
