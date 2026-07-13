@@ -119,6 +119,15 @@ export function saveEnrollmentIdentity(enrollment: EnrollmentIdentity): StoredId
   return next;
 }
 
+export function clearEnrollmentIdentity(): StoredIdentity {
+  const current = ensureInstallationIdentity();
+  const next: StoredIdentity = {
+    installationId: current.installationId,
+  };
+  writeIdentityFile(next);
+  return next;
+}
+
 export function isEnrolled(identity = loadIdentity()) {
   return Boolean(identity.companyId && identity.employeeId && identity.deviceId && identity.encryptedDeviceToken);
 }

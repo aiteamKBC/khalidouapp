@@ -75,6 +75,16 @@ export type AgentTask = {
   project_name: string;
   team_id: string;
   team_name: string;
+  active_seconds: number;
+  idle_seconds: number;
+  tracked_seconds: number;
+};
+
+export type AgentRecentScreenshot = {
+  id: string;
+  captured_at: string;
+  mime_type: string;
+  display_name: string | null;
 };
 
 export type TrackingConfig = {
@@ -254,6 +264,31 @@ export async function listAgentTasks() {
     },
   );
   return response.data.data;
+}
+
+export async function listAgentRecentScreenshots(limit = 4) {
+  const response = await axios.get<ApiSuccess<AgentRecentScreenshot[]>>(
+    `${getApiBaseUrl()}/agent/screenshots/recent`,
+    {
+      headers: getAuthHeaders(),
+      params: { limit: Math.max(1, Math.min(4, limit)) },
+    },
+  );
+  return response.data.data;
+}
+
+export async function downloadAgentScreenshot(screenshotId: string) {
+  const response = await axios.get<ArrayBuffer>(
+    `${getApiBaseUrl()}/agent/screenshots/${screenshotId}/file`,
+    {
+      headers: getAuthHeaders(),
+      responseType: "arraybuffer",
+    },
+  );
+  return {
+    content: Buffer.from(response.data),
+    mimeType: response.headers["content-type"] ?? "image/jpeg",
+  };
 }
 
 export type AgentProject = {

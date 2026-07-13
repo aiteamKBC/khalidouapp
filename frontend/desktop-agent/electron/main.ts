@@ -18,9 +18,11 @@ import {
   getCurrentSession,
   completeScreenshot,
   createEmployeePortalHandoff,
+  downloadAgentScreenshot,
   createAgentTask,
   createTimeAdjustmentRequest,
   listAgentProjects,
+  listAgentRecentScreenshots,
   listAgentTasks,
   initiateScreenshot,
   listTimeAdjustmentRequests,
@@ -39,7 +41,11 @@ import {
   type TrackingConfig,
   type WorkSession,
 } from "./services/agentApi.js";
-import { isEnrolled, loadIdentity } from "./services/identityStore.js";
+import {
+  clearEnrollmentIdentity,
+  isEnrolled,
+  loadIdentity,
+} from "./services/identityStore.js";
 import type { StoredIdentity } from "./services/identityStore.js";
 import {
   enqueuePendingEvent,
@@ -129,6 +135,9 @@ type RuntimeTask = {
     | "rejected"
     | "cancelled";
   canUpdateStage: boolean;
+  activeSeconds: number;
+  idleSeconds: number;
+  trackedSeconds: number;
 };
 
 type IdleLossAlert = {
@@ -228,6 +237,9 @@ function mapTask(task: ApiAgentTask): RuntimeTask {
     teamName: task.team_name,
     stage: task.stage,
     canUpdateStage: task.can_update_stage,
+    activeSeconds: task.active_seconds ?? 0,
+    idleSeconds: task.idle_seconds ?? 0,
+    trackedSeconds: task.tracked_seconds ?? 0,
   };
 }
 
@@ -367,6 +379,12 @@ function rebuildTrayMenu() {
       enabled: runtimeStatus.enrolled && !trackingPausedByUser,
       click: () => void syncNow(),
     },
+    runtimeStatus.enrolled
+      ? {
+          label: "Sign Out This Device",
+          click: () => void logoutDevice(),
+        }
+      : { label: "Device Not Signed In", enabled: false },
     { type: "separator" },
     { label: updateLabel, enabled: false },
     runtimeStatus.updateStatus === "ready"
@@ -683,7 +701,7 @@ function startIdleMonitor() {
       showIdleLossAlert(lostSeconds);
       void sendStateEvent("idle_ended", "active");
     }
-  }, 5000);
+  }, 1000);
 }
 
 async function heartbeatTick() {
@@ -1196,6 +1214,54 @@ async function resumeTracking() {
   };
 }
 
+async function logoutDevice() {
+  if (runtimeStatus.enrolled) {
+    try {
+      await syncPendingQueues(true);
+    } catch (error) {
+      log.warn("Final sync before sign-out failed", error);
+    }
+    await pauseTracking("Employee signed out from this device");
+  }
+
+  clearRuntimeTimers();
+  clearEnrollmentIdentity();
+  configureAutoStart(false);
+  trackingPausedByUser = false;
+  saveTrackingPreferences();
+  currentSessionId = null;
+  workedTodayBaseSeconds = 0;
+  idleSecondsBeforeCurrentIdle = 0;
+  screenshotQueue = [];
+  screenshotWindowEndsAt = null;
+  saveScreenshotSchedule(null);
+  Object.assign(runtimeStatus, {
+    enrolled: false,
+    employeeName: "Not enrolled",
+    employeeAvatarUrl: null,
+    deviceName: process.env.COMPUTERNAME ?? "Windows device",
+    trackingStatus: "starting",
+    trackingPaused: false,
+    sessionStartedAt: null,
+    workedTodaySeconds: 0,
+    activeSeconds: 0,
+    idleSeconds: 0,
+    connectionStatus: "offline",
+    lastScreenshotAt: null,
+    lastSuccessfulSyncAt: null,
+    tasks: [],
+    projects: [],
+    selectedTask: null,
+    timeAdjustmentRequests: [],
+    timeSummary: null,
+    lastIdleAlert: null,
+  } satisfies Partial<AgentRuntimeStatus>);
+  tray?.setImage(createTrayImage("#b7791f"));
+  rebuildTrayMenu();
+  showMainWindow();
+  return { success: true };
+}
+
 async function syncNow() {
   await syncPendingQueues();
   if (currentSessionId && !trackingPausedByUser) {
@@ -1315,12 +1381,12 @@ function configureAutoStart(enabled = runtimeStatus.enrolled) {
     openAtLogin: enabled,
     name: "Khaliduo",
     path: process.execPath,
-    args: ["--hidden"],
+    args: ["--autostart"],
   });
 
   const startupSettings = app.getLoginItemSettings({
     path: process.execPath,
-    args: ["--hidden"],
+    args: ["--autostart"],
   });
   log.info(
     `Windows automatic startup is ${startupSettings.openAtLogin ? "enabled" : "disabled"}${runtimeStatus.enrolled ? " for the enrolled device" : " until enrollment is completed"}`,
@@ -1623,7 +1689,8 @@ app.whenReady().then(async () => {
   log.info("Khaliduo agent starting");
   await initializeLocalDatabase();
   hydrateIdentityStatus();
-  const launchedByWindowsStartup = process.argv.includes("--hidden");
+  const launchedByWindowsStartup =
+    process.argv.includes("--autostart") || process.argv.includes("--hidden");
   loadTrackingPreferences(launchedByWindowsStartup);
   configureAutoStart();
   wireSystemEvents();
@@ -1637,14 +1704,12 @@ app.whenReady().then(async () => {
 
   await createMainWindow();
   configureAutoUpdater();
+  showMainWindow();
   if (runtimeStatus.enrolled && !trackingPausedByUser) {
     await startTrackingAutomatically();
   }
   rebuildTrayMenu();
 
-  if (!launchedByWindowsStartup) {
-    showMainWindow();
-  }
 });
 
 app.on("window-all-closed", () => undefined);
@@ -1717,7 +1782,9 @@ ipcMain.handle("agent:pause-tracking", () => pauseTracking());
 
 ipcMain.handle("agent:resume-tracking", () => resumeTracking());
 
-ipcMain.handle("agent:open-employee-dashboard", async () => {
+ipcMain.handle("agent:logout", () => logoutDevice());
+
+ipcMain.handle("agent:open-employee-dashboard", async (_, section?: string) => {
   try {
     const { handoff_token: handoffToken } = await createEmployeePortalHandoff();
     const portalUrl = new URL(
@@ -1725,6 +1792,9 @@ ipcMain.handle("agent:open-employee-dashboard", async () => {
         "http://localhost:5174/employee",
     );
     portalUrl.searchParams.set("handoff", handoffToken);
+    if (section === "screenshots") {
+      portalUrl.searchParams.set("view", "screenshots");
+    }
     await shell.openExternal(portalUrl.toString());
     return { success: true };
   } catch (error) {
@@ -1739,11 +1809,37 @@ ipcMain.handle("agent:open-employee-dashboard", async () => {
   }
 });
 
+ipcMain.handle("agent:get-recent-screenshots", async () => {
+  try {
+    const screenshots = await listAgentRecentScreenshots(4);
+    const data = [];
+    for (const screenshot of screenshots) {
+      const image = await downloadAgentScreenshot(screenshot.id);
+      data.push({
+        id: screenshot.id,
+        capturedAt: screenshot.captured_at,
+        displayName: screenshot.display_name,
+        dataUrl: `data:${image.mimeType};base64,${image.content.toString("base64")}`,
+      });
+    }
+    return { success: true, screenshots: data };
+  } catch (error) {
+    log.error("Recent screenshots could not be loaded", error);
+    return {
+      success: false,
+      message: getUserFacingError(error, "Recent screenshots could not be loaded."),
+      screenshots: [],
+    };
+  }
+});
+
 ipcMain.handle("agent:set-current-task", async (_, taskId: string | null) => {
   try {
     if (!currentSessionId || !runtimeStatus.enrolled) {
       return { success: false, message: "No active session is available." };
     }
+    recalculateWorkedTime();
+    await heartbeatTick();
     const result = await updateSessionTask(currentSessionId, taskId);
     await refreshTasks();
     syncRuntimeFromSession(result.session);

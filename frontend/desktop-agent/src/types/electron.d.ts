@@ -76,6 +76,9 @@ export type AgentTask = {
   projectName: string;
   teamId: string;
   teamName: string;
+  activeSeconds: number;
+  idleSeconds: number;
+  trackedSeconds: number;
 };
 
 export type AgentProject = {
@@ -103,6 +106,13 @@ export type IdleAlert = {
   endedAt: string;
 };
 
+export type RecentScreenshot = {
+  id: string;
+  capturedAt: string;
+  displayName: string | null;
+  dataUrl: string;
+};
+
 declare global {
   interface Window {
     khaliduo?: {
@@ -116,9 +126,15 @@ declare global {
       ) => Promise<{ success: boolean; message?: string }>;
       pauseTracking: () => Promise<{ success: boolean; message?: string }>;
       resumeTracking: () => Promise<{ success: boolean; message?: string }>;
-      openEmployeeDashboard: () => Promise<{
+      logout: () => Promise<{ success: boolean; message?: string }>;
+      openEmployeeDashboard: (section?: "screenshots") => Promise<{
         success: boolean;
         message?: string;
+      }>;
+      getRecentScreenshots: () => Promise<{
+        success: boolean;
+        message?: string;
+        screenshots: RecentScreenshot[];
       }>;
       setCurrentTask: (
         taskId: string | null,

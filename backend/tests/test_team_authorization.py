@@ -8,6 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from app.core.config import settings
 from app.core.security import create_device_token, hash_token
 from app.core.security import create_jwt_token, hash_password
 from app.database.base import Base
@@ -486,6 +487,74 @@ def test_team_owner_cannot_retrieve_screenshots_from_another_team(team_client):
 
     assert detail.status_code == 403
     assert filtered.status_code == 403
+
+
+def test_desktop_agent_can_only_load_its_own_recent_screenshots(
+    team_client, tmp_path, monkeypatch
+):
+    client, data = team_client
+    monkeypatch.setattr(settings, "screenshot_storage_path", tmp_path)
+    (tmp_path / "a.jpg").write_bytes(b"employee-a-image")
+    (tmp_path / "b.jpg").write_bytes(b"employee-b-image")
+
+    recent = client.get(
+        "/api/v1/agent/screenshots/recent",
+        headers=data["device_headers"],
+    )
+    own_file = client.get(
+        f"/api/v1/agent/screenshots/{data['screenshot_a'].id}/file",
+        headers=data["device_headers"],
+    )
+    other_file = client.get(
+        f"/api/v1/agent/screenshots/{data['screenshot_b'].id}/file",
+        headers=data["device_headers"],
+    )
+
+    assert recent.status_code == 200
+    assert [row["id"] for row in recent.json()["data"]] == [
+        str(data["screenshot_a"].id)
+    ]
+    assert own_file.status_code == 200
+    assert own_file.content == b"employee-a-image"
+    assert other_file.status_code == 404
+
+
+def test_agent_task_list_includes_employee_time_per_task(team_client):
+    client, data = team_client
+    task_id = add_fixture_task(
+        data,
+        name="Timed desktop task",
+        stage="assigned",
+        assignee_key="employee_a",
+    )
+    db: Session = data["session_factory"]()
+    try:
+        db.add(
+            WorkSession(
+                company_id=data["employee_a"].company_id,
+                employee_id=data["employee_a"].id,
+                device_id=data["session_a"].device_id,
+                team_id=data["team_a"].id,
+                project_id=data["project_a"].id,
+                task_id=UUID(task_id),
+                started_at=datetime.now(UTC),
+                status="ended",
+                active_seconds=100,
+                idle_seconds=5,
+                deducted_seconds=20,
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    response = client.get("/api/v1/agent/tasks", headers=data["device_headers"])
+
+    assert response.status_code == 200
+    task = next(row for row in response.json()["data"] if row["id"] == task_id)
+    assert task["active_seconds"] == 80
+    assert task["idle_seconds"] == 5
+    assert task["tracked_seconds"] == 85
 
 
 def test_team_owner_cannot_retrieve_employees_from_another_team(team_client):

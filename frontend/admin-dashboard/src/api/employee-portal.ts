@@ -49,6 +49,9 @@ export type PortalTask = {
   can_update_stage: boolean;
   blocked_reason?: string | null;
   review_note?: string | null;
+  active_seconds: number;
+  idle_seconds: number;
+  tracked_seconds: number;
 };
 
 export type PortalProject = { id: string; name: string; team_id: string };

@@ -74,11 +74,15 @@ function EmployeePortalPage() {
       .then((result) => {
         saveEmployeeToken(result.access_token);
         setToken(result.access_token);
-        window.history.replaceState({}, "", "/employee");
+        const target = new URL(window.location.href);
+        target.searchParams.delete("handoff");
+        window.history.replaceState({}, "", `${target.pathname}${target.search}`);
       })
       .catch((error: unknown) => {
         setHandoffError(error instanceof Error ? error.message : "The dashboard link expired.");
-        window.history.replaceState({}, "", "/employee");
+        const target = new URL(window.location.href);
+        target.searchParams.delete("handoff");
+        window.history.replaceState({}, "", `${target.pathname}${target.search}`);
       })
       .finally(() => setHandoffLoading(false));
   }, [token]);
@@ -246,6 +250,12 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
     queryKey: ["employee-portal", "screenshots"],
     queryFn: () => employeeScreenshots(token),
   });
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("view") !== "screenshots") return;
+    window.setTimeout(() => {
+      document.getElementById("my-screenshots")?.scrollIntoView({ behavior: "smooth" });
+    }, 100);
+  }, [screenshots.isSuccess]);
   const requests = useQuery({
     queryKey: ["employee-portal", "requests"],
     queryFn: () => employeeTimeRequests(token),
@@ -392,7 +402,7 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
             Your time, screenshots, tasks, manual requests and points.
           </p>
         </section>
-        <Card>
+        <Card id="my-screenshots">
           <CardHeader>
             <CardTitle>My profile</CardTitle>
           </CardHeader>
@@ -572,6 +582,9 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
                     {task.team_name} / {task.project_name}
                   </p>
                   <div className="mt-2 flex flex-wrap gap-2 text-xs">
+                    <span className="rounded-full bg-emerald-50 px-2 py-1 font-medium text-emerald-800">
+                      Worked {formatDuration(task.active_seconds ?? 0)}
+                    </span>
                     <span className="rounded-full bg-muted px-2 py-1">
                       {task.priority} priority
                     </span>

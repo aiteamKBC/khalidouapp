@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.api.v1.team_auth import ensure_team_access
 from app.core.exceptions import ApiError
-from app.models import AdminUser, Device, Project, Task, TaskChecklistItem, Team, TeamMember
+from app.models import AdminUser, Device, Project, Task, TaskChecklistItem, Team, TeamMember, WorkSession
 from app.services.task_workflow import TRACKABLE_STAGES
 
 
@@ -191,6 +191,44 @@ def serialize_task(task: Task, project: Project | None = None, team: Team | None
     return data
 
 
+def employee_task_time_totals(
+    db: Session,
+    *,
+    company_id: UUID,
+    employee_id: UUID,
+    task_ids: list[UUID] | None = None,
+) -> dict[UUID, dict[str, int]]:
+    statement = (
+        select(
+            WorkSession.task_id,
+            func.coalesce(func.sum(WorkSession.active_seconds), 0),
+            func.coalesce(func.sum(WorkSession.idle_seconds), 0),
+            func.coalesce(func.sum(WorkSession.deducted_seconds), 0),
+        )
+        .where(
+            WorkSession.company_id == company_id,
+            WorkSession.employee_id == employee_id,
+            WorkSession.task_id.is_not(None),
+        )
+        .group_by(WorkSession.task_id)
+    )
+    if task_ids is not None:
+        if not task_ids:
+            return {}
+        statement = statement.where(WorkSession.task_id.in_(task_ids))
+
+    totals: dict[UUID, dict[str, int]] = {}
+    for task_id, raw_active, idle, deducted in db.execute(statement).all():
+        active = max(0, int(raw_active or 0) - int(deducted or 0))
+        idle_seconds = max(0, int(idle or 0))
+        totals[task_id] = {
+            "active_seconds": active,
+            "idle_seconds": idle_seconds,
+            "tracked_seconds": active + idle_seconds,
+        }
+    return totals
+
+
 def get_project_or_404(db: Session, admin: AdminUser, project_id: UUID) -> Project:
     project = db.scalar(
         select(Project).where(Project.id == project_id, Project.company_id == admin.company_id)
@@ -272,9 +310,21 @@ def list_employee_tasks(db: Session, device: Device) -> list[dict[str, Any]]:
         )
         .order_by(Team.name, Project.name, Task.name)
     ).all()
+    time_totals = employee_task_time_totals(
+        db,
+        company_id=device.company_id,
+        employee_id=device.employee_id,
+        task_ids=[task.id for task, _project, _team in rows],
+    )
     data: list[dict[str, Any]] = []
     for task, project, team in rows:
         item = serialize_task(task, project, team)
         item["can_update_stage"] = task.assignee_employee_id == device.employee_id
+        item.update(
+            time_totals.get(
+                task.id,
+                {"active_seconds": 0, "idle_seconds": 0, "tracked_seconds": 0},
+            )
+        )
         data.append(item)
     return data

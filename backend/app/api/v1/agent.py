@@ -4,7 +4,8 @@ from typing import Annotated
 from uuid import UUID
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Body, Depends, Request, UploadFile
+from fastapi import APIRouter, Body, Depends, Query, Request, UploadFile
+from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -12,9 +13,11 @@ from app.api.deps import DeviceAuthContext, get_current_device, get_current_empl
 from app.api.v1.employee_portal import manual_request_status_seconds, period_summary
 from app.api.v1.timesheets import timesheet_rows
 from app.core.responses import success_response
+from app.core.config import settings
+from app.core.exceptions import ApiError
 from app.core.security import create_employee_handoff_token
 from app.database.session import get_db
-from app.models import Employee, Project, Task, Team, TeamMember, TimeAdjustmentRequest
+from app.models import Employee, Project, Screenshot, Task, Team, TeamMember, TimeAdjustmentRequest
 from app.schemas.agent import (
     AgentTaskCreate,
     AgentTaskUpdate,
@@ -465,6 +468,60 @@ def screenshot_initiate(
     db: Annotated[Session, Depends(get_db)],
 ):
     return success_response(data=initiate_screenshot(db, context.device, payload))
+
+
+@router.get("/screenshots/recent")
+def recent_screenshots(
+    context: Annotated[DeviceAuthContext, Depends(get_current_device)],
+    db: Annotated[Session, Depends(get_db)],
+    limit: int = Query(default=4, ge=1, le=4),
+):
+    rows = db.scalars(
+        select(Screenshot)
+        .where(
+            Screenshot.company_id == context.device.company_id,
+            Screenshot.employee_id == context.device.employee_id,
+            Screenshot.deleted_at.is_(None),
+            Screenshot.status.in_(("uploaded", "completed")),
+        )
+        .order_by(Screenshot.captured_at.desc())
+        .limit(limit)
+    ).all()
+    return success_response(
+        data=[
+            {
+                "id": str(screenshot.id),
+                "captured_at": screenshot.captured_at.isoformat(),
+                "mime_type": screenshot.mime_type,
+                "display_name": screenshot.display_name,
+            }
+            for screenshot in rows
+        ]
+    )
+
+
+@router.get("/screenshots/{screenshot_id}/file")
+def own_screenshot_file(
+    screenshot_id: UUID,
+    context: Annotated[DeviceAuthContext, Depends(get_current_device)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    screenshot = db.scalar(
+        select(Screenshot).where(
+            Screenshot.id == screenshot_id,
+            Screenshot.company_id == context.device.company_id,
+            Screenshot.employee_id == context.device.employee_id,
+            Screenshot.deleted_at.is_(None),
+            Screenshot.status.in_(("uploaded", "completed")),
+        )
+    )
+    if screenshot is None:
+        raise ApiError("SCREENSHOT_NOT_FOUND", "Screenshot was not found.", 404)
+    storage_root = settings.screenshot_storage_path.resolve()
+    file_path = (storage_root / screenshot.storage_path).resolve()
+    if not file_path.is_relative_to(storage_root) or not file_path.exists():
+        raise ApiError("SCREENSHOT_FILE_NOT_FOUND", "Screenshot file was not found.", 404)
+    return FileResponse(file_path, media_type=screenshot.mime_type)
 
 
 @router.post("/screenshots/{screenshot_id}/upload")

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import Swal from "sweetalert2";
-import type { AgentStatus, IdleAlert } from "./types/electron";
+import type { AgentStatus, IdleAlert, RecentScreenshot } from "./types/electron";
 import "sweetalert2/dist/sweetalert2.min.css";
 import "./App.css";
 
@@ -92,9 +92,16 @@ function App() {
   const [isChangingTracking, setIsChangingTracking] = useState(false);
   const [dashboardError, setDashboardError] = useState<string | null>(null);
   const [isOpeningDashboard, setIsOpeningDashboard] = useState(false);
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const [recentScreenshots, setRecentScreenshots] = useState<RecentScreenshot[] | null>(null);
+  const [isLoadingScreenshots, setIsLoadingScreenshots] = useState(false);
+  const [screenshotError, setScreenshotError] = useState<string | null>(null);
   const [summaryPeriod, setSummaryPeriod] = useState<
     "today" | "week" | "month"
   >("today");
+  const [activeView, setActiveView] = useState<"home" | "tasks" | "more">(
+    "home",
+  );
   const shownIdleAlertId = useRef<string | null>(null);
   const isDesktopRuntime = Boolean(window.khaliduo);
   const desktopRuntimeMessage =
@@ -206,6 +213,9 @@ function App() {
     status.workedTodaySeconds,
     summaryPeriod,
   ]);
+  const countedPeriodSeconds = timeBreakdown.segments
+    .filter((segment) => segment.counted)
+    .reduce((total, segment) => total + segment.seconds, 0);
 
   async function refreshStatusAfterEnrollment() {
     const nextStatus = await window.khaliduo?.getAgentStatus();
@@ -439,11 +449,11 @@ function App() {
     }
   }
 
-  async function handleOpenDashboard() {
+  async function handleOpenDashboard(section?: "screenshots") {
     setDashboardError(null);
     setIsOpeningDashboard(true);
     try {
-      const result = await window.khaliduo?.openEmployeeDashboard();
+      const result = await window.khaliduo?.openEmployeeDashboard(section);
       if (!result?.success) {
         setDashboardError(
           result?.message ?? "The employee dashboard could not be opened.",
@@ -451,6 +461,52 @@ function App() {
       }
     } finally {
       setIsOpeningDashboard(false);
+    }
+  }
+
+  async function handleLoadRecentScreenshots() {
+    if (!window.khaliduo || isLoadingScreenshots) return;
+    setIsLoadingScreenshots(true);
+    setScreenshotError(null);
+    try {
+      const result = await window.khaliduo.getRecentScreenshots();
+      if (!result.success) {
+        setScreenshotError(result.message ?? "Recent screenshots could not be loaded.");
+        return;
+      }
+      setRecentScreenshots(result.screenshots);
+    } finally {
+      setIsLoadingScreenshots(false);
+    }
+  }
+
+  async function handleLogout() {
+    if (!window.khaliduo || isLoggingOut) return;
+    const confirmation = await Swal.fire({
+      title: "Sign out from this computer?",
+      text: "Tracking and screenshots will stop, and this computer will need to be linked again before it can track work.",
+      icon: "question",
+      showCancelButton: true,
+      confirmButtonText: "Sign out",
+      cancelButtonText: "Keep me signed in",
+      confirmButtonColor: "#842029",
+    });
+    if (!confirmation.isConfirmed) return;
+
+    setIsLoggingOut(true);
+    try {
+      const result = await window.khaliduo.logout();
+      if (!result.success) {
+        await Swal.fire("Sign out failed", result.message ?? "Please try again.", "error");
+        return;
+      }
+      setStatus(await window.khaliduo.getAgentStatus());
+      setActiveView("home");
+      setEmployeePassword("");
+      setEnrollmentCode("");
+      setTrackingControlMessage(null);
+    } finally {
+      setIsLoggingOut(false);
     }
   }
 
@@ -483,6 +539,7 @@ function App() {
       const nextStatus = await window.khaliduo?.getAgentStatus();
       if (nextStatus) setStatus(nextStatus);
     } else if (result.dismiss === Swal.DismissReason.cancel) {
+      setActiveView("more");
       setTimeRequestMinutes(lostMinutes);
       setTimeRequestReason(
         "Offline meeting or work completed while away from the computer.",
@@ -506,7 +563,7 @@ function App() {
           <div>
             <p className="eyebrow">Kent Consultancy</p>
             <h1>Khaliduo</h1>
-            <p className="window-label">Desktop status & controls</p>
+            <p className="window-label">Your workday companion</p>
           </div>
         </div>
         <span className={`status-pill status-${status.trackingStatus}`}>
@@ -603,6 +660,91 @@ function App() {
       )}
 
       {status.enrolled && (
+        <>
+          <section className="purpose-banner">
+            <span>Your work, clearly recorded</span>
+            <strong>Proof of your effort, focus and dedication.</strong>
+            <p>
+              Khaliduo keeps a transparent record of work time, activity status
+              and scheduled screenshots.
+            </p>
+          </section>
+
+          <nav className="app-view-tabs" aria-label="Desktop app sections">
+            {(["home", "tasks", "more"] as const).map((view) => (
+              <button
+                key={view}
+                type="button"
+                className={activeView === view ? "active" : ""}
+                aria-current={activeView === view ? "page" : undefined}
+                onClick={() => setActiveView(view)}
+              >
+                {view === "home"
+                  ? "Home"
+                  : view === "tasks"
+                    ? "Tasks"
+                    : "More"}
+              </button>
+            ))}
+          </nav>
+        </>
+      )}
+
+      {(!status.enrolled || activeView === "home") && (
+        <div className="app-view app-view-home">
+          {status.enrolled && (
+            <section className="work-focus" aria-label="Current work summary">
+              <div className="work-focus-time">
+                <span>
+                  {summaryPeriod === "today"
+                    ? "Counted today"
+                    : summaryPeriod === "week"
+                      ? "Counted this week"
+                      : "Counted this month"}
+                </span>
+                <strong>{formatDuration(countedPeriodSeconds)}</strong>
+                <small>
+                  {status.trackingPaused ? "Currently paused" : "Counting now"}
+                </small>
+              </div>
+              <div className="work-focus-task">
+                <span>Current task</span>
+                <strong>{status.selectedTask?.name ?? "No task selected"}</strong>
+                <small>
+                  {status.selectedTask
+                    ? `${status.selectedTask.teamName} / ${status.selectedTask.projectName}`
+                    : "Choose a task before you start focused work."}
+                </small>
+              </div>
+              <div className="work-focus-actions">
+                <button
+                  type="button"
+                  className={
+                    status.trackingPaused
+                      ? "focus-action resume-button"
+                      : "focus-action pause-button"
+                  }
+                  onClick={() => void handleTrackingToggle()}
+                  disabled={isChangingTracking}
+                >
+                  {isChangingTracking
+                    ? "Please wait..."
+                    : status.trackingPaused
+                      ? "Resume"
+                      : "Pause"}
+                </button>
+                <button
+                  type="button"
+                  className="focus-action manage-tasks-button"
+                  onClick={() => setActiveView("tasks")}
+                >
+                  Manage tasks
+                </button>
+              </div>
+            </section>
+          )}
+
+      {status.enrolled && (
         <section
           className={`tracking-control ${status.trackingPaused ? "tracking-paused" : "tracking-running"}`}
         >
@@ -687,6 +829,37 @@ function App() {
         <p className="form-error dashboard-error">{dashboardError}</p>
       )}
 
+      {status.enrolled && (
+        <section className="recent-screenshots">
+          <div className="recent-screenshots-heading">
+            <div>
+              <span>My screenshots</span>
+              <strong>Review the latest four captures</strong>
+            </div>
+            <div>
+              <button type="button" onClick={() => void handleLoadRecentScreenshots()} disabled={isLoadingScreenshots}>
+                {isLoadingScreenshots ? "Loading..." : recentScreenshots ? "Refresh" : "Show last 4"}
+              </button>
+              <button type="button" onClick={() => void handleOpenDashboard("screenshots")} disabled={isOpeningDashboard}>
+                View all
+              </button>
+            </div>
+          </div>
+          {recentScreenshots && (
+            <div className="recent-screenshot-grid">
+              {recentScreenshots.map((screenshot) => (
+                <figure key={screenshot.id}>
+                  <img src={screenshot.dataUrl} alt={screenshot.displayName ?? "Work screenshot"} />
+                  <figcaption>{formatTimestamp(screenshot.capturedAt)}</figcaption>
+                </figure>
+              ))}
+              {recentScreenshots.length === 0 && <p>No screenshots have been uploaded yet.</p>}
+            </div>
+          )}
+          {screenshotError && <p className="form-error">{screenshotError}</p>}
+        </section>
+      )}
+
       <section className="summary-panel" aria-label="Time summary">
         <div
           className="summary-period-tabs"
@@ -713,13 +886,7 @@ function App() {
         <div className="metrics">
           <div>
             <span>Counted time</span>
-            <strong>
-              {formatDuration(
-                timeBreakdown.segments
-                  .filter((segment) => segment.counted)
-                  .reduce((total, segment) => total + segment.seconds, 0),
-              )}
-            </strong>
+            <strong>{formatDuration(countedPeriodSeconds)}</strong>
           </div>
           <div>
             <span>Worked</span>
@@ -766,7 +933,11 @@ function App() {
           </div>
         </section>
       )}
+        </div>
+      )}
 
+      {status.enrolled && activeView === "tasks" && (
+        <div className="app-view app-view-tasks">
       {status.enrolled && (
         <section className="current-work">
           <p className="section-title">Current task</p>
@@ -791,7 +962,7 @@ function App() {
               ))}
             </select>
           </div>
-          <div className="task-meta">
+              <div className="task-meta">
             <span>{status.selectedTask?.teamName ?? "No team"}</span>
             <span>{status.selectedTask?.projectName ?? "No project"}</span>
             <select
@@ -818,6 +989,25 @@ function App() {
               <option value="blocked">Report blocked</option>
             </select>
           </div>
+          {trackableTasks.length > 0 && (
+            <div className="task-switch-list" aria-label="Available tasks">
+              {trackableTasks.map((task) => (
+                <button
+                  key={task.id}
+                  type="button"
+                  className={status.selectedTask?.id === task.id ? "active" : ""}
+                  disabled={isSubmittingTask}
+                  onClick={() => void handleTaskChange(task.id)}
+                >
+                  <span>{task.name}</span>
+                  <strong>{formatDuration(task.activeSeconds)}</strong>
+                  <small>
+                    {status.selectedTask?.id === task.id ? "Tracking this task" : "Switch to task"}
+                  </small>
+                </button>
+              ))}
+            </div>
+          )}
           {status.selectedTask && !status.selectedTask.canUpdateStage && (
             <p className="task-permission-note">
               You can select and track this task as a collaborator, but only the
@@ -967,7 +1157,11 @@ function App() {
           {taskError && <p className="form-error">{taskError}</p>}
         </section>
       )}
+        </div>
+      )}
 
+      {(!status.enrolled || activeView === "more") && (
+        <div className="app-view app-view-more">
       <details className="details">
         <summary>System details</summary>
         <dl>
@@ -1088,6 +1282,24 @@ function App() {
             </ul>
           )}
         </section>
+      )}
+      {status.enrolled && (
+        <section className="account-actions">
+          <div>
+            <strong>Device account</strong>
+            <span>Sign out only when this computer should stop tracking this employee.</span>
+          </div>
+          <button
+            type="button"
+            className="logout-button"
+            onClick={() => void handleLogout()}
+            disabled={isLoggingOut}
+          >
+            {isLoggingOut ? "Signing out..." : "Sign out from this device"}
+          </button>
+        </section>
+      )}
+        </div>
       )}
 
       <footer className="privacy">

@@ -10,8 +10,10 @@ contextBridge.exposeInMainWorld("khaliduo", {
     ipcRenderer.invoke("agent:enroll-with-credentials", email, password),
   pauseTracking: () => ipcRenderer.invoke("agent:pause-tracking"),
   resumeTracking: () => ipcRenderer.invoke("agent:resume-tracking"),
-  openEmployeeDashboard: () =>
-    ipcRenderer.invoke("agent:open-employee-dashboard"),
+  logout: () => ipcRenderer.invoke("agent:logout"),
+  openEmployeeDashboard: (section?: "screenshots") =>
+    ipcRenderer.invoke("agent:open-employee-dashboard", section),
+  getRecentScreenshots: () => ipcRenderer.invoke("agent:get-recent-screenshots"),
   setCurrentTask: (taskId: string | null) =>
     ipcRenderer.invoke("agent:set-current-task", taskId),
   createTask: (options: {

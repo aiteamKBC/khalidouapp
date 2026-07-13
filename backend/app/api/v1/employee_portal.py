@@ -34,6 +34,7 @@ from app.models import (
 from app.schemas.employee_portal import EmployeePortalTaskCreate, EmployeePortalTaskUpdate, EmployeePortalTimeRequestCreate
 from app.schemas.admin import ChecklistItemCreate, ChecklistItemUpdate, TaskCommentCreate
 from app.services.projects import (
+    employee_task_time_totals,
     serialize_project,
     serialize_task,
     validate_task_dates,
@@ -192,7 +193,24 @@ def tasks(
         .distinct()
         .order_by(Team.name, Project.name, Task.name)
     ).all()
-    return success_response(data=[serialize_task(task, project, team) for task, project, team in rows])
+    time_totals = employee_task_time_totals(
+        db,
+        company_id=current_employee.company_id,
+        employee_id=current_employee.id,
+        task_ids=[task.id for task, _project, _team in rows],
+    )
+    data = []
+    for task, project, team in rows:
+        item = serialize_task(task, project, team)
+        item["can_update_stage"] = task.assignee_employee_id == current_employee.id
+        item.update(
+            time_totals.get(
+                task.id,
+                {"active_seconds": 0, "idle_seconds": 0, "tracked_seconds": 0},
+            )
+        )
+        data.append(item)
+    return success_response(data=data)
 
 
 @router.get("/projects")
