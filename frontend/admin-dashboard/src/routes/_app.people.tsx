@@ -481,11 +481,13 @@ function PeopleDirectory({ embedded = false }: { embedded?: boolean }) {
                       <Button
                         variant="ghost"
                         size="sm"
-                        className="text-destructive hover:text-destructive"
-                        disabled={row.status !== "active" || deactivateMutation.isPending}
-                        onClick={() => deactivateMutation.mutate(row.id)}
+                        className={cn(
+                          row.status === "active" && "text-destructive hover:text-destructive",
+                        )}
+                        disabled={archiveMutation.isPending}
+                        onClick={() => changeArchiveStatus(row, row.status === "active")}
                       >
-                        Deactivate
+                        {row.status === "active" ? "Archive" : "Restore"}
                       </Button>
                     </>
                   )}
