@@ -104,6 +104,7 @@ type AgentRuntimeStatus = {
   selectedTask: RuntimeTask | null;
   timeAdjustmentRequests: TimeAdjustmentRequest[];
   timeSummary: Pick<AgentSummary, "today" | "week" | "month"> | null;
+  todayTimeline: AgentSummary["today_timeline"] | null;
   lastIdleAlert: IdleLossAlert | null;
   updateStatus:
     | "idle"
@@ -155,6 +156,7 @@ let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 let durationTimer: ReturnType<typeof setInterval> | null = null;
 let idleTimer: ReturnType<typeof setInterval> | null = null;
 let idleAttentionTimer: ReturnType<typeof setTimeout> | null = null;
+let idleAlertAttentionActive = false;
 let screenshotTimer: ReturnType<typeof setTimeout> | null = null;
 let screenshotQueue: number[] = [];
 let screenshotWindowEndsAt: number | null = null;
@@ -203,6 +205,7 @@ const runtimeStatus: AgentRuntimeStatus = {
   selectedTask: null,
   timeAdjustmentRequests: [],
   timeSummary: null,
+  todayTimeline: null,
   lastIdleAlert: null,
   updateStatus: "idle",
   updateVersion: null,
@@ -553,6 +556,7 @@ async function refreshWorkedTodayTotal() {
       week: summary.week,
       month: summary.month,
     };
+    runtimeStatus.todayTimeline = summary.today_timeline;
     workedTodayBaseSeconds = Math.max(
       0,
       summary.today.tracked_active_seconds - runtimeStatus.activeSeconds,
@@ -574,6 +578,7 @@ function showIdleLossAlert(lostSeconds: number) {
     lostSeconds,
     endedAt: new Date().toISOString(),
   };
+  setIdleAlertAttention(true);
   showMainWindow({ forceForeground: true, centerOnPointerDisplay: true });
   mainWindow?.webContents.send("agent:idle-alert", runtimeStatus.lastIdleAlert);
 }
@@ -1255,6 +1260,7 @@ async function logoutDevice() {
     selectedTask: null,
     timeAdjustmentRequests: [],
     timeSummary: null,
+    todayTimeline: null,
     lastIdleAlert: null,
   } satisfies Partial<AgentRuntimeStatus>);
   tray?.setImage(createTrayImage("#b7791f"));
@@ -1391,7 +1397,9 @@ function showMainWindow(
     );
   }
 
-  if (options.forceForeground) {
+  const useTransientForeground =
+    options.forceForeground && !idleAlertAttentionActive;
+  if (useTransientForeground) {
     window.setAlwaysOnTop(true, "screen-saver");
   }
 
@@ -1399,7 +1407,7 @@ function showMainWindow(
   window.moveTop();
   window.focus();
 
-  if (options.forceForeground) {
+  if (useTransientForeground) {
     if (idleAttentionTimer) {
       clearTimeout(idleAttentionTimer);
     }
@@ -1409,6 +1417,31 @@ function showMainWindow(
         window.setAlwaysOnTop(false);
       }
     }, 1500);
+  }
+}
+
+function setIdleAlertAttention(active: boolean) {
+  idleAlertAttentionActive = active;
+  if (!active) {
+    runtimeStatus.lastIdleAlert = null;
+  }
+  if (idleAttentionTimer) {
+    clearTimeout(idleAttentionTimer);
+    idleAttentionTimer = null;
+  }
+
+  const window = mainWindow;
+  if (!window || window.isDestroyed()) {
+    return;
+  }
+  window.setAlwaysOnTop(active, "screen-saver");
+  window.setMinimizable(!active);
+  window.setClosable(!active);
+  window.flashFrame(active);
+  if (active) {
+    window.show();
+    window.moveTop();
+    window.focus();
   }
 }
 
@@ -1758,6 +1791,10 @@ ipcMain.handle("agent:get-status", () => ({
   ...runtimeStatus,
   privacyNotice,
 }));
+
+ipcMain.on("agent:set-idle-alert-attention", (_, active: boolean) => {
+  setIdleAlertAttention(Boolean(active));
+});
 
 ipcMain.handle("agent:enroll-device", async (_, enrollmentCode: string) => {
   try {

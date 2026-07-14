@@ -1,4 +1,4 @@
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from uuid import UUID, uuid4
 
 import pytest
@@ -9,13 +9,14 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.core.config import settings
-from app.core.security import create_device_token, hash_token
+from app.core.security import create_device_token, create_employee_access_token, hash_token
 from app.core.security import create_jwt_token, hash_password
 from app.database.base import Base
 from app.database.session import get_db
 from app.main import app
 from app.models import (
     AdminUser,
+    ActivityEvent,
     Company,
     Device,
     DeviceToken,
@@ -1017,6 +1018,8 @@ def test_desktop_summary_matches_employee_periods_and_profile(team_client):
     summary = response.json()["data"]
     assert summary["employee"]["id"] == str(data["employee_a"].id)
     assert {"today", "week", "month"}.issubset(summary)
+    assert summary["today_timeline"]["is_running"] is True
+    assert summary["today_timeline"]["intervals"][0]["type"] == "worked"
     for period_name in ("today", "week", "month"):
         period = summary[period_name]
         assert {
@@ -1026,6 +1029,112 @@ def test_desktop_summary_matches_employee_periods_and_profile(team_client):
             "manual_pending_seconds",
             "manual_rejected_seconds",
         }.issubset(period)
+
+
+def test_workday_timeline_splits_work_idle_and_locked_periods(team_client):
+    client, data = team_client
+    work_day = date.today()
+    started_at = datetime.combine(work_day, datetime.min.time(), tzinfo=UTC) + timedelta(hours=9)
+    transitions = [
+        ("idle_started", started_at + timedelta(hours=1)),
+        ("idle_ended", started_at + timedelta(hours=1, minutes=15)),
+        ("screen_locked", started_at + timedelta(hours=2)),
+        ("screen_unlocked", started_at + timedelta(hours=2, minutes=5)),
+    ]
+
+    db: Session = data["session_factory"]()
+    try:
+        session = db.get(WorkSession, data["session_a"].id)
+        session.started_at = started_at
+        session.ended_at = started_at + timedelta(hours=3)
+        session.status = "ended"
+        for event_type, event_timestamp in transitions:
+            db.add(
+                ActivityEvent(
+                    company_id=session.company_id,
+                    employee_id=session.employee_id,
+                    device_id=session.device_id,
+                    session_id=session.id,
+                    event_type=event_type,
+                    event_timestamp=event_timestamp,
+                    payload=None,
+                    idempotency_key=str(uuid4()),
+                )
+            )
+        db.commit()
+    finally:
+        db.close()
+
+    response = client.get(
+        f"/api/v1/activity/timeline?employee_id={data['employee_a'].id}&day={work_day.isoformat()}",
+        headers=data["general_headers"],
+    )
+
+    assert response.status_code == 200
+    timeline = response.json()["data"]
+    assert [interval["type"] for interval in timeline["intervals"]] == [
+        "worked",
+        "idle",
+        "worked",
+        "locked",
+        "worked",
+    ]
+    assert timeline["worked_seconds"] == 9600
+    assert timeline["idle_seconds"] == 900
+    assert timeline["locked_seconds"] == 300
+    assert timeline["intervals"][0]["task_name"] == "Task A"
+    assert timeline["is_running"] is False
+
+    employee_token = create_employee_access_token(
+        employee_id=data["employee_a"].id,
+        company_id=data["employee_a"].company_id,
+    )
+    employee_response = client.get(
+        "/api/v1/employee-portal/summary",
+        headers={"Authorization": f"Bearer {employee_token}"},
+    )
+    assert employee_response.status_code == 200
+    assert employee_response.json()["data"]["today_timeline"]["idle_seconds"] == 900
+
+
+def test_workday_timeline_stops_stale_open_session_at_last_heartbeat(team_client):
+    client, data = team_client
+    now = datetime.now(UTC)
+    started_at = now - timedelta(minutes=20)
+    heartbeat_at = now - timedelta(minutes=10)
+
+    db: Session = data["session_factory"]()
+    try:
+        session = db.get(WorkSession, data["session_a"].id)
+        session.started_at = started_at
+        session.updated_at = started_at
+        session.ended_at = None
+        db.add(
+            ActivityEvent(
+                company_id=session.company_id,
+                employee_id=session.employee_id,
+                device_id=session.device_id,
+                session_id=session.id,
+                event_type="heartbeat",
+                event_timestamp=heartbeat_at,
+                payload=None,
+                idempotency_key=str(uuid4()),
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    response = client.get(
+        f"/api/v1/activity/timeline?employee_id={data['employee_a'].id}&day={now.date().isoformat()}",
+        headers=data["general_headers"],
+    )
+
+    timeline = response.json()["data"]
+    assert response.status_code == 200
+    assert timeline["is_running"] is False
+    assert timeline["last_ended_at"] == heartbeat_at.isoformat()
+    assert timeline["worked_seconds"] == 600
 
 
 def test_employee_may_belong_to_multiple_teams(team_client):

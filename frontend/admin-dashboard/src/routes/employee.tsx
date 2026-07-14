@@ -50,6 +50,7 @@ import {
   type PortalPeriod,
 } from "@/api/employee-portal";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { WorkdayTimeline } from "@/components/workday-timeline";
 
 export const Route = createFileRoute("/employee")({ component: EmployeePortalPage });
 
@@ -237,6 +238,7 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
   const summary = useQuery({
     queryKey: ["employee-portal", "summary"],
     queryFn: () => employeeSummary(token),
+    refetchInterval: 60_000,
   });
   const tasks = useQuery({
     queryKey: ["employee-portal", "tasks"],
@@ -450,6 +452,14 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
           <PeriodCard title="This week" period={summary.data?.week} icon={CalendarClock} />
           <PeriodCard title="This month" period={summary.data?.month} icon={Star} />
         </div>
+        <Card>
+          <CardHeader>
+            <CardTitle>Today's activity</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <WorkdayTimeline timeline={summary.data?.todayTimeline} />
+          </CardContent>
+        </Card>
         <div className="grid gap-6 lg:grid-cols-2">
           <Card>
             <CardHeader>

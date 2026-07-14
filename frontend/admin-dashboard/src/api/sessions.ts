@@ -1,5 +1,6 @@
 import { apiFetch, toMinutes, withQuery } from "./client";
 import type { ActivityEvent, WorkSession } from "@/types";
+import { mapWorkdayTimeline, type BackendWorkdayTimeline } from "./workday";
 
 type BackendSession = {
   id: string;
@@ -63,4 +64,11 @@ export async function listActivity(employeeId?: string, teamId?: string): Promis
     withQuery("/activity", { employee_id: employeeId, team_id: teamId, page_size: 100 }),
   );
   return events.map(mapActivity);
+}
+
+export async function getWorkdayTimeline(employeeId: string, day: string) {
+  const timeline = await apiFetch<BackendWorkdayTimeline>(
+    withQuery("/activity/timeline", { employee_id: employeeId, day }),
+  );
+  return mapWorkdayTimeline(timeline);
 }

@@ -1034,6 +1034,86 @@ button:disabled {
   color: #842029;
 }
 
+.today-activity {
+  display: grid;
+  gap: 9px;
+  padding: 11px;
+  border: 1px solid #eaddec;
+  border-radius: 8px;
+  background: #fff;
+}
+.today-activity-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.today-activity-heading > div {
+  display: grid;
+  gap: 2px;
+}
+.today-activity-heading span {
+  color: var(--muted);
+  font-size: 8px;
+}
+.today-activity-heading strong {
+  color: #2f2140;
+  font-size: 11px;
+}
+.today-activity-list {
+  display: grid;
+  max-height: 138px;
+  overflow-y: auto;
+  border: 1px solid #eee7f0;
+  border-radius: 6px;
+}
+.today-activity-list > div {
+  display: grid;
+  grid-template-columns: 68px minmax(0, 1fr) 58px;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 6px 8px;
+  border-bottom: 1px solid #f0eaf2;
+  font-size: 8px;
+}
+.today-activity-list > div:last-child {
+  border-bottom: 0;
+}
+.today-activity-list strong {
+  overflow: hidden;
+  color: #3c2b4a;
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.today-activity-list > div > span:last-child {
+  color: var(--muted);
+  text-align: right;
+}
+.activity-state {
+  width: fit-content;
+  padding: 3px 5px;
+  border-radius: 4px;
+  font-weight: 700;
+}
+.activity-state-worked {
+  background: #e5f5ec;
+  color: #17613d;
+}
+.activity-state-idle {
+  background: #fff3cd;
+  color: #765500;
+}
+.activity-state-locked {
+  background: #edf0f4;
+  color: #4b5563;
+}
+.activity-state-sleeping {
+  background: #ecebff;
+  color: #4338a0;
+}
+
 @media (min-width: 620px) {
   .status-window {
     max-width: 600px;

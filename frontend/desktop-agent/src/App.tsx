@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import Swal from "sweetalert2";
-import type { AgentStatus, IdleAlert, RecentScreenshot } from "./types/electron";
+import Swal, { type SweetAlertResult } from "sweetalert2";
+import type { AgentStatus, IdleAlert, RecentScreenshot, WorkdayTimeline } from "./types/electron";
 import "sweetalert2/dist/sweetalert2.min.css";
 import "./App.css";
 
@@ -24,6 +24,7 @@ const fallbackStatus: AgentStatus = {
   selectedTask: null,
   timeAdjustmentRequests: [],
   timeSummary: null,
+  todayTimeline: null,
   lastIdleAlert: null,
   updateStatus: "idle",
   updateVersion: null,
@@ -515,21 +516,27 @@ function App() {
       return;
     }
     shownIdleAlertId.current = alert.id;
+    window.khaliduo?.setIdleAlertAttention(true);
     const lostMinutes = Math.max(1, Math.round(alert.lostSeconds / 60));
-    const result = await Swal.fire({
-      title: "Do you want to continue tracking?",
-      text: `Mouse activity returned after ${formatDuration(alert.lostSeconds)} of idle time. Continue tracking, stop now, or request the time manually if you were in an offline meeting or doing other work away from the computer.`,
-      icon: "warning",
-      showDenyButton: true,
-      showCancelButton: true,
-      confirmButtonText: "Continue tracking",
-      denyButtonText: "Stop tracking",
-      cancelButtonText: "Request manual time",
-      confirmButtonColor: "#1f7a4d",
-      denyButtonColor: "#842029",
-      allowEscapeKey: false,
-      allowOutsideClick: false,
-    });
+    let result: SweetAlertResult;
+    try {
+      result = await Swal.fire({
+        title: "Do you want to continue tracking?",
+        text: `Mouse activity returned after ${formatDuration(alert.lostSeconds)} of idle time. Continue tracking, stop now, or request the time manually if you were in an offline meeting or doing other work away from the computer.`,
+        icon: "warning",
+        showDenyButton: true,
+        showCancelButton: true,
+        confirmButtonText: "Continue tracking",
+        denyButtonText: "Stop tracking",
+        cancelButtonText: "Request manual time",
+        confirmButtonColor: "#1f7a4d",
+        denyButtonColor: "#842029",
+        allowEscapeKey: false,
+        allowOutsideClick: false,
+      });
+    } finally {
+      window.khaliduo?.setIdleAlertAttention(false);
+    }
 
     if (result.isDenied) {
       const pauseResult = await window.khaliduo?.pauseTracking();
@@ -933,6 +940,9 @@ function App() {
           </div>
         </section>
       )}
+      {status.enrolled && status.todayTimeline && (
+        <TodayActivity timeline={status.todayTimeline} />
+      )}
         </div>
       )}
 
@@ -1315,6 +1325,59 @@ function App() {
       </footer>
     </main>
   );
+}
+
+function TodayActivity({ timeline }: { timeline: WorkdayTimeline }) {
+  const labels = {
+    worked: "Worked",
+    idle: "Idle",
+    locked: "Locked",
+    sleeping: "Sleeping",
+  } as const;
+
+  return (
+    <section className="today-activity" aria-label="Today's activity">
+      <div className="today-activity-heading">
+        <div>
+          <span>Today's activity</span>
+          <strong>
+            {timeline.first_started_at
+              ? `${formatClock(timeline.first_started_at, timeline.timezone)} - ${timeline.is_running ? "Now" : formatClock(timeline.last_ended_at, timeline.timezone)}`
+              : "No activity"}
+          </strong>
+        </div>
+        <span>{timeline.intervals.length} periods</span>
+      </div>
+      <div className="today-activity-list">
+        {timeline.intervals.map((interval, index) => (
+          <div key={`${interval.session_id}-${interval.started_at}-${index}`}>
+            <span className={`activity-state activity-state-${interval.type}`}>
+              {labels[interval.type]}
+            </span>
+            <strong>
+              {formatClock(interval.started_at, timeline.timezone)} - {interval.ended_at ? formatClock(interval.ended_at, timeline.timezone) : "Now"}
+            </strong>
+            <span>
+              {formatDuration(
+                interval.is_current
+                  ? Math.max(0, Math.floor((Date.now() - new Date(interval.started_at).getTime()) / 1000))
+                  : interval.duration_seconds,
+              )}
+            </span>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function formatClock(value: string | null, timezone: string) {
+  if (!value) return "-";
+  return new Intl.DateTimeFormat(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone: timezone,
+  }).format(new Date(value));
 }
 
 export default App;

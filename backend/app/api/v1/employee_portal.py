@@ -52,6 +52,7 @@ from app.services.task_workflow import (
     stop_task_tracking,
 )
 from app.services.screenshots import serialize_screenshot
+from app.services.activity_timeline import build_workday_timeline
 from app.services.time_adjustments import serialize_time_adjustment_request
 
 router = APIRouter(prefix="/employee-portal", tags=["employee-portal"])
@@ -161,6 +162,12 @@ def summary(
                 manual_request_status_seconds(db, current_employee, month_start, month_end),
             ),
             "days": monthly_rows,
+            "today_timeline": build_workday_timeline(
+                db,
+                company_id=current_employee.company_id,
+                employee_id=current_employee.id,
+                timezone_name=current_employee.timezone,
+            ),
             "points_rule": "1 hour of approved active work = 1 point",
         }
     )

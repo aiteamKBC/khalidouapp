@@ -31,6 +31,7 @@ export type AgentStatus = {
     week: AgentPeriodSummary;
     month: AgentPeriodSummary;
   } | null;
+  todayTimeline: WorkdayTimeline | null;
   lastIdleAlert: IdleAlert | null;
   updateStatus:
     | "idle"
@@ -56,6 +57,28 @@ export type AgentPeriodSummary = {
   deducted_seconds: number;
   screenshot_count: number;
   points: number;
+};
+
+export type WorkdayTimeline = {
+  date: string;
+  timezone: string;
+  first_started_at: string | null;
+  last_ended_at: string | null;
+  is_running: boolean;
+  worked_seconds: number;
+  idle_seconds: number;
+  locked_seconds: number;
+  sleeping_seconds: number;
+  intervals: Array<{
+    type: "worked" | "idle" | "locked" | "sleeping";
+    started_at: string;
+    ended_at: string | null;
+    duration_seconds: number;
+    session_id: string;
+    project_name: string | null;
+    task_name: string | null;
+    is_current: boolean;
+  }>;
 };
 
 export type AgentTask = {
@@ -162,6 +185,7 @@ declare global {
         message?: string;
         request?: TimeAdjustmentRequest;
       }>;
+      setIdleAlertAttention: (active: boolean) => void;
     };
   }
 }

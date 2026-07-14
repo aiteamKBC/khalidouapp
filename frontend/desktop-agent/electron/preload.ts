@@ -33,6 +33,8 @@ contextBridge.exposeInMainWorld("khaliduo", {
       requestedMinutes,
       reason,
     ),
+  setIdleAlertAttention: (active: boolean) =>
+    ipcRenderer.send("agent:set-idle-alert-attention", active),
   onIdleAlert: (
     callback: (alert: {
       id: string;
