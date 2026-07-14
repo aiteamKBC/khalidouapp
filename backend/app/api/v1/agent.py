@@ -65,6 +65,7 @@ from app.services.task_workflow import (
     validate_employee_stage_change,
     stop_task_tracking,
 )
+from app.services.activity_timeline import build_workday_timeline
 from app.services.time_adjustments import (
     create_employee_time_adjustment_request,
     serialize_time_adjustment_request,
@@ -169,6 +170,12 @@ def agent_period_summary(context: DeviceAuthContext, db: Session) -> dict:
             "avatar_url": employee.avatar_url,
         },
         "today": summarize(today, today),
+        "today_timeline": build_workday_timeline(
+            db,
+            company_id=context.device.company_id,
+            employee_id=context.device.employee_id,
+            timezone_name=employee.timezone,
+        ),
         "week": summarize(week_start, week_start + timedelta(days=6)),
         "month": summarize(month_start, month_end),
     }

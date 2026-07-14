@@ -1,4 +1,6 @@
 import { apiFetch, apiUrl } from "./client";
+import { mapWorkdayTimeline, type BackendWorkdayTimeline } from "./workday";
+import type { WorkdayTimeline } from "@/types";
 
 const STORAGE_KEY = "khaliduo.employee.auth";
 
@@ -30,6 +32,7 @@ export type PortalSummary = {
   week: PortalPeriod;
   month: PortalPeriod;
   days: Array<PortalPeriod & { date: string }>;
+  todayTimeline: WorkdayTimeline;
   points_rule: string;
 };
 
@@ -134,8 +137,13 @@ export const forgotEmployeeAccessKey = (email: string) =>
     body: JSON.stringify({ email }),
   });
 
-export const employeeSummary = (token: string) =>
-  apiFetch<PortalSummary>("/employee-portal/summary", {}, token);
+export async function employeeSummary(token: string): Promise<PortalSummary> {
+  const result = await apiFetch<
+    Omit<PortalSummary, "todayTimeline"> & { today_timeline: BackendWorkdayTimeline }
+  >("/employee-portal/summary", {}, token);
+  const { today_timeline, ...summary } = result;
+  return { ...summary, todayTimeline: mapWorkdayTimeline(today_timeline) };
+}
 
 export const employeeTasks = (token: string) =>
   apiFetch<PortalTask[]>("/employee-portal/tasks", {}, token);

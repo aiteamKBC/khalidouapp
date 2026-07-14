@@ -123,9 +123,32 @@ export type AgentPeriodSummary = {
   points: number;
 };
 
+export type AgentWorkdayTimeline = {
+  date: string;
+  timezone: string;
+  first_started_at: string | null;
+  last_ended_at: string | null;
+  is_running: boolean;
+  worked_seconds: number;
+  idle_seconds: number;
+  locked_seconds: number;
+  sleeping_seconds: number;
+  intervals: Array<{
+    type: "worked" | "idle" | "locked" | "sleeping";
+    started_at: string;
+    ended_at: string | null;
+    duration_seconds: number;
+    session_id: string;
+    project_name: string | null;
+    task_name: string | null;
+    is_current: boolean;
+  }>;
+};
+
 export type AgentSummary = {
   employee: { id: string; name: string; avatar_url: string | null };
   today: AgentPeriodSummary;
+  today_timeline: AgentWorkdayTimeline;
   week: AgentPeriodSummary;
   month: AgentPeriodSummary;
 };

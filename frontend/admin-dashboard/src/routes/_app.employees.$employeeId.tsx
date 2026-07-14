@@ -18,6 +18,8 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { StatusBadge } from "@/components/ui/status-badge";
+import { DatePicker } from "@/components/ui/date-picker";
+import { WorkdayTimeline } from "@/components/workday-timeline";
 import {
   createEnrollmentCode,
   createPortalAccessKey,
@@ -26,7 +28,7 @@ import {
   revokeEnrollmentCode,
   revokePortalAccessKey,
 } from "@/api/employees";
-import { listSessions, listActivity } from "@/api/sessions";
+import { getWorkdayTimeline, listSessions, listActivity } from "@/api/sessions";
 import { listScreenshots } from "@/api/screenshots";
 import { listTimesheets } from "@/api/timesheets";
 import { listDevices } from "@/api/devices";
@@ -45,6 +47,12 @@ function EmployeeDetailPage() {
   const { hasRole } = useAuth();
   const canManageEnrollment = hasRole("general_admin");
   const [activeTab, setActiveTab] = useState("profile");
+  const [timelineDay, setTimelineDay] = useState(() => {
+    const now = new Date();
+    const month = String(now.getMonth() + 1).padStart(2, "0");
+    const day = String(now.getDate()).padStart(2, "0");
+    return `${now.getFullYear()}-${month}-${day}`;
+  });
   const emp = useQuery({
     queryKey: ["employee", employeeId],
     queryFn: () => getEmployee(employeeId),
@@ -58,6 +66,12 @@ function EmployeeDetailPage() {
     queryKey: ["activity", employeeId],
     queryFn: () => listActivity(employeeId),
     enabled: activeTab === "activity",
+  });
+  const timeline = useQuery({
+    queryKey: ["workday-timeline", employeeId, timelineDay],
+    queryFn: () => getWorkdayTimeline(employeeId, timelineDay),
+    enabled: activeTab === "workday",
+    refetchInterval: activeTab === "workday" ? 60_000 : false,
   });
   const shots = useQuery({
     queryKey: ["emp-shots", employeeId],
@@ -115,6 +129,7 @@ function EmployeeDetailPage() {
       <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList className="mb-4 flex-wrap">
           <TabsTrigger value="profile">Profile</TabsTrigger>
+          <TabsTrigger value="workday">Workday</TabsTrigger>
           <TabsTrigger value="sessions">Sessions</TabsTrigger>
           <TabsTrigger value="screenshots">Screenshots</TabsTrigger>
           <TabsTrigger value="timesheets">Timesheets</TabsTrigger>
@@ -177,6 +192,23 @@ function EmployeeDetailPage() {
               </CardContent>
             </Card>
           </div>
+        </TabsContent>
+
+        <TabsContent value="workday">
+          <Card>
+            <CardHeader className="flex-row items-center justify-between gap-3 space-y-0">
+              <CardTitle>Workday activity</CardTitle>
+              <DatePicker
+                value={timelineDay}
+                onChange={(value) => value && setTimelineDay(value)}
+                clearable={false}
+                className="w-44"
+              />
+            </CardHeader>
+            <CardContent>
+              <WorkdayTimeline timeline={timeline.data} />
+            </CardContent>
+          </Card>
         </TabsContent>
 
         <TabsContent value="sessions">

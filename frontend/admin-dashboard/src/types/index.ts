@@ -169,6 +169,32 @@ export interface ActivityEvent {
   meta?: Record<string, string>;
 }
 
+export type WorkdayIntervalType = "worked" | "idle" | "locked" | "sleeping";
+
+export interface WorkdayInterval {
+  type: WorkdayIntervalType;
+  startedAt: string;
+  endedAt?: string;
+  durationSeconds: number;
+  sessionId: string;
+  projectName?: string;
+  taskName?: string;
+  isCurrent: boolean;
+}
+
+export interface WorkdayTimeline {
+  date: string;
+  timezone: string;
+  firstStartedAt?: string;
+  lastEndedAt?: string;
+  isRunning: boolean;
+  workedSeconds: number;
+  idleSeconds: number;
+  lockedSeconds: number;
+  sleepingSeconds: number;
+  intervals: WorkdayInterval[];
+}
+
 export interface Screenshot {
   id: string;
   employeeId: string;
