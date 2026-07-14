@@ -154,6 +154,7 @@ let currentSessionId: string | null = null;
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 let durationTimer: ReturnType<typeof setInterval> | null = null;
 let idleTimer: ReturnType<typeof setInterval> | null = null;
+let idleAttentionTimer: ReturnType<typeof setTimeout> | null = null;
 let screenshotTimer: ReturnType<typeof setTimeout> | null = null;
 let screenshotQueue: number[] = [];
 let screenshotWindowEndsAt: number | null = null;
@@ -573,7 +574,7 @@ function showIdleLossAlert(lostSeconds: number) {
     lostSeconds,
     endedAt: new Date().toISOString(),
   };
-  showMainWindow();
+  showMainWindow({ forceForeground: true, centerOnPointerDisplay: true });
   mainWindow?.webContents.send("agent:idle-alert", runtimeStatus.lastIdleAlert);
 }
 
@@ -1364,12 +1365,51 @@ async function createMainWindow() {
   }
 }
 
-function showMainWindow() {
-  if (!mainWindow) {
+function showMainWindow(
+  options: {
+    forceForeground?: boolean;
+    centerOnPointerDisplay?: boolean;
+  } = {},
+) {
+  const window = mainWindow;
+  if (!window || window.isDestroyed()) {
     return;
   }
-  mainWindow.show();
-  mainWindow.focus();
+
+  if (window.isMinimized()) {
+    window.restore();
+  }
+
+  if (options.centerOnPointerDisplay) {
+    const { workArea } = screen.getDisplayNearestPoint(
+      screen.getCursorScreenPoint(),
+    );
+    const bounds = window.getBounds();
+    window.setPosition(
+      Math.round(workArea.x + Math.max(0, (workArea.width - bounds.width) / 2)),
+      Math.round(workArea.y + Math.max(0, (workArea.height - bounds.height) / 2)),
+    );
+  }
+
+  if (options.forceForeground) {
+    window.setAlwaysOnTop(true, "screen-saver");
+  }
+
+  window.show();
+  window.moveTop();
+  window.focus();
+
+  if (options.forceForeground) {
+    if (idleAttentionTimer) {
+      clearTimeout(idleAttentionTimer);
+    }
+    idleAttentionTimer = setTimeout(() => {
+      idleAttentionTimer = null;
+      if (!window.isDestroyed()) {
+        window.setAlwaysOnTop(false);
+      }
+    }, 1500);
+  }
 }
 
 function configureAutoStart(enabled = runtimeStatus.enrolled) {
