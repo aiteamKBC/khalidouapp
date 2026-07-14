@@ -67,6 +67,7 @@ const {
   dialog,
   ipcMain,
   Menu,
+  Notification,
   powerMonitor,
   screen,
   Tray,
@@ -951,11 +952,41 @@ async function captureAndUploadScreenshot() {
     runtimeStatus.lastSuccessfulSyncAt = new Date().toISOString();
   runtimeStatus.connectionStatus = queued > 0 ? "offline" : "online";
   rebuildTrayMenu();
+  if (uploaded + queued > 0) {
+    showScreenshotCapturedNotification();
+  }
   log.info("Display screenshots processed", {
     displays: sources.length,
     uploaded,
     queued,
   });
+}
+
+function showScreenshotCapturedNotification() {
+  const title = "Screenshot captured";
+  const body =
+    "Khaliduo took a screenshot to document your work and effort.";
+
+  if (Notification.isSupported()) {
+    const notification = new Notification({
+      title,
+      body,
+      icon: path.join(
+        __dirname,
+        "..",
+        "dist-khaliduo",
+        "khaliduo-icon.png",
+      ),
+      silent: true,
+    });
+    notification.on("click", () => showMainWindow());
+    notification.show();
+    return;
+  }
+
+  if (process.platform === "win32") {
+    tray?.displayBalloon({ title, content: body, iconType: "info" });
+  }
 }
 
 async function syncPendingQueues(forcePendingEvents = false) {
@@ -1758,6 +1789,9 @@ app.on("before-quit", (event) => {
 });
 
 app.whenReady().then(async () => {
+  if (process.platform === "win32") {
+    app.setAppUserModelId("com.kentconsultancy.khaliduo");
+  }
   log.initialize();
   log.info("Khaliduo agent starting");
   await initializeLocalDatabase();
