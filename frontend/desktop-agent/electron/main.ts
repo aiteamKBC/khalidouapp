@@ -23,7 +23,6 @@ import {
   createTimeAdjustmentRequest,
   listAgentProjects,
   listAgentRecentScreenshots,
-  listAgentRecentTasks,
   listAgentTasks,
   initiateScreenshot,
   listTimeAdjustmentRequests,
@@ -182,6 +181,8 @@ let manualUpdateCheckRequested = false;
 let isUpdateCheckRunning = false;
 let isInstallingUpdate = false;
 let hasPromptedForDownloadedUpdate = false;
+let lastFullSummaryRefreshAt = 0;
+let lastMetadataRefreshAt = 0;
 let trackingConfig: TrackingConfig = {
   screenshot_enabled: true,
   screenshot_interval_minutes: 10,
@@ -618,14 +619,21 @@ async function refreshTasks() {
     return;
   }
   try {
-    const [tasks, projects, recentTasks] = await Promise.all([
+    const [tasks, projects] = await Promise.all([
       listAgentTasks(),
       listAgentProjects(),
-      listAgentRecentTasks(3),
     ]);
-    runtimeStatus.tasks = tasks.map(mapTask);
+    const runtimeTasks = tasks.map(mapTask);
+    runtimeStatus.tasks = runtimeTasks;
     runtimeStatus.projects = projects;
-    runtimeStatus.recentTasks = recentTasks.map(mapTask);
+    runtimeStatus.recentTasks = [...runtimeTasks]
+      .sort(
+        (a, b) =>
+          b.trackedSeconds - a.trackedSeconds ||
+          b.activeSeconds - a.activeSeconds ||
+          a.name.localeCompare(b.name),
+      )
+      .slice(0, 3);
     selectRuntimeTask(runtimeStatus.selectedTask?.id ?? null);
   } catch (error) {
     log.warn("Failed to refresh tasks", error);
@@ -764,7 +772,10 @@ async function heartbeatTick() {
     if (latestLocalStatus !== status) {
       runtimeStatus.trackingStatus = latestLocalStatus;
     }
-    await refreshWorkedTodayTotal();
+    if (Date.now() - lastFullSummaryRefreshAt > 5 * 60 * 1000) {
+      lastFullSummaryRefreshAt = Date.now();
+      await refreshWorkedTodayTotal();
+    }
     runtimeStatus.connectionStatus = "online";
     runtimeStatus.lastSuccessfulSyncAt = new Date().toISOString();
   } catch (error) {
@@ -778,8 +789,11 @@ async function heartbeatTick() {
     });
     log.warn("Heartbeat failed", error);
   } finally {
-    void refreshTrackingConfig();
-    void refreshTasks();
+    if (Date.now() - lastMetadataRefreshAt > 5 * 60 * 1000) {
+      lastMetadataRefreshAt = Date.now();
+      void refreshTrackingConfig();
+      void refreshTasks();
+    }
     rebuildTrayMenu();
   }
 }
@@ -1520,6 +1534,13 @@ function showRequiredUpdatePrompt(version: string | null) {
   });
 }
 
+function runtimeStatusPayload() {
+  return {
+    ...runtimeStatus,
+    privacyNotice,
+  };
+}
+
 function configureAutoStart(enabled = runtimeStatus.enrolled) {
   if (process.platform !== "win32" || !app.isPackaged) {
     return;
@@ -1854,10 +1875,7 @@ app.whenReady().then(async () => {
 
 app.on("window-all-closed", () => undefined);
 
-ipcMain.handle("agent:get-status", () => ({
-  ...runtimeStatus,
-  privacyNotice,
-}));
+ipcMain.handle("agent:get-status", () => runtimeStatusPayload());
 
 ipcMain.on("agent:set-idle-alert-attention", (_, active: boolean) => {
   setIdleAlertAttention(Boolean(active));
@@ -2008,7 +2026,7 @@ ipcMain.handle("agent:set-current-task", async (_, taskId: string | null) => {
     runtimeStatus.connectionStatus = "online";
     runtimeStatus.lastSuccessfulSyncAt = new Date().toISOString();
     rebuildTrayMenu();
-    return { success: true };
+    return { success: true, status: runtimeStatusPayload() };
   } catch (error) {
     runtimeStatus.connectionStatus = "offline";
     rebuildTrayMenu();
@@ -2031,11 +2049,21 @@ ipcMain.handle(
         };
       }
       const task = await createAgentTask(options);
-      await refreshTasks();
+      const runtimeTask = mapTask(task);
+      runtimeStatus.tasks = [
+        runtimeTask,
+        ...runtimeStatus.tasks.filter((item) => item.id !== task.id),
+      ];
+      runtimeStatus.recentTasks = [
+        runtimeTask,
+        ...runtimeStatus.recentTasks.filter((item) => item.id !== task.id),
+      ].slice(0, 3);
+      void refreshTasks();
       rebuildTrayMenu();
       return {
         success: true,
         message: `${task.name} was submitted for manager approval.`,
+        status: runtimeStatusPayload(),
       };
     } catch (error) {
       log.error("Task creation failed", error);
@@ -2060,7 +2088,8 @@ ipcMain.handle(
       }
       await updateAgentTaskStage(taskId, stage, note);
       await refreshTasks();
-      return { success: true };
+      rebuildTrayMenu();
+      return { success: true, status: runtimeStatusPayload() };
     } catch (error) {
       log.error("Task stage update failed", error);
       return {
@@ -2083,7 +2112,7 @@ ipcMain.handle(
       runtimeStatus.connectionStatus = "online";
       runtimeStatus.lastSuccessfulSyncAt = new Date().toISOString();
       rebuildTrayMenu();
-      return { success: true, request };
+      return { success: true, request, status: runtimeStatusPayload() };
     } catch (error) {
       runtimeStatus.connectionStatus = "offline";
       rebuildTrayMenu();

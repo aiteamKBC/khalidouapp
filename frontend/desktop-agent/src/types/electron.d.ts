@@ -165,7 +165,7 @@ declare global {
       }>;
       setCurrentTask: (
         taskId: string | null,
-      ) => Promise<{ success: boolean; message?: string }>;
+      ) => Promise<{ success: boolean; message?: string; status?: AgentStatus }>;
       createTask: (options: {
         name: string;
         projectId?: string;
@@ -174,12 +174,12 @@ declare global {
         startDate?: string;
         deadline?: string;
         estimatedMinutes?: number;
-      }) => Promise<{ success: boolean; message?: string }>;
+      }) => Promise<{ success: boolean; message?: string; status?: AgentStatus }>;
       updateTaskStage: (
         taskId: string,
         stage: "assigned" | "in_progress" | "ready_for_review" | "blocked",
         note?: string,
-      ) => Promise<{ success: boolean; message?: string }>;
+      ) => Promise<{ success: boolean; message?: string; status?: AgentStatus }>;
       onIdleAlert: (callback: (alert: IdleAlert) => void) => () => void;
       onRequiredUpdate: (
         callback: (update: { version: string | null }) => void,
@@ -192,6 +192,7 @@ declare global {
         success: boolean;
         message?: string;
         request?: TimeAdjustmentRequest;
+        status?: AgentStatus;
       }>;
       setIdleAlertAttention: (active: boolean) => void;
       setUpdateAttention: (active: boolean) => void;

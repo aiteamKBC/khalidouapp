@@ -150,7 +150,7 @@ function App() {
       window.khaliduo.onRequiredUpdate?.((update) => {
         void showRequiredUpdate(update.version);
       }) ?? (() => undefined);
-    const interval = window.setInterval(() => void loadStatus(), 1000);
+    const interval = window.setInterval(() => void loadStatus(), 5000);
 
     return () => {
       mounted = false;
@@ -344,7 +344,7 @@ function App() {
       }
       setTimeRequestReason("");
       setTimeRequestSuccess("Request sent.");
-      setStatus(await window.khaliduo.getAgentStatus());
+      if (result.status) setStatus(result.status);
     } finally {
       setIsSubmittingTimeRequest(false);
     }
@@ -364,7 +364,7 @@ function App() {
         setTaskError(result.message ?? "Task selection failed.");
         return;
       }
-      setStatus(await window.khaliduo.getAgentStatus());
+      if (result.status) setStatus(result.status);
     } finally {
       setIsSubmittingTask(false);
     }
@@ -393,7 +393,7 @@ function App() {
       setNewTaskStartDate("");
       setNewTaskDeadline("");
       setTrackingControlMessage(result.message ?? "Task submitted for manager approval.");
-      setStatus(await window.khaliduo.getAgentStatus());
+      if (result.status) setStatus(result.status);
     } finally {
       setIsSubmittingTask(false);
     }
@@ -434,7 +434,9 @@ function App() {
     } else if (stage === "ready_for_review") {
       setTrackingControlMessage("Finished work submitted. Waiting for approval.");
     }
-    setStatus(await window.khaliduo.getAgentStatus());
+    if (result.status) {
+      setStatus(result.status);
+    }
     setIsSubmittingTask(false);
   }
 
