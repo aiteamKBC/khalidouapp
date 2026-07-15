@@ -36,3 +36,9 @@ class Employee(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     company = relationship("Company", back_populates="employees")
     devices = relationship("Device", back_populates="employee")
+    work_profile = relationship(
+        "EmployeeWorkProfile",
+        back_populates="employee",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )

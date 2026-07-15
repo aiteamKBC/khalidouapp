@@ -3,7 +3,7 @@ import { apiFetch } from "./client";
 export type PersonInvitationInput = {
   name: string;
   email: string;
-  kind: "employee" | "team_manager" | "general_admin";
+  kind: "employee" | "team_manager" | "general_admin" | "hr";
   teamIds: string[];
   department?: string;
   timezone?: string;

@@ -7,6 +7,7 @@ from app.models import AdminPermissionOverride, AdminUser
 
 GENERAL_ADMIN = "general_admin"
 TEAM_MANAGER = "team_owner"
+HR_MANAGER = "hr"
 
 PERMISSION_CATALOG: tuple[dict[str, str], ...] = (
     {"key": "dashboard.view", "label": "View dashboard", "group": "General", "description": "Open the administration dashboard."},
@@ -19,6 +20,8 @@ PERMISSION_CATALOG: tuple[dict[str, str], ...] = (
     {"key": "people.view", "label": "View people", "group": "People", "description": "View people inside the assigned data scope."},
     {"key": "people.manage", "label": "Manage people", "group": "People", "description": "Invite and edit people."},
     {"key": "people.archive", "label": "Archive people", "group": "People", "description": "Archive and restore people and their access."},
+    {"key": "payroll.manage", "label": "Manage payroll", "group": "Payroll", "description": "Manage employee work profiles, salary, overtime and deduction rules."},
+    {"key": "payroll.view", "label": "View payroll", "group": "Payroll", "description": "View payroll previews and employee pay rules."},
     {"key": "live_activity.view", "label": "View live activity", "group": "Tracking", "description": "View live status and work sessions."},
     {"key": "screenshots.view", "label": "View screenshots", "group": "Tracking", "description": "View screenshots inside the assigned data scope."},
     {"key": "screenshots.manage", "label": "Manage screenshots", "group": "Tracking", "description": "Delete screenshots and manage screenshot storage."},
@@ -61,6 +64,28 @@ LEGACY_TEAM_CAPABILITIES = frozenset(
 
 ROLE_CAPABILITIES: dict[str, frozenset[str]] = {
     GENERAL_ADMIN: MANAGED_PERMISSION_KEYS | LEGACY_GENERAL_CAPABILITIES,
+    HR_MANAGER: frozenset(
+        {
+            "dashboard.view",
+            "audit.view",
+            "people.view",
+            "people.manage",
+            "people.archive",
+            "teams.view",
+            "live_activity.view",
+            "screenshots.view",
+            "timesheets.view",
+            "time_requests.view",
+            "time_requests.manage",
+            "devices.view",
+            "projects.view",
+            "notifications.view",
+            "reports.view",
+            "reports.export",
+            "payroll.view",
+            "payroll.manage",
+        }
+    ),
     TEAM_MANAGER: frozenset(
         {
             "teams.view",

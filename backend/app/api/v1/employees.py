@@ -19,7 +19,7 @@ from app.api.v1.admin_utils import (
     serialize_activity_event,
     serialize_work_session,
 )
-from app.api.v1.team_auth import apply_employee_scope, ensure_employee_access, ensure_team_access, require_general_admin
+from app.api.v1.team_auth import apply_employee_scope, ensure_employee_access, ensure_team_access
 from app.core.config import settings
 from app.core.exceptions import ApiError
 from app.core.responses import success_response
@@ -43,6 +43,15 @@ from app.services.email import (
 from app.services.employee_invitations import (
     issue_employee_invitation,
     latest_employee_invitations,
+)
+from app.schemas.admin import EmployeeWorkProfileUpdate
+from app.services.permissions import require_capability
+from app.services.work_profiles import (
+    get_or_create_work_profile,
+    payroll_preview,
+    profile_completeness,
+    refresh_profile_completed_at,
+    serialize_work_profile,
 )
 
 router = APIRouter(tags=["employees"])
@@ -260,7 +269,7 @@ def create_employee(
     current_admin: Annotated[AdminUser, Depends(get_current_admin)],
     db: Annotated[Session, Depends(get_db)],
 ):
-    require_general_admin(current_admin)
+    require_capability(current_admin, "people.manage")
     employee = Employee(
         company_id=current_admin.company_id,
         name=payload.name,
@@ -273,6 +282,8 @@ def create_employee(
     )
     db.add(employee)
     db.flush()
+    profile = get_or_create_work_profile(db, employee)
+    refresh_profile_completed_at(profile)
     invitation, raw_invitation_token = issue_employee_invitation(db, employee)
     record_audit_log(
         db,
@@ -296,6 +307,7 @@ def create_employee(
         expires_in_hours=settings.employee_invitation_expire_hours,
     )
     data = serialize_employee(employee, invitation)
+    data["work_profile"] = serialize_work_profile(profile)
     data["email_queued"] = email_queued
     return success_response(data=data)
 
@@ -342,7 +354,124 @@ def serialize_enrollment_code(code: EnrollmentCode, include_plain_code: str | No
 def get_employee(employee_id: UUID, current_admin: Annotated[AdminUser, Depends(get_current_admin)], db: Annotated[Session, Depends(get_db)]):
     employee = get_employee_or_404(db, current_admin, employee_id)
     invitation = latest_employee_invitations(db, [employee.id]).get(employee.id)
-    return success_response(data=serialize_employee(employee, invitation))
+    profile = get_or_create_work_profile(db, employee)
+    data = serialize_employee(employee, invitation)
+    data["work_profile"] = serialize_work_profile(profile)
+    return success_response(data=data)
+
+
+@router.get("/employees/{employee_id}/work-profile")
+def get_employee_work_profile(
+    employee_id: UUID,
+    current_admin: Annotated[AdminUser, Depends(get_current_admin)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    require_capability(current_admin, "payroll.view")
+    employee = get_employee_or_404(db, current_admin, employee_id)
+    profile = get_or_create_work_profile(db, employee)
+    return success_response(data=serialize_work_profile(profile))
+
+
+@router.patch("/employees/{employee_id}/work-profile")
+def update_employee_work_profile(
+    employee_id: UUID,
+    payload: EmployeeWorkProfileUpdate,
+    request: Request,
+    current_admin: Annotated[AdminUser, Depends(get_current_admin)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    require_capability(current_admin, "payroll.manage")
+    employee = get_employee_or_404(db, current_admin, employee_id)
+    profile = get_or_create_work_profile(db, employee)
+    changes = payload.model_dump(exclude_unset=True, mode="json")
+    for key, value in changes.items():
+        setattr(profile, key, value)
+    refresh_profile_completed_at(profile)
+    db.add(profile)
+    record_audit_log(
+        db,
+        current_admin,
+        "updated",
+        "employee_work_profile",
+        entity_id=employee.id,
+        entity_name=employee.email,
+        details=changes,
+        request=request,
+    )
+    db.commit()
+    db.refresh(profile)
+    return success_response(data=serialize_work_profile(profile))
+
+
+@router.post("/employees/{employee_id}/send-invitation")
+def send_employee_invitation(
+    employee_id: UUID,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    current_admin: Annotated[AdminUser, Depends(get_current_admin)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    require_capability(current_admin, "people.manage")
+    employee = get_employee_or_404(db, current_admin, employee_id)
+    profile = get_or_create_work_profile(db, employee)
+    completeness = profile_completeness(profile)
+    if not completeness["complete"]:
+        raise ApiError(
+            "EMPLOYEE_PROFILE_INCOMPLETE",
+            "Complete schedule, breaks, salary, deduction and overtime settings before sending the invitation.",
+            409,
+            details={"missing_fields": completeness["missing_fields"]},
+        )
+    invitation, raw_invitation_token = issue_employee_invitation(db, employee)
+    if employee.status == "inactive":
+        employee.status = "invited"
+        db.add(employee)
+    record_audit_log(
+        db,
+        current_admin,
+        "sent",
+        "employee_invitation",
+        entity_id=employee.id,
+        entity_name=employee.email,
+        request=request,
+    )
+    db.commit()
+    email_queued = enqueue_employee_invitation_email(
+        db,
+        background_tasks,
+        company_id=current_admin.company_id,
+        to=employee.email,
+        name=employee.name,
+        token=raw_invitation_token,
+        expires_in_hours=settings.employee_invitation_expire_hours,
+    )
+    data = serialize_employee(employee, invitation)
+    data["email_queued"] = email_queued
+    return success_response(data=data)
+
+
+@router.get("/employees/{employee_id}/payroll-preview")
+def get_employee_payroll_preview(
+    employee_id: UUID,
+    current_admin: Annotated[AdminUser, Depends(get_current_admin)],
+    db: Annotated[Session, Depends(get_db)],
+    start_date: date | None = None,
+    end_date: date | None = None,
+):
+    require_capability(current_admin, "payroll.view")
+    employee = get_employee_or_404(db, current_admin, employee_id)
+    today = date.today()
+    start_date = start_date or today.replace(day=1)
+    end_date = end_date or today
+    return success_response(
+        data=payroll_preview(
+            db,
+            company_id=current_admin.company_id,
+            employee=employee,
+            start_date=start_date,
+            end_date=end_date,
+        )
+    )
 
 
 @router.post("/employees/{employee_id}/portal-access-key")
@@ -353,7 +482,7 @@ def create_employee_portal_access_key(
     current_admin: Annotated[AdminUser, Depends(get_current_admin)],
     db: Annotated[Session, Depends(get_db)],
 ):
-    require_general_admin(current_admin)
+    require_capability(current_admin, "devices.manage")
     employee = get_employee_or_404(db, current_admin, employee_id)
     plain_key = generate_portal_access_key()
     employee.portal_access_key_hash = hash_password(plain_key)
@@ -387,7 +516,7 @@ def revoke_employee_portal_access_key(
     current_admin: Annotated[AdminUser, Depends(get_current_admin)],
     db: Annotated[Session, Depends(get_db)],
 ):
-    require_general_admin(current_admin)
+    require_capability(current_admin, "devices.manage")
     employee = get_employee_or_404(db, current_admin, employee_id)
     employee.portal_access_key_hash = None
     employee.portal_access_key_hint = None
@@ -411,7 +540,7 @@ def list_employee_enrollment_codes(
     current_admin: Annotated[AdminUser, Depends(get_current_admin)],
     db: Annotated[Session, Depends(get_db)],
 ):
-    require_general_admin(current_admin)
+    require_capability(current_admin, "devices.manage")
     employee = get_employee_or_404(db, current_admin, employee_id)
     codes = db.scalars(
         select(EnrollmentCode)
@@ -433,7 +562,7 @@ def create_employee_enrollment_code(
     current_admin: Annotated[AdminUser, Depends(get_current_admin)],
     db: Annotated[Session, Depends(get_db)],
 ):
-    require_general_admin(current_admin)
+    require_capability(current_admin, "devices.manage")
     employee = get_employee_or_404(db, current_admin, employee_id)
     plain_code = generate_enrollment_code()
     expires_at = datetime.now(UTC) + timedelta(days=payload.expires_in_days)
@@ -475,7 +604,7 @@ def revoke_employee_enrollment_code(
     current_admin: Annotated[AdminUser, Depends(get_current_admin)],
     db: Annotated[Session, Depends(get_db)],
 ):
-    require_general_admin(current_admin)
+    require_capability(current_admin, "devices.manage")
     employee = get_employee_or_404(db, current_admin, employee_id)
     enrollment_code = db.scalar(
         select(EnrollmentCode).where(
@@ -513,7 +642,7 @@ def update_employee(
     current_admin: Annotated[AdminUser, Depends(get_current_admin)],
     db: Annotated[Session, Depends(get_db)],
 ):
-    require_general_admin(current_admin)
+    require_capability(current_admin, "people.manage")
     employee = get_employee_or_404(db, current_admin, employee_id)
     changes = payload.model_dump(exclude_unset=True)
     if (
@@ -547,7 +676,7 @@ def update_employee(
 
 @router.delete("/employees/{employee_id}")
 def delete_employee(employee_id: UUID, request: Request, current_admin: Annotated[AdminUser, Depends(get_current_admin)], db: Annotated[Session, Depends(get_db)]):
-    require_general_admin(current_admin)
+    require_capability(current_admin, "people.archive")
     employee = get_employee_or_404(db, current_admin, employee_id)
     employee.status = "inactive"
     db.add(employee)

@@ -54,6 +54,7 @@ from app.services.task_workflow import (
 from app.services.screenshots import serialize_screenshot
 from app.services.activity_timeline import build_workday_timeline
 from app.services.time_adjustments import serialize_time_adjustment_request
+from app.services.work_profiles import get_or_create_work_profile, payroll_preview, serialize_work_profile
 
 router = APIRouter(prefix="/employee-portal", tags=["employee-portal"])
 
@@ -170,6 +171,34 @@ def summary(
             ),
             "points_rule": "1 hour of approved active work = 1 point",
         }
+    )
+
+
+@router.get("/work-profile")
+def own_work_profile(
+    current_employee: Annotated[Employee, Depends(get_current_employee)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    profile = get_or_create_work_profile(db, current_employee)
+    return success_response(data=serialize_work_profile(profile))
+
+
+@router.get("/payroll-preview")
+def own_payroll_preview(
+    current_employee: Annotated[Employee, Depends(get_current_employee)],
+    db: Annotated[Session, Depends(get_db)],
+    start_date: date | None = None,
+    end_date: date | None = None,
+):
+    today = date.today()
+    return success_response(
+        data=payroll_preview(
+            db,
+            company_id=current_employee.company_id,
+            employee=current_employee,
+            start_date=start_date or today.replace(day=1),
+            end_date=end_date or today,
+        )
     )
 
 

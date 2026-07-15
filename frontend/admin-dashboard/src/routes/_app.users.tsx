@@ -181,7 +181,7 @@ function UsersPage() {
                 <TableCell className="font-medium">{user.name}</TableCell>
                 <TableCell className="text-sm text-muted-foreground">{user.email}</TableCell>
                 <TableCell className="text-sm">
-                  {user.role === "team_owner" ? "Team manager" : "General admin"}
+                  {user.role === "team_owner" ? "Team manager" : user.role === "hr" ? "HR" : "General admin"}
                 </TableCell>
                 <TableCell className="text-sm">
                   {user.assignedTeamIds
@@ -266,6 +266,7 @@ function UsersPage() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="team_owner">Team manager</SelectItem>
+                    <SelectItem value="hr">HR</SelectItem>
                     <SelectItem value="general_admin">General admin</SelectItem>
                   </SelectContent>
                 </Select>
@@ -350,6 +351,7 @@ function UsersPage() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="team_owner">Team manager</SelectItem>
+                    <SelectItem value="hr">HR</SelectItem>
                     <SelectItem value="general_admin">General admin</SelectItem>
                   </SelectContent>
                 </Select>

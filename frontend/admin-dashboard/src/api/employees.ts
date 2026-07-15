@@ -65,6 +65,55 @@ export type EmployeeCreateInput = {
   timezone?: string;
 };
 
+export type WorkProfile = {
+  id: string;
+  employeeId: string;
+  shiftStart?: string | null;
+  shiftEnd?: string | null;
+  workingDays?: number[] | null;
+  weeklyOffDays?: number[] | null;
+  requiredDailyMinutes?: number | null;
+  breakRules?: Array<{ name: string; minutes: number; paid: boolean; start_time?: string | null; end_time?: string | null }> | null;
+  lateGraceMinutes?: number | null;
+  deductionPolicy?: { mode: "review" | "per_minute" | "brackets"; require_admin_review: boolean; brackets: Array<{ after_minutes: number; deduct_minutes: number; note?: string | null }> } | null;
+  overtimeEnabled: boolean;
+  overtimeBasis?: "beyond_daily_required" | "outside_shift" | "either" | null;
+  overtimeRateMultiplier?: number | null;
+  salaryAmount?: number | null;
+  salaryCurrency?: "EGP" | "GBP" | "USD" | "EUR" | "SAR" | "AED" | null;
+  completeness: { complete: boolean; missing_fields: string[]; completed_at?: string | null };
+};
+
+export type WorkProfileInput = {
+  shiftStart?: string;
+  shiftEnd?: string;
+  workingDays?: number[];
+  weeklyOffDays?: number[];
+  requiredDailyMinutes?: number;
+  breakRules?: WorkProfile["breakRules"];
+  lateGraceMinutes?: number;
+  deductionPolicy?: WorkProfile["deductionPolicy"];
+  overtimeEnabled?: boolean;
+  overtimeBasis?: WorkProfile["overtimeBasis"];
+  overtimeRateMultiplier?: number;
+  salaryAmount?: number;
+  salaryCurrency?: WorkProfile["salaryCurrency"];
+};
+
+export type PayrollPreview = {
+  employee_id: string;
+  currency: string;
+  base_salary: number;
+  required_seconds: number;
+  active_seconds: number;
+  idle_seconds: number;
+  overtime_seconds: number;
+  overtime_amount: number;
+  deduction_amount: number;
+  estimated_total: number;
+  notes: string[];
+};
+
 function normalizeEmployeeStatus(value?: string | null): EmployeeStatus {
   if (value === "idle" || value === "locked" || value === "sleeping" || value === "offline")
     return value;
@@ -124,6 +173,27 @@ function mapEnrollmentCode(row: BackendEnrollmentCode): EnrollmentCode {
     usedAt: row.used_at ?? undefined,
     createdAt: row.created_at,
     code: row.code,
+  };
+}
+
+function mapWorkProfile(row: any): WorkProfile {
+  return {
+    id: row.id,
+    employeeId: row.employee_id,
+    shiftStart: row.shift_start,
+    shiftEnd: row.shift_end,
+    workingDays: row.working_days,
+    weeklyOffDays: row.weekly_off_days,
+    requiredDailyMinutes: row.required_daily_minutes,
+    breakRules: row.break_rules,
+    lateGraceMinutes: row.late_grace_minutes,
+    deductionPolicy: row.deduction_policy,
+    overtimeEnabled: row.overtime_enabled,
+    overtimeBasis: row.overtime_basis,
+    overtimeRateMultiplier: row.overtime_rate_multiplier,
+    salaryAmount: row.salary_amount,
+    salaryCurrency: row.salary_currency,
+    completeness: row.completeness,
   };
 }
 
@@ -204,4 +274,39 @@ export async function createPortalAccessKey(employeeId: string): Promise<{
 
 export async function revokePortalAccessKey(employeeId: string): Promise<void> {
   await apiFetch(`/employees/${employeeId}/portal-access-key`, { method: "DELETE" });
+}
+
+export async function getWorkProfile(employeeId: string): Promise<WorkProfile> {
+  return mapWorkProfile(await apiFetch(`/employees/${employeeId}/work-profile`));
+}
+
+export async function updateWorkProfile(employeeId: string, input: WorkProfileInput): Promise<WorkProfile> {
+  return mapWorkProfile(
+    await apiFetch(`/employees/${employeeId}/work-profile`, {
+      method: "PATCH",
+      body: JSON.stringify({
+        shift_start: input.shiftStart,
+        shift_end: input.shiftEnd,
+        working_days: input.workingDays,
+        weekly_off_days: input.weeklyOffDays,
+        required_daily_minutes: input.requiredDailyMinutes,
+        break_rules: input.breakRules,
+        late_grace_minutes: input.lateGraceMinutes,
+        deduction_policy: input.deductionPolicy,
+        overtime_enabled: input.overtimeEnabled,
+        overtime_basis: input.overtimeBasis,
+        overtime_rate_multiplier: input.overtimeRateMultiplier,
+        salary_amount: input.salaryAmount,
+        salary_currency: input.salaryCurrency,
+      }),
+    }),
+  );
+}
+
+export async function sendEmployeeInvitation(employeeId: string): Promise<void> {
+  await apiFetch(`/employees/${employeeId}/send-invitation`, { method: "POST" });
+}
+
+export async function getPayrollPreview(employeeId: string): Promise<PayrollPreview> {
+  return apiFetch(`/employees/${employeeId}/payroll-preview`);
 }

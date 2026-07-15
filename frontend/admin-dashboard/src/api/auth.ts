@@ -13,7 +13,7 @@ type BackendUser = {
   employee_id?: string | null;
   name: string;
   email: string;
-  role: "general_admin" | "team_owner";
+  role: "general_admin" | "team_owner" | "hr";
   permissions?: string[];
   status: "active" | "inactive";
   assigned_team_ids?: string[];

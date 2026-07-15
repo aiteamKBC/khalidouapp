@@ -9,6 +9,8 @@ export const permissions = {
   peopleView: "people.view",
   peopleManage: "people.manage",
   peopleArchive: "people.archive",
+  payrollView: "payroll.view",
+  payrollManage: "payroll.manage",
   liveActivityView: "live_activity.view",
   screenshotsView: "screenshots.view",
   screenshotsManage: "screenshots.manage",
@@ -34,6 +36,7 @@ export function requiredPermissionForPath(pathname: string): PermissionKey | und
   if (pathname.startsWith("/screenshots")) return permissions.screenshotsView;
   if (pathname.startsWith("/timesheets")) return permissions.timesheetsView;
   if (pathname.startsWith("/time-adjustments")) return permissions.timeRequestsView;
+  if (pathname.startsWith("/payroll")) return permissions.payrollView;
   if (pathname.startsWith("/devices")) return permissions.devicesView;
   if (pathname.startsWith("/reports")) return permissions.reportsView;
   if (pathname.startsWith("/settings/tracking")) return permissions.settingsView;

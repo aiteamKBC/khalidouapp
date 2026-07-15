@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, time
 from typing import Literal
 from uuid import UUID
 
@@ -22,6 +22,42 @@ class EmployeeUpdate(BaseModel):
     timezone: str | None = Field(default=None, max_length=80)
     status: str | None = Field(default=None, max_length=50)
     weekly_capacity_minutes: int | None = Field(default=None, ge=60, le=10080)
+
+
+class BreakRule(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    minutes: int = Field(ge=1, le=240)
+    paid: bool = False
+    start_time: time | None = None
+    end_time: time | None = None
+
+
+class DeductionBracket(BaseModel):
+    after_minutes: int = Field(ge=0, le=1440)
+    deduct_minutes: int = Field(ge=0, le=1440)
+    note: str | None = Field(default=None, max_length=255)
+
+
+class DeductionPolicy(BaseModel):
+    mode: Literal["review", "per_minute", "brackets"] = "review"
+    brackets: list[DeductionBracket] = Field(default_factory=list)
+    require_admin_review: bool = True
+
+
+class EmployeeWorkProfileUpdate(BaseModel):
+    shift_start: time | None = None
+    shift_end: time | None = None
+    working_days: list[int] | None = None
+    weekly_off_days: list[int] | None = None
+    required_daily_minutes: int | None = Field(default=None, ge=60, le=1440)
+    break_rules: list[BreakRule] | None = None
+    late_grace_minutes: int | None = Field(default=None, ge=0, le=240)
+    deduction_policy: DeductionPolicy | None = None
+    overtime_enabled: bool | None = None
+    overtime_basis: Literal["beyond_daily_required", "outside_shift", "either"] | None = None
+    overtime_rate_multiplier: float | None = Field(default=None, ge=0, le=10)
+    salary_amount: float | None = Field(default=None, ge=0)
+    salary_currency: Literal["EGP", "GBP", "USD", "EUR", "SAR", "AED"] | None = None
 
 
 class EnrollmentCodeCreate(BaseModel):
@@ -160,7 +196,7 @@ class AdminUserCreate(BaseModel):
     name: str = Field(min_length=1, max_length=255)
     email: EmailStr
     password: str = Field(min_length=8, max_length=255)
-    role: Literal["general_admin", "team_owner"] = "team_owner"
+    role: Literal["general_admin", "team_owner", "hr"] = "team_owner"
     status: str = Field(default="active", max_length=50)
 
 
@@ -168,14 +204,14 @@ class AdminUserUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=255)
     email: EmailStr | None = None
     password: str | None = Field(default=None, min_length=8, max_length=255)
-    role: Literal["general_admin", "team_owner"] | None = None
+    role: Literal["general_admin", "team_owner", "hr"] | None = None
     status: str | None = Field(default=None, max_length=50)
 
 
 class PersonInvitationCreate(BaseModel):
     name: str = Field(min_length=1, max_length=255)
     email: EmailStr
-    kind: Literal["employee", "team_manager", "general_admin"]
+    kind: Literal["employee", "team_manager", "general_admin", "hr"]
     team_ids: list[UUID] = Field(default_factory=list)
     department: str | None = Field(default=None, max_length=255)
     timezone: str = Field(default="Africa/Cairo", max_length=80)
@@ -183,7 +219,7 @@ class PersonInvitationCreate(BaseModel):
 
 
 class AdminAccessUpdate(BaseModel):
-    role: Literal["general_admin", "team_owner"] | None = None
+    role: Literal["general_admin", "team_owner", "hr"] | None = None
     permission_mode: Literal["role", "custom"] | None = None
     data_scope: Literal["company", "assigned_teams"] | None = None
     permission_overrides: dict[str, bool] | None = None

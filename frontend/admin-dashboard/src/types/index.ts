@@ -1,4 +1,4 @@
-export type Role = "general_admin" | "team_owner";
+export type Role = "general_admin" | "team_owner" | "hr";
 export type PermissionMode = "role" | "custom";
 export type DataScope = "company" | "assigned_teams";
 

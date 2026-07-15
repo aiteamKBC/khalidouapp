@@ -78,7 +78,7 @@ export const Route = createFileRoute("/_app/people")({
 // A person is either a tracked Employee (no dashboard login — uses a desktop
 // enrollment code + optional portal key) or an admin User (dashboard login with
 // a password + role). This hub is the single place to create and manage both.
-type PersonKind = "employee" | "team_owner" | "general_admin";
+type PersonKind = "employee" | "team_owner" | "general_admin" | "hr";
 type TypeFilter = "all" | "employees" | "admins";
 type StatusFilter = "all" | "active" | "invited" | "archived";
 type AccessPreset = Role | "custom";
@@ -226,11 +226,13 @@ function PeopleDirectory({ embedded = false }: { embedded?: boolean }) {
       name: user.name,
       email: user.email,
       roleLabel:
-        user.role === "general_admin"
+        user.role === "hr"
+          ? "HR"
+          : user.role === "general_admin"
           ? user.teamLeadTeamIds.length
             ? "General admin · Team lead"
             : "General admin"
-          : "Team lead",
+            : "Team lead",
       detail:
         user.dataScope === "company"
           ? "All teams"
@@ -348,7 +350,7 @@ function PeopleDirectory({ embedded = false }: { embedded?: boolean }) {
     }
     setEditRole(preset);
     setEditPermissionMode("role");
-    setEditDataScope(preset === "general_admin" ? "company" : "assigned_teams");
+    setEditDataScope(preset === "general_admin" || preset === "hr" ? "company" : "assigned_teams");
     setEditPermissions(catalog.data?.rolePresets[preset] ?? []);
   }
 
@@ -570,6 +572,7 @@ function PeopleDirectory({ embedded = false }: { embedded?: boolean }) {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="team_owner">Team manager</SelectItem>
+                    <SelectItem value="hr">HR</SelectItem>
                     <SelectItem value="general_admin">General admin</SelectItem>
                   </SelectContent>
                 </Select>
@@ -747,6 +750,13 @@ function AddPersonWizard({
               icon={ShieldCheck}
               title="General admin"
               subtitle="Company-wide admin with access to every team and permission to review a team manager's own task."
+            />
+            <TypeOption
+              active={kind === "hr"}
+              onClick={() => setKind("hr")}
+              icon={KeyRound}
+              title="HR"
+              subtitle="Manages employee profiles, schedules, payroll, deductions, overtime and invitations."
             />
             <div className="flex justify-end gap-2 pt-1">
               <Button variant="outline" onClick={close}>
@@ -1044,5 +1054,6 @@ function TeamAccessSelector({
 function kindLabel(kind: PersonKind): string {
   if (kind === "employee") return "Employee";
   if (kind === "team_owner") return "Team manager";
+  if (kind === "hr") return "HR";
   return "General admin";
 }

@@ -270,7 +270,7 @@ def create_user(
         role=payload.role,
         status=payload.status,
         permission_mode="role",
-        data_scope="company" if payload.role == "general_admin" else "assigned_teams",
+        data_scope="company" if payload.role in {"general_admin", "hr"} else "assigned_teams",
     )
     if payload.role == "team_owner":
         employee = team_owner_employee_identity(
@@ -353,6 +353,8 @@ def update_user(
         admin.data_scope = "assigned_teams"
         employee = ensure_tracked_employee(db, admin)
         employee.portal_password_hash = admin.password_hash
+    elif admin.role == "hr":
+        admin.data_scope = "company"
     elif new_password and admin.employee_id:
         sync_linked_employee_password(admin)
     db.add(admin)

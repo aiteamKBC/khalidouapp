@@ -24,6 +24,7 @@ import { Route as AppReportsRouteImport } from './routes/_app.reports'
 import { Route as AppProjectsRouteImport } from './routes/_app.projects'
 import { Route as AppProfileRouteImport } from './routes/_app.profile'
 import { Route as AppPeopleRouteImport } from './routes/_app.people'
+import { Route as AppPayrollRouteImport } from './routes/_app.payroll'
 import { Route as AppNotificationsRouteImport } from './routes/_app.notifications'
 import { Route as AppLiveActivityRouteImport } from './routes/_app.live-activity'
 import { Route as AppEmployeesRouteImport } from './routes/_app.employees'
@@ -110,6 +111,11 @@ const AppPeopleRoute = AppPeopleRouteImport.update({
   path: '/people',
   getParentRoute: () => AppRoute,
 } as any)
+const AppPayrollRoute = AppPayrollRouteImport.update({
+  id: '/payroll',
+  path: '/payroll',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppNotificationsRoute = AppNotificationsRouteImport.update({
   id: '/notifications',
   path: '/notifications',
@@ -178,6 +184,7 @@ export interface FileRoutesByFullPath {
   '/employees': typeof AppEmployeesRouteWithChildren
   '/live-activity': typeof AppLiveActivityRoute
   '/notifications': typeof AppNotificationsRoute
+  '/payroll': typeof AppPayrollRoute
   '/people': typeof AppPeopleRoute
   '/profile': typeof AppProfileRoute
   '/projects': typeof AppProjectsRouteWithChildren
@@ -205,6 +212,7 @@ export interface FileRoutesByTo {
   '/employees': typeof AppEmployeesRouteWithChildren
   '/live-activity': typeof AppLiveActivityRoute
   '/notifications': typeof AppNotificationsRoute
+  '/payroll': typeof AppPayrollRoute
   '/people': typeof AppPeopleRoute
   '/profile': typeof AppProfileRoute
   '/projects': typeof AppProjectsRouteWithChildren
@@ -234,6 +242,7 @@ export interface FileRoutesById {
   '/_app/employees': typeof AppEmployeesRouteWithChildren
   '/_app/live-activity': typeof AppLiveActivityRoute
   '/_app/notifications': typeof AppNotificationsRoute
+  '/_app/payroll': typeof AppPayrollRoute
   '/_app/people': typeof AppPeopleRoute
   '/_app/profile': typeof AppProfileRoute
   '/_app/projects': typeof AppProjectsRouteWithChildren
@@ -263,6 +272,7 @@ export interface FileRouteTypes {
     | '/employees'
     | '/live-activity'
     | '/notifications'
+    | '/payroll'
     | '/people'
     | '/profile'
     | '/projects'
@@ -290,6 +300,7 @@ export interface FileRouteTypes {
     | '/employees'
     | '/live-activity'
     | '/notifications'
+    | '/payroll'
     | '/people'
     | '/profile'
     | '/projects'
@@ -318,6 +329,7 @@ export interface FileRouteTypes {
     | '/_app/employees'
     | '/_app/live-activity'
     | '/_app/notifications'
+    | '/_app/payroll'
     | '/_app/people'
     | '/_app/profile'
     | '/_app/projects'
@@ -448,6 +460,13 @@ declare module '@tanstack/react-router' {
       path: '/people'
       fullPath: '/people'
       preLoaderRoute: typeof AppPeopleRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/payroll': {
+      id: '/_app/payroll'
+      path: '/payroll'
+      fullPath: '/payroll'
+      preLoaderRoute: typeof AppPayrollRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/notifications': {
@@ -585,6 +604,7 @@ interface AppRouteChildren {
   AppEmployeesRoute: typeof AppEmployeesRouteWithChildren
   AppLiveActivityRoute: typeof AppLiveActivityRoute
   AppNotificationsRoute: typeof AppNotificationsRoute
+  AppPayrollRoute: typeof AppPayrollRoute
   AppPeopleRoute: typeof AppPeopleRoute
   AppProfileRoute: typeof AppProfileRoute
   AppProjectsRoute: typeof AppProjectsRouteWithChildren
@@ -604,6 +624,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppEmployeesRoute: AppEmployeesRouteWithChildren,
   AppLiveActivityRoute: AppLiveActivityRoute,
   AppNotificationsRoute: AppNotificationsRoute,
+  AppPayrollRoute: AppPayrollRoute,
   AppPeopleRoute: AppPeopleRoute,
   AppProfileRoute: AppProfileRoute,
   AppProjectsRoute: AppProjectsRouteWithChildren,

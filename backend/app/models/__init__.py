@@ -8,6 +8,7 @@ from app.models.company import Company
 from app.models.device import Device
 from app.models.device_token import DeviceToken
 from app.models.employee import Employee
+from app.models.employee_work_profile import EmployeeWorkProfile
 from app.models.employee_invitation import EmployeeInvitation
 from app.models.email_delivery import EmailDelivery
 from app.models.enrollment_code import EnrollmentCode
@@ -40,6 +41,7 @@ __all__ = [
     "Device",
     "DeviceToken",
     "Employee",
+    "EmployeeWorkProfile",
     "EmployeeInvitation",
     "EmailDelivery",
     "EnrollmentCode",

@@ -7,6 +7,7 @@ import {
   Camera,
   Clock,
   ClockPlus,
+  Banknote,
   MonitorSmartphone,
   BarChart3,
   Settings,
@@ -65,6 +66,12 @@ const items: NavItem[] = [
     label: "Time Requests",
     icon: ClockPlus,
     permission: permissions.timeRequestsView,
+  },
+  {
+    to: "/payroll",
+    label: "Payroll",
+    icon: Banknote,
+    permission: permissions.payrollView,
   },
   {
     to: "/devices",
@@ -137,7 +144,7 @@ export function AppSidebar({ onNavigate }: { onNavigate?: () => void }) {
           <div className="mb-2 rounded-md px-3 py-2 text-xs text-sidebar-foreground/80">
             <div className="font-medium text-sidebar-foreground truncate">{user.name}</div>
             <div className="truncate">
-              {user.role === "team_owner" ? "Team lead" : "General admin"}
+              {user.role === "team_owner" ? "Team lead" : user.role === "hr" ? "HR" : "General admin"}
               {user.role === "general_admin" && user.teamLeadTeamIds.length > 0
                 ? " · Team lead"
                 : ""}

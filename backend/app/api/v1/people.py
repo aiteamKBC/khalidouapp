@@ -31,6 +31,7 @@ from app.services.employee_invitations import (
     serialize_employee_invitation,
 )
 from app.services.permissions import is_full_admin, require_capability
+from app.services.work_profiles import get_or_create_work_profile, refresh_profile_completed_at
 from app.services.person_access import (
     archive_linked_person,
     person_state,
@@ -85,7 +86,7 @@ def invite_person(
     )
     if payload.kind == "employee" and employee is not None:
         raise ApiError("EMPLOYEE_EMAIL_EXISTS", "An employee with this email already exists.", 409)
-    if payload.kind in {"team_manager", "general_admin"} and admin is not None:
+    if payload.kind in {"team_manager", "general_admin", "hr"} and admin is not None:
         raise ApiError("ADMIN_EMAIL_EXISTS", "An admin user with this email already exists.", 409)
 
     temporary_password: str | None = None
@@ -105,16 +106,17 @@ def invite_person(
         db.add(employee)
         db.flush()
 
-    if payload.kind in {"team_manager", "general_admin"}:
+    if payload.kind in {"team_manager", "general_admin", "hr"}:
         temporary_password = generate_temporary_password()
         password_hash = hash_password(temporary_password)
+        admin_role = "team_owner" if payload.kind == "team_manager" else payload.kind
         admin = AdminUser(
             company_id=current_admin.company_id,
             employee_id=employee.id if payload.kind == "team_manager" and employee else None,
             name=payload.name.strip(),
             email=email,
             password_hash=password_hash,
-            role="team_owner" if payload.kind == "team_manager" else "general_admin",
+            role=admin_role,
             status="active",
             permission_mode="role",
             data_scope="assigned_teams" if payload.kind == "team_manager" else "company",
@@ -142,6 +144,8 @@ def invite_person(
             db.add(TeamOwner(team_id=team.id, admin_user_id=admin.id))
 
     if payload.kind == "employee" and employee is not None:
+        profile = get_or_create_work_profile(db, employee)
+        refresh_profile_completed_at(profile)
         employee_invitation, raw_invitation_token = issue_employee_invitation(db, employee)
 
     record_audit_log(
