@@ -112,6 +112,9 @@ function App() {
   const [recentScreenshots, setRecentScreenshots] = useState<RecentScreenshot[] | null>(null);
   const [isLoadingScreenshots, setIsLoadingScreenshots] = useState(false);
   const [screenshotError, setScreenshotError] = useState<string | null>(null);
+  const [theme, setTheme] = useState<"light" | "dark">(() =>
+    window.localStorage.getItem("khaliduo-theme") === "dark" ? "dark" : "light",
+  );
   const shownIdleAlertId = useRef<string | null>(null);
   const screenshotsLoadedForEnrollment = useRef(false);
   const isDesktopRuntime = Boolean(window.khaliduo);
@@ -155,6 +158,10 @@ function App() {
       setProjectFilterId(status.selectedTask.projectId);
     }
   }, [status.selectedTask?.projectId]);
+
+  useEffect(() => {
+    window.localStorage.setItem("khaliduo-theme", theme);
+  }, [theme]);
 
   const statusLabel = useMemo(
     () => status.trackingStatus.charAt(0).toUpperCase() + status.trackingStatus.slice(1),
@@ -543,7 +550,7 @@ function App() {
   }
 
   return (
-    <main className="k-app" data-tone={timerTone}>
+    <main className="k-app" data-tone={timerTone} data-theme={theme}>
       <header className="k-titlebar">
         <div className="k-brand">
           <img src="./khaliduo-icon.png" alt="Khaliduo" />
@@ -560,6 +567,24 @@ function App() {
           title="Refresh status"
         >
           Synced
+        </button>
+        {status.enrolled && (
+          <button
+            type="button"
+            className="k-title-button"
+            onClick={() => void handleOpenDashboard()}
+            disabled={isOpeningDashboard}
+          >
+            Dashboard
+          </button>
+        )}
+        <button
+          type="button"
+          className="k-theme-button"
+          onClick={() => setTheme((current) => (current === "dark" ? "light" : "dark"))}
+          title={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
+        >
+          {theme === "dark" ? "Light" : "Dark"}
         </button>
         <span className="k-window-controls">- □ ×</span>
       </header>
@@ -597,6 +622,7 @@ function App() {
             activeView={activeView}
             status={status}
             onViewChange={setActiveView}
+            onOpenDashboard={() => void handleOpenDashboard()}
             onLogout={() => void handleLogout()}
             isLoggingOut={isLoggingOut}
           />
@@ -775,12 +801,14 @@ function Sidebar({
   activeView,
   status,
   onViewChange,
+  onOpenDashboard,
   onLogout,
   isLoggingOut,
 }: {
   activeView: "home" | "tasks" | "more";
   status: AgentStatus;
   onViewChange: (view: "home" | "tasks" | "more") => void;
+  onOpenDashboard: () => void;
   onLogout: () => void;
   isLoggingOut: boolean;
 }) {
@@ -797,9 +825,8 @@ function Sidebar({
         <button className={activeView === "more" ? "active" : ""} onClick={() => onViewChange("more")}>
           More
         </button>
-        <span className="k-nav-title">Tracking</span>
-        <button onClick={() => onViewChange("more")}>Manual time</button>
-        <button onClick={() => onViewChange("home")}>Screenshots</button>
+        <span className="k-nav-title">Online</span>
+        <button onClick={onOpenDashboard}>Dashboard</button>
       </nav>
       <div className="k-user">
         <span className="k-avatar">
@@ -1047,7 +1074,10 @@ function Timeline({ timeline }: { timeline: WorkdayTimeline }) {
       <div className="k-timeline">
         {timeline.intervals.slice(-6).map((interval, index) => (
           <div key={`${interval.session_id}-${interval.started_at}-${index}`} className={`k-line-${interval.type}`}>
-            <span>{formatClock(interval.started_at, timeline.timezone)}</span>
+            <span>
+              {formatClock(interval.started_at, timeline.timezone)} -{" "}
+              {interval.is_current ? "Now" : formatClock(interval.ended_at, timeline.timezone)}
+            </span>
             <b>{labels[interval.type]}</b>
             <small>
               {formatDuration(
@@ -1113,6 +1143,55 @@ function TasksView({
   return (
     <section className="k-page">
       <div className="k-panel">
+        <h2>Create task request</h2>
+        <div className="k-form-grid">
+          <label className="wide">
+            Task name
+            <input value={newTaskName} maxLength={255} placeholder="What are you working on?" disabled={isSubmittingTask} onChange={(event) => onNewTaskNameChange(event.target.value)} />
+          </label>
+          <label className="wide">
+            Description
+            <input value={newTaskDescription} maxLength={1000} placeholder="Expected outcome or useful context" disabled={isSubmittingTask} onChange={(event) => onNewTaskDescriptionChange(event.target.value)} />
+          </label>
+          <label>
+            Team
+            <select value={newTaskTeamId} disabled={isSubmittingTask} onChange={(event) => onNewTaskTeamChange(event.target.value)}>
+              <option value="">Select team</option>
+              {taskTeams.map(([teamId, teamName]) => (
+                <option key={teamId} value={teamId}>
+                  {teamName}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Project
+            <select value={newTaskProjectId} disabled={isSubmittingTask || !newTaskTeamId} onChange={(event) => onNewTaskProjectChange(event.target.value)}>
+              <option value="">Select project</option>
+              {status.projects
+                .filter((project) => project.team_id === newTaskTeamId)
+                .map((project) => (
+                  <option key={project.id} value={project.id}>
+                    {project.name}
+                  </option>
+                ))}
+            </select>
+          </label>
+          <label>
+            Start date
+            <input type="date" value={newTaskStartDate} disabled={isSubmittingTask} onChange={(event) => onNewTaskStartDateChange(event.target.value)} />
+          </label>
+          <label>
+            Deadline
+            <input type="date" min={newTaskStartDate || undefined} value={newTaskDeadline} disabled={isSubmittingTask} onChange={(event) => onNewTaskDeadlineChange(event.target.value)} />
+          </label>
+        </div>
+        <button className="k-primary" disabled={!newTaskName.trim() || isSubmittingTask} onClick={onCreateTask}>
+          {isSubmittingTask ? "Submitting..." : "Submit request"}
+        </button>
+      </div>
+
+      <div className="k-panel">
         <h2>Current task</h2>
         <div className="k-form-grid">
           <label>
@@ -1161,55 +1240,6 @@ function TasksView({
         </button>
         {trackingControlMessage && <p className="k-success">{trackingControlMessage}</p>}
         {taskError && <p className="k-error">{taskError}</p>}
-      </div>
-
-      <div className="k-panel">
-        <h2>Create task request</h2>
-        <div className="k-form-grid">
-          <label className="wide">
-            Task name
-            <input value={newTaskName} maxLength={255} placeholder="What are you working on?" disabled={isSubmittingTask} onChange={(event) => onNewTaskNameChange(event.target.value)} />
-          </label>
-          <label className="wide">
-            Description
-            <input value={newTaskDescription} maxLength={1000} placeholder="Expected outcome or useful context" disabled={isSubmittingTask} onChange={(event) => onNewTaskDescriptionChange(event.target.value)} />
-          </label>
-          <label>
-            Team
-            <select value={newTaskTeamId} disabled={isSubmittingTask} onChange={(event) => onNewTaskTeamChange(event.target.value)}>
-              <option value="">Select team</option>
-              {taskTeams.map(([teamId, teamName]) => (
-                <option key={teamId} value={teamId}>
-                  {teamName}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Project
-            <select value={newTaskProjectId} disabled={isSubmittingTask || !newTaskTeamId} onChange={(event) => onNewTaskProjectChange(event.target.value)}>
-              <option value="">Select project</option>
-              {status.projects
-                .filter((project) => project.team_id === newTaskTeamId)
-                .map((project) => (
-                  <option key={project.id} value={project.id}>
-                    {project.name}
-                  </option>
-                ))}
-            </select>
-          </label>
-          <label>
-            Start date
-            <input type="date" value={newTaskStartDate} disabled={isSubmittingTask} onChange={(event) => onNewTaskStartDateChange(event.target.value)} />
-          </label>
-          <label>
-            Deadline
-            <input type="date" min={newTaskStartDate || undefined} value={newTaskDeadline} disabled={isSubmittingTask} onChange={(event) => onNewTaskDeadlineChange(event.target.value)} />
-          </label>
-        </div>
-        <button className="k-primary" disabled={!newTaskName.trim() || isSubmittingTask} onClick={onCreateTask}>
-          {isSubmittingTask ? "Submitting..." : "Submit request"}
-        </button>
       </div>
     </section>
   );

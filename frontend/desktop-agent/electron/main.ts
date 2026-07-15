@@ -1325,10 +1325,10 @@ async function syncNow() {
 
 async function createMainWindow() {
   mainWindow = new BrowserWindow({
-    width: 520,
-    height: 680,
-    minWidth: 420,
-    minHeight: 560,
+    width: 1100,
+    height: 720,
+    minWidth: 980,
+    minHeight: 640,
     show: false,
     autoHideMenuBar: true,
     title: "Khaliduo Status",
