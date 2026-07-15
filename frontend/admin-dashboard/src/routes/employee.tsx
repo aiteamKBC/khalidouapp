@@ -230,6 +230,7 @@ function EmployeeLogin({
 
 function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () => void }) {
   const queryClient = useQueryClient();
+  const [screenshotDay, setScreenshotDay] = useState(() => new Date().toISOString().slice(0, 10));
   const me = useQuery({
     queryKey: ["employee-portal", "me"],
     queryFn: () => employeeMe(token),
@@ -249,8 +250,8 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
     queryFn: () => employeeProjects(token),
   });
   const screenshots = useQuery({
-    queryKey: ["employee-portal", "screenshots"],
-    queryFn: () => employeeScreenshots(token),
+    queryKey: ["employee-portal", "screenshots", screenshotDay],
+    queryFn: () => employeeScreenshots(token, screenshotDay),
   });
   useEffect(() => {
     if (new URLSearchParams(window.location.search).get("view") !== "screenshots") return;
@@ -404,7 +405,7 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
             Your time, screenshots, tasks, manual requests and points.
           </p>
         </section>
-        <Card id="my-screenshots">
+        <Card>
           <CardHeader>
             <CardTitle>My profile</CardTitle>
           </CardHeader>
@@ -858,12 +859,25 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
             ))}
           </CardContent>
         </Card>
-        <Card>
+        <Card id="my-screenshots">
           <CardHeader>
-            <CardTitle>My screenshots</CardTitle>
-            <p className="text-sm text-muted-foreground">
-              Only you and authorized administrators can view these images.
-            </p>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+              <div>
+                <CardTitle>My screenshots</CardTitle>
+                <p className="text-sm text-muted-foreground">
+                  Only screenshots from the selected day are loaded.
+                </p>
+              </div>
+              <div className="w-full sm:w-48">
+                <Label htmlFor="employee-screenshot-day">Day</Label>
+                <Input
+                  id="employee-screenshot-day"
+                  type="date"
+                  value={screenshotDay}
+                  onChange={(event) => setScreenshotDay(event.target.value)}
+                />
+              </div>
+            </div>
           </CardHeader>
           <CardContent>
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -880,8 +894,11 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
                 </figure>
               ))}
             </div>
+            {screenshots.isLoading && (
+              <p className="text-sm text-muted-foreground">Loading screenshots for this day...</p>
+            )}
             {screenshots.data?.length === 0 && (
-              <p className="text-sm text-muted-foreground">No screenshots yet.</p>
+              <p className="text-sm text-muted-foreground">No screenshots for this day.</p>
             )}
           </CardContent>
         </Card>

@@ -3,6 +3,7 @@ from datetime import UTC, date, datetime, timedelta
 from typing import Annotated
 from uuid import UUID, uuid4
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, File, Query, UploadFile
 from fastapi.responses import FileResponse
@@ -59,6 +60,16 @@ from app.services.work_profiles import get_or_create_work_profile, payroll_previ
 router = APIRouter(prefix="/employee-portal", tags=["employee-portal"])
 
 
+def employee_day_bounds(target_day: date, timezone_name: str | None) -> tuple[datetime, datetime]:
+    try:
+        tz = ZoneInfo(timezone_name or "UTC")
+    except ZoneInfoNotFoundError:
+        tz = ZoneInfo("UTC")
+    start_at = datetime.combine(target_day, datetime.min.time(), tzinfo=tz).astimezone(UTC)
+    end_at = datetime.combine(target_day, datetime.max.time(), tzinfo=tz).astimezone(UTC)
+    return start_at, end_at
+
+
 def participant_task(db: Session, employee: Employee, task_id: UUID) -> tuple[Task, Project, Team]:
     row = db.execute(
         select(Task, Project, Team)
@@ -76,6 +87,36 @@ def participant_task(db: Session, employee: Employee, task_id: UUID) -> tuple[Ta
     if row is None:
         raise ApiError("TASK_NOT_FOUND", "Your assigned task was not found.", 404)
     return row
+
+
+def _is_profile_workday(profile, target_day: date) -> bool:
+    working_days = profile.working_days or [0, 1, 2, 3, 4]
+    off_days = profile.weekly_off_days or []
+    weekday = target_day.weekday()
+    return weekday in working_days and weekday not in off_days
+
+
+def _idle_limit_for_day(profile, target_day: date, active_seconds: int) -> int:
+    if not _is_profile_workday(profile, target_day):
+        return 0
+    required_seconds = int(profile.required_daily_minutes or 480) * 60
+    return max(0, required_seconds - active_seconds)
+
+
+def apply_work_profile_idle_rules(rows: list[dict], profile) -> list[dict]:
+    adjusted_rows = []
+    for row in rows:
+        adjusted = dict(row)
+        try:
+            row_day = date.fromisoformat(str(adjusted["date"]))
+        except (KeyError, ValueError):
+            adjusted_rows.append(adjusted)
+            continue
+        active_seconds = int(adjusted.get("active_seconds", 0))
+        idle_seconds = int(adjusted.get("idle_seconds", 0))
+        adjusted["idle_seconds"] = min(idle_seconds, _idle_limit_for_day(profile, row_day, active_seconds))
+        adjusted_rows.append(adjusted)
+    return adjusted_rows
 
 
 def period_summary(rows: list[dict], manual_status_seconds: dict[str, int] | None = None) -> dict:
@@ -128,7 +169,11 @@ def summary(
     week_start = today - timedelta(days=today.weekday())
     month_start = today.replace(day=1)
     month_end = today.replace(day=monthrange(today.year, today.month)[1])
-    daily_rows = timesheet_rows(db, current_employee.company_id, today, today, current_employee.id)
+    profile = get_or_create_work_profile(db, current_employee)
+    daily_rows = apply_work_profile_idle_rules(
+        timesheet_rows(db, current_employee.company_id, today, today, current_employee.id),
+        profile,
+    )
     weekly_rows = timesheet_rows(
         db,
         current_employee.company_id,
@@ -136,6 +181,7 @@ def summary(
         week_start + timedelta(days=6),
         current_employee.id,
     )
+    weekly_rows = apply_work_profile_idle_rules(weekly_rows, profile)
     monthly_rows = timesheet_rows(
         db,
         current_employee.company_id,
@@ -143,6 +189,7 @@ def summary(
         month_end,
         current_employee.id,
     )
+    monthly_rows = apply_work_profile_idle_rules(monthly_rows, profile)
     return success_response(
         data={
             "today": period_summary(
@@ -659,13 +706,18 @@ def read_all_notifications(
 def screenshots(
     current_employee: Annotated[Employee, Depends(get_current_employee)],
     db: Annotated[Session, Depends(get_db)],
+    day: date | None = None,
     page_size: int = Query(default=50, ge=1, le=100),
 ):
+    target_day = day or date.today()
+    start_at, end_at = employee_day_bounds(target_day, current_employee.timezone)
     rows = db.scalars(
         select(Screenshot)
         .where(
             Screenshot.company_id == current_employee.company_id,
             Screenshot.employee_id == current_employee.id,
+            Screenshot.captured_at >= start_at,
+            Screenshot.captured_at <= end_at,
             Screenshot.deleted_at.is_(None),
         )
         .order_by(Screenshot.captured_at.desc())

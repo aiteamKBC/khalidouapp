@@ -1,4 +1,4 @@
-import { apiFetch, apiUrl } from "./client";
+import { apiFetch, apiUrl, withQuery } from "./client";
 import { mapWorkdayTimeline, type BackendWorkdayTimeline } from "./workday";
 import type { WorkdayTimeline } from "@/types";
 
@@ -297,10 +297,10 @@ export const createEmployeeTimeRequest = (
     token,
   );
 
-export async function employeeScreenshots(token: string): Promise<PortalScreenshot[]> {
+export async function employeeScreenshots(token: string, day?: string): Promise<PortalScreenshot[]> {
   const rows = await apiFetch<
     Array<{ id: string; captured_at: string; temporary_url: string; tracked_seconds: number }>
-  >("/employee-portal/screenshots", {}, token);
+  >(withQuery("/employee-portal/screenshots", { day }), {}, token);
   return Promise.all(
     rows.map(async (row) => {
       const response = await fetch(apiUrl(row.temporary_url), {
