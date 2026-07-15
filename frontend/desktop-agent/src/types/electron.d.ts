@@ -31,6 +31,10 @@ export type AgentStatus = {
     week: AgentPeriodSummary;
     month: AgentPeriodSummary;
   } | null;
+  dailyTargetSeconds: number;
+  dailyTargetProgressPercent: number;
+  activityPercent: number;
+  recentTasks: AgentTask[];
   todayTimeline: WorkdayTimeline | null;
   lastIdleAlert: IdleAlert | null;
   updateStatus:

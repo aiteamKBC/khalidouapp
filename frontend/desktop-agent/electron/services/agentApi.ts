@@ -147,6 +147,9 @@ export type AgentWorkdayTimeline = {
 
 export type AgentSummary = {
   employee: { id: string; name: string; avatar_url: string | null };
+  daily_target_seconds: number;
+  daily_target_progress_percent: number;
+  activity_percent: number;
   today: AgentPeriodSummary;
   today_timeline: AgentWorkdayTimeline;
   week: AgentPeriodSummary;
@@ -284,6 +287,17 @@ export async function listAgentTasks() {
     `${getApiBaseUrl()}/agent/tasks`,
     {
       headers: getAuthHeaders(),
+    },
+  );
+  return response.data.data;
+}
+
+export async function listAgentRecentTasks(limit = 3) {
+  const response = await axios.get<ApiSuccess<AgentTask[]>>(
+    `${getApiBaseUrl()}/agent/tasks/recent`,
+    {
+      headers: getAuthHeaders(),
+      params: { limit: Math.max(1, Math.min(8, limit)) },
     },
   );
   return response.data.data;

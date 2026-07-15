@@ -24,6 +24,10 @@ const fallbackStatus: AgentStatus = {
   selectedTask: null,
   timeAdjustmentRequests: [],
   timeSummary: null,
+  dailyTargetSeconds: 8 * 60 * 60,
+  dailyTargetProgressPercent: 0,
+  activityPercent: 0,
+  recentTasks: [],
   todayTimeline: null,
   lastIdleAlert: null,
   updateStatus: "idle",
@@ -217,6 +221,10 @@ function App() {
   const countedPeriodSeconds = timeBreakdown.segments
     .filter((segment) => segment.counted)
     .reduce((total, segment) => total + segment.seconds, 0);
+  const targetProgress = Math.max(
+    0,
+    Math.min(100, status.dailyTargetProgressPercent),
+  );
 
   async function refreshStatusAfterEnrollment() {
     const nextStatus = await window.khaliduo?.getAgentStatus();
@@ -669,11 +677,12 @@ function App() {
       {status.enrolled && (
         <>
           <section className="purpose-banner">
-            <span>Your work, clearly recorded</span>
-            <strong>Proof of your effort, focus and dedication.</strong>
+            <span>{status.trackingPaused ? "Paused" : "Running"}</span>
+            <strong>{formatDuration(countedPeriodSeconds)}</strong>
             <p>
-              Khaliduo keeps a transparent record of work time, activity status
-              and scheduled screenshots.
+              {status.selectedTask
+                ? `${status.selectedTask.name} / ${status.selectedTask.teamName}`
+                : "Choose a task to make today's record easier to review."}
             </p>
           </section>
 
@@ -700,18 +709,12 @@ function App() {
       {(!status.enrolled || activeView === "home") && (
         <div className="app-view app-view-home">
           {status.enrolled && (
-            <section className="work-focus" aria-label="Current work summary">
+            <section className="work-focus timer-board" aria-label="Current work summary">
               <div className="work-focus-time">
-                <span>
-                  {summaryPeriod === "today"
-                    ? "Counted today"
-                    : summaryPeriod === "week"
-                      ? "Counted this week"
-                      : "Counted this month"}
-                </span>
+                <span>Current session</span>
                 <strong>{formatDuration(countedPeriodSeconds)}</strong>
                 <small>
-                  {status.trackingPaused ? "Currently paused" : "Counting now"}
+                  {status.trackingPaused ? "Paused" : `${statusLabel} now`}
                 </small>
               </div>
               <div className="work-focus-task">
@@ -747,6 +750,18 @@ function App() {
                 >
                   Manage tasks
                 </button>
+              </div>
+              <div className="daily-target">
+                <div>
+                  <span>Daily target</span>
+                  <strong>
+                    {formatDuration(status.workedTodaySeconds)} / {formatDuration(status.dailyTargetSeconds)}
+                  </strong>
+                </div>
+                <b>{targetProgress}%</b>
+                <div className="target-bar">
+                  <i style={{ width: `${targetProgress}%` }} />
+                </div>
               </div>
             </section>
           )}
@@ -834,6 +849,49 @@ function App() {
       )}
       {dashboardError && (
         <p className="form-error dashboard-error">{dashboardError}</p>
+      )}
+
+      {status.enrolled && (
+        <section className="pulse-grid" aria-label="Work pulse">
+          <div>
+            <span>Today tracked</span>
+            <strong>{formatDuration(status.workedTodaySeconds)}</strong>
+          </div>
+          <div>
+            <span>Activity</span>
+            <strong>{status.activityPercent}%</strong>
+          </div>
+          <div>
+            <span>Idle time</span>
+            <strong>{formatDuration(status.idleSeconds)}</strong>
+          </div>
+        </section>
+      )}
+
+      {status.enrolled && status.recentTasks.length > 0 && (
+        <section className="recent-tasks-panel">
+          <div className="panel-heading">
+            <strong>Recent tasks</strong>
+            <button type="button" onClick={() => setActiveView("tasks")}>
+              View all
+            </button>
+          </div>
+          <div className="recent-task-list">
+            {status.recentTasks.map((task) => (
+              <button
+                key={task.id}
+                type="button"
+                className={status.selectedTask?.id === task.id ? "active" : ""}
+                disabled={isSubmittingTask}
+                onClick={() => void handleTaskChange(task.id)}
+              >
+                <span>{task.name}</span>
+                <small>{task.projectName}</small>
+                <strong>{formatDuration(task.trackedSeconds)}</strong>
+              </button>
+            ))}
+          </div>
+        </section>
       )}
 
       {status.enrolled && (

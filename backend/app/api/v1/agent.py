@@ -73,6 +73,8 @@ from app.services.time_adjustments import (
 
 router = APIRouter(prefix="/agent", tags=["desktop-agent"])
 
+DEFAULT_DAILY_TARGET_SECONDS = 8 * 60 * 60
+
 
 @router.post("/enroll")
 def enroll(payload: EnrollmentRequest, request: Request, db: Annotated[Session, Depends(get_db)]):
@@ -163,13 +165,27 @@ def agent_period_summary(context: DeviceAuthContext, db: Session) -> dict:
             manual_request_status_seconds(db, employee, start, end),
         )
 
+    today_summary = summarize(today, today)
+    target_seconds = DEFAULT_DAILY_TARGET_SECONDS
+    tracked_seconds = today_summary["tracked_active_seconds"]
+    activity_base_seconds = tracked_seconds + today_summary["idle_seconds"]
     return {
         "employee": {
             "id": str(employee.id),
             "name": employee.name,
             "avatar_url": employee.avatar_url,
         },
-        "today": summarize(today, today),
+        "daily_target_seconds": target_seconds,
+        "daily_target_progress_percent": min(
+            100,
+            round((tracked_seconds / target_seconds) * 100),
+        )
+        if target_seconds
+        else 0,
+        "activity_percent": round((tracked_seconds / activity_base_seconds) * 100)
+        if activity_base_seconds
+        else 0,
+        "today": today_summary,
         "today_timeline": build_workday_timeline(
             db,
             company_id=context.device.company_id,
@@ -196,6 +212,25 @@ def today_time_summary(
 ):
     summary = agent_period_summary(context, db)["today"]
     return success_response(data={"active_seconds": summary["tracked_active_seconds"]})
+
+
+@router.get("/tasks/recent")
+def recent_tasks(
+    context: Annotated[DeviceAuthContext, Depends(get_current_device)],
+    db: Annotated[Session, Depends(get_db)],
+    limit: int = Query(default=3, ge=1, le=8),
+):
+    tasks = list_employee_tasks(db, context.device)
+    ordered = sorted(
+        tasks,
+        key=lambda task: (
+            task.get("tracked_seconds", 0),
+            task.get("active_seconds", 0),
+            task.get("name", ""),
+        ),
+        reverse=True,
+    )
+    return success_response(data=ordered[:limit])
 
 
 @router.post("/tasks")

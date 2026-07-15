@@ -23,6 +23,7 @@ import {
   createTimeAdjustmentRequest,
   listAgentProjects,
   listAgentRecentScreenshots,
+  listAgentRecentTasks,
   listAgentTasks,
   initiateScreenshot,
   listTimeAdjustmentRequests,
@@ -105,6 +106,10 @@ type AgentRuntimeStatus = {
   selectedTask: RuntimeTask | null;
   timeAdjustmentRequests: TimeAdjustmentRequest[];
   timeSummary: Pick<AgentSummary, "today" | "week" | "month"> | null;
+  dailyTargetSeconds: number;
+  dailyTargetProgressPercent: number;
+  activityPercent: number;
+  recentTasks: RuntimeTask[];
   todayTimeline: AgentSummary["today_timeline"] | null;
   lastIdleAlert: IdleLossAlert | null;
   updateStatus:
@@ -206,6 +211,10 @@ const runtimeStatus: AgentRuntimeStatus = {
   selectedTask: null,
   timeAdjustmentRequests: [],
   timeSummary: null,
+  dailyTargetSeconds: 8 * 60 * 60,
+  dailyTargetProgressPercent: 0,
+  activityPercent: 0,
+  recentTasks: [],
   todayTimeline: null,
   lastIdleAlert: null,
   updateStatus: "idle",
@@ -557,6 +566,10 @@ async function refreshWorkedTodayTotal() {
       week: summary.week,
       month: summary.month,
     };
+    runtimeStatus.dailyTargetSeconds = summary.daily_target_seconds ?? 8 * 60 * 60;
+    runtimeStatus.dailyTargetProgressPercent =
+      summary.daily_target_progress_percent ?? 0;
+    runtimeStatus.activityPercent = summary.activity_percent ?? 0;
     runtimeStatus.todayTimeline = summary.today_timeline;
     workedTodayBaseSeconds = Math.max(
       0,
@@ -600,15 +613,18 @@ async function refreshTasks() {
   if (!runtimeStatus.enrolled) {
     runtimeStatus.tasks = [];
     runtimeStatus.selectedTask = null;
+    runtimeStatus.recentTasks = [];
     return;
   }
   try {
-    const [tasks, projects] = await Promise.all([
+    const [tasks, projects, recentTasks] = await Promise.all([
       listAgentTasks(),
       listAgentProjects(),
+      listAgentRecentTasks(3),
     ]);
     runtimeStatus.tasks = tasks.map(mapTask);
     runtimeStatus.projects = projects;
+    runtimeStatus.recentTasks = recentTasks.map(mapTask);
     selectRuntimeTask(runtimeStatus.selectedTask?.id ?? null);
   } catch (error) {
     log.warn("Failed to refresh tasks", error);

@@ -198,6 +198,83 @@
   background: var(--card);
   box-shadow: 0 4px 14px rgb(55 33 75 / 5%);
 }
+.timer-board {
+  position: relative;
+  grid-template-columns: minmax(220px, 1.2fr) minmax(220px, 1fr);
+  border-color: #ded6f7;
+  background:
+    radial-gradient(circle at 78% 18%, rgb(98 70 234 / 12%), transparent 34%),
+    linear-gradient(135deg, #ffffff, #fbfaff);
+}
+.timer-board .work-focus-time {
+  display: grid;
+  min-height: 190px;
+  place-content: center;
+  text-align: center;
+  background:
+    radial-gradient(circle, rgb(98 70 234 / 18%) 0 38%, transparent 39%),
+    linear-gradient(135deg, #19122f, #241748);
+  color: #fff;
+}
+.timer-board .work-focus-time span,
+.timer-board .work-focus-time small {
+  color: #cfc7ff;
+}
+.timer-board .work-focus-time strong {
+  color: #fff;
+  font-size: 52px;
+  letter-spacing: 0;
+}
+.timer-board .work-focus-task {
+  display: grid;
+  align-content: center;
+  min-height: 120px;
+  background: #fff;
+}
+.timer-board .work-focus-task strong {
+  font-size: 24px;
+}
+.daily-target {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px 14px;
+  align-items: center;
+  padding: 12px;
+  border-radius: 10px;
+  background: #fff;
+}
+.daily-target span,
+.daily-target strong {
+  display: block;
+}
+.daily-target span {
+  color: var(--muted);
+  font-size: 8px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+.daily-target strong {
+  margin-top: 4px;
+  font-size: 13px;
+}
+.daily-target b {
+  color: #281348;
+  font-size: 13px;
+}
+.target-bar {
+  grid-column: 1 / -1;
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #ece8f3;
+}
+.target-bar i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #10b981, #36bffa);
+}
 .work-focus-time,
 .work-focus-task {
   min-width: 0;
@@ -272,13 +349,105 @@
 .task-request,
 .time-request,
 .enrollment,
-.details {
+.details,
+.pulse-grid,
+.recent-tasks-panel {
   margin: 0 0 9px;
   padding: 11px;
   border: 1px solid var(--border);
   border-radius: 12px;
   background: var(--card);
   box-shadow: 0 2px 8px rgb(55 33 75 / 3%);
+}
+.pulse-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+.pulse-grid div {
+  min-width: 0;
+  padding: 14px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #ffffff, #f7fbff);
+}
+.pulse-grid span,
+.pulse-grid strong {
+  display: block;
+}
+.pulse-grid span {
+  color: var(--muted);
+  font-size: 8px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+.pulse-grid strong {
+  margin-top: 7px;
+  color: #15102b;
+  font-size: 18px;
+}
+.pulse-grid div:nth-child(2) strong {
+  color: #10b981;
+}
+.pulse-grid div:nth-child(3) strong {
+  color: #f59e0b;
+}
+.panel-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.panel-heading strong {
+  font-size: 11px;
+}
+.panel-heading button {
+  padding: 6px 9px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: #5f3ca0;
+  background: #fff;
+  font-size: 8px;
+  font-weight: 800;
+}
+.recent-task-list {
+  display: grid;
+  gap: 7px;
+}
+.recent-task-list button {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 10px;
+  align-items: center;
+  padding: 10px;
+  border: 1px solid #ebe3f1;
+  border-radius: 10px;
+  color: #281348;
+  background: #fff;
+  text-align: left;
+}
+.recent-task-list button.active {
+  border-color: #6d4df2;
+  background: #f6f3ff;
+}
+.recent-task-list span,
+.recent-task-list small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.recent-task-list span {
+  font-size: 10px;
+  font-weight: 800;
+}
+.recent-task-list small {
+  color: var(--muted);
+  font-size: 8px;
+}
+.recent-task-list strong {
+  grid-row: 1 / span 2;
+  grid-column: 2;
+  font-size: 11px;
 }
 
 .section-title {
@@ -1116,12 +1285,29 @@ button:disabled {
 
 @media (min-width: 620px) {
   .status-window {
-    max-width: 600px;
+    max-width: 1120px;
     margin: 0 auto;
+  }
+  .app-view-home {
+    display: grid;
+    grid-template-columns: minmax(0, 1.2fr) minmax(280px, 0.8fr);
+    gap: 12px;
+  }
+  .app-view-home .timer-board,
+  .app-view-home .summary-panel,
+  .app-view-home .time-breakdown {
+    grid-column: 1 / -1;
   }
 }
 
 @media (max-width: 479px) {
+  .timer-board,
+  .pulse-grid {
+    grid-template-columns: 1fr;
+  }
+  .timer-board .work-focus-time strong {
+    font-size: 36px;
+  }
   .quick-task-options {
     grid-template-columns: 1fr;
   }
