@@ -181,6 +181,10 @@ declare global {
         note?: string,
       ) => Promise<{ success: boolean; message?: string }>;
       onIdleAlert: (callback: (alert: IdleAlert) => void) => () => void;
+      onRequiredUpdate: (
+        callback: (update: { version: string | null }) => void,
+      ) => () => void;
+      installUpdate: () => Promise<{ success: boolean; message?: string }>;
       createTimeAdjustmentRequest: (
         requestedMinutes: number,
         reason: string,
@@ -190,6 +194,7 @@ declare global {
         request?: TimeAdjustmentRequest;
       }>;
       setIdleAlertAttention: (active: boolean) => void;
+      setUpdateAttention: (active: boolean) => void;
     };
   }
 }

@@ -35,6 +35,17 @@ contextBridge.exposeInMainWorld("khaliduo", {
     ),
   setIdleAlertAttention: (active: boolean) =>
     ipcRenderer.send("agent:set-idle-alert-attention", active),
+  setUpdateAttention: (active: boolean) =>
+    ipcRenderer.send("agent:set-update-attention", active),
+  installUpdate: () => ipcRenderer.invoke("agent:install-update"),
+  onRequiredUpdate: (callback: (update: { version: string | null }) => void) => {
+    const listener = (
+      _event: Electron.IpcRendererEvent,
+      update: { version: string | null },
+    ) => callback(update);
+    ipcRenderer.on("agent:update-required", listener);
+    return () => ipcRenderer.removeListener("agent:update-required", listener);
+  },
   onIdleAlert: (
     callback: (alert: {
       id: string;

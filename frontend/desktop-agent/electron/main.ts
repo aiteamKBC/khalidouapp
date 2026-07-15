@@ -163,6 +163,7 @@ let durationTimer: ReturnType<typeof setInterval> | null = null;
 let idleTimer: ReturnType<typeof setInterval> | null = null;
 let idleAttentionTimer: ReturnType<typeof setTimeout> | null = null;
 let idleAlertAttentionActive = false;
+let updateAttentionActive = false;
 let screenshotTimer: ReturnType<typeof setTimeout> | null = null;
 let screenshotQueue: number[] = [];
 let screenshotWindowEndsAt: number | null = null;
@@ -1449,7 +1450,7 @@ function showMainWindow(
   }
 
   const useTransientForeground =
-    options.forceForeground && !idleAlertAttentionActive;
+    options.forceForeground && !idleAlertAttentionActive && !updateAttentionActive;
   if (useTransientForeground) {
     window.setAlwaysOnTop(true, "screen-saver");
   }
@@ -1494,6 +1495,29 @@ function setIdleAlertAttention(active: boolean) {
     window.moveTop();
     window.focus();
   }
+}
+
+function setUpdateAttention(active: boolean) {
+  updateAttentionActive = active;
+  const window = mainWindow;
+  if (!window || window.isDestroyed()) {
+    return;
+  }
+  window.setAlwaysOnTop(active || idleAlertAttentionActive, "screen-saver");
+  window.setMinimizable(!active && !idleAlertAttentionActive);
+  window.setClosable(!active && !idleAlertAttentionActive);
+  window.flashFrame(active);
+  if (active) {
+    showMainWindow({ forceForeground: true, centerOnPointerDisplay: true });
+  }
+}
+
+function showRequiredUpdatePrompt(version: string | null) {
+  setUpdateAttention(true);
+  showMainWindow({ forceForeground: true, centerOnPointerDisplay: true });
+  mainWindow?.webContents.send("agent:update-required", {
+    version,
+  });
 }
 
 function configureAutoStart(enabled = runtimeStatus.enrolled) {
@@ -1611,6 +1635,7 @@ async function installDownloadedUpdate() {
     return;
   }
   isInstallingUpdate = true;
+  setUpdateAttention(false);
   if (updateCheckTimer) clearInterval(updateCheckTimer);
   if (initialUpdateCheckTimer) clearTimeout(initialUpdateCheckTimer);
   await finishTrackingBeforeUpdate();
@@ -1678,19 +1703,7 @@ function configureAutoUpdater() {
       return;
     }
     hasPromptedForDownloadedUpdate = true;
-    const { response } = await showUpdateMessage({
-      type: "info",
-      title: "Required Khaliduo Update",
-      message: `Khaliduo ${event.version} must be installed now.`,
-      detail:
-        "Your active tracking session will be closed safely. Khaliduo will restart automatically after installation.",
-      buttons: ["Install update now"],
-      defaultId: 0,
-      noLink: true,
-    });
-    if (response === 0) {
-      await installDownloadedUpdate();
-    }
+    showRequiredUpdatePrompt(event.version);
   });
   autoUpdater.on("error", (error) => {
     setUpdateStatus("error", { percent: null });
@@ -1848,6 +1861,24 @@ ipcMain.handle("agent:get-status", () => ({
 
 ipcMain.on("agent:set-idle-alert-attention", (_, active: boolean) => {
   setIdleAlertAttention(Boolean(active));
+});
+
+ipcMain.on("agent:set-update-attention", (_, active: boolean) => {
+  setUpdateAttention(Boolean(active));
+});
+
+ipcMain.handle("agent:install-update", async () => {
+  try {
+    await installDownloadedUpdate();
+    return { success: true };
+  } catch (error) {
+    log.error("Update installation failed", error);
+    setUpdateAttention(true);
+    return {
+      success: false,
+      message: getUserFacingError(error, "Could not install the update."),
+    };
+  }
 });
 
 ipcMain.handle("agent:enroll-device", async (_, enrollmentCode: string) => {

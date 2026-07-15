@@ -116,6 +116,8 @@ function App() {
     window.localStorage.getItem("khaliduo-theme") === "dark" ? "dark" : "light",
   );
   const shownIdleAlertId = useRef<string | null>(null);
+  const promptedUpdateVersion = useRef<string | null>(null);
+  const updatePromptActive = useRef(false);
   const screenshotsLoadedForEnrollment = useRef(false);
   const isDesktopRuntime = Boolean(window.khaliduo);
   const desktopRuntimeMessage =
@@ -144,14 +146,24 @@ function App() {
       window.khaliduo.onIdleAlert?.((alert) => {
         void showIdleAlert(alert);
       }) ?? (() => undefined);
+    const removeRequiredUpdateListener =
+      window.khaliduo.onRequiredUpdate?.((update) => {
+        void showRequiredUpdate(update.version);
+      }) ?? (() => undefined);
     const interval = window.setInterval(() => void loadStatus(), 1000);
 
     return () => {
       mounted = false;
       removeIdleAlertListener();
+      removeRequiredUpdateListener();
       window.clearInterval(interval);
     };
   }, []);
+
+  useEffect(() => {
+    if (status.updateStatus !== "ready") return;
+    void showRequiredUpdate(status.updateVersion);
+  }, [status.updateStatus, status.updateVersion]);
 
   useEffect(() => {
     if (status.selectedTask?.projectId) {
@@ -550,6 +562,54 @@ function App() {
       setTimeRequestMinutes(lostMinutes);
       setTimeRequestReason("Offline meeting or work completed while away from the computer.");
       window.setTimeout(() => document.getElementById("time-request-reason")?.focus(), 50);
+    }
+  }
+
+  async function showRequiredUpdate(version: string | null) {
+    const promptKey = version ?? "ready";
+    if (updatePromptActive.current || promptedUpdateVersion.current === promptKey) return;
+    promptedUpdateVersion.current = promptKey;
+    updatePromptActive.current = true;
+    window.khaliduo?.setUpdateAttention(true);
+
+    try {
+      while (true) {
+        const result = await Swal.fire({
+          title: "Required update",
+          html: `<strong>Khaliduo ${version ? `v${version}` : ""} is ready to install.</strong><br/>You must install this update now to continue using the app. Your active session will be closed safely and Khaliduo will restart automatically.`,
+          icon: "info",
+          confirmButtonText: "Install update now",
+          confirmButtonColor: "#e91e63",
+          allowEscapeKey: false,
+          allowOutsideClick: false,
+          showCancelButton: false,
+          showCloseButton: false,
+          backdrop: true,
+          heightAuto: false,
+        });
+        if (!result.isConfirmed) continue;
+
+        const installResult = await window.khaliduo?.installUpdate();
+        if (installResult?.success !== false) {
+          return;
+        }
+        await Swal.fire({
+          title: "Update could not start",
+          text: installResult?.message ?? "Please try again.",
+          icon: "error",
+          confirmButtonText: "Try again",
+          allowEscapeKey: false,
+          allowOutsideClick: false,
+          showCancelButton: false,
+          showCloseButton: false,
+        });
+      }
+    } finally {
+      updatePromptActive.current = false;
+      window.khaliduo?.setUpdateAttention(status.updateStatus === "ready");
+      if (status.updateStatus !== "ready") {
+        promptedUpdateVersion.current = null;
+      }
     }
   }
 
