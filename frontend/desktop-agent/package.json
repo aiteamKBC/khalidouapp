@@ -1,7 +1,7 @@
 {
   "name": "khaliduo",
   "private": true,
-  "version": "1.1.12",
+  "version": "1.1.13",
   "type": "module",
   "description": "Khaliduo desktop app by Kent Consultancy.",
   "main": "dist-electron-khaliduo/main.js",

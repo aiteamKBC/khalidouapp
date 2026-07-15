@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent } from "react";
 import Swal, { type SweetAlertResult } from "sweetalert2";
 import type { AgentStatus, IdleAlert, RecentScreenshot, WorkdayTimeline } from "./types/electron";
 import "sweetalert2/dist/sweetalert2.min.css";
@@ -709,7 +709,11 @@ function App() {
       {(!status.enrolled || activeView === "home") && (
         <div className="app-view app-view-home">
           {status.enrolled && (
-            <section className="work-focus timer-board" aria-label="Current work summary">
+            <section
+              className="work-focus timer-board"
+              aria-label="Current work summary"
+              style={{ "--progress": targetProgress } as CSSProperties}
+            >
               <div className="work-focus-time">
                 <span>Current session</span>
                 <strong>{formatDuration(countedPeriodSeconds)}</strong>
