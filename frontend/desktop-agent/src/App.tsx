@@ -242,9 +242,13 @@ function App() {
     .reduce((total, segment) => total + segment.seconds, 0);
   const targetProgress = Math.max(0, Math.min(100, status.dailyTargetProgressPercent));
   const isPaused = status.trackingPaused || status.trackingStatus === "paused";
-  const isRunning = status.enrolled && !isPaused && status.connectionStatus === "online";
+  const isTracking =
+    status.enrolled &&
+    !isPaused &&
+    ["active", "idle", "locked", "sleeping", "starting"].includes(status.trackingStatus);
+  const isRunning = isTracking && ["active", "starting"].includes(status.trackingStatus);
   const timerTone = isPaused ? "paused" : isRunning ? "running" : "stopped";
-  const statusText = isPaused ? "Paused" : isRunning ? "Running" : "No timer running";
+  const statusText = isPaused ? "Paused" : isTracking ? "Running" : "No timer running";
 
   async function refreshStatusAfterEnrollment() {
     const nextStatus = await window.khaliduo?.getAgentStatus();
@@ -624,7 +628,8 @@ function App() {
             onViewChange={setActiveView}
             onOpenDashboard={() => void handleOpenDashboard()}
             onLogout={() => void handleLogout()}
-            isLoggingOut={isLoggingOut}
+          isLoggingOut={isLoggingOut}
+            isTracking={isTracking}
           />
           {activeView === "home" && (
             <HomeView
@@ -804,6 +809,7 @@ function Sidebar({
   onOpenDashboard,
   onLogout,
   isLoggingOut,
+  isTracking,
 }: {
   activeView: "home" | "tasks" | "more";
   status: AgentStatus;
@@ -811,6 +817,7 @@ function Sidebar({
   onOpenDashboard: () => void;
   onLogout: () => void;
   isLoggingOut: boolean;
+  isTracking: boolean;
 }) {
   return (
     <aside className="k-sidebar">
@@ -834,8 +841,12 @@ function Sidebar({
         </span>
         <div>
           <strong>{status.employeeName}</strong>
-          <small className={status.connectionStatus === "online" ? "k-ok" : "k-danger"}>
-            {status.connectionStatus === "online" ? "Online - Synced" : "Offline"}
+          <small className={status.connectionStatus === "online" || isTracking ? "k-ok" : "k-danger"}>
+            {status.connectionStatus === "online"
+              ? "Online - Synced"
+              : isTracking
+                ? "Online - Sync pending"
+                : "Offline"}
           </small>
         </div>
       </div>

@@ -966,7 +966,11 @@ async function captureAndUploadScreenshot() {
   runtimeStatus.lastScreenshotAt = capturedAt;
   if (uploaded > 0)
     runtimeStatus.lastSuccessfulSyncAt = new Date().toISOString();
-  runtimeStatus.connectionStatus = queued > 0 ? "offline" : "online";
+  if (uploaded > 0) {
+    runtimeStatus.connectionStatus = "online";
+  } else if (queued > 0 && runtimeStatus.lastSuccessfulSyncAt === null) {
+    runtimeStatus.connectionStatus = "offline";
+  }
   rebuildTrayMenu();
   if (uploaded + queued > 0) {
     showScreenshotCapturedNotification();
