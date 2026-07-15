@@ -72,6 +72,7 @@ export interface Task {
   reviewNote?: string;
   completionNote?: string;
   reviewedAt?: string;
+  isSystemDefault?: boolean;
   checklist: TaskChecklistItem[];
   name: string;
   description?: string;

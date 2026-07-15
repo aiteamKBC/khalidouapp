@@ -97,8 +97,9 @@ def ensure_general_work_project(db: Session, *, company_id: UUID, team_id: UUID)
         select(Project).where(
             Project.company_id == company_id,
             Project.team_id == team_id,
-            Project.name == "General Work",
+            Project.name.startswith("General Work"),
         )
+        .order_by(Project.created_at.asc())
     )
     if project is None:
         project = Project(
@@ -142,6 +143,13 @@ def ensure_general_work_project(db: Session, *, company_id: UUID, team_id: UUID)
 
 
 def serialize_task(task: Task, project: Project | None = None, team: Team | None = None) -> dict[str, Any]:
+    is_system_default = (
+        task.name == "General Work"
+        and task.assignee_employee_id is None
+        and task.created_by_employee_id is None
+        and project is not None
+        and project.name.startswith("General Work")
+    )
     data = {
         "id": str(task.id),
         "company_id": str(task.company_id),
@@ -169,6 +177,7 @@ def serialize_task(task: Task, project: Project | None = None, team: Team | None
         "block_resolution_note": task.block_resolution_note,
         "review_note": task.review_note,
         "completion_note": task.completion_note,
+        "is_system_default": is_system_default,
         "reviewed_by_admin_user_id": str(task.reviewed_by_admin_user_id) if task.reviewed_by_admin_user_id else None,
         "reviewed_at": task.reviewed_at.isoformat() if task.reviewed_at else None,
         "checklist": [

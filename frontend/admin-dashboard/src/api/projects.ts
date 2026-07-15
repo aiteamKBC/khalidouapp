@@ -36,6 +36,7 @@ type BackendTask = {
   block_resolution_note?: string | null;
   review_note?: string | null;
   completion_note?: string | null;
+  is_system_default?: boolean;
   reviewed_at?: string | null;
   checklist?: Array<{
     id: string;
@@ -134,6 +135,7 @@ function mapTask(task: BackendTask): Task {
     reviewNote: task.review_note ?? undefined,
     completionNote: task.completion_note ?? undefined,
     reviewedAt: task.reviewed_at ?? undefined,
+    isSystemDefault: task.is_system_default ?? false,
     checklist: (task.checklist ?? []).map((item) => ({
       id: item.id,
       title: item.title,
@@ -227,7 +229,9 @@ export async function listTasks(options?: {
   return tasks
     .map(mapTask)
     .filter(
-      (task) => !options?.scopedTeamIds?.length || options.scopedTeamIds.includes(task.teamId),
+      (task) =>
+        !task.isSystemDefault &&
+        (!options?.scopedTeamIds?.length || options.scopedTeamIds.includes(task.teamId)),
     );
 }
 
