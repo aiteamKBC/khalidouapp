@@ -48,7 +48,7 @@ def upgrade() -> None:
     )
     op.create_index(op.f("ix_employee_work_profiles_company_id"), "employee_work_profiles", ["company_id"], unique=False)
     op.create_index(op.f("ix_employee_work_profiles_employee_id"), "employee_work_profiles", ["employee_id"], unique=False)
-    op.execute(
+    op.get_bind().exec_driver_sql(
         """
         INSERT INTO employee_work_profiles (
             id, company_id, employee_id, required_daily_minutes, late_grace_minutes,
