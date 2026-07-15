@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { PageHeader } from "@/components/ui/page-header";
 
 export const Route = createFileRoute("/_app/profile")({ component: ProfilePage });
 
@@ -81,23 +82,21 @@ function ProfilePage() {
   }
 
   return (
-    <div className="mx-auto max-w-2xl space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold">My Profile</h1>
-        <p className="text-sm text-muted-foreground">Update your name and profile photo.</p>
-      </div>
-      <Card>
+    <div className="mx-auto max-w-3xl space-y-6">
+      <PageHeader title="My Profile" description="Update your identity and account security." />
+      <Card className="overflow-hidden border-primary/10">
+        <div className="h-24 bg-gradient-to-r from-[#211b48] via-[#4b1d52] to-[#e5185d]" />
         <CardHeader>
           <CardTitle>Profile details</CardTitle>
         </CardHeader>
         <CardContent>
           <form className="space-y-5" onSubmit={save}>
-            <div className="flex items-center gap-4">
-              <Avatar className="h-20 w-20">
+            <div className="-mt-16 flex flex-col items-start gap-4 sm:flex-row sm:items-end">
+              <Avatar className="h-24 w-24 border-4 border-card shadow-xl">
                 <AvatarImage src={avatarUrl ?? undefined} />
                 <AvatarFallback>{name.slice(0, 2).toUpperCase()}</AvatarFallback>
               </Avatar>
-              <div className="flex gap-2">
+              <div className="mb-1 flex gap-2">
                 <Button type="button" variant="outline" asChild>
                   <label className="cursor-pointer">
                     <Camera className="mr-2 h-4 w-4" />
@@ -134,7 +133,7 @@ function ProfilePage() {
           </form>
         </CardContent>
       </Card>
-      <Card>
+      <Card className="border-primary/10">
         <CardHeader>
           <CardTitle>Change password</CardTitle>
         </CardHeader>

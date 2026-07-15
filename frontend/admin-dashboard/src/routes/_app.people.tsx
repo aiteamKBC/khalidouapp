@@ -103,22 +103,22 @@ function PeopleHubPage() {
     search.tab === "live" && !can(permissions.liveActivityView) ? "directory" : search.tab;
 
   return (
-    <div>
+    <div className="mx-auto max-w-[1440px]">
       <PageHeader
         title="People"
         description="Manage people, employee tracking, and live workforce activity from one place."
       />
-      <div className="mb-5 flex gap-1 overflow-x-auto border-b border-border">
+      <div className="studio-card mb-5 flex w-fit max-w-full gap-1 overflow-x-auto rounded-xl border bg-card p-1">
         <Button
           variant="ghost"
-          className={`rounded-none border-b-2 px-4 ${tab === "directory" ? "border-primary text-foreground" : "border-transparent text-muted-foreground"}`}
+          className={`rounded-lg border-0 px-4 ${tab === "directory" ? "bg-[#fce3ec] text-[#e5185d] dark:bg-[#38142b] dark:text-[#f0538b]" : "text-muted-foreground"}`}
           onClick={() => navigate({ to: "/people", search: { tab: "directory" } })}
         >
           <UsersRound className="mr-2 h-4 w-4" /> Directory
         </Button>
         <Button
           variant="ghost"
-          className={`rounded-none border-b-2 px-4 ${tab === "employees" ? "border-primary text-foreground" : "border-transparent text-muted-foreground"}`}
+          className={`rounded-lg border-0 px-4 ${tab === "employees" ? "bg-[#fce3ec] text-[#e5185d] dark:bg-[#38142b] dark:text-[#f0538b]" : "text-muted-foreground"}`}
           onClick={() => navigate({ to: "/people", search: { tab: "employees" } })}
         >
           <UserCircle className="mr-2 h-4 w-4" /> Employees
@@ -126,7 +126,7 @@ function PeopleHubPage() {
         {can(permissions.liveActivityView) && (
           <Button
             variant="ghost"
-            className={`rounded-none border-b-2 px-4 ${tab === "live" ? "border-primary text-foreground" : "border-transparent text-muted-foreground"}`}
+            className={`rounded-lg border-0 px-4 ${tab === "live" ? "bg-[#fce3ec] text-[#e5185d] dark:bg-[#38142b] dark:text-[#f0538b]" : "text-muted-foreground"}`}
             onClick={() => navigate({ to: "/people", search: { tab: "live" } })}
           >
             <Activity className="mr-2 h-4 w-4" /> Live Activity
@@ -229,9 +229,9 @@ function PeopleDirectory({ embedded = false }: { embedded?: boolean }) {
         user.role === "hr"
           ? "HR"
           : user.role === "general_admin"
-          ? user.teamLeadTeamIds.length
-            ? "General admin · Team lead"
-            : "General admin"
+            ? user.teamLeadTeamIds.length
+              ? "General admin · Team lead"
+              : "General admin"
             : "Team lead",
       detail:
         user.dataScope === "company"

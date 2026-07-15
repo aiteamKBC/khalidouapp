@@ -1,3 +1,4 @@
+@import url("https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap");
 @import "tailwindcss" source(none);
 @source "../src";
 @import "tw-animate-css";
@@ -57,7 +58,7 @@
   --brand-navy-deep: oklch(0.22 0.1 285);
   --brand-pink: oklch(0.64 0.22 355);
 
-  --background: oklch(0.99 0.003 300);
+  --background: #f4f1f7;
   --foreground: oklch(0.22 0.06 285);
   --card: oklch(1 0 0);
   --card-foreground: oklch(0.22 0.06 285);
@@ -83,7 +84,7 @@
   --info: oklch(0.6 0.13 250);
   --info-foreground: oklch(0.99 0.003 300);
 
-  --border: oklch(0.92 0.008 300);
+  --border: #e9e1ec;
   --input: oklch(0.92 0.008 300);
   --ring: var(--brand-navy);
 
@@ -93,8 +94,8 @@
   --chart-4: oklch(0.75 0.14 75);
   --chart-5: oklch(0.55 0.14 250);
 
-  --sidebar: oklch(0.22 0.1 285);
-  --sidebar-foreground: oklch(0.93 0.008 300);
+  --sidebar: #211b48;
+  --sidebar-foreground: #a99fce;
   --sidebar-primary: oklch(0.64 0.22 355);
   --sidebar-primary-foreground: oklch(0.99 0.003 300);
   --sidebar-accent: oklch(0.28 0.11 285);
@@ -151,6 +152,56 @@
   body {
     background-color: var(--color-background);
     color: var(--color-foreground);
+    font-family: "Plus Jakarta Sans", "Segoe UI", system-ui, sans-serif;
     font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+}
+
+@layer utilities {
+  .font-mono-numeric {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+  }
+
+  .studio-card {
+    box-shadow:
+      0 1px 2px rgba(36, 30, 78, 0.05),
+      0 10px 26px -16px rgba(36, 30, 78, 0.28);
+  }
+
+  .dark .studio-card {
+    box-shadow:
+      0 1px 2px rgba(0, 0, 0, 0.28),
+      0 14px 30px -18px rgba(0, 0, 0, 0.75);
+  }
+
+  .studio-main > * {
+    animation: studio-page-in 320ms ease-out both;
+  }
+
+  .studio-toolbar {
+    border: 1px solid var(--border);
+    border-radius: 1rem;
+    background: var(--card);
+    padding: 1rem;
+    box-shadow:
+      0 1px 2px rgba(36, 30, 78, 0.05),
+      0 10px 26px -16px rgba(36, 30, 78, 0.28);
+  }
+}
+
+@keyframes studio-page-in {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .studio-main > * {
+    animation: none;
   }
 }

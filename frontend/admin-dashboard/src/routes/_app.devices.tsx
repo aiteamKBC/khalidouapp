@@ -28,6 +28,8 @@ import { listEmployees } from "@/api/employees";
 import { useAuth } from "@/lib/auth";
 import { formatRelative, formatDate } from "@/lib/format";
 import { toast } from "sonner";
+import { Laptop, ShieldCheck, WifiOff } from "lucide-react";
+import { MetricTile } from "@/components/ui/metric-tile";
 
 export const Route = createFileRoute("/_app/devices")({
   component: DevicesPage,
@@ -57,8 +59,36 @@ function DevicesList() {
   });
 
   return (
-    <div>
+    <div className="mx-auto max-w-[1440px]">
       <PageHeader title="Devices" description="Managed devices reporting to Khaliduo." />
+
+      <div className="mb-4 grid gap-3 sm:grid-cols-3">
+        <MetricTile
+          icon={Laptop}
+          value={(devs.data ?? []).length}
+          label="Registered devices"
+          hint="Managed endpoints"
+          tone="blue"
+        />
+        <MetricTile
+          icon={ShieldCheck}
+          value={
+            (devs.data ?? []).filter(
+              (device) => device.status !== "offline" && device.tokenStatus === "valid",
+            ).length
+          }
+          label="Healthy devices"
+          hint="Online with valid tokens"
+          tone="green"
+        />
+        <MetricTile
+          icon={WifiOff}
+          value={(devs.data ?? []).filter((device) => device.status === "offline").length}
+          label="Devices offline"
+          hint="May need attention"
+          tone="amber"
+        />
+      </div>
 
       <Card className="overflow-x-auto">
         <Table>

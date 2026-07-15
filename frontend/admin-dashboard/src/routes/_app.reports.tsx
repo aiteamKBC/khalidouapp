@@ -71,7 +71,7 @@ function ReportsPage() {
   );
 
   return (
-    <div>
+    <div className="mx-auto max-w-[1440px]">
       <PageHeader
         title="Reports"
         description="Aggregated productivity insights."

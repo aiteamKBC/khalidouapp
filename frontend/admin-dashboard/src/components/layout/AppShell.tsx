@@ -4,6 +4,7 @@ import { AppSidebar } from "./AppSidebar";
 import { Sheet, SheetContent, SheetTrigger, SheetTitle } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { BrandLogo } from "@/components/ui/brand-logo";
+import { ThemeToggle } from "@/components/ui/theme-toggle";
 
 export function AppShell({ children }: { children: ReactNode }) {
   const [open, setOpen] = useState(false);
@@ -11,7 +12,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   return (
     <div className="min-h-screen w-full bg-background">
       <div className="flex min-h-screen">
-        <div className="hidden lg:block sticky top-0 h-screen border-r border-border">
+        <div className="sticky top-0 hidden h-screen lg:block">
           <AppSidebar />
         </div>
 
@@ -32,9 +33,12 @@ export function AppShell({ children }: { children: ReactNode }) {
               <BrandLogo className="h-8 w-8" />
               <span className="text-sm font-semibold">Khaliduo</span>
             </div>
+            <ThemeToggle className="ml-auto" />
           </header>
 
-          <main className="flex-1 p-4 sm:p-6 lg:p-8 min-w-0">{children}</main>
+          <main className="studio-main min-w-0 flex-1 p-4 sm:p-6 lg:px-[26px] lg:py-[22px]">
+            {children}
+          </main>
         </div>
       </div>
     </div>

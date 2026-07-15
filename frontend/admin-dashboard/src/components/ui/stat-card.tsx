@@ -23,18 +23,22 @@ export function StatCard({
   }[tone];
 
   return (
-    <Card>
+    <Card className="group overflow-hidden hover:-translate-y-0.5 hover:border-primary/15 hover:shadow-md">
       <CardContent className="p-5">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
               {label}
             </p>
-            <p className="mt-2 text-2xl font-semibold text-foreground">{value}</p>
+            <p className="font-mono-numeric mt-2 text-2xl font-extrabold text-foreground">
+              {value}
+            </p>
             {hint && <p className="mt-1 text-xs text-muted-foreground">{hint}</p>}
           </div>
           {Icon && (
-            <div className={`shrink-0 grid h-10 w-10 place-items-center rounded-lg ${toneClass}`}>
+            <div
+              className={`grid h-11 w-11 shrink-0 place-items-center rounded-xl transition-transform group-hover:scale-105 ${toneClass}`}
+            >
               <Icon className="h-5 w-5" />
             </div>
           )}

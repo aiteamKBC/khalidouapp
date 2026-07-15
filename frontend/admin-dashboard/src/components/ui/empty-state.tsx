@@ -13,9 +13,9 @@ export function EmptyState({
   action?: ReactNode;
 }) {
   return (
-    <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border bg-card/50 px-6 py-12 text-center">
+    <div className="relative flex flex-col items-center justify-center overflow-hidden rounded-2xl border border-dashed border-border bg-gradient-to-br from-card to-muted/35 px-6 py-14 text-center">
       {Icon && (
-        <div className="mb-3 grid h-12 w-12 place-items-center rounded-full bg-muted text-muted-foreground">
+        <div className="mb-4 grid h-14 w-14 place-items-center rounded-2xl bg-gradient-to-br from-[#fce3ec] to-violet-100 text-[#e5185d] shadow-sm dark:from-[#38142b] dark:to-violet-950 dark:text-[#f0538b]">
           <Icon className="h-6 w-6" />
         </div>
       )}

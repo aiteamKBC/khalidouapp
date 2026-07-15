@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bell, CheckCheck } from "lucide-react";
+import { Bell, CheckCheck, Inbox, ListChecks } from "lucide-react";
 import { PageHeader } from "@/components/ui/page-header";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -28,6 +28,7 @@ import {
 import { useAuth } from "@/lib/auth";
 import type { Task } from "@/types";
 import { toast } from "sonner";
+import { MetricTile } from "@/components/ui/metric-tile";
 
 export const Route = createFileRoute("/_app/notifications")({ component: NotificationsPage });
 
@@ -101,7 +102,7 @@ function NotificationsPage() {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="mx-auto max-w-[1200px] space-y-6">
       <PageHeader
         title="Notifications"
         description="Review task requests, assignments, comments and deadline alerts from one place."
@@ -111,6 +112,32 @@ function NotificationsPage() {
           </Button>
         }
       />
+      <div className="grid gap-3 sm:grid-cols-3">
+        <MetricTile
+          icon={Inbox}
+          value={(notifications.data ?? []).length}
+          label="All notifications"
+          hint="Your activity inbox"
+          tone="violet"
+        />
+        <MetricTile
+          icon={Bell}
+          value={unread}
+          label="Unread"
+          hint="Waiting for your attention"
+          tone="pink"
+        />
+        <MetricTile
+          icon={ListChecks}
+          value={
+            (notifications.data ?? []).filter((item) => item.workflowRequest?.status === "pending")
+              .length
+          }
+          label="Pending actions"
+          hint="Workflow decisions"
+          tone="amber"
+        />
+      </div>
       <div className="space-y-2">
         {(notifications.data ?? []).map((item) => {
           const taskId = item.taskId ?? item.workflowRequest?.taskId;
@@ -125,14 +152,14 @@ function NotificationsPage() {
               key={item.id}
               role="button"
               tabIndex={0}
-              className={`cursor-pointer p-4 transition hover:border-primary/40 ${item.readAt ? "opacity-70" : "border-primary/30 bg-primary/[0.03]"}`}
+              className={`group cursor-pointer overflow-hidden p-4 transition hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-md ${item.readAt ? "opacity-70" : "border-[#e5185d]/30 bg-gradient-to-r from-[#fce3ec]/55 to-card dark:from-[#38142b]/55"}`}
               onClick={() => openTask(item.id, taskId)}
               onKeyDown={(event) => {
                 if (event.key === "Enter" || event.key === " ") openTask(item.id, taskId);
               }}
             >
               <div className="flex gap-3">
-                <div className="mt-0.5 h-fit rounded-full bg-primary/10 p-2 text-primary">
+                <div className="mt-0.5 h-fit rounded-xl bg-[#fce3ec] p-2.5 text-[#e5185d] transition-transform group-hover:scale-105 dark:bg-[#38142b] dark:text-[#f0538b]">
                   <Bell className="h-4 w-4" />
                 </div>
                 <div className="min-w-0 flex-1">

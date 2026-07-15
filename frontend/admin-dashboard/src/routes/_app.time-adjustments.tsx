@@ -91,7 +91,7 @@ function TimeAdjustmentsPage() {
       : (employees.data ?? []).filter((employee) => employee.teamIds.includes(teamId));
 
   return (
-    <div>
+    <div className="mx-auto max-w-[1440px]">
       <PageHeader
         title="Time Requests"
         description="Review employee requests for approved manual time adjustments."

@@ -68,7 +68,7 @@ function TimesheetsPage() {
   const teamName = (id: string) => (teams.data ?? []).find((t) => t.id === id)?.name ?? id;
 
   return (
-    <div>
+    <div className="mx-auto max-w-[1440px]">
       <PageHeader
         title="Timesheets"
         description="Daily and weekly time-tracked records per employee."

@@ -100,7 +100,8 @@ function PayrollPage() {
       void queryClient.invalidateQueries({ queryKey: ["employee-work-profile", employeeId] });
       void queryClient.invalidateQueries({ queryKey: ["employee-payroll-preview", employeeId] });
     },
-    onError: (error) => toast.error(error instanceof Error ? error.message : "Could not save profile"),
+    onError: (error) =>
+      toast.error(error instanceof Error ? error.message : "Could not save profile"),
   });
 
   const invite = useMutation({
@@ -109,7 +110,8 @@ function PayrollPage() {
       toast.success("Invitation sent");
       void queryClient.invalidateQueries({ queryKey: ["employees"] });
     },
-    onError: (error) => toast.error(error instanceof Error ? error.message : "Could not send invitation"),
+    onError: (error) =>
+      toast.error(error instanceof Error ? error.message : "Could not send invitation"),
   });
 
   const missing = profile.data?.completeness.missing_fields ?? [];
@@ -117,7 +119,7 @@ function PayrollPage() {
   const employeeOptions = useMemo(() => employees.data ?? [], [employees.data]);
 
   return (
-    <div>
+    <div className="mx-auto max-w-[1320px]">
       <PageHeader
         title="Payroll and work profiles"
         description="Complete schedules, breaks, salary, overtime and deduction rules before inviting employees."
@@ -155,7 +157,9 @@ function PayrollPage() {
                 <div className="font-medium">{selectedEmployee.name}</div>
                 <div className="text-muted-foreground">{selectedEmployee.email}</div>
                 <div className="mt-2 text-xs text-muted-foreground">
-                  {profile.data?.completeness.complete ? "Profile complete" : `${missing.length} missing fields`}
+                  {profile.data?.completeness.complete
+                    ? "Profile complete"
+                    : `${missing.length} missing fields`}
                 </div>
               </div>
             )}
@@ -186,30 +190,96 @@ function PayrollPage() {
             </CardHeader>
             <CardContent className="grid gap-4 md:grid-cols-2">
               <Field label="Shift start">
-                <Input type="time" value={form.shiftStart ?? ""} disabled={!canManage} onChange={(event) => setForm({ ...form, shiftStart: event.target.value })} />
+                <Input
+                  type="time"
+                  value={form.shiftStart ?? ""}
+                  disabled={!canManage}
+                  onChange={(event) => setForm({ ...form, shiftStart: event.target.value })}
+                />
               </Field>
               <Field label="Shift end">
-                <Input type="time" value={form.shiftEnd ?? ""} disabled={!canManage} onChange={(event) => setForm({ ...form, shiftEnd: event.target.value })} />
+                <Input
+                  type="time"
+                  value={form.shiftEnd ?? ""}
+                  disabled={!canManage}
+                  onChange={(event) => setForm({ ...form, shiftEnd: event.target.value })}
+                />
               </Field>
               <Field label="Required daily minutes">
-                <Input type="number" value={form.requiredDailyMinutes ?? 480} disabled={!canManage} onChange={(event) => setForm({ ...form, requiredDailyMinutes: Number(event.target.value) })} />
+                <Input
+                  type="number"
+                  value={form.requiredDailyMinutes ?? 480}
+                  disabled={!canManage}
+                  onChange={(event) =>
+                    setForm({ ...form, requiredDailyMinutes: Number(event.target.value) })
+                  }
+                />
               </Field>
               <Field label="Late grace minutes">
-                <Input type="number" value={form.lateGraceMinutes ?? 15} disabled={!canManage} onChange={(event) => setForm({ ...form, lateGraceMinutes: Number(event.target.value) })} />
+                <Input
+                  type="number"
+                  value={form.lateGraceMinutes ?? 15}
+                  disabled={!canManage}
+                  onChange={(event) =>
+                    setForm({ ...form, lateGraceMinutes: Number(event.target.value) })
+                  }
+                />
               </Field>
               <div>
                 <Label>Working days</Label>
-                <DayPicker value={form.workingDays ?? []} disabled={!canManage} onChange={(workingDays) => setForm({ ...form, workingDays })} />
+                <DayPicker
+                  value={form.workingDays ?? []}
+                  disabled={!canManage}
+                  onChange={(workingDays) => setForm({ ...form, workingDays })}
+                />
               </div>
               <div>
                 <Label>Weekly off days</Label>
-                <DayPicker value={form.weeklyOffDays ?? []} disabled={!canManage} onChange={(weeklyOffDays) => setForm({ ...form, weeklyOffDays })} />
+                <DayPicker
+                  value={form.weeklyOffDays ?? []}
+                  disabled={!canManage}
+                  onChange={(weeklyOffDays) => setForm({ ...form, weeklyOffDays })}
+                />
               </div>
               <Field label="30 minute break">
-                <Input type="number" value={form.breakRules?.[0]?.minutes ?? 30} disabled={!canManage} onChange={(event) => setForm({ ...form, breakRules: [{ name: "Lunch", minutes: Number(event.target.value), paid: false }, { name: "Short break", minutes: form.breakRules?.[1]?.minutes ?? 15, paid: false }] })} />
+                <Input
+                  type="number"
+                  value={form.breakRules?.[0]?.minutes ?? 30}
+                  disabled={!canManage}
+                  onChange={(event) =>
+                    setForm({
+                      ...form,
+                      breakRules: [
+                        { name: "Lunch", minutes: Number(event.target.value), paid: false },
+                        {
+                          name: "Short break",
+                          minutes: form.breakRules?.[1]?.minutes ?? 15,
+                          paid: false,
+                        },
+                      ],
+                    })
+                  }
+                />
               </Field>
               <Field label="Short break">
-                <Input type="number" value={form.breakRules?.[1]?.minutes ?? 15} disabled={!canManage} onChange={(event) => setForm({ ...form, breakRules: [{ name: "Lunch", minutes: form.breakRules?.[0]?.minutes ?? 30, paid: false }, { name: "Short break", minutes: Number(event.target.value), paid: false }] })} />
+                <Input
+                  type="number"
+                  value={form.breakRules?.[1]?.minutes ?? 15}
+                  disabled={!canManage}
+                  onChange={(event) =>
+                    setForm({
+                      ...form,
+                      breakRules: [
+                        {
+                          name: "Lunch",
+                          minutes: form.breakRules?.[0]?.minutes ?? 30,
+                          paid: false,
+                        },
+                        { name: "Short break", minutes: Number(event.target.value), paid: false },
+                      ],
+                    })
+                  }
+                />
               </Field>
             </CardContent>
           </Card>
@@ -220,19 +290,56 @@ function PayrollPage() {
             </CardHeader>
             <CardContent className="grid gap-4 md:grid-cols-3">
               <Field label="Salary amount">
-                <Input type="number" value={form.salaryAmount ?? 0} disabled={!canManage} onChange={(event) => setForm({ ...form, salaryAmount: Number(event.target.value) })} />
+                <Input
+                  type="number"
+                  value={form.salaryAmount ?? 0}
+                  disabled={!canManage}
+                  onChange={(event) =>
+                    setForm({ ...form, salaryAmount: Number(event.target.value) })
+                  }
+                />
               </Field>
               <Field label="Currency">
-                <Select value={form.salaryCurrency ?? "EGP"} disabled={!canManage} onValueChange={(salaryCurrency) => setForm({ ...form, salaryCurrency: salaryCurrency as WorkProfileInput["salaryCurrency"] })}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                <Select
+                  value={form.salaryCurrency ?? "EGP"}
+                  disabled={!canManage}
+                  onValueChange={(salaryCurrency) =>
+                    setForm({
+                      ...form,
+                      salaryCurrency: salaryCurrency as WorkProfileInput["salaryCurrency"],
+                    })
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
                   <SelectContent>
-                    {["EGP", "GBP", "USD", "EUR", "SAR", "AED"].map((currency) => <SelectItem key={currency} value={currency}>{currency}</SelectItem>)}
+                    {["EGP", "GBP", "USD", "EUR", "SAR", "AED"].map((currency) => (
+                      <SelectItem key={currency} value={currency}>
+                        {currency}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </Field>
               <Field label="Deduction mode">
-                <Select value={form.deductionPolicy?.mode ?? "review"} disabled={!canManage} onValueChange={(mode) => setForm({ ...form, deductionPolicy: { mode: mode as "review" | "per_minute" | "brackets", require_admin_review: true, brackets: form.deductionPolicy?.brackets ?? [] } })}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                <Select
+                  value={form.deductionPolicy?.mode ?? "review"}
+                  disabled={!canManage}
+                  onValueChange={(mode) =>
+                    setForm({
+                      ...form,
+                      deductionPolicy: {
+                        mode: mode as "review" | "per_minute" | "brackets",
+                        require_admin_review: true,
+                        brackets: form.deductionPolicy?.brackets ?? [],
+                      },
+                    })
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="review">Manager review</SelectItem>
                     <SelectItem value="per_minute">By minute</SelectItem>
@@ -241,12 +348,29 @@ function PayrollPage() {
                 </Select>
               </Field>
               <label className="flex items-center gap-2 text-sm">
-                <Checkbox checked={form.overtimeEnabled === true} disabled={!canManage} onCheckedChange={(checked) => setForm({ ...form, overtimeEnabled: checked === true })} />
+                <Checkbox
+                  checked={form.overtimeEnabled === true}
+                  disabled={!canManage}
+                  onCheckedChange={(checked) =>
+                    setForm({ ...form, overtimeEnabled: checked === true })
+                  }
+                />
                 Overtime enabled
               </label>
               <Field label="Overtime basis">
-                <Select value={form.overtimeBasis ?? "beyond_daily_required"} disabled={!canManage || !form.overtimeEnabled} onValueChange={(overtimeBasis) => setForm({ ...form, overtimeBasis: overtimeBasis as WorkProfileInput["overtimeBasis"] })}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                <Select
+                  value={form.overtimeBasis ?? "beyond_daily_required"}
+                  disabled={!canManage || !form.overtimeEnabled}
+                  onValueChange={(overtimeBasis) =>
+                    setForm({
+                      ...form,
+                      overtimeBasis: overtimeBasis as WorkProfileInput["overtimeBasis"],
+                    })
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="beyond_daily_required">Beyond daily required</SelectItem>
                     <SelectItem value="outside_shift">Outside shift</SelectItem>
@@ -255,7 +379,15 @@ function PayrollPage() {
                 </Select>
               </Field>
               <Field label="Overtime multiplier">
-                <Input type="number" step="0.1" value={form.overtimeRateMultiplier ?? 1.5} disabled={!canManage || !form.overtimeEnabled} onChange={(event) => setForm({ ...form, overtimeRateMultiplier: Number(event.target.value) })} />
+                <Input
+                  type="number"
+                  step="0.1"
+                  value={form.overtimeRateMultiplier ?? 1.5}
+                  disabled={!canManage || !form.overtimeEnabled}
+                  onChange={(event) =>
+                    setForm({ ...form, overtimeRateMultiplier: Number(event.target.value) })
+                  }
+                />
               </Field>
             </CardContent>
           </Card>
@@ -265,10 +397,23 @@ function PayrollPage() {
               <CardTitle>Preview</CardTitle>
             </CardHeader>
             <CardContent className="grid gap-3 md:grid-cols-4">
-              <Preview label="Base" value={`${preview.data?.base_salary ?? 0} ${preview.data?.currency ?? "EGP"}`} />
-              <Preview label="Required" value={formatMinutes(Math.round((preview.data?.required_seconds ?? 0) / 60))} />
-              <Preview label="Tracked" value={formatMinutes(Math.round((preview.data?.active_seconds ?? 0) / 60))} />
-              <Preview label="Estimated total" value={`${preview.data?.estimated_total ?? 0} ${preview.data?.currency ?? "EGP"}`} icon />
+              <Preview
+                label="Base"
+                value={`${preview.data?.base_salary ?? 0} ${preview.data?.currency ?? "EGP"}`}
+              />
+              <Preview
+                label="Required"
+                value={formatMinutes(Math.round((preview.data?.required_seconds ?? 0) / 60))}
+              />
+              <Preview
+                label="Tracked"
+                value={formatMinutes(Math.round((preview.data?.active_seconds ?? 0) / 60))}
+              />
+              <Preview
+                label="Estimated total"
+                value={`${preview.data?.estimated_total ?? 0} ${preview.data?.currency ?? "EGP"}`}
+                icon
+              />
             </CardContent>
           </Card>
 
@@ -294,7 +439,15 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
-function DayPicker({ value, disabled, onChange }: { value: number[]; disabled: boolean; onChange: (value: number[]) => void }) {
+function DayPicker({
+  value,
+  disabled,
+  onChange,
+}: {
+  value: number[];
+  disabled: boolean;
+  onChange: (value: number[]) => void;
+}) {
   return (
     <div className="mt-2 grid grid-cols-4 gap-2">
       {weekdays.map(([label, day]) => (
@@ -303,7 +456,11 @@ function DayPicker({ value, disabled, onChange }: { value: number[]; disabled: b
             checked={value.includes(day)}
             disabled={disabled}
             onCheckedChange={(checked) =>
-              onChange(checked === true ? [...new Set([...value, day])] : value.filter((item) => item !== day))
+              onChange(
+                checked === true
+                  ? [...new Set([...value, day])]
+                  : value.filter((item) => item !== day),
+              )
             }
           />
           {label}

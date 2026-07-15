@@ -1,4 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   Activity,
@@ -114,6 +115,7 @@ function periodTotals(byDate: Map<string, DayAgg>, dates: string[]) {
 }
 
 function DashboardPage() {
+  const [activityFilter, setActivityFilter] = useState<"all" | Employee["status"]>("all");
   const { scopedTeamIds } = useAuth();
   const scope = scopedTeamIds();
 
@@ -213,6 +215,9 @@ function DashboardPage() {
     .filter((r) => r.employee)
     .sort((a, b) => b.latest - a.latest)
     .slice(0, 4);
+  const filteredActivity = recentActivity.filter(
+    ({ employee }) => activityFilter === "all" || employee?.status === activityFilter,
+  );
 
   const online = (emps.data ?? [])
     .filter((e) => e.status !== "offline")
@@ -238,12 +243,15 @@ function DashboardPage() {
     requests.isError;
 
   return (
-    <div>
+    <div className="mx-auto max-w-[1440px]">
       <PageHeader
         title="Dashboard"
         description={dateRange}
         actions={
-          <Button asChild variant="outline">
+          <Button
+            asChild
+            className="rounded-[10px] bg-gradient-to-br from-[#e5185d] to-[#c40e4c] shadow-[0_8px_18px_-8px_#e5185d] hover:brightness-105"
+          >
             <Link to="/reports">
               Open reports <ArrowRight className="ml-2 h-4 w-4" />
             </Link>
@@ -251,60 +259,47 @@ function DashboardPage() {
         }
       />
 
-      <div className="mb-5 rounded-lg border bg-card p-3">
-        <div className="flex flex-col justify-between gap-3 xl:flex-row xl:items-center">
-          <div className="flex min-w-0 items-center justify-between gap-4 xl:w-64">
-            <div className="flex items-center gap-2">
-              <span
-                className={`grid h-8 w-8 place-items-center rounded-md ${attentionCount ? "bg-warning/15 text-warning-foreground" : "bg-success/10 text-success"}`}
-              >
-                {attentionCount ? (
-                  <AlertTriangle className="h-5 w-5" />
-                ) : (
-                  <CheckCircle2 className="h-5 w-5" />
-                )}
-              </span>
-              <div>
-                <p className="text-sm font-semibold">
-                  {attentionCount
-                    ? `${attentionCount} items need attention`
-                    : "Everything looks healthy"}
-                </p>
-                <p className="text-xs text-muted-foreground">Live operational summary</p>
-              </div>
-            </div>
-          </div>
-          <div className="grid flex-1 grid-cols-2 gap-2 sm:grid-cols-4">
-            <QuickSignal
-              to="/time-adjustments"
-              value={requests.data?.length ?? 0}
-              label="Time requests"
-              icon={TimerReset}
-              tone="warning"
-            />
-            <QuickSignal
-              to="/employees"
-              value={inactiveToday.length}
-              label="Not started"
-              icon={Users}
-              tone="danger"
-            />
-            <QuickSignal
-              to="/devices"
-              value={offlineDevices.length}
-              label="Devices offline"
-              icon={Monitor}
-              tone="muted"
-            />
-            <QuickSignal
-              to="/teams"
-              value={teamsWithoutOwner.length}
-              label="Teams unowned"
-              icon={AlertTriangle}
-              tone="warning"
-            />
-          </div>
-        </div>
+      <div className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
+        <QuickSignal
+          to="/time-adjustments"
+          value={attentionCount}
+          label={attentionCount ? "Need attention" : "All healthy"}
+          sublabel="Live summary"
+          icon={attentionCount ? AlertTriangle : CheckCircle2}
+          tone={attentionCount ? "warning" : "success"}
+        />
+        <QuickSignal
+          to="/time-adjustments"
+          value={requests.data?.length ?? 0}
+          label="Time requests"
+          sublabel="Pending review"
+          icon={TimerReset}
+          tone="info"
+        />
+        <QuickSignal
+          to="/employees"
+          value={inactiveToday.length}
+          label="Not started"
+          sublabel="Today"
+          icon={Users}
+          tone="muted"
+        />
+        <QuickSignal
+          to="/devices"
+          value={offlineDevices.length}
+          label="Devices offline"
+          sublabel={`of ${devices.data?.length ?? 0} devices`}
+          icon={Monitor}
+          tone="danger"
+        />
+        <QuickSignal
+          to="/teams"
+          value={teamsWithoutOwner.length}
+          label="Teams unowned"
+          sublabel="Assign an owner"
+          icon={AlertTriangle}
+          tone="warning"
+        />
       </div>
 
       {hasDataError && (
@@ -336,7 +331,7 @@ function DashboardPage() {
       )}
 
       {/* Hero metrics */}
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className="grid gap-3 md:grid-cols-3">
         {loading ? (
           Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-36" />)
         ) : (
@@ -505,42 +500,54 @@ function DashboardPage() {
       )}
 
       {/* Recent activity + Insights */}
-      <div className="mt-6 grid gap-6 lg:grid-cols-3">
-        <Card className="lg:col-span-2">
-          <CardHeader className="flex-row items-center justify-between space-y-0">
-            <CardTitle className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              Recent activity
-            </CardTitle>
-            <Link to="/screenshots" className="text-sm font-medium text-primary hover:underline">
-              View all
-            </Link>
+      <div className="mt-4 grid items-start gap-4 lg:grid-cols-[1.62fr_1fr]">
+        <Card className="studio-card overflow-hidden rounded-2xl shadow-none">
+          <CardHeader className="flex-row items-center justify-between space-y-0 p-[18px]">
+            <div className="flex items-center gap-3">
+              <CardTitle className="text-sm font-extrabold">Recent activity</CardTitle>
+              <span className="text-[11px] font-bold text-muted-foreground">
+                {filteredActivity.length} of {recentActivity.length} members
+              </span>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {(["all", "active", "idle", "offline"] as const).map((filter) => (
+                <button
+                  key={filter}
+                  type="button"
+                  onClick={() => setActivityFilter(filter)}
+                  className={`rounded-full border px-3 py-1.5 text-[11px] font-bold capitalize transition ${activityFilter === filter ? "border-[#e5185d] bg-[#fce3ec] text-[#e5185d] dark:bg-[#38142b] dark:text-[#f0538b]" : "bg-card text-muted-foreground hover:border-[#e5185d]/40"}`}
+                >
+                  {filter}
+                </button>
+              ))}
+            </div>
           </CardHeader>
-          <CardContent className="space-y-5">
-            {recentActivity.length === 0 && (
-              <p className="text-sm text-muted-foreground">No recent screenshots.</p>
+          <CardContent className="space-y-0 border-t p-0">
+            {filteredActivity.length === 0 && (
+              <p className="p-6 text-sm text-muted-foreground">No recent screenshots.</p>
             )}
-            {recentActivity.map(({ employee, shots: images }) => (
+            {filteredActivity.map(({ employee, shots: images }) => (
               <div
                 key={employee!.id}
-                className="grid items-center gap-3 border-b border-border pb-4 last:border-0 last:pb-0 md:grid-cols-[180px_minmax(0,1fr)]"
+                className="grid items-center gap-3 border-b border-border px-[18px] py-[15px] last:border-0 md:grid-cols-[150px_minmax(0,1fr)]"
               >
                 <Link
                   to="/employees/$employeeId"
                   params={{ employeeId: employee!.id }}
                   className="flex min-w-0 items-center gap-2 rounded-md p-1 transition hover:bg-muted/60"
                 >
-                  <Avatar className="h-8 w-8">
+                  <Avatar className="h-9 w-9">
                     <AvatarFallback className="text-xs">{initials(employee!.name)}</AvatarFallback>
                   </Avatar>
-                  <span className="text-sm font-medium">{employee!.name}</span>
+                  <span className="truncate text-[12.5px] font-bold">{employee!.name}</span>
                   <StatusBadge status={employee!.status} className="ml-auto shrink-0" />
                 </Link>
-                <div className="grid grid-cols-3 gap-2">
+                <div className="grid grid-cols-3 gap-2.5">
                   {images.map((shot) => (
                     <Link
                       key={shot.id}
                       to="/screenshots"
-                      className="group overflow-hidden rounded-lg ring-1 ring-border transition hover:ring-primary/40 hover:shadow-md"
+                      className="group overflow-hidden rounded-[9px] ring-1 ring-border transition hover:ring-primary/40 hover:shadow-md"
                     >
                       <ProtectedImage
                         src={shot.thumbnailUrl}
@@ -555,20 +562,20 @@ function DashboardPage() {
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+        <Card className="studio-card rounded-2xl shadow-none">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-[11px] font-extrabold uppercase tracking-[0.06em] text-muted-foreground">
               Insights
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-6">
             <div>
-              <p className="text-sm font-medium">Work time classification</p>
-              <p className="mt-1 text-3xl font-semibold">
+              <p className="text-[13.5px] font-extrabold">Work time classification</p>
+              <p className="font-mono-numeric mt-1 text-3xl font-extrabold">
                 {Math.round((activeWork / classifiedTotal) * 100)}%
                 <span className="ml-1 text-sm font-normal text-muted-foreground">active work</span>
               </p>
-              <div className="mt-3 flex h-2 overflow-hidden rounded-full bg-muted">
+              <div className="mt-3 flex h-2.5 overflow-hidden rounded-full bg-muted">
                 {classified.map((seg) =>
                   seg.minutes > 0 ? (
                     <div
@@ -587,7 +594,7 @@ function DashboardPage() {
                       <span className={`h-2 w-2 rounded-full ${seg.className}`} />
                       {seg.label}
                     </span>
-                    <span className="font-mono">
+                    <span className="font-mono-numeric font-bold">
                       {Math.round((seg.minutes / classifiedTotal) * 100)}%
                     </span>
                   </div>
@@ -610,7 +617,7 @@ function DashboardPage() {
       </div>
 
       {/* Who's online */}
-      <Card className="mt-6">
+      <Card className="studio-card mt-4 rounded-2xl shadow-none">
         <CardHeader className="flex-row items-center justify-between space-y-0">
           <CardTitle className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
             Who's online
@@ -626,7 +633,7 @@ function DashboardPage() {
           {online.length === 0 ? (
             <p className="text-sm text-muted-foreground">No one is currently online.</p>
           ) : (
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="flex flex-wrap gap-2.5">
               {online.map((e) => (
                 <OnlineRow key={e.id} employee={e} />
               ))}
@@ -642,31 +649,40 @@ function QuickSignal({
   to,
   value,
   label,
+  sublabel,
   icon: Icon,
   tone,
 }: {
   to: "/time-adjustments" | "/employees" | "/devices" | "/teams";
   value: number;
   label: string;
+  sublabel: string;
   icon: LucideIcon;
-  tone: "warning" | "danger" | "muted";
+  tone: "warning" | "danger" | "muted" | "info" | "success";
 }) {
   const styles = {
-    warning: "bg-warning/15 text-warning-foreground",
-    danger: "bg-destructive/10 text-destructive",
-    muted: "bg-muted text-muted-foreground",
+    warning: "bg-[#fbf1dd] text-[#c47d0e] dark:bg-[#2c2413] dark:text-[#e0a648]",
+    danger: "bg-[#fbe9e9] text-[#dc2626] dark:bg-[#331a1d] dark:text-[#f2626e]",
+    muted: "bg-[#efe9f1] text-[#5d5578] dark:bg-[#271d3a] dark:text-[#a79dbb]",
+    info: "bg-[#e8eefc] text-[#3b6fe0] dark:bg-[#182543] dark:text-[#6f9bf0]",
+    success: "bg-[#e6f6ec] text-[#16a34a] dark:bg-[#123122] dark:text-[#37d17f]",
   }[tone];
   return (
     <Link
       to={to}
-      className="group flex min-w-[132px] items-center gap-2.5 rounded-md border border-transparent bg-muted/40 px-3 py-2.5 transition hover:border-border hover:bg-muted"
+      className="studio-card group flex min-w-0 items-start gap-3 rounded-[14px] border bg-card p-3.5 transition hover:-translate-y-0.5 hover:border-[#e5185d]/20"
     >
-      <span className={`grid h-8 w-8 place-items-center rounded-lg ${styles}`}>
-        <Icon className="h-4 w-4" />
+      <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-[11px] ${styles}`}>
+        <Icon className="h-5 w-5" />
       </span>
       <span className="min-w-0">
-        <strong className="block text-base leading-none">{value}</strong>
-        <span className="mt-1 block truncate text-[11px] text-muted-foreground">{label}</span>
+        <strong className="font-mono-numeric block text-2xl font-extrabold leading-none">
+          {value}
+        </strong>
+        <span className="mt-1.5 block truncate text-xs font-bold">{label}</span>
+        <span className="mt-0.5 block truncate text-[10.5px] font-semibold text-muted-foreground">
+          {sublabel}
+        </span>
       </span>
     </Link>
   );
@@ -727,8 +743,8 @@ function HeroCard({
       to={to}
       className="group rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
     >
-      <Card className="h-full rounded-lg transition duration-200 group-hover:border-primary/25 group-hover:shadow-sm">
-        <CardContent className="p-5">
+      <Card className="studio-card h-full rounded-2xl shadow-none transition duration-200 group-hover:-translate-y-0.5 group-hover:border-primary/25">
+        <CardContent className="p-[18px]">
           <div className="flex items-center justify-between">
             <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               {label}
@@ -737,7 +753,7 @@ function HeroCard({
           </div>
           <div className="mt-3 flex items-end justify-between gap-3">
             <div>
-              <p className="text-3xl font-semibold tracking-tight">{value}</p>
+              <p className="font-mono-numeric text-3xl font-extrabold tracking-tight">{value}</p>
               <div className="mt-1">{trend}</div>
             </div>
             <div className="h-10 w-28">
@@ -803,19 +819,17 @@ function OnlineRow({ employee }: { employee: Employee }) {
     <Link
       to="/employees/$employeeId"
       params={{ employeeId: employee.id }}
-      className="group flex items-center gap-3 rounded-lg border p-3 transition hover:border-primary/20 hover:bg-muted/40"
+      className="group flex items-center gap-2.5 rounded-full border bg-muted/40 py-1.5 pl-1.5 pr-3.5 transition hover:border-primary/20 hover:bg-muted"
     >
-      <Avatar className="h-9 w-9">
+      <Avatar className="h-[30px] w-[30px]">
         <AvatarFallback className="text-xs">{initials(employee.name)}</AvatarFallback>
       </Avatar>
       <div className="min-w-0 flex-1">
-        <p className="truncate text-sm font-medium">{employee.name}</p>
-        <p className="truncate text-xs text-muted-foreground">
+        <p className="truncate text-xs font-bold">{employee.name}</p>
+        <p className="truncate text-[10px] font-semibold text-muted-foreground">
           {formatMinutes(employee.workedTodayMinutes)} today
         </p>
       </div>
-      <StatusBadge status={employee.status} />
-      <ArrowRight className="h-4 w-4 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
     </Link>
   );
 }

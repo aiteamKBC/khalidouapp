@@ -1,7 +1,7 @@
 import { createFileRoute, Link, Outlet, useNavigate, useRouterState } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState, type FormEvent } from "react";
-import { Plus, RotateCcw, Search } from "lucide-react";
+import { Clock3, Plus, RotateCcw, Search, ShieldCheck, UsersRound } from "lucide-react";
 import { PageHeader } from "@/components/ui/page-header";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -33,6 +33,7 @@ import { listEmployees } from "@/api/employees";
 import { listUsers } from "@/api/users";
 import { formatMinutes, formatRelative } from "@/lib/format";
 import { toast } from "sonner";
+import { MetricTile } from "@/components/ui/metric-tile";
 
 export const Route = createFileRoute("/_app/teams")({
   component: TeamsPage,
@@ -132,7 +133,7 @@ function TeamsList() {
   }
 
   return (
-    <div>
+    <div className="mx-auto max-w-[1440px]">
       <PageHeader
         title="Teams"
         description="Organize employees into teams and assign owners."
@@ -146,7 +147,40 @@ function TeamsList() {
         }
       />
 
-      <Card className="p-4 mb-4">
+      <div className="mb-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <MetricTile
+          icon={UsersRound}
+          value={(teams.data ?? []).length}
+          label="Total teams"
+          hint="Across your workspace"
+          tone="violet"
+        />
+        <MetricTile
+          icon={ShieldCheck}
+          value={(teams.data ?? []).filter((team) => team.ownerIds.length > 0).length}
+          label="Teams with owners"
+          hint="Clear accountability"
+          tone="green"
+        />
+        <MetricTile
+          icon={UsersRound}
+          value={(emps.data ?? []).filter((employee) => employee.status !== "offline").length}
+          label="People online"
+          hint="Live right now"
+          tone="blue"
+        />
+        <MetricTile
+          icon={Clock3}
+          value={formatMinutes(
+            (emps.data ?? []).reduce((sum, employee) => sum + employee.workedTodayMinutes, 0),
+          )}
+          label="Worked today"
+          hint="All visible members"
+          tone="pink"
+        />
+      </div>
+
+      <Card className="mb-4 p-4">
         <div className="grid gap-3 sm:grid-cols-[1fr_auto_auto]">
           <div className="relative">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />

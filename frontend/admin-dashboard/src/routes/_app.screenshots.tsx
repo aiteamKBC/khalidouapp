@@ -86,7 +86,7 @@ function ScreenshotsPage() {
     (tasks.data ?? []).find((task) => task.id === screenshot.taskId);
 
   return (
-    <div>
+    <div className="mx-auto max-w-[1440px]">
       <PageHeader
         title="Screenshots"
         description={`Review captured screenshots with filters and quick preview${shots.data ? ` · ${shots.data.total} total` : ""}.`}
@@ -154,10 +154,14 @@ function ScreenshotsPage() {
           description="Try adjusting the filters or check back later."
         />
       ) : (
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
           {filtered.map((shot, index) => (
-            <button key={shot.id} onClick={() => setOpenIdx(index)} className="group text-left">
-              <div className="aspect-video overflow-hidden rounded-md ring-1 ring-border bg-muted">
+            <button
+              key={shot.id}
+              onClick={() => setOpenIdx(index)}
+              className="studio-card group overflow-hidden rounded-2xl border bg-card p-2 text-left transition duration-200 hover:-translate-y-1 hover:border-[#e5185d]/25 hover:shadow-lg"
+            >
+              <div className="aspect-video overflow-hidden rounded-xl bg-muted ring-1 ring-border">
                 {failedIds.has(shot.id) ? (
                   <div className="grid h-full w-full place-items-center text-xs text-muted-foreground">
                     <ImageOff className="h-6 w-6" />
@@ -167,11 +171,11 @@ function ScreenshotsPage() {
                     src={shot.thumbnailUrl}
                     alt=""
                     onLoadError={() => setFailedIds((previous) => new Set(previous).add(shot.id))}
-                    className="h-full w-full object-cover transition-transform group-hover:scale-[1.02]"
+                    className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.04]"
                   />
                 )}
               </div>
-              <div className="mt-2 flex items-center justify-between gap-2 text-xs">
+              <div className="flex items-center justify-between gap-2 px-1 pb-1 pt-3 text-xs">
                 <div className="truncate">
                   <div className="font-medium text-foreground truncate">
                     {empOf(shot.employeeId)}
