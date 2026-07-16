@@ -24,7 +24,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                   <Menu className="h-5 w-5" />
                 </Button>
               </SheetTrigger>
-              <SheetContent side="left" className="w-64 p-0 bg-sidebar border-sidebar-border">
+              <SheetContent side="left" className="w-[260px] border-sidebar-border bg-sidebar p-0">
                 <SheetTitle className="sr-only">Navigation</SheetTitle>
                 <AppSidebar onNavigate={() => setOpen(false)} />
               </SheetContent>
@@ -36,7 +36,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             <ThemeToggle className="ml-auto" />
           </header>
 
-          <main className="studio-main min-w-0 flex-1 p-4 sm:p-6 lg:px-[26px] lg:py-[22px]">
+          <main className="studio-main min-w-0 flex-1 overflow-x-hidden p-4 sm:p-5 lg:px-7 lg:py-6 2xl:px-10">
             {children}
           </main>
         </div>

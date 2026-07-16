@@ -223,7 +223,7 @@ function DashboardPage() {
     .filter((e) => e.status !== "offline")
     .sort((a, b) => (a.status === "active" ? -1 : 1) - (b.status === "active" ? -1 : 1));
 
-  const dateRange = `${fmtDay(thisMonday)} – ${fmtDay(sunday)}`;
+  const dateRange = `${fmtDay(thisMonday)} - ${fmtDay(sunday)}`;
   const loading = month.isLoading || summary.isLoading;
   const offlineDevices = (devices.data ?? []).filter((device) => device.status === "offline");
   const inactiveToday = (emps.data ?? []).filter(
@@ -243,7 +243,7 @@ function DashboardPage() {
     requests.isError;
 
   return (
-    <div className="mx-auto max-w-[1440px]">
+    <div className="studio-page">
       <PageHeader
         title="Dashboard"
         description={dateRange}
@@ -331,7 +331,7 @@ function DashboardPage() {
       )}
 
       {/* Hero metrics */}
-      <div className="grid gap-3 md:grid-cols-3">
+      <div className="grid max-w-[1120px] gap-3 md:grid-cols-[repeat(3,minmax(250px,1fr))]">
         {loading ? (
           Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-36" />)
         ) : (
@@ -500,7 +500,7 @@ function DashboardPage() {
       )}
 
       {/* Recent activity + Insights */}
-      <div className="mt-4 grid items-start gap-4 lg:grid-cols-[1.62fr_1fr]">
+      <div className="mt-4 grid items-start gap-4 xl:grid-cols-[minmax(0,1.62fr)_minmax(360px,1fr)]">
         <Card className="studio-card overflow-hidden rounded-2xl shadow-none">
           <CardHeader className="flex-row items-center justify-between space-y-0 p-[18px]">
             <div className="flex items-center gap-3">
@@ -529,7 +529,7 @@ function DashboardPage() {
             {filteredActivity.map(({ employee, shots: images }) => (
               <div
                 key={employee!.id}
-                className="grid items-center gap-3 border-b border-border px-[18px] py-[15px] last:border-0 md:grid-cols-[150px_minmax(0,1fr)]"
+                className="grid items-center gap-3 border-b border-border px-[18px] py-[15px] last:border-0 md:grid-cols-[190px_minmax(0,1fr)] 2xl:grid-cols-[220px_minmax(0,1fr)]"
               >
                 <Link
                   to="/employees/$employeeId"
@@ -542,7 +542,7 @@ function DashboardPage() {
                   <span className="truncate text-[12.5px] font-bold">{employee!.name}</span>
                   <StatusBadge status={employee!.status} className="ml-auto shrink-0" />
                 </Link>
-                <div className="grid grid-cols-3 gap-2.5">
+                <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
                   {images.map((shot) => (
                     <Link
                       key={shot.id}
@@ -624,7 +624,7 @@ function DashboardPage() {
           </CardTitle>
           {summary.data && (
             <span className="text-xs text-muted-foreground">
-              {summary.data.onlineEmployees} online · {summary.data.idleEmployees} idle ·{" "}
+              {summary.data.onlineEmployees} online / {summary.data.idleEmployees} idle /{" "}
               {summary.data.offlineEmployees} offline
             </span>
           )}
@@ -695,6 +695,15 @@ function formatSignedMinutes(delta: number): string {
   const sign = delta >= 0 ? "+" : "-";
   return `${sign}${formatMinutes(Math.abs(delta))}`;
 }
+function formatLiveSince(value?: string): string {
+  if (!value) return "Live now";
+  const seconds = Math.max(0, Math.round((Date.now() - new Date(value).getTime()) / 1000));
+  if (seconds < 45) return "Live now";
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes}m live`;
+  const hours = Math.round(minutes / 60);
+  return `${hours}h live`;
+}
 
 function Trend({
   delta,
@@ -751,12 +760,14 @@ function HeroCard({
             </p>
             <Icon className="h-4 w-4 text-muted-foreground" />
           </div>
-          <div className="mt-3 flex items-end justify-between gap-3">
-            <div>
-              <p className="font-mono-numeric text-3xl font-extrabold tracking-tight">{value}</p>
+          <div className="mt-3 grid grid-cols-[minmax(0,1fr)_112px] items-end gap-4">
+            <div className="min-w-0">
+              <p className="font-mono-numeric truncate text-[28px] font-extrabold leading-none tracking-tight">
+                {value}
+              </p>
               <div className="mt-1">{trend}</div>
             </div>
-            <div className="h-10 w-28">
+            <div className="h-12 w-28 justify-self-end">
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={data} margin={{ top: 4, right: 0, bottom: 0, left: 0 }}>
                   <defs>
@@ -815,19 +826,42 @@ function MemberList({
 }
 
 function OnlineRow({ employee }: { employee: Employee }) {
+  const isActive = employee.status === "active";
+  const statusLabel = isActive ? "Live now" : employee.status === "idle" ? "Idle online" : "Online";
+  const statusClasses = isActive
+    ? "bg-success/12 text-success ring-success/20"
+    : "bg-warning/15 text-warning-foreground ring-warning/20";
   return (
     <Link
       to="/employees/$employeeId"
       params={{ employeeId: employee.id }}
-      className="group flex items-center gap-2.5 rounded-full border bg-muted/40 py-1.5 pl-1.5 pr-3.5 transition hover:border-primary/20 hover:bg-muted"
+      className="group flex min-w-[210px] items-center gap-3 rounded-[14px] border bg-card px-3 py-2.5 shadow-sm transition hover:-translate-y-0.5 hover:border-success/30 hover:shadow-md sm:min-w-[230px]"
     >
-      <Avatar className="h-[30px] w-[30px]">
-        <AvatarFallback className="text-xs">{initials(employee.name)}</AvatarFallback>
-      </Avatar>
+      <span className="relative shrink-0">
+        <span
+          className={`absolute inset-[-4px] rounded-full ${isActive ? "bg-success/18 animate-pulse" : "bg-warning/12"}`}
+        />
+        <Avatar className="relative h-10 w-10 border-2 border-card">
+          <AvatarFallback className="text-xs font-extrabold">
+            {initials(employee.name)}
+          </AvatarFallback>
+        </Avatar>
+        <span
+          className={`absolute bottom-0 right-0 h-3.5 w-3.5 rounded-full border-2 border-card ${isActive ? "bg-success" : "bg-warning"}`}
+        />
+      </span>
       <div className="min-w-0 flex-1">
-        <p className="truncate text-xs font-bold">{employee.name}</p>
-        <p className="truncate text-[10px] font-semibold text-muted-foreground">
-          {formatMinutes(employee.workedTodayMinutes)} today
+        <div className="flex min-w-0 items-center gap-2">
+          <p className="truncate text-xs font-extrabold">{employee.name}</p>
+          <span
+            className={`shrink-0 rounded-full px-2 py-0.5 text-[9.5px] font-extrabold ring-1 ${statusClasses}`}
+          >
+            {statusLabel}
+          </span>
+        </div>
+        <p className="mt-0.5 truncate text-[10.5px] font-semibold text-muted-foreground">
+          {formatLiveSince(employee.lastHeartbeat)} / {formatMinutes(employee.workedTodayMinutes)}{" "}
+          today
         </p>
       </div>
     </Link>

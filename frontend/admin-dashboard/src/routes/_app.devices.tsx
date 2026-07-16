@@ -59,7 +59,7 @@ function DevicesList() {
   });
 
   return (
-    <div className="mx-auto max-w-[1440px]">
+    <div className="studio-page">
       <PageHeader title="Devices" description="Managed devices reporting to Khaliduo." />
 
       <div className="mb-4 grid gap-3 sm:grid-cols-3">

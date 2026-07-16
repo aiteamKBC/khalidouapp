@@ -602,7 +602,7 @@ function ProjectsPage() {
   const selectedTask = (tasks.data ?? []).find((task) => task.id === selectedTaskId) ?? null;
 
   return (
-    <div className="mx-auto max-w-[1440px]">
+    <div className="studio-page">
       <PageHeader
         title={view === "projects" ? "Projects" : "Tasks"}
         description={

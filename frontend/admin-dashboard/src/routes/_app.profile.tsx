@@ -82,7 +82,7 @@ function ProfilePage() {
   }
 
   return (
-    <div className="mx-auto max-w-3xl space-y-6">
+    <div className="studio-page-narrow space-y-6">
       <PageHeader title="My Profile" description="Update your identity and account security." />
       <Card className="overflow-hidden border-primary/10">
         <div className="h-24 bg-gradient-to-r from-[#211b48] via-[#4b1d52] to-[#e5185d]" />

@@ -133,7 +133,7 @@ function TeamsList() {
   }
 
   return (
-    <div className="mx-auto max-w-[1440px]">
+    <div className="studio-page">
       <PageHeader
         title="Teams"
         description="Organize employees into teams and assign owners."

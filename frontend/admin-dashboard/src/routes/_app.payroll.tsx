@@ -119,7 +119,7 @@ function PayrollPage() {
   const employeeOptions = useMemo(() => employees.data ?? [], [employees.data]);
 
   return (
-    <div className="mx-auto max-w-[1320px]">
+    <div className="studio-page-medium">
       <PageHeader
         title="Payroll and work profiles"
         description="Complete schedules, breaks, salary, overtime and deduction rules before inviting employees."

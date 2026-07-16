@@ -68,7 +68,7 @@ function AuditLogPage() {
   if (!isGeneralAdmin) return <Navigate to="/dashboard" />;
 
   return (
-    <div className="mx-auto max-w-[1440px]">
+    <div className="studio-page">
       <PageHeader
         title="Audit Log"
         description="Historical record of admin actions and system events."

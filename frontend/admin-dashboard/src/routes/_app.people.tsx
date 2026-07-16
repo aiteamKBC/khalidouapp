@@ -103,7 +103,7 @@ function PeopleHubPage() {
     search.tab === "live" && !can(permissions.liveActivityView) ? "directory" : search.tab;
 
   return (
-    <div className="mx-auto max-w-[1440px]">
+    <div className="studio-page">
       <PageHeader
         title="People"
         description="Manage people, employee tracking, and live workforce activity from one place."

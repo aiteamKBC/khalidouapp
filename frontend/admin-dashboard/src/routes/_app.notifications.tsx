@@ -102,7 +102,7 @@ function NotificationsPage() {
   };
 
   return (
-    <div className="mx-auto max-w-[1200px] space-y-6">
+    <div className="studio-page-medium space-y-6">
       <PageHeader
         title="Notifications"
         description="Review task requests, assignments, comments and deadline alerts from one place."

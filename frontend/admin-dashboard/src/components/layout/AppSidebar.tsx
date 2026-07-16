@@ -123,9 +123,14 @@ export function AppSidebar({ onNavigate }: { onNavigate?: () => void }) {
       ),
     }))
     .filter((group) => group.items.length > 0);
+  const roleLabel = user
+    ? `${user.role === "team_owner" ? "Team lead" : user.role === "hr" ? "HR" : "General admin"}${
+        user.role === "general_admin" && user.teamLeadTeamIds.length > 0 ? " / Team lead" : ""
+      }`
+    : "";
 
   return (
-    <aside className="flex h-full w-[250px] flex-col bg-sidebar text-sidebar-foreground">
+    <aside className="flex h-full w-[260px] flex-col bg-sidebar text-sidebar-foreground">
       <div className="flex items-center gap-3 px-4 pb-3 pt-5">
         <div className="grid h-9 w-9 shrink-0 place-items-center overflow-hidden rounded-[10px] bg-white p-0.5 shadow-lg">
           <BrandLogo className="h-full w-full" />
@@ -140,7 +145,7 @@ export function AppSidebar({ onNavigate }: { onNavigate?: () => void }) {
         </div>
       </div>
 
-      <nav className="flex-1 overflow-y-auto px-3 pb-2">
+      <nav className="min-h-0 flex-1 overflow-y-auto px-3 pb-2">
         {visibleGroups.map((group) => (
           <div key={group.label}>
             <p className="px-2 pb-1 pt-3.5 text-[10px] font-extrabold uppercase tracking-[0.09em] text-white/30">
@@ -182,7 +187,7 @@ export function AppSidebar({ onNavigate }: { onNavigate?: () => void }) {
           <ThemeToggle className="h-8 w-8 border-white/10 bg-white/[0.06] text-sidebar-foreground hover:bg-white/10" />
         </div>
         {user && (
-          <div className="flex items-center gap-2.5 px-1.5 py-1">
+          <div className="grid grid-cols-[34px_minmax(0,1fr)] items-center gap-2.5 rounded-[12px] bg-white/[0.035] p-2">
             <span className="grid h-[34px] w-[34px] shrink-0 place-items-center rounded-full bg-gradient-to-br from-[#e5185d] to-violet-600 text-[11px] font-extrabold text-white">
               {user.name
                 .split(" ")
@@ -195,7 +200,8 @@ export function AppSidebar({ onNavigate }: { onNavigate?: () => void }) {
               <div className="truncate text-[12.5px] font-bold leading-tight text-white">
                 {user.name}
               </div>
-              <div className="truncate font-semibold">
+              <div className="truncate font-semibold">{roleLabel}</div>
+              <div className="hidden">
                 {user.role === "team_owner"
                   ? "Team lead"
                   : user.role === "hr"
@@ -208,10 +214,11 @@ export function AppSidebar({ onNavigate }: { onNavigate?: () => void }) {
             </div>
             <button
               onClick={() => logout()}
-              className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-sidebar-foreground hover:bg-white/[0.08] hover:text-white"
+              className="col-span-2 flex h-9 w-full items-center justify-center gap-2 rounded-[10px] border border-white/10 bg-white/[0.05] text-[12px] font-bold text-sidebar-foreground transition hover:bg-white/[0.09] hover:text-white"
               aria-label="Logout"
             >
               <LogOut className="h-4 w-4" />
+              Logout
             </button>
           </div>
         )}

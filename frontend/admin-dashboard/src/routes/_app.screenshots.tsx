@@ -86,7 +86,7 @@ function ScreenshotsPage() {
     (tasks.data ?? []).find((task) => task.id === screenshot.taskId);
 
   return (
-    <div className="mx-auto max-w-[1440px]">
+    <div className="studio-page">
       <PageHeader
         title="Screenshots"
         description={`Review captured screenshots with filters and quick preview${shots.data ? ` · ${shots.data.total} total` : ""}.`}

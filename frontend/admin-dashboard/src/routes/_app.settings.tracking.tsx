@@ -69,7 +69,7 @@ function TrackingSettingsPage() {
     form.screenshotRetentionDays < 1;
 
   return (
-    <div className="mx-auto max-w-4xl">
+    <div className="studio-page-narrow">
       <PageHeader
         title="Tracking Settings"
         description={
