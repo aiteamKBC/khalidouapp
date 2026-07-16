@@ -27,6 +27,46 @@ from app.models import (
 )
 
 
+def employee_onboarding_payload() -> dict:
+    return {
+        "start_date": "2026-01-01",
+        "annual_leave_days": 21,
+        "work_profile": {
+            "shift_start": "09:00",
+            "shift_end": "17:00",
+            "working_days": [0, 1, 2, 3, 4],
+            "weekly_off_days": [5, 6],
+            "required_daily_minutes": 480,
+            "break_rules": [
+                {
+                    "name": "Lunch",
+                    "minutes": 30,
+                    "paid": False,
+                    "start_time": "12:30",
+                    "end_time": "13:00",
+                },
+                {
+                    "name": "Short break",
+                    "minutes": 15,
+                    "paid": False,
+                    "start_time": "15:30",
+                    "end_time": "15:45",
+                },
+            ],
+            "late_grace_minutes": 15,
+            "deduction_policy": {
+                "mode": "review",
+                "brackets": [],
+                "require_admin_review": True,
+            },
+            "overtime_enabled": False,
+            "salary_amount": 0,
+            "salary_currency": "EGP",
+            "salary_type": "monthly",
+        },
+    }
+
+
 @pytest.fixture()
 def identity_client():
     engine = create_engine(
@@ -343,6 +383,7 @@ def test_general_admin_can_invite_employee_and_other_general_admin(
             "email": "employee@kentconsultancy.co",
             "kind": "employee",
             "team_ids": [str(data["team_b"].id)],
+            **employee_onboarding_payload(),
         },
     )
     admin_response = client.post(
@@ -482,6 +523,7 @@ def test_employee_invitation_is_hashed_one_time_and_accepts_password(
             "email": "invited.employee@kentconsultancy.co",
             "kind": "employee",
             "team_ids": [str(data["team_a"].id)],
+            **employee_onboarding_payload(),
         },
     )
     created_data = created.json()["data"]
@@ -622,6 +664,7 @@ def test_employee_invitation_resend_revokes_old_token(identity_client, monkeypat
             "email": "resent.employee@kentconsultancy.co",
             "kind": "employee",
             "team_ids": [str(data["team_a"].id)],
+            **employee_onboarding_payload(),
         },
     )
     invitation_id = created.json()["data"]["invitation"]["id"]
@@ -718,6 +761,7 @@ def test_accepted_employee_can_enroll_desktop_with_employee_token(
             "email": "desktop.employee@kentconsultancy.co",
             "kind": "employee",
             "team_ids": [str(data["team_a"].id)],
+            **employee_onboarding_payload(),
         },
     )
     client.post(
@@ -825,6 +869,7 @@ def test_failed_invitation_queue_is_reported_and_can_be_resent(
             "email": "queue.recovery@kentconsultancy.co",
             "kind": "employee",
             "team_ids": [str(data["team_a"].id)],
+            **employee_onboarding_payload(),
         },
     )
     assert created.status_code == 200

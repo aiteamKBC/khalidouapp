@@ -95,7 +95,7 @@ export interface Employee {
   name: string;
   code: string;
   email: string;
-  department: string;
+  jobTitle: string;
   teamIds: string[];
   status: EmployeeStatus;
   sessionStart?: string;
@@ -105,6 +105,7 @@ export interface Employee {
   lastHeartbeat?: string;
   lastScreenshotAt?: string;
   currentDeviceId?: string;
+  currentDeviceName?: string;
   currentTeamId?: string;
   currentProjectId?: string;
   currentTaskId?: string;

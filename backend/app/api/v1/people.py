@@ -99,9 +99,11 @@ def invite_person(
             name=payload.name.strip(),
             email=email,
             employee_code=f"EMP-{uuid4().hex[:8].upper()}",
-            department=payload.department or ("Management" if payload.kind == "team_manager" else None),
+            job_title=payload.job_title or ("Team Leader" if payload.kind == "team_manager" else None),
             timezone=payload.timezone,
             status="invited" if payload.kind == "employee" else "active",
+            start_date=payload.start_date,
+            annual_leave_days=payload.annual_leave_days,
         )
         db.add(employee)
         db.flush()
@@ -145,6 +147,16 @@ def invite_person(
 
     if payload.kind == "employee" and employee is not None:
         profile = get_or_create_work_profile(db, employee)
+        if payload.start_date is None:
+            raise ApiError("START_DATE_REQUIRED", "Employee start date is required.", 400)
+        if payload.work_profile is None:
+            raise ApiError("WORK_PROFILE_REQUIRED", "Complete the employee schedule and salary before invitation.", 400)
+        work_profile_changes = payload.work_profile.model_dump(exclude_unset=True, mode="json")
+        for time_field in ("shift_start", "shift_end"):
+            if time_field in work_profile_changes:
+                work_profile_changes[time_field] = getattr(payload.work_profile, time_field)
+        for key, value in work_profile_changes.items():
+            setattr(profile, key, value)
         refresh_profile_completed_at(profile)
         employee_invitation, raw_invitation_token = issue_employee_invitation(db, employee)
 

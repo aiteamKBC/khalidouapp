@@ -29,6 +29,9 @@ PERMISSION_CATALOG: tuple[dict[str, str], ...] = (
     {"key": "timesheets.manage", "label": "Manage timesheets", "group": "Tracking", "description": "Manage recorded time."},
     {"key": "time_requests.view", "label": "View time requests", "group": "Tracking", "description": "View time adjustment requests."},
     {"key": "time_requests.manage", "label": "Manage time requests", "group": "Tracking", "description": "Approve or reject time adjustment requests."},
+    {"key": "breaks.view", "label": "View breaks", "group": "Tracking", "description": "View employee break rules and usage."},
+    {"key": "leave_requests.view", "label": "View holiday requests", "group": "Leave", "description": "View holiday requests inside the assigned data scope."},
+    {"key": "leave_requests.manage", "label": "Approve holiday requests", "group": "Leave", "description": "Manage holiday credits and approve or reject requests."},
     {"key": "devices.view", "label": "View devices", "group": "Tracking", "description": "View enrolled devices."},
     {"key": "devices.manage", "label": "Manage devices", "group": "Tracking", "description": "Enroll, update, or revoke devices and backup codes."},
     {"key": "projects.view", "label": "View projects and tasks", "group": "Work", "description": "View projects and tasks inside the assigned data scope."},
@@ -77,6 +80,9 @@ ROLE_CAPABILITIES: dict[str, frozenset[str]] = {
             "timesheets.view",
             "time_requests.view",
             "time_requests.manage",
+            "breaks.view",
+            "leave_requests.view",
+            "leave_requests.manage",
             "devices.view",
             "projects.view",
             "notifications.view",
@@ -104,6 +110,12 @@ ROLE_CAPABILITIES: dict[str, frozenset[str]] = {
     )
     | LEGACY_TEAM_CAPABILITIES,
 }
+
+# Role inheritance is one-way: a General Admin always includes every Team
+# Leader capability, while Team Leaders never inherit company administration.
+ROLE_CAPABILITIES[GENERAL_ADMIN] = (
+    ROLE_CAPABILITIES[GENERAL_ADMIN] | ROLE_CAPABILITIES[TEAM_MANAGER]
+)
 
 VALID_PERMISSION_KEYS = frozenset().union(*ROLE_CAPABILITIES.values())
 FULL_ADMIN_REQUIRED_PERMISSIONS = frozenset(

@@ -8,6 +8,6 @@ export const Route = createFileRoute("/")({
 function IndexRedirect() {
   const { user, loading } = useAuth();
   if (loading) return null;
-  if (user) return <Navigate to="/dashboard" />;
-  return <Navigate to="/login" search={{ resetToken: undefined }} />;
+  if (user) return <Navigate to="/dashboard" replace />;
+  return <Navigate to="/login" search={{ resetToken: undefined }} replace />;
 }

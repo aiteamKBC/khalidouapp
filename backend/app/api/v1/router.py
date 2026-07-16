@@ -12,6 +12,7 @@ from app.api.v1 import (
     employee_portal,
     employees,
     health,
+    leave_requests,
     people,
     projects,
     reports,
@@ -44,6 +45,7 @@ api_router.include_router(screenshots.router)
 api_router.include_router(devices.router)
 api_router.include_router(projects.router)
 api_router.include_router(time_adjustments.router)
+api_router.include_router(leave_requests.router)
 api_router.include_router(timesheets.router)
 api_router.include_router(reports.router)
 api_router.include_router(settings.router)

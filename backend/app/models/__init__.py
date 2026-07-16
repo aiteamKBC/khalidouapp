@@ -10,6 +10,8 @@ from app.models.device_token import DeviceToken
 from app.models.employee import Employee
 from app.models.employee_work_profile import EmployeeWorkProfile
 from app.models.employee_invitation import EmployeeInvitation
+from app.models.leave_balance import LeaveBalance
+from app.models.leave_request import LeaveRequest
 from app.models.email_delivery import EmailDelivery
 from app.models.enrollment_code import EnrollmentCode
 from app.models.project import Project
@@ -43,6 +45,8 @@ __all__ = [
     "Employee",
     "EmployeeWorkProfile",
     "EmployeeInvitation",
+    "LeaveBalance",
+    "LeaveRequest",
     "EmailDelivery",
     "EnrollmentCode",
     "Project",

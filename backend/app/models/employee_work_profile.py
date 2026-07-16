@@ -32,6 +32,7 @@ class EmployeeWorkProfile(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     overtime_rate_multiplier: Mapped[Decimal | None] = mapped_column(Numeric(8, 2), nullable=True)
     salary_amount: Mapped[Decimal | None] = mapped_column(Numeric(14, 2), nullable=True)
     salary_currency: Mapped[str | None] = mapped_column(String(3), nullable=True)
+    salary_type: Mapped[str] = mapped_column(String(20), nullable=False, default="monthly")
     profile_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     employee = relationship("Employee", back_populates="work_profile")

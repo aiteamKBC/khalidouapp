@@ -15,6 +15,8 @@ import {
   LogOut,
   Bell,
   CircleUserRound,
+  Coffee,
+  Palmtree,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { BrandLogo } from "@/components/ui/brand-logo";
@@ -73,6 +75,13 @@ const navGroups: { label: string; items: NavItem[] }[] = [
         label: "Time Requests",
         icon: ClockPlus,
         permission: permissions.timeRequestsView,
+      },
+      { to: "/breaks", label: "Breaks", icon: Coffee, permission: permissions.breaksView },
+      {
+        to: "/holiday-requests",
+        label: "Holiday Requests",
+        icon: Palmtree,
+        permission: permissions.leaveRequestsView,
       },
       { to: "/reports", label: "Reports", icon: BarChart3, permission: permissions.reportsView },
     ],

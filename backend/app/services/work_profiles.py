@@ -19,11 +19,24 @@ REQUIRED_PROFILE_FIELDS = (
     "deduction_policy",
     "salary_amount",
     "salary_currency",
+    "salary_type",
 )
 
 DEFAULT_BREAK_RULES = [
-    {"name": "Lunch", "minutes": 30, "paid": False},
-    {"name": "Short break", "minutes": 15, "paid": False},
+    {
+        "name": "Lunch",
+        "minutes": 30,
+        "paid": False,
+        "start_time": "12:30",
+        "end_time": "13:00",
+    },
+    {
+        "name": "Short break",
+        "minutes": 15,
+        "paid": False,
+        "start_time": "15:30",
+        "end_time": "15:45",
+    },
 ]
 DEFAULT_DEDUCTION_POLICY = {
     "mode": "review",
@@ -48,6 +61,7 @@ def get_or_create_work_profile(db: Session, employee: Employee) -> EmployeeWorkP
             deduction_policy=DEFAULT_DEDUCTION_POLICY,
             salary_amount=0,
             salary_currency="EGP",
+            salary_type="monthly",
             overtime_enabled=False,
         )
         db.add(profile)
@@ -88,10 +102,53 @@ def validate_work_profile(profile: EmployeeWorkProfile) -> None:
         overlap = set(profile.working_days) & set(profile.weekly_off_days)
         if overlap:
             raise ApiError("INVALID_WORK_DAYS", "Working days and off days cannot overlap.", 400)
+    if profile.shift_start and profile.shift_end and profile.shift_end <= profile.shift_start:
+        raise ApiError("INVALID_SHIFT", "Shift end must be later than shift start on the same day.", 400)
+    for rule in profile.break_rules or []:
+        start = rule.get("start_time")
+        end = rule.get("end_time")
+        if not start or not end:
+            raise ApiError("INVALID_BREAK", "Every break needs a start and end time.", 400)
+        start_time = datetime.strptime(str(start)[:5], "%H:%M").time()
+        end_time = datetime.strptime(str(end)[:5], "%H:%M").time()
+        if end_time <= start_time:
+            raise ApiError("INVALID_BREAK", "Break end must be later than break start.", 400)
+        actual_minutes = (
+            end_time.hour * 60 + end_time.minute - start_time.hour * 60 - start_time.minute
+        )
+        if int(rule.get("minutes", 0)) != actual_minutes:
+            raise ApiError("INVALID_BREAK_DURATION", "Break duration must match its start and end time.", 400)
+        if profile.shift_start and profile.shift_end and not (
+            profile.shift_start <= start_time < end_time <= profile.shift_end
+        ):
+            raise ApiError("BREAK_OUTSIDE_SHIFT", "Every break must be fully inside the employee shift.", 400)
+
+
+def schedule_minutes(profile: EmployeeWorkProfile) -> dict[str, int]:
+    """Return shift salary minutes; scheduled breaks are inside the shift."""
+    if not profile.shift_start or not profile.shift_end or profile.shift_end <= profile.shift_start:
+        return {"shift": 0, "paid_break": 0, "unpaid_break": 0, "payable": 0}
+    shift = (
+        profile.shift_end.hour * 60
+        + profile.shift_end.minute
+        - profile.shift_start.hour * 60
+        - profile.shift_start.minute
+    )
+    paid_break = sum(int(rule.get("minutes", 0)) for rule in profile.break_rules or [] if rule.get("paid"))
+    unpaid_break = sum(int(rule.get("minutes", 0)) for rule in profile.break_rules or [] if not rule.get("paid"))
+    return {
+        "shift": shift,
+        "paid_break": paid_break,
+        "unpaid_break": unpaid_break,
+        "payable": shift,
+    }
 
 
 def refresh_profile_completed_at(profile: EmployeeWorkProfile) -> None:
     validate_work_profile(profile)
+    minutes = schedule_minutes(profile)
+    if minutes["payable"]:
+        profile.required_daily_minutes = minutes["payable"]
     if profile_completeness(profile)["complete"]:
         profile.profile_completed_at = profile.profile_completed_at or datetime.now(UTC)
     else:
@@ -115,6 +172,7 @@ def serialize_work_profile(profile: EmployeeWorkProfile) -> dict:
         "overtime_rate_multiplier": float(profile.overtime_rate_multiplier) if profile.overtime_rate_multiplier is not None else None,
         "salary_amount": float(profile.salary_amount) if profile.salary_amount is not None else None,
         "salary_currency": profile.salary_currency,
+        "salary_type": profile.salary_type,
         "completeness": profile_completeness(profile),
         "created_at": profile.created_at.isoformat(),
         "updated_at": profile.updated_at.isoformat(),
@@ -141,20 +199,42 @@ def payroll_preview(
     active_seconds = sum(max(0, session.active_seconds - session.deducted_seconds) for session in sessions)
     idle_seconds = sum(session.idle_seconds for session in sessions)
     required_daily = profile.required_daily_minutes or 480
+    break_minutes = schedule_minutes(profile)
+    if break_minutes["payable"]:
+        required_daily = break_minutes["payable"]
     working_days = profile.working_days or [0, 1, 2, 3, 4]
     days = (end_date - start_date).days + 1
     required_days = sum(1 for offset in range(days) if (start_date + timedelta(days=offset)).weekday() in working_days)
     required_seconds = required_days * required_daily * 60
+    paid_break_seconds = required_days * break_minutes["paid_break"] * 60
+    unpaid_break_seconds = required_days * break_minutes["unpaid_break"] * 60
     overtime_seconds = max(0, active_seconds - required_seconds) if profile.overtime_enabled else 0
-    base_salary = Decimal(profile.salary_amount or 0)
-    hourly_rate = base_salary / Decimal(22 * 8) if base_salary else Decimal(0)
+    configured_salary = Decimal(profile.salary_amount or 0)
+    monthly_paid_hours = Decimal(required_daily * 30) / Decimal(60)
+    hourly_rate = (
+        configured_salary
+        if profile.salary_type == "hourly"
+        else configured_salary / monthly_paid_hours
+        if configured_salary and monthly_paid_hours > 0
+        else Decimal(0)
+    )
+    base_salary = (
+        configured_salary
+        if profile.salary_type == "monthly"
+        else hourly_rate * monthly_paid_hours
+    )
     overtime_multiplier = Decimal(profile.overtime_rate_multiplier or 1)
     overtime_amount = (Decimal(overtime_seconds) / Decimal(3600)) * hourly_rate * overtime_multiplier
     return {
         "employee_id": str(employee.id),
         "currency": profile.salary_currency or "EGP",
         "base_salary": float(base_salary),
+        "hourly_rate": float(hourly_rate.quantize(Decimal("0.01"))),
+        "monthly_paid_hours": float(monthly_paid_hours.quantize(Decimal("0.01"))),
+        "salary_type": profile.salary_type,
         "required_seconds": required_seconds,
+        "paid_break_seconds": paid_break_seconds,
+        "unpaid_break_seconds": unpaid_break_seconds,
         "active_seconds": active_seconds,
         "idle_seconds": idle_seconds,
         "overtime_seconds": overtime_seconds,
@@ -162,6 +242,7 @@ def payroll_preview(
         "deduction_amount": 0,
         "estimated_total": float((base_salary + overtime_amount).quantize(Decimal("0.01"))),
         "notes": [
+            "Salary rate uses 30 paid calendar days per month; weekly days off and scheduled breaks remain paid.",
             "Idle and late deductions stay pending for Admin/HR review until a deduction decision is recorded.",
             "Preview uses a monthly base of 22 working days x 8 hours until a company payroll calendar is added.",
         ],

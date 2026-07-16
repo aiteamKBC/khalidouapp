@@ -121,7 +121,7 @@ function UsersPage() {
       toast.error(error instanceof Error ? error.message : "Failed to update user access"),
   });
 
-  if (!hasRole("general_admin")) return <Navigate to="/dashboard" />;
+  if (!hasRole("general_admin")) return <Navigate to="/dashboard" replace />;
 
   function submitCreate(event: FormEvent) {
     event.preventDefault();
@@ -181,7 +181,7 @@ function UsersPage() {
                 <TableCell className="font-medium">{user.name}</TableCell>
                 <TableCell className="text-sm text-muted-foreground">{user.email}</TableCell>
                 <TableCell className="text-sm">
-                  {user.role === "team_owner" ? "Team manager" : user.role === "hr" ? "HR" : "General admin"}
+                  {user.role === "team_owner" ? "Team leader" : user.role === "hr" ? "HR" : "General admin"}
                 </TableCell>
                 <TableCell className="text-sm">
                   {user.assignedTeamIds
@@ -265,7 +265,7 @@ function UsersPage() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="team_owner">Team manager</SelectItem>
+                    <SelectItem value="team_owner">Team leader</SelectItem>
                     <SelectItem value="hr">HR</SelectItem>
                     <SelectItem value="general_admin">General admin</SelectItem>
                   </SelectContent>
@@ -350,7 +350,7 @@ function UsersPage() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="team_owner">Team manager</SelectItem>
+                    <SelectItem value="team_owner">Team leader</SelectItem>
                     <SelectItem value="hr">HR</SelectItem>
                     <SelectItem value="general_admin">General admin</SelectItem>
                   </SelectContent>
@@ -393,12 +393,12 @@ function TeamAccessSelector({
       <div>
         <Label>Team access</Label>
         <p className="text-xs text-muted-foreground">
-          Choose the teams this team manager can manage. General admins can manage every team.
+          Choose the teams this team leader can manage. General admins can manage every team.
         </p>
       </div>
       {teams.length === 0 ? (
         <p className="text-sm text-muted-foreground">
-          Create a team before assigning a team manager.
+          Create a team before assigning a team leader.
         </p>
       ) : (
         <div className="grid gap-2 sm:grid-cols-2">

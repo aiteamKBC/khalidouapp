@@ -27,9 +27,11 @@ import { Route as AppPeopleRouteImport } from './routes/_app.people'
 import { Route as AppPayrollRouteImport } from './routes/_app.payroll'
 import { Route as AppNotificationsRouteImport } from './routes/_app.notifications'
 import { Route as AppLiveActivityRouteImport } from './routes/_app.live-activity'
+import { Route as AppHolidayRequestsRouteImport } from './routes/_app.holiday-requests'
 import { Route as AppEmployeesRouteImport } from './routes/_app.employees'
 import { Route as AppDevicesRouteImport } from './routes/_app.devices'
 import { Route as AppDashboardRouteImport } from './routes/_app.dashboard'
+import { Route as AppBreaksRouteImport } from './routes/_app.breaks'
 import { Route as AppAuditLogRouteImport } from './routes/_app.audit-log'
 import { Route as AppTeamsTeamIdRouteImport } from './routes/_app.teams.$teamId'
 import { Route as AppSettingsTrackingRouteImport } from './routes/_app.settings.tracking'
@@ -126,6 +128,11 @@ const AppLiveActivityRoute = AppLiveActivityRouteImport.update({
   path: '/live-activity',
   getParentRoute: () => AppRoute,
 } as any)
+const AppHolidayRequestsRoute = AppHolidayRequestsRouteImport.update({
+  id: '/holiday-requests',
+  path: '/holiday-requests',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppEmployeesRoute = AppEmployeesRouteImport.update({
   id: '/employees',
   path: '/employees',
@@ -139,6 +146,11 @@ const AppDevicesRoute = AppDevicesRouteImport.update({
 const AppDashboardRoute = AppDashboardRouteImport.update({
   id: '/dashboard',
   path: '/dashboard',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppBreaksRoute = AppBreaksRouteImport.update({
+  id: '/breaks',
+  path: '/breaks',
   getParentRoute: () => AppRoute,
 } as any)
 const AppAuditLogRoute = AppAuditLogRouteImport.update({
@@ -179,9 +191,11 @@ export interface FileRoutesByFullPath {
   '/employee': typeof EmployeeRoute
   '/login': typeof LoginRoute
   '/audit-log': typeof AppAuditLogRoute
+  '/breaks': typeof AppBreaksRoute
   '/dashboard': typeof AppDashboardRoute
   '/devices': typeof AppDevicesRouteWithChildren
   '/employees': typeof AppEmployeesRouteWithChildren
+  '/holiday-requests': typeof AppHolidayRequestsRoute
   '/live-activity': typeof AppLiveActivityRoute
   '/notifications': typeof AppNotificationsRoute
   '/payroll': typeof AppPayrollRoute
@@ -207,9 +221,11 @@ export interface FileRoutesByTo {
   '/employee': typeof EmployeeRoute
   '/login': typeof LoginRoute
   '/audit-log': typeof AppAuditLogRoute
+  '/breaks': typeof AppBreaksRoute
   '/dashboard': typeof AppDashboardRoute
   '/devices': typeof AppDevicesRouteWithChildren
   '/employees': typeof AppEmployeesRouteWithChildren
+  '/holiday-requests': typeof AppHolidayRequestsRoute
   '/live-activity': typeof AppLiveActivityRoute
   '/notifications': typeof AppNotificationsRoute
   '/payroll': typeof AppPayrollRoute
@@ -237,9 +253,11 @@ export interface FileRoutesById {
   '/employee': typeof EmployeeRoute
   '/login': typeof LoginRoute
   '/_app/audit-log': typeof AppAuditLogRoute
+  '/_app/breaks': typeof AppBreaksRoute
   '/_app/dashboard': typeof AppDashboardRoute
   '/_app/devices': typeof AppDevicesRouteWithChildren
   '/_app/employees': typeof AppEmployeesRouteWithChildren
+  '/_app/holiday-requests': typeof AppHolidayRequestsRoute
   '/_app/live-activity': typeof AppLiveActivityRoute
   '/_app/notifications': typeof AppNotificationsRoute
   '/_app/payroll': typeof AppPayrollRoute
@@ -267,9 +285,11 @@ export interface FileRouteTypes {
     | '/employee'
     | '/login'
     | '/audit-log'
+    | '/breaks'
     | '/dashboard'
     | '/devices'
     | '/employees'
+    | '/holiday-requests'
     | '/live-activity'
     | '/notifications'
     | '/payroll'
@@ -295,9 +315,11 @@ export interface FileRouteTypes {
     | '/employee'
     | '/login'
     | '/audit-log'
+    | '/breaks'
     | '/dashboard'
     | '/devices'
     | '/employees'
+    | '/holiday-requests'
     | '/live-activity'
     | '/notifications'
     | '/payroll'
@@ -324,9 +346,11 @@ export interface FileRouteTypes {
     | '/employee'
     | '/login'
     | '/_app/audit-log'
+    | '/_app/breaks'
     | '/_app/dashboard'
     | '/_app/devices'
     | '/_app/employees'
+    | '/_app/holiday-requests'
     | '/_app/live-activity'
     | '/_app/notifications'
     | '/_app/payroll'
@@ -483,6 +507,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppLiveActivityRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/holiday-requests': {
+      id: '/_app/holiday-requests'
+      path: '/holiday-requests'
+      fullPath: '/holiday-requests'
+      preLoaderRoute: typeof AppHolidayRequestsRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/employees': {
       id: '/_app/employees'
       path: '/employees'
@@ -502,6 +533,13 @@ declare module '@tanstack/react-router' {
       path: '/dashboard'
       fullPath: '/dashboard'
       preLoaderRoute: typeof AppDashboardRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/breaks': {
+      id: '/_app/breaks'
+      path: '/breaks'
+      fullPath: '/breaks'
+      preLoaderRoute: typeof AppBreaksRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/audit-log': {
@@ -599,9 +637,11 @@ const AppTeamsRouteWithChildren = AppTeamsRoute._addFileChildren(
 
 interface AppRouteChildren {
   AppAuditLogRoute: typeof AppAuditLogRoute
+  AppBreaksRoute: typeof AppBreaksRoute
   AppDashboardRoute: typeof AppDashboardRoute
   AppDevicesRoute: typeof AppDevicesRouteWithChildren
   AppEmployeesRoute: typeof AppEmployeesRouteWithChildren
+  AppHolidayRequestsRoute: typeof AppHolidayRequestsRoute
   AppLiveActivityRoute: typeof AppLiveActivityRoute
   AppNotificationsRoute: typeof AppNotificationsRoute
   AppPayrollRoute: typeof AppPayrollRoute
@@ -619,9 +659,11 @@ interface AppRouteChildren {
 
 const AppRouteChildren: AppRouteChildren = {
   AppAuditLogRoute: AppAuditLogRoute,
+  AppBreaksRoute: AppBreaksRoute,
   AppDashboardRoute: AppDashboardRoute,
   AppDevicesRoute: AppDevicesRouteWithChildren,
   AppEmployeesRoute: AppEmployeesRouteWithChildren,
+  AppHolidayRequestsRoute: AppHolidayRequestsRoute,
   AppLiveActivityRoute: AppLiveActivityRoute,
   AppNotificationsRoute: AppNotificationsRoute,
   AppPayrollRoute: AppPayrollRoute,

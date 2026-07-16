@@ -47,6 +47,8 @@ import {
   updateEmployeeTask,
   updateEmployeeProfile,
   forgotEmployeeAccessKey,
+  employeeLeaveRequests,
+  createEmployeeLeaveRequest,
   type PortalPeriod,
 } from "@/api/employee-portal";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -263,6 +265,10 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
     queryKey: ["employee-portal", "requests"],
     queryFn: () => employeeTimeRequests(token),
   });
+  const leaveRequests = useQuery({
+    queryKey: ["employee-portal", "leave-requests"],
+    queryFn: () => employeeLeaveRequests(token),
+  });
   const notifications = useQuery({
     queryKey: ["employee-portal", "notifications"],
     queryFn: () => employeeNotifications(token),
@@ -271,6 +277,9 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
   const [minutes, setMinutes] = useState(30);
   const [requestedDate, setRequestedDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [reason, setReason] = useState("");
+  const [leaveStart, setLeaveStart] = useState("");
+  const [leaveEnd, setLeaveEnd] = useState("");
+  const [leaveReason, setLeaveReason] = useState("");
   const [taskName, setTaskName] = useState("");
   const [taskDescription, setTaskDescription] = useState("");
   const [taskProject, setTaskProject] = useState("");
@@ -355,6 +364,15 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
         queryClient.invalidateQueries({ queryKey: ["employee-portal", "requests"] }),
         queryClient.invalidateQueries({ queryKey: ["employee-portal", "summary"] }),
       ]);
+    },
+  });
+  const createLeave = useMutation({
+    mutationFn: () => createEmployeeLeaveRequest(token, {
+      startDate: leaveStart, endDate: leaveEnd, leaveType: "annual", reason: leaveReason || undefined,
+    }),
+    onSuccess: async () => {
+      setLeaveStart(""); setLeaveEnd(""); setLeaveReason("");
+      await queryClient.invalidateQueries({ queryKey: ["employee-portal", "leave-requests"] });
     },
   });
 
@@ -838,6 +856,23 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
             </CardContent>
           </Card>
         </div>
+        <Card>
+          <CardHeader>
+            <CardTitle>Request holiday</CardTitle>
+            <p className="text-sm text-muted-foreground">
+              Annual credit: {leaveRequests.data?.balance.remaining_days ?? "-"} of {leaveRequests.data?.balance.credit_days ?? "-"} days remaining.
+            </p>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <form className="space-y-3" onSubmit={(event) => { event.preventDefault(); createLeave.mutate(); }}>
+              <div className="grid grid-cols-2 gap-3"><div><Label>From</Label><Input type="date" value={leaveStart} onChange={(event) => setLeaveStart(event.target.value)} required /></div><div><Label>To</Label><Input type="date" value={leaveEnd} onChange={(event) => setLeaveEnd(event.target.value)} required /></div></div>
+              <div><Label>Reason (optional)</Label><Textarea value={leaveReason} onChange={(event) => setLeaveReason(event.target.value)} /></div>
+              <Button disabled={createLeave.isPending}>{createLeave.isPending ? "Sending..." : "Request holiday"}</Button>
+              {createLeave.error && <p className="text-sm text-destructive">{createLeave.error.message}</p>}
+            </form>
+            <div className="space-y-2">{(leaveRequests.data?.requests ?? []).map((request) => <div key={request.id} className="flex items-center justify-between rounded-lg border p-3"><div><strong>{request.requested_days} days</strong><p className="text-xs text-muted-foreground">{request.start_date} – {request.end_date}</p></div><StatusBadge status={request.status} /></div>)}</div>
+          </CardContent>
+        </Card>
         <Card>
           <CardHeader>
             <CardTitle>Manual time requests</CardTitle>

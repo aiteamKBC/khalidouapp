@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ImgHTMLAttributes } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiFile } from "@/api/client";
+import { cn } from "@/lib/utils";
 
 type ProtectedImageProps = Omit<ImgHTMLAttributes<HTMLImageElement>, "src"> & {
   src: string;
@@ -8,8 +9,15 @@ type ProtectedImageProps = Omit<ImgHTMLAttributes<HTMLImageElement>, "src"> & {
   onLoadError?: () => void;
 };
 
-export function ProtectedImage({ src, eager = false, onLoadError, ...props }: ProtectedImageProps) {
-  const imageRef = useRef<HTMLImageElement>(null);
+export function ProtectedImage({
+  src,
+  eager = false,
+  onLoadError,
+  className,
+  alt,
+  ...props
+}: ProtectedImageProps) {
+  const imageRef = useRef<HTMLElement | null>(null);
   const errorReported = useRef(false);
   const [visible, setVisible] = useState(eager);
   const [objectUrl, setObjectUrl] = useState<string>();
@@ -28,7 +36,7 @@ export function ProtectedImage({ src, eager = false, onLoadError, ...props }: Pr
           observer.disconnect();
         }
       },
-      { rootMargin: "240px" },
+      { rootMargin: "80px" },
     );
     observer.observe(element);
     return () => observer.disconnect();
@@ -40,7 +48,7 @@ export function ProtectedImage({ src, eager = false, onLoadError, ...props }: Pr
     enabled: visible && Boolean(src),
     staleTime: Number.POSITIVE_INFINITY,
     gcTime: 5 * 60_000,
-    retry: 1,
+    retry: false,
   });
 
   useEffect(() => {
@@ -56,11 +64,32 @@ export function ProtectedImage({ src, eager = false, onLoadError, ...props }: Pr
     onLoadError?.();
   }, [image.isError, onLoadError]);
 
+  if (!objectUrl) {
+    return (
+      <span
+        ref={(element) => {
+          imageRef.current = element;
+        }}
+        role="img"
+        aria-label={typeof alt === "string" ? alt : undefined}
+        aria-busy={visible && image.isLoading}
+        className={cn(
+          "block bg-[linear-gradient(135deg,hsl(var(--muted))_0%,hsl(var(--card))_45%,hsl(var(--muted))_100%)]",
+          className,
+        )}
+      />
+    );
+  }
+
   return (
     <img
       {...props}
-      ref={imageRef}
+      ref={(element) => {
+        imageRef.current = element;
+      }}
       src={objectUrl}
+      alt={alt}
+      className={className}
       loading={eager ? "eager" : (props.loading ?? "lazy")}
       aria-busy={visible && image.isLoading}
     />

@@ -1,8 +1,8 @@
 from uuid import UUID
 
-from datetime import datetime
+from datetime import date, datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Date, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database.base import Base
@@ -20,7 +20,7 @@ class Employee(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     email: Mapped[str] = mapped_column(String(320), nullable=False, index=True)
     employee_code: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
-    department: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    job_title: Mapped[str | None] = mapped_column(String(255), nullable=True)
     timezone: Mapped[str] = mapped_column(String(80), nullable=False, default="UTC")
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="active")
     weekly_capacity_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=2400)
@@ -33,6 +33,8 @@ class Employee(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     status_before_archive: Mapped[str | None] = mapped_column(String(50), nullable=True)
     avatar_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    start_date: Mapped[date | None] = mapped_column(Date, nullable=True, index=True)
+    annual_leave_days: Mapped[int] = mapped_column(Integer, nullable=False, default=21)
 
     company = relationship("Company", back_populates="employees")
     devices = relationship("Device", back_populates="employee")

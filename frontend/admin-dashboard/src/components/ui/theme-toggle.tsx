@@ -4,12 +4,15 @@ import { cn } from "@/lib/utils";
 
 type Theme = "light" | "dark";
 const THEME_EVENT = "khaliduo-theme-change";
+const THEME_STORAGE_KEY = "khaliduo-theme-v2";
+const LEGACY_THEME_STORAGE_KEY = "khaliduo-theme";
 
 function preferredTheme(): Theme {
   if (typeof window === "undefined") return "light";
-  const saved = window.localStorage.getItem("khaliduo-theme");
+  window.localStorage.removeItem(LEGACY_THEME_STORAGE_KEY);
+  const saved = window.localStorage.getItem(THEME_STORAGE_KEY);
   if (saved === "light" || saved === "dark") return saved;
-  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  return "light";
 }
 
 function applyTheme(theme: Theme) {
@@ -33,7 +36,7 @@ export function ThemeToggle({ className }: { className?: string }) {
     const next = theme === "dark" ? "light" : "dark";
     setTheme(next);
     applyTheme(next);
-    window.localStorage.setItem("khaliduo-theme", next);
+    window.localStorage.setItem(THEME_STORAGE_KEY, next);
     window.dispatchEvent(new CustomEvent<Theme>(THEME_EVENT, { detail: next }));
   }
 

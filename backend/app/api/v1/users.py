@@ -76,7 +76,7 @@ def team_owner_employee_identity(
             name=name,
             email=email.lower(),
             employee_code=f"EMP-{uuid4().hex[:8].upper()}",
-            department="Management",
+            job_title="Management",
             timezone="UTC",
             status="active",
         )

@@ -44,11 +44,13 @@ def serialize_employee(employee: Employee, invitation=None) -> dict[str, Any]:
         "name": employee.name,
         "email": employee.email,
         "employee_code": employee.employee_code,
-        "department": employee.department,
+          "job_title": employee.job_title,
         "timezone": employee.timezone,
         "status": employee.status,
         "weekly_capacity_minutes": employee.weekly_capacity_minutes,
-        "avatar_url": employee.avatar_url,
+          "avatar_url": employee.avatar_url,
+          "start_date": employee.start_date.isoformat() if employee.start_date else None,
+          "annual_leave_days": employee.annual_leave_days,
         "portal_access_enabled": bool(
             employee.portal_password_hash or employee.portal_access_key_hash
         ),

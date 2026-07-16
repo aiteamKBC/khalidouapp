@@ -9,7 +9,7 @@ export type PortalEmployee = {
   name: string;
   email: string;
   employee_code: string;
-  department?: string | null;
+  job_title?: string | null;
   avatar_url?: string | null;
 };
 
@@ -75,6 +75,15 @@ export type PortalTimeRequest = {
   status: "pending" | "approved" | "rejected";
   admin_note?: string | null;
   created_at: string;
+};
+
+export type PortalLeaveData = {
+  balance: { year: number; credit_days: number; used_days: number; remaining_days: number };
+  requests: Array<{
+    id: string; start_date: string; end_date: string; requested_days: number;
+    leave_type: "annual" | "sick" | "unpaid"; reason?: string | null;
+    status: "pending" | "approved" | "rejected"; review_note?: string | null;
+  }>;
 };
 
 export function readEmployeeToken() {
@@ -296,6 +305,26 @@ export const createEmployeeTimeRequest = (
     },
     token,
   );
+
+export const employeeLeaveRequests = (token: string) =>
+  apiFetch<PortalLeaveData>("/employee-portal/leave-requests", {}, token);
+
+export const createEmployeeLeaveRequest = (
+  token: string,
+  input: { startDate: string; endDate: string; leaveType: string; reason?: string },
+) => apiFetch(
+  "/employee-portal/leave-requests",
+  {
+    method: "POST",
+    body: JSON.stringify({
+      start_date: input.startDate,
+      end_date: input.endDate,
+      leave_type: input.leaveType,
+      reason: input.reason,
+    }),
+  },
+  token,
+);
 
 export async function employeeScreenshots(token: string, day?: string): Promise<PortalScreenshot[]> {
   const rows = await apiFetch<

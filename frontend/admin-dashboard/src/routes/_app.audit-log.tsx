@@ -65,7 +65,7 @@ function AuditLogPage() {
     return true;
   });
 
-  if (!isGeneralAdmin) return <Navigate to="/dashboard" />;
+  if (!isGeneralAdmin) return <Navigate to="/dashboard" replace />;
 
   return (
     <div className="studio-page">

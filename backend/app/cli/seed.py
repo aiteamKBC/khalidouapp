@@ -73,7 +73,7 @@ def main() -> None:
                 name=employee_name,
                 email=employee_email,
                 employee_code="TEST-001",
-                department="Development",
+                job_title="Developer",
                 timezone="Africa/Cairo",
                 status="active",
             )

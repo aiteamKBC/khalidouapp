@@ -9,7 +9,7 @@ class EmployeeCreate(BaseModel):
     name: str = Field(min_length=1, max_length=255)
     email: EmailStr
     employee_code: str | None = Field(default=None, max_length=80)
-    department: str | None = Field(default=None, max_length=255)
+    job_title: str | None = Field(default=None, max_length=255)
     timezone: str = Field(default="UTC", max_length=80)
     weekly_capacity_minutes: int = Field(default=2400, ge=60, le=10080)
 
@@ -18,7 +18,7 @@ class EmployeeUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=255)
     email: EmailStr | None = None
     employee_code: str | None = Field(default=None, max_length=80)
-    department: str | None = Field(default=None, max_length=255)
+    job_title: str | None = Field(default=None, max_length=255)
     timezone: str | None = Field(default=None, max_length=80)
     status: str | None = Field(default=None, max_length=50)
     weekly_capacity_minutes: int | None = Field(default=None, ge=60, le=10080)
@@ -58,6 +58,7 @@ class EmployeeWorkProfileUpdate(BaseModel):
     overtime_rate_multiplier: float | None = Field(default=None, ge=0, le=10)
     salary_amount: float | None = Field(default=None, ge=0)
     salary_currency: Literal["EGP", "GBP", "USD", "EUR", "SAR", "AED"] | None = None
+    salary_type: Literal["monthly", "hourly"] | None = None
 
 
 class EnrollmentCodeCreate(BaseModel):
@@ -213,9 +214,12 @@ class PersonInvitationCreate(BaseModel):
     email: EmailStr
     kind: Literal["employee", "team_manager", "general_admin", "hr"]
     team_ids: list[UUID] = Field(default_factory=list)
-    department: str | None = Field(default=None, max_length=255)
+    job_title: str | None = Field(default=None, max_length=255)
     timezone: str = Field(default="Africa/Cairo", max_length=80)
     track_as_employee: bool = False
+    start_date: date | None = None
+    annual_leave_days: int = Field(default=21, ge=0, le=365)
+    work_profile: EmployeeWorkProfileUpdate | None = None
 
 
 class AdminAccessUpdate(BaseModel):
@@ -231,3 +235,20 @@ class TimeAdjustmentReview(BaseModel):
     status: str = Field(pattern="^(approved|rejected)$")
     approved_minutes: int | None = Field(default=None, ge=1, le=720)
     admin_note: str | None = Field(default=None, max_length=1000)
+
+
+class LeaveRequestReview(BaseModel):
+    status: str = Field(pattern="^(approved|rejected)$")
+    review_note: str | None = Field(default=None, max_length=1000)
+
+
+class LeaveBalanceUpdate(BaseModel):
+    credit_days: float = Field(ge=0, le=365)
+
+
+class ManualLeaveCreate(BaseModel):
+    employee_id: UUID
+    start_date: date
+    end_date: date
+    leave_type: str = Field(default="annual", pattern="^(annual|sick|unpaid)$")
+    reason: str | None = Field(default=None, max_length=1000)

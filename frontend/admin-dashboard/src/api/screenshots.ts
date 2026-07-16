@@ -63,10 +63,13 @@ export async function listScreenshotPage(options: {
   };
 }
 
-export async function listScreenshots(scopedTeamIds?: string[]): Promise<Screenshot[]> {
+export async function listScreenshots(
+  scopedTeamIds?: string[],
+  options: { pageSize?: number } = {},
+): Promise<Screenshot[]> {
   const teamId = scopedTeamIds?.length === 1 ? scopedTeamIds[0] : undefined;
   const screenshots = await apiFetch<BackendScreenshot[]>(
-    withQuery("/screenshots", { page_size: 50, team_id: teamId }),
+    withQuery("/screenshots", { page_size: options.pageSize ?? 50, team_id: teamId }),
   );
   return screenshots.map((screenshot) =>
     mapScreenshot(screenshot, screenshot.team_id ?? teamId ?? ""),

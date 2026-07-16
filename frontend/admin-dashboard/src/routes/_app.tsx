@@ -17,7 +17,7 @@ function AppLayout() {
         Loading…
       </div>
     );
-  if (!user) return <Navigate to="/login" search={{ resetToken: undefined }} />;
+  if (!user) return <Navigate to="/login" search={{ resetToken: undefined }} replace />;
   const requiredPermission = requiredPermissionForPath(pathname);
   if (requiredPermission && !can(requiredPermission)) {
     return (

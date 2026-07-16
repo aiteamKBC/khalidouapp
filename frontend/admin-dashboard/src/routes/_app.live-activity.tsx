@@ -14,13 +14,12 @@ import {
 import { StatusBadge } from "@/components/ui/status-badge";
 import { listEmployees } from "@/api/employees";
 import { listTeams } from "@/api/teams";
-import { listDevices } from "@/api/devices";
 import { listTasks } from "@/api/projects";
 import { useAuth } from "@/lib/auth";
 import { formatMinutes, formatRelative } from "@/lib/format";
 
 export const Route = createFileRoute("/_app/live-activity")({
-  component: () => <Navigate to="/people" search={{ tab: "live" }} />,
+  component: () => <Navigate to="/people" search={{ tab: "live" }} replace />,
 });
 
 export function LiveActivityPage({ embedded = false }: { embedded?: boolean }) {
@@ -31,12 +30,18 @@ export function LiveActivityPage({ embedded = false }: { embedded?: boolean }) {
     queryFn: () => listEmployees(scope),
     refetchInterval: 15_000,
   });
-  const teams = useQuery({ queryKey: ["teams", scope], queryFn: () => listTeams(scope) });
+  const teams = useQuery({
+    queryKey: ["teams", scope],
+    queryFn: () => listTeams(scope),
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
+  });
   const tasks = useQuery({
     queryKey: ["tasks", scope],
     queryFn: () => listTasks({ scopedTeamIds: scope }),
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
   });
-  const devices = useQuery({ queryKey: ["devices", scope], queryFn: () => listDevices(scope) });
 
   return (
     <div>
@@ -74,9 +79,6 @@ export function LiveActivityPage({ embedded = false }: { embedded?: boolean }) {
               const team = (teams.data ?? []).find(
                 (item) => item.id === (employee.currentTeamId ?? employee.teamIds[0]),
               );
-              const device = (devices.data ?? []).find(
-                (item) => item.id === employee.currentDeviceId,
-              );
               const session = employee.sessionStart
                 ? Math.round((Date.now() - new Date(employee.sessionStart).getTime()) / 60000)
                 : 0;
@@ -94,9 +96,7 @@ export function LiveActivityPage({ embedded = false }: { embedded?: boolean }) {
                   <TableCell className="text-sm text-muted-foreground">
                     {formatRelative(employee.lastHeartbeat)}
                   </TableCell>
-                  <TableCell className="text-sm">
-                    {device ? <StatusBadge status={device.status} /> : "-"}
-                  </TableCell>
+                  <TableCell className="text-sm">{employee.currentDeviceName ?? "-"}</TableCell>
                 </TableRow>
               );
             })}

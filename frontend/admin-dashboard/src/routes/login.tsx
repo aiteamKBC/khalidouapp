@@ -30,7 +30,7 @@ function LoginPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  if (user) return <Navigate to="/dashboard" />;
+  if (user) return <Navigate to="/dashboard" replace />;
 
   async function onResetSubmit(event: FormEvent) {
     event.preventDefault();
@@ -116,7 +116,7 @@ function LoginPage() {
     try {
       await login(email, password, remember);
       toast.success("Signed in");
-      navigate({ to: "/dashboard" });
+      navigate({ to: "/dashboard", replace: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Invalid credentials");
     } finally {

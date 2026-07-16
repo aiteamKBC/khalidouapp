@@ -16,6 +16,7 @@ import {
   RefreshCw,
   Archive,
   ArchiveRestore,
+  Trash2,
 } from "lucide-react";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card } from "@/components/ui/card";
@@ -62,15 +63,18 @@ import { useAuth } from "@/lib/auth";
 import { permissions } from "@/lib/permissions";
 import { toast } from "sonner";
 import type { DataScope, Employee, PermissionMode, Role, Team, User } from "@/types";
-import { EmployeesList } from "./_app.employees";
 import { LiveActivityPage } from "./_app.live-activity";
 
 export const Route = createFileRoute("/_app/people")({
   validateSearch: (search: Record<string, unknown>) => ({
     tab:
-      search.tab === "directory" || search.tab === "employees" || search.tab === "live"
-        ? search.tab
-        : "directory",
+      search.tab === "directory"
+        ? "directory"
+        : search.tab === "archived"
+          ? "archived"
+        : search.tab === "live" || search.tab === "employees"
+          ? "live"
+          : "directory",
   }),
   component: PeopleHubPage,
 });
@@ -80,6 +84,7 @@ export const Route = createFileRoute("/_app/people")({
 // a password + role). This hub is the single place to create and manage both.
 type PersonKind = "employee" | "team_owner" | "general_admin" | "hr";
 type TypeFilter = "all" | "employees" | "admins";
+type RoleFilter = "all" | "employee" | Role;
 type StatusFilter = "all" | "active" | "invited" | "archived";
 type AccessPreset = Role | "custom";
 
@@ -91,6 +96,9 @@ type PersonRow = {
   roleLabel: string;
   detail: string;
   status: "active" | "invited" | "expired" | "archived";
+  teamIds: string[];
+  dashboardEmployeeId?: string;
+  isCurrentUser: boolean;
   employee?: Employee;
   user?: User;
 };
@@ -112,31 +120,31 @@ function PeopleHubPage() {
         <Button
           variant="ghost"
           className={`rounded-lg border-0 px-4 ${tab === "directory" ? "bg-[#fce3ec] text-[#e5185d] dark:bg-[#38142b] dark:text-[#f0538b]" : "text-muted-foreground"}`}
-          onClick={() => navigate({ to: "/people", search: { tab: "directory" } })}
+          onClick={() => navigate({ to: "/people", search: { tab: "directory" }, replace: true })}
         >
-          <UsersRound className="mr-2 h-4 w-4" /> Directory
+          <UsersRound className="mr-2 h-4 w-4" /> Directory & access
         </Button>
         <Button
           variant="ghost"
-          className={`rounded-lg border-0 px-4 ${tab === "employees" ? "bg-[#fce3ec] text-[#e5185d] dark:bg-[#38142b] dark:text-[#f0538b]" : "text-muted-foreground"}`}
-          onClick={() => navigate({ to: "/people", search: { tab: "employees" } })}
+          className={`rounded-lg border-0 px-4 ${tab === "archived" ? "bg-[#fce3ec] text-[#e5185d] dark:bg-[#38142b] dark:text-[#f0538b]" : "text-muted-foreground"}`}
+          onClick={() => navigate({ to: "/people", search: { tab: "archived" }, replace: true })}
         >
-          <UserCircle className="mr-2 h-4 w-4" /> Employees
+          <Archive className="mr-2 h-4 w-4" /> Archived
         </Button>
         {can(permissions.liveActivityView) && (
           <Button
             variant="ghost"
             className={`rounded-lg border-0 px-4 ${tab === "live" ? "bg-[#fce3ec] text-[#e5185d] dark:bg-[#38142b] dark:text-[#f0538b]" : "text-muted-foreground"}`}
-            onClick={() => navigate({ to: "/people", search: { tab: "live" } })}
+            onClick={() => navigate({ to: "/people", search: { tab: "live" }, replace: true })}
           >
-            <Activity className="mr-2 h-4 w-4" /> Live Activity
+            <Activity className="mr-2 h-4 w-4" /> Live activity
           </Button>
         )}
       </div>
       {tab === "directory" ? (
         <PeopleDirectory embedded />
-      ) : tab === "employees" ? (
-        <EmployeesList embedded />
+      ) : tab === "archived" ? (
+        <PeopleDirectory embedded archiveOnly />
       ) : (
         <LiveActivityPage embedded />
       )}
@@ -144,8 +152,14 @@ function PeopleHubPage() {
   );
 }
 
-function PeopleDirectory({ embedded = false }: { embedded?: boolean }) {
-  const { can, canAny, user: currentUser, refreshUser } = useAuth();
+function PeopleDirectory({
+  embedded = false,
+  archiveOnly = false,
+}: {
+  embedded?: boolean;
+  archiveOnly?: boolean;
+}) {
+  const { can, user: currentUser, refreshUser } = useAuth();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
 
@@ -153,17 +167,25 @@ function PeopleDirectory({ embedded = false }: { embedded?: boolean }) {
     queryKey: ["users"],
     queryFn: listUsers,
     enabled: can(permissions.accessManage),
+    staleTime: 60_000,
+    placeholderData: (previous) => previous,
   });
-  const employees = useQuery({ queryKey: ["employees"], queryFn: () => listEmployees() });
-  const teams = useQuery({ queryKey: ["teams"], queryFn: () => listTeams() });
-  const catalog = useQuery({
-    queryKey: ["permission-catalog"],
-    queryFn: getPermissionCatalog,
-    enabled: can(permissions.accessManage),
+  const employees = useQuery({
+    queryKey: ["employees"],
+    queryFn: () => listEmployees(),
+    staleTime: 20_000,
+    placeholderData: (previous) => previous,
   });
-
+  const teams = useQuery({
+    queryKey: ["teams"],
+    queryFn: () => listTeams(),
+    staleTime: 60_000,
+    placeholderData: (previous) => previous,
+  });
   const [q, setQ] = useState("");
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
+  const [roleFilter, setRoleFilter] = useState<RoleFilter>("all");
+  const [teamFilter, setTeamFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [wizardOpen, setWizardOpen] = useState(false);
 
@@ -179,6 +201,14 @@ function PeopleDirectory({ embedded = false }: { embedded?: boolean }) {
   const [editTeamIds, setEditTeamIds] = useState<string[]>([]);
   const [editTrackAsEmployee, setEditTrackAsEmployee] = useState(false);
   const [editPermissions, setEditPermissions] = useState<string[]>([]);
+  const canChangeRoles = currentUser?.role === "general_admin";
+
+  const catalog = useQuery({
+    queryKey: ["permission-catalog"],
+    queryFn: getPermissionCatalog,
+    enabled: Boolean(editUser) && can(permissions.accessManage),
+    staleTime: 5 * 60_000,
+  });
 
   const access = useQuery({
     queryKey: ["admin-access", editUser?.id],
@@ -201,6 +231,10 @@ function PeopleDirectory({ embedded = false }: { embedded?: boolean }) {
     () => new Map((teams.data ?? []).map((team) => [team.id, team.name])),
     [teams.data],
   );
+  const activeTeams = useMemo(
+    () => (teams.data ?? []).filter((team) => team.status === "active"),
+    [teams.data],
+  );
 
   const rows = useMemo<PersonRow[]>(() => {
     const employeeRows: PersonRow[] = (employees.data ?? []).map((employee) => ({
@@ -209,7 +243,7 @@ function PeopleDirectory({ embedded = false }: { embedded?: boolean }) {
       name: employee.name,
       email: employee.email,
       roleLabel: "Employee",
-      detail: employee.department || "—",
+      detail: employee.jobTitle || "—",
       status:
         employee.accountStatus === "invited"
           ? employee.invitation?.status === "expired"
@@ -218,6 +252,10 @@ function PeopleDirectory({ embedded = false }: { embedded?: boolean }) {
           : employee.active
             ? "active"
             : "archived",
+      teamIds: employee.teamIds,
+      dashboardEmployeeId: employee.id,
+      isCurrentUser:
+        currentUser?.employeeId === employee.id || currentUser?.trackedEmployeeId === employee.id,
       employee,
     }));
     const adminRows: PersonRow[] = (users.data ?? []).map((user) => ({
@@ -241,20 +279,44 @@ function PeopleDirectory({ embedded = false }: { embedded?: boolean }) {
               .filter(Boolean)
               .join(", ") || "—",
       status: user.status === "active" ? "active" : "archived",
+      teamIds: user.dataScope === "company" ? activeTeams.map((team) => team.id) : user.teamLeadTeamIds,
+      dashboardEmployeeId: user.trackedEmployeeId,
+      isCurrentUser: currentUser?.id === user.id,
       user,
     }));
     const all = [...adminRows, ...employeeRows];
     return all.filter((row) => {
+      if (archiveOnly && row.status !== "archived") return false;
+      if (!archiveOnly && statusFilter === "all" && row.status === "archived") return false;
       if (typeFilter === "employees" && row.kind !== "employee") return false;
       if (typeFilter === "admins" && row.kind !== "admin") return false;
-      if (statusFilter === "active" && row.status !== "active") return false;
-      if (statusFilter === "invited" && row.status !== "invited" && row.status !== "expired")
+      if (roleFilter === "employee" && row.kind !== "employee") return false;
+      if (roleFilter !== "all" && roleFilter !== "employee" && row.user?.role !== roleFilter)
         return false;
-      if (statusFilter === "archived" && row.status !== "archived") return false;
+      if (teamFilter !== "all" && !row.teamIds.includes(teamFilter)) return false;
+      if (!archiveOnly) {
+        if (statusFilter === "active" && row.status !== "active") return false;
+        if (statusFilter === "invited" && row.status !== "invited" && row.status !== "expired")
+          return false;
+        if (statusFilter === "archived" && row.status !== "archived") return false;
+      }
       if (q && !`${row.name} ${row.email}`.toLowerCase().includes(q.toLowerCase())) return false;
       return true;
     });
-  }, [employees.data, users.data, teamNames, typeFilter, statusFilter, q]);
+  }, [
+    employees.data,
+    users.data,
+    teamNames,
+    activeTeams,
+    currentUser?.id,
+    currentUser?.employeeId,
+    currentUser?.trackedEmployeeId,
+    typeFilter,
+    roleFilter,
+    teamFilter,
+    statusFilter,
+    q,
+  ]);
 
   const updateMutation = useMutation({
     mutationFn: async () => {
@@ -265,7 +327,7 @@ function PeopleDirectory({ embedded = false }: { embedded?: boolean }) {
         password: editPassword || undefined,
       });
       const base = new Set(
-        editPermissionMode === "role" ? (catalog.data?.rolePresets[editRole] ?? []) : [],
+        editPermissionMode === "role" ? (catalog.data?.rolePresets?.[editRole] ?? []) : [],
       );
       const selected = new Set(editPermissions);
       const overrides = Object.fromEntries(
@@ -280,7 +342,7 @@ function PeopleDirectory({ embedded = false }: { embedded?: boolean }) {
       return updateAdminAccess(editUser.id, {
         role: editRole,
         permissionMode: editPermissionMode,
-        dataScope: editDataScope,
+        dataScope: editRole === "team_owner" ? "assigned_teams" : editDataScope,
         permissionOverrides: overrides,
         teamLeadTeamIds: editTeamIds,
         trackAsEmployee: editTrackAsEmployee,
@@ -343,6 +405,10 @@ function PeopleDirectory({ embedded = false }: { embedded?: boolean }) {
   }
 
   function choosePreset(preset: AccessPreset) {
+    if (!canChangeRoles) {
+      toast.error("Only General admins can change roles.");
+      return;
+    }
     setEditPreset(preset);
     if (preset === "custom") {
       setEditPermissionMode("custom");
@@ -351,10 +417,42 @@ function PeopleDirectory({ embedded = false }: { embedded?: boolean }) {
     setEditRole(preset);
     setEditPermissionMode("role");
     setEditDataScope(preset === "general_admin" || preset === "hr" ? "company" : "assigned_teams");
-    setEditPermissions(catalog.data?.rolePresets[preset] ?? []);
+    setEditPermissions(catalog.data?.rolePresets?.[preset] ?? []);
   }
 
+  function changeBaseRole(role: Role) {
+    if (!canChangeRoles) {
+      toast.error("Only General admins can change roles.");
+      return;
+    }
+    setEditRole(role);
+    if (role === "team_owner") {
+      setEditDataScope("assigned_teams");
+    }
+    if (editPermissionMode === "custom" && editPreset !== "custom") {
+      setEditPreset("custom");
+    }
+  }
+
+  function changeDataScope(scope: DataScope) {
+    if (editRole === "team_owner" && scope === "company") {
+      toast.error("Team leads can only see assigned teams.");
+      return;
+    }
+    setEditDataScope(scope);
+  }
+
+  const visiblePermissionKeys = useMemo(() => {
+    if (!catalog.data) return [];
+    if (editPermissionMode === "custom") return editPermissions;
+    return catalog.data.rolePresets?.[editRole] ?? [];
+  }, [catalog.data, editPermissionMode, editPermissions, editRole]);
+
   function changeArchiveStatus(row: PersonRow, archived: boolean) {
+    if (row.isCurrentUser) {
+      toast.error("You cannot archive your own account.");
+      return;
+    }
     if (archived) {
       const accepted = window.confirm(
         `Archive ${row.name}? They will lose access and new tracking will stop, but their history will be kept.`,
@@ -381,21 +479,32 @@ function PeopleDirectory({ embedded = false }: { embedded?: boolean }) {
       {embedded && (
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-card p-4">
           <div>
-            <h2 className="text-sm font-semibold">People directory & access</h2>
+            <h2 className="text-sm font-semibold">
+              {archiveOnly ? "Archived people" : "People directory & access"}
+            </h2>
             <p className="text-xs text-muted-foreground">
-              Add employees, Team Managers, or General Admins and choose their teams and sign-in
-              method.
+              {archiveOnly
+                ? "Restore archived people here. Permanent deletion needs a safe backend endpoint."
+                : "Add employees, Team Managers, or General Admins and choose their teams and sign-in method."}
             </p>
           </div>
-          <Button onClick={() => setWizardOpen(true)}>
-            <Plus className="mr-2 h-4 w-4" /> Add person
-          </Button>
+          {!archiveOnly && (
+            <Button onClick={() => setWizardOpen(true)}>
+              <Plus className="mr-2 h-4 w-4" /> Add person
+            </Button>
+          )}
         </div>
       )}
 
       <Card className="mb-4 p-4">
-        <div className="grid gap-3 sm:grid-cols-3">
-          <div className="relative sm:col-span-2">
+        <div
+          className={`grid gap-3 ${
+            archiveOnly
+              ? "md:grid-cols-[minmax(260px,2fr)_repeat(3,minmax(150px,1fr))]"
+              : "md:grid-cols-[minmax(260px,2fr)_repeat(4,minmax(150px,1fr))]"
+          }`}
+        >
+          <div className="relative">
             <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               placeholder="Search by name or email..."
@@ -414,7 +523,72 @@ function PeopleDirectory({ embedded = false }: { embedded?: boolean }) {
               <SelectItem value="admins">Admins</SelectItem>
             </SelectContent>
           </Select>
+          <Select value={roleFilter} onValueChange={(value) => setRoleFilter(value as RoleFilter)}>
+            <SelectTrigger>
+              <SelectValue placeholder="Role" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All roles</SelectItem>
+              <SelectItem value="employee">Employee</SelectItem>
+              <SelectItem value="team_owner">Team lead</SelectItem>
+              <SelectItem value="hr">HR</SelectItem>
+              <SelectItem value="general_admin">General admin</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select value={teamFilter} onValueChange={setTeamFilter}>
+            <SelectTrigger>
+              <SelectValue placeholder="Team" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All teams</SelectItem>
+              {activeTeams.map((team) => (
+                <SelectItem key={team.id} value={team.id}>
+                  {team.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {!archiveOnly && (
+            <Select
+              value={statusFilter}
+              onValueChange={(value) => setStatusFilter(value as StatusFilter)}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Status" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All active/invited</SelectItem>
+                <SelectItem value="active">Active only</SelectItem>
+                <SelectItem value="invited">Invited / expired</SelectItem>
+              </SelectContent>
+            </Select>
+          )}
         </div>
+        {(q ||
+          typeFilter !== "all" ||
+          roleFilter !== "all" ||
+          teamFilter !== "all" ||
+          (!archiveOnly && statusFilter !== "all")) && (
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t pt-3">
+            <span className="text-xs font-medium text-muted-foreground">
+              Showing {rows.length} {archiveOnly ? "archived" : ""} people with current filters.
+            </span>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                setQ("");
+                setTypeFilter("all");
+                setRoleFilter("all");
+                setTeamFilter("all");
+                setStatusFilter("all");
+              }}
+            >
+              Clear filters
+            </Button>
+          </div>
+        )}
       </Card>
 
       <Card className="overflow-x-auto">
@@ -424,7 +598,7 @@ function PeopleDirectory({ embedded = false }: { embedded?: boolean }) {
               <TableHead>Name</TableHead>
               <TableHead>Email</TableHead>
               <TableHead>Type / role</TableHead>
-              <TableHead>Teams / department</TableHead>
+              <TableHead>Teams / job title</TableHead>
               <TableHead>Sign-in</TableHead>
               <TableHead>Status</TableHead>
               <TableHead className="text-right">Actions</TableHead>
@@ -441,14 +615,41 @@ function PeopleDirectory({ embedded = false }: { embedded?: boolean }) {
                   {row.kind === "employee"
                     ? row.status === "invited" || row.status === "expired"
                       ? "Email invitation"
-                      : "Password + device enrollment"
+                      : "Password"
                     : "Password"}
                 </TableCell>
                 <TableCell>
                   <StatusBadge status={row.status} />
                 </TableCell>
                 <TableCell className="space-x-1 text-right">
-                  {row.kind === "employee" ? (
+                  <div className="flex flex-wrap justify-end gap-1">
+                    {row.dashboardEmployeeId && (row.kind === "admin" || row.status === "active") && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="rounded-full border-[#e5185d]/25 bg-[#fce3ec]/55 text-[#e5185d] hover:bg-[#fce3ec]"
+                        onClick={() =>
+                          navigate({
+                            to: "/employees/$employeeId",
+                            params: { employeeId: row.dashboardEmployeeId! },
+                          })
+                        }
+                      >
+                        <Activity className="mr-1.5 h-3.5 w-3.5" />
+                        Employee profile
+                      </Button>
+                    )}
+                    {row.isCurrentUser && !row.dashboardEmployeeId && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => navigate({ to: "/profile" })}
+                      >
+                        <UserCircle className="mr-1.5 h-3.5 w-3.5" />
+                        My profile
+                      </Button>
+                    )}
+                    {row.kind === "employee" ? (
                     <>
                       {(row.status === "invited" || row.status === "expired") &&
                         row.employee?.invitation && (
@@ -462,37 +663,96 @@ function PeopleDirectory({ embedded = false }: { embedded?: boolean }) {
                             Resend invitation
                           </Button>
                         )}
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() =>
-                          navigate({
-                            to: "/employees/$employeeId",
-                            params: { employeeId: row.id },
-                          })
-                        }
-                      >
-                        Access & codes
-                      </Button>
+                      {can(permissions.peopleArchive) &&
+                        !row.isCurrentUser &&
+                        row.status !== "archived" && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="text-destructive hover:text-destructive"
+                          disabled={archiveMutation.isPending}
+                          onClick={() => changeArchiveStatus(row, true)}
+                        >
+                          <Archive className="mr-1.5 h-3.5 w-3.5" /> Archive
+                        </Button>
+                      )}
+                      {can(permissions.peopleArchive) &&
+                        !row.isCurrentUser &&
+                        row.status === "archived" && (
+                        <>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            disabled={archiveMutation.isPending}
+                            onClick={() => changeArchiveStatus(row, false)}
+                          >
+                            <ArchiveRestore className="mr-1.5 h-3.5 w-3.5" /> Restore
+                          </Button>
+                          {archiveOnly && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              disabled
+                              title="Permanent deletion is not enabled yet."
+                            >
+                              <Trash2 className="mr-1.5 h-3.5 w-3.5" /> Delete
+                            </Button>
+                          )}
+                        </>
+                      )}
                     </>
                   ) : (
                     <>
-                      <Button variant="ghost" size="sm" onClick={() => openEdit(row.user!)}>
-                        Manage access
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className={cn(
-                          row.status === "active" && "text-destructive hover:text-destructive",
-                        )}
-                        disabled={archiveMutation.isPending}
-                        onClick={() => changeArchiveStatus(row, row.status === "active")}
-                      >
-                        {row.status === "active" ? "Archive" : "Restore"}
-                      </Button>
+                      {!row.isCurrentUser && canChangeRoles && (
+                        <Button variant="ghost" size="sm" onClick={() => openEdit(row.user!)}>
+                          Permissions
+                        </Button>
+                      )}
+                      {can(permissions.peopleArchive) &&
+                        !row.isCurrentUser &&
+                        row.status !== "archived" && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="text-destructive hover:text-destructive"
+                          disabled={archiveMutation.isPending}
+                          onClick={() => changeArchiveStatus(row, true)}
+                        >
+                          <Archive className="mr-1.5 h-3.5 w-3.5" /> Archive
+                        </Button>
+                      )}
+                      {can(permissions.peopleArchive) &&
+                        !row.isCurrentUser &&
+                        row.status === "archived" && (
+                        <>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            disabled={archiveMutation.isPending}
+                            onClick={() => changeArchiveStatus(row, false)}
+                          >
+                            <ArchiveRestore className="mr-1.5 h-3.5 w-3.5" /> Restore
+                          </Button>
+                          {archiveOnly && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              disabled
+                              title="Permanent deletion is not enabled yet."
+                            >
+                              <Trash2 className="mr-1.5 h-3.5 w-3.5" /> Delete
+                            </Button>
+                          )}
+                        </>
+                      )}
                     </>
                   )}
+                    {row.isCurrentUser && (
+                      <span className="inline-flex items-center rounded-full bg-muted px-2.5 py-1 text-xs font-bold text-muted-foreground">
+                        You
+                      </span>
+                    )}
+                  </div>
                 </TableCell>
               </TableRow>
             ))}
@@ -522,18 +782,37 @@ function PeopleDirectory({ embedded = false }: { embedded?: boolean }) {
 
       {/* Manage admin access */}
       <Dialog open={!!editUser} onOpenChange={(open) => !open && setEditUser(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Manage admin access</DialogTitle>
+        <DialogContent className="max-h-[88vh] overflow-hidden p-0 sm:max-w-3xl">
+          <DialogHeader className="border-b px-5 py-4">
+            <DialogTitle>Role & permissions</DialogTitle>
           </DialogHeader>
           <form
-            className="space-y-4"
+            className="flex min-h-0 flex-col"
             onSubmit={(event) => {
               event.preventDefault();
               updateMutation.mutate();
             }}
           >
-            <div className="grid gap-3 sm:grid-cols-2">
+            <div className="max-h-[calc(88vh-132px)] space-y-3 overflow-y-auto px-5 py-4">
+              <div className="rounded-xl border bg-muted/25 p-3">
+                <p className="text-sm font-extrabold">How roles work</p>
+                <div className="mt-2 grid gap-2 text-xs text-muted-foreground sm:grid-cols-3">
+                  <RoleExplainer
+                    title="Team lead"
+                    body="Assigned teams only. No company-wide admin or payroll visibility."
+                  />
+                  <RoleExplainer
+                    title="HR"
+                    body="People, invitations, schedules, payroll and HR operations."
+                  />
+                  <RoleExplainer
+                    title="General admin"
+                    body="Company-wide access. Can also be team lead when needed."
+                  />
+                </div>
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <Label htmlFor="edit-name">Name</Label>
                 <Input
@@ -565,31 +844,136 @@ function PeopleDirectory({ embedded = false }: { embedded?: boolean }) {
                 />
               </div>
               <div className="space-y-1.5">
-                <Label>Role</Label>
-                <Select value={editRole} onValueChange={(value) => setEditRole(value as Role)}>
+                <Label>Role preset</Label>
+                <Select
+                  value={editPreset}
+                  onValueChange={(value) => choosePreset(value as AccessPreset)}
+                  disabled={!canChangeRoles}
+                >
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="team_owner">Team manager</SelectItem>
+                    <SelectItem value="team_owner">Team lead</SelectItem>
+                    <SelectItem value="hr">HR</SelectItem>
+                    <SelectItem value="general_admin">General admin</SelectItem>
+                    <SelectItem value="custom">Custom permissions</SelectItem>
+                  </SelectContent>
+                </Select>
+                {!canChangeRoles && (
+                  <p className="text-xs text-muted-foreground">
+                    Only General admins can change roles and permission presets.
+                  </p>
+                )}
+              </div>
+              </div>
+
+              <div className="rounded-xl border p-3">
+              <Label>Access scope</Label>
+              <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                <button
+                  type="button"
+                  onClick={() => changeDataScope("assigned_teams")}
+                  className={cn(
+                    "rounded-lg border p-3 text-left text-sm transition hover:bg-muted/60",
+                    editDataScope === "assigned_teams" && "border-[#e5185d] bg-[#fce3ec]/50",
+                  )}
+                >
+                  <span className="font-bold">Assigned teams</span>
+                  <span className="mt-1 block text-xs text-muted-foreground">
+                    Best for Team leads. They only see selected teams.
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  disabled={editRole === "team_owner"}
+                  onClick={() => changeDataScope("company")}
+                  className={cn(
+                    "rounded-lg border p-3 text-left text-sm transition hover:bg-muted/60 disabled:cursor-not-allowed disabled:opacity-45",
+                    editDataScope === "company" && "border-[#e5185d] bg-[#fce3ec]/50",
+                  )}
+                >
+                  <span className="font-bold">Whole company</span>
+                  <span className="mt-1 block text-xs text-muted-foreground">
+                    Best for General admin and HR.
+                  </span>
+                </button>
+              </div>
+              </div>
+
+              {editPermissionMode === "custom" && (
+                <div className="space-y-1.5 rounded-xl border p-3">
+                <Label>Base role for this custom account</Label>
+                <Select
+                  value={editRole}
+                  onValueChange={(value) => changeBaseRole(value as Role)}
+                  disabled={!canChangeRoles}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="team_owner">Team lead</SelectItem>
                     <SelectItem value="hr">HR</SelectItem>
                     <SelectItem value="general_admin">General admin</SelectItem>
                   </SelectContent>
                 </Select>
+                <p className="text-xs text-muted-foreground">
+                  Team lead is limited to selected teams. General admin can be company-wide and can
+                  also be assigned teams.
+                </p>
               </div>
+              )}
+
+              {(editRole === "team_owner" || editRole === "general_admin") && (
+                <TeamAccessSelector
+                  teams={teams.data ?? []}
+                  teamIds={editTeamIds}
+                  onToggle={(id, checked) =>
+                    setEditTeamIds((current) =>
+                      checked ? [...new Set([...current, id])] : current.filter((x) => x !== id),
+                    )
+                  }
+                />
+              )}
+
+              {(editRole === "team_owner" || editRole === "general_admin") && (
+                <div className="flex items-center justify-between gap-3 rounded-xl border p-3">
+                <div>
+                  <Label>Also track as employee</Label>
+                  <p className="text-xs text-muted-foreground">
+                    Use this when the admin/team lead also works on tasks and needs their own
+                    employee dashboard.
+                  </p>
+                </div>
+                <Switch checked={editTrackAsEmployee} onCheckedChange={setEditTrackAsEmployee} />
+              </div>
+              )}
+
+              {editPermissionMode === "custom" && catalog.data && (
+                <PermissionChecklist
+                  permissions={catalog.data.permissions}
+                  selected={editPermissions}
+                  disabled={!canChangeRoles}
+                  onToggle={(key, checked) =>
+                    setEditPermissions((current) =>
+                      checked ? [...new Set([...current, key])] : current.filter((x) => x !== key),
+                    )
+                  }
+                />
+              )}
+
+              {catalog.data && (
+                <PermissionPreview
+                  role={editRole}
+                  mode={editPermissionMode}
+                  permissions={catalog.data.permissions}
+                  selectedKeys={visiblePermissionKeys}
+                />
+              )}
             </div>
-            {editRole === "team_owner" && (
-              <TeamAccessSelector
-                teams={teams.data ?? []}
-                teamIds={editTeamIds}
-                onToggle={(id, checked) =>
-                  setEditTeamIds((current) =>
-                    checked ? [...new Set([...current, id])] : current.filter((x) => x !== id),
-                  )
-                }
-              />
-            )}
-            <div className="flex justify-end gap-2">
+
+            <div className="flex justify-end gap-2 border-t bg-card px-5 py-4">
               <Button type="button" variant="outline" onClick={() => setEditUser(null)}>
                 Cancel
               </Button>
@@ -616,12 +1000,25 @@ function AddPersonWizard({
   onCreated: () => Promise<void>;
 }) {
   const navigate = useNavigate();
-  const [step, setStep] = useState<"type" | "form" | "invited">("type");
+  const [step, setStep] = useState<"type" | "form" | "work" | "review" | "invited">("type");
   const [kind, setKind] = useState<PersonKind>("employee");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
-  const [department, setDepartment] = useState("");
+  const [jobTitle, setJobTitle] = useState("");
   const [teamIds, setTeamIds] = useState<string[]>([]);
+  const [startDate, setStartDate] = useState("");
+  const [annualLeaveDays, setAnnualLeaveDays] = useState(21);
+  const [shiftStart, setShiftStart] = useState("09:00");
+  const [shiftEnd, setShiftEnd] = useState("17:00");
+  const [offDays, setOffDays] = useState<number[]>([5, 6]);
+  const [salaryType, setSalaryType] = useState<"monthly" | "hourly">("monthly");
+  const [salaryAmount, setSalaryAmount] = useState("0");
+  const [hourlyRate, setHourlyRate] = useState("0");
+  const [salaryCurrency, setSalaryCurrency] = useState("EGP");
+  const [breaks, setBreaks] = useState([
+    { name: "Lunch", start_time: "13:00", end_time: "13:30", minutes: 30, paid: false },
+    { name: "Short break", start_time: "15:30", end_time: "15:45", minutes: 15, paid: true },
+  ]);
 
   // Invitation confirmation and optional fallback enrollment (employee only).
   const [createdEmployee, setCreatedEmployee] = useState<Employee | null>(null);
@@ -634,8 +1031,11 @@ function AddPersonWizard({
     setKind("employee");
     setName("");
     setEmail("");
-    setDepartment("");
+    setJobTitle("");
     setTeamIds([]);
+    setStartDate(""); setAnnualLeaveDays(21); setShiftStart("09:00"); setShiftEnd("17:00");
+    setOffDays([5, 6]); setSalaryType("monthly"); setSalaryAmount("0"); setHourlyRate("0"); setSalaryCurrency("EGP");
+    setBreaks([{ name: "Lunch", start_time: "13:00", end_time: "13:30", minutes: 30, paid: false }, { name: "Short break", start_time: "15:30", end_time: "15:45", minutes: 15, paid: true }]);
     setCreatedEmployee(null);
     setCreatedInvitation(undefined);
     setInvitationEmailQueued(false);
@@ -655,8 +1055,24 @@ function AddPersonWizard({
         email,
         kind: kind === "team_owner" ? "team_manager" : kind,
         teamIds,
-        department,
+        jobTitle,
         timezone: "Africa/Cairo",
+        startDate: kind === "employee" ? startDate : undefined,
+        annualLeaveDays: kind === "employee" ? annualLeaveDays : undefined,
+        workProfile: kind === "employee" ? {
+          shiftStart, shiftEnd,
+          workingDays: [0, 1, 2, 3, 4, 5, 6].filter((day) => !offDays.includes(day)),
+          weeklyOffDays: offDays,
+          requiredDailyMinutes: Math.max(60, requiredDailyMinutes),
+          breakRules: breaks,
+          lateGraceMinutes: 15,
+          overtimeEnabled: true,
+          overtimeBasis: "outside_shift",
+          overtimeRateMultiplier: 1,
+          salaryAmount: salaryType === "monthly" ? Number(salaryAmount) : Number(hourlyRate),
+          salaryCurrency,
+          salaryType,
+        } : undefined,
       });
       const employee = invitation.employeeId ? await getEmployee(invitation.employeeId) : undefined;
       return { kind, employee, invitation };
@@ -711,16 +1127,52 @@ function AddPersonWizard({
 
   function submitForm(event: FormEvent) {
     event.preventDefault();
-    createMutation.mutate();
+    setStep(kind === "employee" ? "work" : "review");
   }
+
+  const shiftTimeOptions = Array.from({ length: 96 }, (_, index) => {
+    const hours = Math.floor(index / 4);
+    const minutes = (index % 4) * 15;
+    const value = `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+    const hour12 = hours % 12 || 12;
+    return { value, label: `${hour12}:${String(minutes).padStart(2, "0")} ${hours < 12 ? "AM" : "PM"}` };
+  });
+  const firstYearLeaveCredit = (() => {
+    if (!startDate) return null;
+    const [startYear, startMonth, startDay] = startDate.split("-").map(Number);
+    const targetMonthStart = new Date(startYear, startMonth - 1 + 6, 1, 12);
+    const targetMonthLastDay = new Date(targetMonthStart.getFullYear(), targetMonthStart.getMonth() + 1, 0).getDate();
+    const eligibleAt = new Date(targetMonthStart.getFullYear(), targetMonthStart.getMonth(), Math.min(startDay, targetMonthLastDay), 12);
+    const remainingFullMonths = 12 - (eligibleAt.getMonth() + 1);
+    return {
+      eligibleAt: eligibleAt.toLocaleDateString(),
+      months: remainingFullMonths,
+      days: Number(((remainingFullMonths * annualLeaveDays) / 12).toFixed(2)),
+    };
+  })();
+  const shiftMinutes = Math.max(
+    0,
+    Math.round(
+      (new Date(`2000-01-01T${shiftEnd}`).getTime() -
+        new Date(`2000-01-01T${shiftStart}`).getTime()) /
+        60000,
+    ),
+  );
+  const requiredDailyMinutes = shiftMinutes;
+  const estimatedMonthlyHours = (requiredDailyMinutes / 60) * 30;
+  const calculatedHourlyRate =
+    estimatedMonthlyHours > 0 ? Number(salaryAmount || 0) / estimatedMonthlyHours : 0;
+  const calculatedMonthlySalary = Number(hourlyRate || 0) * estimatedMonthlyHours;
 
   return (
     <Dialog open={open} onOpenChange={(next) => (next ? onOpenChange(true) : close())}>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>
             {step === "type" && "Add a person"}
             {step === "form" && `New ${kindLabel(kind).toLowerCase()}`}
+            {step === "work" && "Work, breaks and salary"}
+            {step === "review" && "Review and send invitation"}
             {step === "invited" && "Invitation sent"}
           </DialogTitle>
         </DialogHeader>
@@ -741,7 +1193,7 @@ function AddPersonWizard({
               active={kind === "team_owner"}
               onClick={() => setKind("team_owner")}
               icon={UserPlus}
-              title="Team manager"
+              title="Team leader"
               subtitle="Manages assigned teams in the dashboard and has an Employee profile, so they can receive and track their own tasks."
             />
             <TypeOption
@@ -749,7 +1201,7 @@ function AddPersonWizard({
               onClick={() => setKind("general_admin")}
               icon={ShieldCheck}
               title="General admin"
-              subtitle="Company-wide admin with access to every team and permission to review a team manager's own task."
+              subtitle="Company-wide admin with access to every team and permission to review a team leader's own task."
             />
             <TypeOption
               active={kind === "hr"}
@@ -791,11 +1243,12 @@ function AddPersonWizard({
               </div>
               {kind === "employee" && (
                 <div className="space-y-1.5">
-                  <Label htmlFor="person-department">Department</Label>
+                  <Label htmlFor="person-job-title">Job title</Label>
                   <Input
-                    id="person-department"
-                    value={department}
-                    onChange={(event) => setDepartment(event.target.value)}
+                    id="person-job-title"
+                    value={jobTitle}
+                    onChange={(event) => setJobTitle(event.target.value)}
+                    placeholder="e.g. AI Engineer"
                   />
                 </div>
               )}
@@ -851,12 +1304,38 @@ function AddPersonWizard({
                       ? "Sending..."
                       : "Creating..."
                     : kind === "employee"
-                      ? "Send invitation"
+                      ? "Next"
                       : `Create ${kindLabel(kind).toLowerCase()}`}
                 </Button>
               </div>
             </div>
           </form>
+        )}
+
+        {step === "work" && kind === "employee" && (
+          <div className="space-y-5">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div><Label>Employment start date</Label><Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} required /></div>
+              <div><Label>Annual leave entitlement</Label><Input type="number" min={0} max={365} value={annualLeaveDays} onChange={(e) => setAnnualLeaveDays(Number(e.target.value))} /><p className="mt-1 text-xs text-muted-foreground">{firstYearLeaveCredit ? `Eligible after 6 months on ${firstYearLeaveCredit.eligibleAt}. ${firstYearLeaveCredit.months} full months remaining × ${annualLeaveDays} ÷ 12 = ${firstYearLeaveCredit.days} days.` : "Default: 21 days per full calendar year."}</p></div>
+              <div><Label>Shift starts</Label><Select value={shiftStart} onValueChange={setShiftStart}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent className="max-h-72">{shiftTimeOptions.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectContent></Select></div>
+              <div><Label>Shift ends</Label><Select value={shiftEnd} onValueChange={setShiftEnd}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent className="max-h-72">{shiftTimeOptions.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectContent></Select></div>
+            </div>
+            <div><Label>Weekly days off</Label><div className="mt-2 flex flex-wrap gap-2">{["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((label, day) => <label key={label} className="flex items-center gap-2 rounded-lg border px-3 py-2 text-sm"><Checkbox checked={offDays.includes(day)} onCheckedChange={(checked) => setOffDays((current) => checked ? [...new Set([...current, day])] : current.filter((item) => item !== day))} />{label}</label>)}</div></div>
+            <div className="space-y-3"><div className="flex items-center justify-between"><Label>Breaks (must be inside the shift)</Label><Button type="button" size="sm" variant="outline" onClick={() => setBreaks((items) => [...items, { name: `Break ${items.length + 1}`, start_time: shiftStart, end_time: shiftStart, minutes: 15, paid: false }])}><Plus className="mr-1 h-4 w-4" />Add break</Button></div>{breaks.map((item, index) => <div key={index} className="grid gap-2 rounded-xl border p-3 sm:grid-cols-[1fr_110px_110px_100px_auto]"><Input value={item.name} onChange={(e) => setBreaks((rows) => rows.map((row, i) => i === index ? { ...row, name: e.target.value } : row))} /><Input type="time" value={item.start_time} onChange={(e) => setBreaks((rows) => rows.map((row, i) => i === index ? { ...row, start_time: e.target.value } : row))} /><Input type="time" value={item.end_time} onChange={(e) => setBreaks((rows) => rows.map((row, i) => i === index ? { ...row, end_time: e.target.value, minutes: Math.max(1, Math.round((new Date(`2000-01-01T${e.target.value}`).getTime() - new Date(`2000-01-01T${row.start_time}`).getTime()) / 60000)) } : row))} /><label className="flex items-center gap-2 text-sm"><Switch checked={item.paid} onCheckedChange={(paid) => setBreaks((rows) => rows.map((row, i) => i === index ? { ...row, paid } : row))} />Paid</label><Button type="button" size="icon" variant="ghost" onClick={() => setBreaks((rows) => rows.filter((_, i) => i !== index))}><Trash2 className="h-4 w-4" /></Button></div>)}</div>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <div><Label>Salary type</Label><Select value={salaryType} onValueChange={(value) => setSalaryType(value as typeof salaryType)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="monthly">Monthly</SelectItem><SelectItem value="hourly">Hourly</SelectItem></SelectContent></Select></div>
+              <div><Label>Monthly salary</Label><Input type="number" min={0} step="0.01" value={salaryType === "monthly" ? salaryAmount : calculatedMonthlySalary.toFixed(2)} readOnly={salaryType === "hourly"} className={salaryType === "hourly" ? "bg-muted" : undefined} onKeyDown={(event) => { if (salaryAmount === "0" && /^\d$/.test(event.key)) { event.preventDefault(); setSalaryAmount(event.key); } }} onChange={(e) => setSalaryAmount(e.target.value)} /></div>
+              <div><Label>Hourly rate</Label><Input type="number" min={0} step="0.01" value={salaryType === "monthly" ? calculatedHourlyRate.toFixed(2) : hourlyRate} readOnly={salaryType === "monthly"} className={salaryType === "monthly" ? "bg-muted" : undefined} onKeyDown={(event) => { if (hourlyRate === "0" && /^\d$/.test(event.key)) { event.preventDefault(); setHourlyRate(event.key); setSalaryAmount((Number(event.key) * estimatedMonthlyHours).toFixed(2)); } }} onChange={(e) => { setHourlyRate(e.target.value); setSalaryAmount((Number(e.target.value || 0) * estimatedMonthlyHours).toFixed(2)); }} /></div>
+              <div><Label>Currency</Label><Select value={salaryCurrency} onValueChange={setSalaryCurrency}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{["EGP", "GBP", "USD", "EUR", "SAR", "AED"].map((currency) => <SelectItem key={currency} value={currency}>{currency}</SelectItem>)}</SelectContent></Select></div>
+            </div>
+            <p className="text-xs text-muted-foreground">Calculated using 30 paid calendar days × shift hours = {estimatedMonthlyHours.toFixed(2)} paid hours/month. Weekly days off and scheduled breaks are paid and included.</p>
+            <p className="rounded-lg border bg-muted/40 p-3 text-xs text-muted-foreground">Time outside {shiftStart}–{shiftEnd} is categorized as overtime, paid at the normal hourly rate, and requires approval each time. Breaks are part of the shift hours and are never counted as idle.</p>
+            <div className="flex justify-between"><Button variant="ghost" onClick={() => setStep("form")}><ArrowLeft className="mr-2 h-4 w-4" />Back</Button><Button disabled={!startDate || shiftEnd <= shiftStart || breaks.some((item) => item.start_time < shiftStart || item.end_time > shiftEnd || item.end_time <= item.start_time)} onClick={() => setStep("review")}>Review</Button></div>
+          </div>
+        )}
+
+        {step === "review" && (
+          <div className="space-y-4"><div className="grid gap-3 rounded-xl border bg-muted/25 p-4 sm:grid-cols-2"><div><span className="text-xs text-muted-foreground">Name</span><p className="font-bold">{name}</p></div><div><span className="text-xs text-muted-foreground">Email</span><p className="font-bold">{email}</p></div><div><span className="text-xs text-muted-foreground">Role</span><p className="font-bold">{kindLabel(kind)}</p></div><div><span className="text-xs text-muted-foreground">Teams</span><p className="font-bold">{teams.filter((team) => teamIds.includes(team.id)).map((team) => team.name).join(", ") || "Company-wide"}</p></div>{kind === "employee" && <><div><span className="text-xs text-muted-foreground">Start / annual leave</span><p className="font-bold">{startDate} · {annualLeaveDays} days</p></div><div><span className="text-xs text-muted-foreground">Shift</span><p className="font-bold">{shiftStart}–{shiftEnd}</p></div><div><span className="text-xs text-muted-foreground">Salary</span><p className="font-bold">{salaryAmount} {salaryCurrency} · {salaryType}</p></div><div><span className="text-xs text-muted-foreground">Breaks</span><p className="font-bold">{breaks.map((item) => `${item.name} ${item.start_time}–${item.end_time}`).join(", ")}</p></div></>}</div><p className="text-sm text-muted-foreground">No account or invitation has been created yet. Confirm to save this profile and send the invitation.</p><div className="flex justify-between"><Button variant="ghost" onClick={() => setStep(kind === "employee" ? "work" : "form")}><ArrowLeft className="mr-2 h-4 w-4" />Back</Button><Button disabled={createMutation.isPending} onClick={() => createMutation.mutate()}>{createMutation.isPending ? "Creating..." : "Confirm & send invitation"}</Button></div></div>
         )}
 
         {step === "invited" && createdEmployee && (
@@ -1015,6 +1494,148 @@ function TypeOption({
   );
 }
 
+function RoleExplainer({ title, body }: { title: string; body: string }) {
+  return (
+    <div className="rounded-lg border bg-card p-3">
+      <p className="font-bold text-foreground">{title}</p>
+      <p className="mt-1 leading-relaxed">{body}</p>
+    </div>
+  );
+}
+
+function PermissionChecklist({
+  permissions,
+  selected,
+  disabled = false,
+  onToggle,
+}: {
+  permissions: PermissionDefinition[];
+  selected: string[];
+  disabled?: boolean;
+  onToggle: (key: string, checked: boolean) => void;
+}) {
+  const grouped = permissions.reduce<Record<string, PermissionDefinition[]>>((acc, permission) => {
+    acc[permission.group] = [...(acc[permission.group] ?? []), permission];
+    return acc;
+  }, {});
+
+  return (
+    <div className="space-y-3 rounded-xl border p-3">
+      <div className="flex flex-wrap items-end justify-between gap-2">
+        <div>
+          <Label>Custom permissions</Label>
+          <p className="text-xs text-muted-foreground">
+            Turn on only the actions this person should be able to use.
+          </p>
+        </div>
+        <span className="text-[11px] font-bold text-muted-foreground">
+          {selected.length} selected
+        </span>
+      </div>
+      <div className="grid max-h-[240px] gap-2 overflow-y-auto pr-1 md:grid-cols-2">
+        {Object.entries(grouped).map(([group, items]) => (
+          <div key={group} className="rounded-lg border bg-muted/20 p-2.5">
+            <p className="mb-2 text-xs font-extrabold uppercase tracking-wide text-muted-foreground">
+              {group}
+            </p>
+            <div className="space-y-2">
+              {items.map((permission) => (
+                <label key={permission.key} className="flex items-start gap-2 text-sm">
+                  <Checkbox
+                    checked={selected.includes(permission.key)}
+                    disabled={disabled}
+                    onCheckedChange={(checked) => onToggle(permission.key, checked === true)}
+                  />
+                  <span>
+                    <span className="block font-semibold">{permission.label}</span>
+                    <span className="line-clamp-2 block text-xs text-muted-foreground">
+                      {permission.description}
+                    </span>
+                  </span>
+                </label>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function PermissionPreview({
+  role,
+  mode,
+  permissions,
+  selectedKeys,
+}: {
+  role: Role;
+  mode: PermissionMode;
+  permissions: PermissionDefinition[];
+  selectedKeys: string[];
+}) {
+  const selected = new Set(selectedKeys);
+  const grouped = permissions.reduce<Record<string, PermissionDefinition[]>>((acc, permission) => {
+    if (!selected.has(permission.key)) return acc;
+    acc[permission.group] = [...(acc[permission.group] ?? []), permission];
+    return acc;
+  }, {});
+  const groupEntries = Object.entries(grouped).sort(([a], [b]) => a.localeCompare(b));
+  const hasPayroll = selectedKeys.some((key) => key.startsWith("payroll."));
+
+  return (
+    <div className="rounded-xl border bg-muted/20 p-3">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <Label>Visible permissions</Label>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Current selection for{" "}
+            <span className="font-bold text-foreground">
+              {roleLabel(role)}
+              {mode === "custom" ? " · custom" : ""}
+            </span>
+            . This is what this person can access after saving.
+          </p>
+        </div>
+        {role === "team_owner" && !hasPayroll && (
+          <span className="rounded-full bg-success/10 px-2.5 py-1 text-[11px] font-bold text-success">
+            Payroll hidden
+          </span>
+        )}
+      </div>
+
+      {groupEntries.length === 0 ? (
+        <p className="mt-3 text-xs text-muted-foreground">No permissions selected.</p>
+      ) : (
+        <div className="mt-3 grid max-h-[190px] gap-2 overflow-y-auto pr-1 sm:grid-cols-2 lg:grid-cols-3">
+          {groupEntries.map(([group, items]) => (
+            <div key={group} className="rounded-lg border bg-card p-3">
+              <p className="text-xs font-extrabold uppercase tracking-wide text-muted-foreground">
+                {group}
+              </p>
+              <p className="mt-1 text-lg font-extrabold">{items.length}</p>
+              <div className="mt-2 flex flex-wrap gap-1">
+                {items.slice(0, 3).map((permission) => (
+                  <span
+                    key={permission.key}
+                    className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold text-muted-foreground"
+                  >
+                    {permission.label}
+                  </span>
+                ))}
+                {items.length > 3 && (
+                  <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">
+                    +{items.length - 3}
+                  </span>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function TeamAccessSelector({
   teams,
   teamIds,
@@ -1053,7 +1674,13 @@ function TeamAccessSelector({
 
 function kindLabel(kind: PersonKind): string {
   if (kind === "employee") return "Employee";
-  if (kind === "team_owner") return "Team manager";
+  if (kind === "team_owner") return "Team leader";
   if (kind === "hr") return "HR";
+  return "General admin";
+}
+
+function roleLabel(role: Role): string {
+  if (role === "team_owner") return "Team lead";
+  if (role === "hr") return "HR";
   return "General admin";
 }

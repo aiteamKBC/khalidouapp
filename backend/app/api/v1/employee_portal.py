@@ -31,8 +31,9 @@ from app.models import (
     Team,
     TeamMember,
     TimeAdjustmentRequest,
+    LeaveRequest,
 )
-from app.schemas.employee_portal import EmployeePortalTaskCreate, EmployeePortalTaskUpdate, EmployeePortalTimeRequestCreate
+from app.schemas.employee_portal import EmployeePortalLeaveRequestCreate, EmployeePortalTaskCreate, EmployeePortalTaskUpdate, EmployeePortalTimeRequestCreate
 from app.schemas.admin import ChecklistItemCreate, ChecklistItemUpdate, TaskCommentCreate
 from app.services.projects import (
     employee_task_time_totals,
@@ -56,6 +57,7 @@ from app.services.screenshots import serialize_screenshot
 from app.services.activity_timeline import build_workday_timeline
 from app.services.time_adjustments import serialize_time_adjustment_request
 from app.services.work_profiles import get_or_create_work_profile, payroll_preview, serialize_work_profile
+from app.services.leave_management import requested_workdays, serialize_balance, serialize_leave_request
 
 router = APIRouter(prefix="/employee-portal", tags=["employee-portal"])
 
@@ -797,3 +799,68 @@ def create_time_request(
     db.commit()
     db.refresh(row)
     return success_response(data=serialize_time_adjustment_request(row))
+
+
+@router.get("/leave-requests")
+def list_employee_leave_requests(
+    current_employee: Annotated[Employee, Depends(get_current_employee)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    rows = db.scalars(
+        select(LeaveRequest)
+        .where(
+            LeaveRequest.company_id == current_employee.company_id,
+            LeaveRequest.employee_id == current_employee.id,
+        )
+        .order_by(LeaveRequest.created_at.desc())
+        .limit(50)
+    ).all()
+    return success_response(
+        data={
+            "balance": serialize_balance(db, current_employee, date.today().year),
+            "requests": [serialize_leave_request(row) for row in rows],
+        }
+    )
+
+
+@router.post("/leave-requests")
+def create_employee_leave_request(
+    payload: EmployeePortalLeaveRequestCreate,
+    current_employee: Annotated[Employee, Depends(get_current_employee)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    if payload.end_date < payload.start_date:
+        raise ApiError("INVALID_LEAVE_DATES", "End date must be on or after start date.", 400)
+    if payload.start_date.year != payload.end_date.year:
+        raise ApiError("LEAVE_YEAR_BOUNDARY", "A holiday request must stay within one calendar year.", 400)
+    profile = get_or_create_work_profile(db, current_employee)
+    days = requested_workdays(payload.start_date, payload.end_date, profile.working_days)
+    if days < 1:
+        raise ApiError("NO_WORKDAYS", "The selected period contains no working days.", 400)
+    balance = serialize_balance(db, current_employee, payload.start_date.year)
+    if payload.leave_type == "annual" and days > balance["remaining_days"]:
+        raise ApiError("INSUFFICIENT_LEAVE_CREDIT", "You do not have enough holiday credit.", 409)
+    overlap = db.scalar(
+        select(LeaveRequest.id).where(
+            LeaveRequest.employee_id == current_employee.id,
+            LeaveRequest.status.in_(["pending", "approved"]),
+            LeaveRequest.start_date <= payload.end_date,
+            LeaveRequest.end_date >= payload.start_date,
+        )
+    )
+    if overlap:
+        raise ApiError("OVERLAPPING_LEAVE_REQUEST", "You already have a holiday request in this period.", 409)
+    row = LeaveRequest(
+        company_id=current_employee.company_id,
+        employee_id=current_employee.id,
+        start_date=payload.start_date,
+        end_date=payload.end_date,
+        requested_days=days,
+        leave_type=payload.leave_type,
+        reason=payload.reason.strip() if payload.reason else None,
+        status="pending",
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return success_response(data=serialize_leave_request(row))

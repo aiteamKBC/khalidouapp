@@ -396,7 +396,7 @@ function PayrollPage() {
             <CardHeader>
               <CardTitle>Preview</CardTitle>
             </CardHeader>
-            <CardContent className="grid gap-3 md:grid-cols-4">
+            <CardContent className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
               <Preview
                 label="Base"
                 value={`${preview.data?.base_salary ?? 0} ${preview.data?.currency ?? "EGP"}`}
@@ -404,6 +404,14 @@ function PayrollPage() {
               <Preview
                 label="Required"
                 value={formatMinutes(Math.round((preview.data?.required_seconds ?? 0) / 60))}
+              />
+              <Preview
+                label="Paid breaks"
+                value={formatMinutes(Math.round((preview.data?.paid_break_seconds ?? 0) / 60))}
+              />
+              <Preview
+                label="Unpaid breaks"
+                value={formatMinutes(Math.round((preview.data?.unpaid_break_seconds ?? 0) / 60))}
               />
               <Preview
                 label="Tracked"

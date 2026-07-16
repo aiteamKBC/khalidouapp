@@ -63,7 +63,7 @@ def list_employees(
     db: Annotated[Session, Depends(get_db)],
     search: str | None = None,
     status: str | None = None,
-    department: str | None = None,
+    job_title: str | None = None,
     team_id: UUID | None = None,
     sort: str = "name",
     page: int = Query(default=1, ge=1),
@@ -76,8 +76,8 @@ def list_employees(
         statement = statement.where(or_(Employee.name.ilike(pattern), Employee.email.ilike(pattern), Employee.employee_code.ilike(pattern)))
     if status:
         statement = statement.where(Employee.status == status)
-    if department:
-        statement = statement.where(Employee.department == department)
+    if job_title:
+        statement = statement.where(Employee.job_title == job_title)
 
     sort_column = {
         "name": Employee.name,
@@ -275,7 +275,7 @@ def create_employee(
         name=payload.name,
         email=payload.email.lower(),
         employee_code=payload.employee_code or f"EMP-{uuid4().hex[:8].upper()}",
-        department=payload.department,
+        job_title=payload.job_title,
         timezone=payload.timezone,
         status="invited",
         weekly_capacity_minutes=payload.weekly_capacity_minutes,
@@ -292,7 +292,7 @@ def create_employee(
         "employee",
         entity_id=employee.id,
         entity_name=employee.email,
-        details={"status": employee.status, "department": employee.department},
+        details={"status": employee.status, "job_title": employee.job_title},
         request=request,
     )
     db.commit()
@@ -383,7 +383,11 @@ def update_employee_work_profile(
     require_capability(current_admin, "payroll.manage")
     employee = get_employee_or_404(db, current_admin, employee_id)
     profile = get_or_create_work_profile(db, employee)
-    changes = payload.model_dump(exclude_unset=True, mode="json")
+    audit_changes = payload.model_dump(exclude_unset=True, mode="json")
+    changes = dict(audit_changes)
+    for time_field in ("shift_start", "shift_end"):
+        if time_field in changes:
+            changes[time_field] = getattr(payload, time_field)
     for key, value in changes.items():
         setattr(profile, key, value)
     refresh_profile_completed_at(profile)
@@ -395,7 +399,7 @@ def update_employee_work_profile(
         "employee_work_profile",
         entity_id=employee.id,
         entity_name=employee.email,
-        details=changes,
+        details=audit_changes,
         request=request,
     )
     db.commit()

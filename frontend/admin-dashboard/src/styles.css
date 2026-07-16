@@ -190,7 +190,7 @@
 
   .studio-page {
     width: 100%;
-    max-width: min(1680px, 100%);
+    max-width: none;
   }
 
   .studio-page-medium {

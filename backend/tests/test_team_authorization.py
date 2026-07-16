@@ -105,7 +105,7 @@ def team_client():
         name="Employee A",
         email="a@example.com",
         employee_code="A",
-        department=None,
+        job_title=None,
         timezone="UTC",
         status="active",
     )
@@ -114,7 +114,7 @@ def team_client():
         name="Employee B",
         email="b@example.com",
         employee_code="B",
-        department=None,
+        job_title=None,
         timezone="UTC",
         status="active",
     )
@@ -123,7 +123,7 @@ def team_client():
         name="Shared Employee",
         email="shared@example.com",
         employee_code="S",
-        department=None,
+        job_title=None,
         timezone="UTC",
         status="active",
     )
@@ -132,7 +132,7 @@ def team_client():
         name="Other Employee",
         email="other.employee@example.com",
         employee_code="O",
-        department=None,
+        job_title=None,
         timezone="UTC",
         status="active",
     )

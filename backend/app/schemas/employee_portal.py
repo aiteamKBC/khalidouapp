@@ -39,6 +39,13 @@ class EmployeePortalTimeRequestCreate(BaseModel):
     reason: str = Field(min_length=3, max_length=1000)
 
 
+class EmployeePortalLeaveRequestCreate(BaseModel):
+    start_date: date
+    end_date: date
+    leave_type: str = Field(default="annual", pattern="^(annual|sick|unpaid)$")
+    reason: str | None = Field(default=None, max_length=1000)
+
+
 class EmployeePortalTaskCreate(BaseModel):
     project_id: UUID
     name: str = Field(min_length=1, max_length=255)

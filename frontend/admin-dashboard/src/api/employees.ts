@@ -6,7 +6,7 @@ type BackendEmployee = {
   name: string;
   email: string;
   employee_code: string;
-  department?: string | null;
+  job_title?: string | null;
   timezone: string;
   status: string;
   invitation?: {
@@ -61,7 +61,7 @@ export type EmployeeCreateInput = {
   name: string;
   email: string;
   employeeCode?: string;
-  department?: string;
+  jobTitle?: string;
   timezone?: string;
 };
 
@@ -81,6 +81,7 @@ export type WorkProfile = {
   overtimeRateMultiplier?: number | null;
   salaryAmount?: number | null;
   salaryCurrency?: "EGP" | "GBP" | "USD" | "EUR" | "SAR" | "AED" | null;
+  salaryType: "monthly" | "hourly";
   completeness: { complete: boolean; missing_fields: string[]; completed_at?: string | null };
 };
 
@@ -98,13 +99,18 @@ export type WorkProfileInput = {
   overtimeRateMultiplier?: number;
   salaryAmount?: number;
   salaryCurrency?: WorkProfile["salaryCurrency"];
+  salaryType?: WorkProfile["salaryType"];
 };
 
 export type PayrollPreview = {
   employee_id: string;
   currency: string;
   base_salary: number;
+  hourly_rate: number;
+  monthly_paid_hours: number;
   required_seconds: number;
+  paid_break_seconds: number;
+  unpaid_break_seconds: number;
   active_seconds: number;
   idle_seconds: number;
   overtime_seconds: number;
@@ -132,7 +138,7 @@ function mapEmployee(status: BackendEmployeeStatus, teamIds: string[]): Employee
     name: employee.name,
     code: employee.employee_code,
     email: employee.email,
-    department: employee.department ?? "",
+    jobTitle: employee.job_title ?? "",
     teamIds,
     status: normalizeEmployeeStatus(status.activity_status),
     sessionStart: status.session_start_time ?? undefined,
@@ -142,6 +148,7 @@ function mapEmployee(status: BackendEmployeeStatus, teamIds: string[]): Employee
     lastHeartbeat: status.last_heartbeat ?? undefined,
     lastScreenshotAt: status.last_screenshot ?? undefined,
     currentDeviceId: status.device?.id,
+    currentDeviceName: status.device?.device_name,
     currentTeamId: status.current_session?.team_id ?? undefined,
     currentProjectId: status.current_session?.project_id ?? undefined,
     currentTaskId: status.current_session?.task_id ?? undefined,
@@ -193,6 +200,7 @@ function mapWorkProfile(row: any): WorkProfile {
     overtimeRateMultiplier: row.overtime_rate_multiplier,
     salaryAmount: row.salary_amount,
     salaryCurrency: row.salary_currency,
+    salaryType: row.salary_type ?? "monthly",
     completeness: row.completeness,
   };
 }
@@ -220,7 +228,7 @@ export async function createEmployee(input: EmployeeCreateInput): Promise<Employ
       name: input.name,
       email: input.email,
       employee_code: input.employeeCode || undefined,
-      department: input.department || undefined,
+      job_title: input.jobTitle || undefined,
       timezone: input.timezone || "Africa/Cairo",
       status: "active",
     }),
@@ -298,6 +306,7 @@ export async function updateWorkProfile(employeeId: string, input: WorkProfileIn
         overtime_rate_multiplier: input.overtimeRateMultiplier,
         salary_amount: input.salaryAmount,
         salary_currency: input.salaryCurrency,
+        salary_type: input.salaryType,
       }),
     }),
   );
