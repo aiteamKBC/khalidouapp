@@ -15,7 +15,7 @@ from app.core.exceptions import ApiError
 from app.core.responses import success_response
 from app.core.security import create_employee_access_token, decode_jwt_token, hash_password, verify_password
 from app.database.session import get_db
-from app.models import Employee
+from app.models import AdminUser, Employee
 from app.schemas.employee_portal import (
     EmployeeForgotAccessRequest,
     EmployeePortalHandoff,
@@ -23,6 +23,7 @@ from app.schemas.employee_portal import (
     EmployeeProfileUpdate,
 )
 from app.services.email import enqueue_portal_key_email, ensure_email_allowed
+from app.services.person_access import ensure_tracked_employee
 
 router = APIRouter(prefix="/employee-auth", tags=["employee-auth"])
 
@@ -106,6 +107,16 @@ def login(payload: EmployeePortalLogin, request: Request, db: Annotated[Session,
         ),
         None,
     )
+    if employee is None and payload.password:
+        admin = db.scalar(
+            select(AdminUser).where(
+                func.lower(AdminUser.email) == payload.email.lower(),
+                AdminUser.status == "active",
+            )
+        )
+        if admin is not None and verify_password(payload.password, admin.password_hash):
+            employee = ensure_tracked_employee(db, admin)
+
     if employee is None:
         raise ApiError(
             "INVALID_EMPLOYEE_LOGIN",

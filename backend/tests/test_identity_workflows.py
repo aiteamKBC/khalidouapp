@@ -420,6 +420,34 @@ def test_general_admin_can_invite_employee_and_other_general_admin(
     assert "admins.manage" in me.json()["data"]["permissions"]
 
 
+def test_general_admin_can_sign_in_to_employee_portal(identity_client):
+    client, data = identity_client
+
+    login = client.post(
+        "/api/v1/employee-auth/login",
+        json={
+            "email": "general@kentconsultancy.co",
+            "password": "OldPassword123!",
+        },
+    )
+
+    assert login.status_code == 200
+    response_data = login.json()["data"]
+    assert response_data["employee"]["email"] == "general@kentconsultancy.co"
+    assert response_data["employee"]["status"] == "active"
+    assert response_data["access_token"]
+
+    db: Session = data["session_factory"]()
+    try:
+        admin = db.get(AdminUser, data["general_admin"].id)
+        employee = db.get(Employee, UUID(response_data["employee"]["id"]))
+        assert employee is not None
+        assert admin.employee_id == employee.id
+        assert employee.portal_password_hash == admin.password_hash
+    finally:
+        db.close()
+
+
 def test_general_admin_can_reset_manager_password_and_queue_reset_email(
     identity_client, monkeypatch
 ):
