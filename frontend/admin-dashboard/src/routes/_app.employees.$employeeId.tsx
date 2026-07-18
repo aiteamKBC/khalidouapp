@@ -8,6 +8,8 @@ import {
   CalendarDays,
   Camera,
   Clock3,
+  Download,
+  Eye,
   Star,
   type LucideIcon,
 } from "lucide-react";
@@ -15,13 +17,20 @@ import { PageHeader } from "@/components/ui/page-header";
 import { ProtectedImage } from "@/components/ProtectedImage";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { DatePicker } from "@/components/ui/date-picker";
 import { WorkdayTimeline } from "@/components/workday-timeline";
 import { getEmployee } from "@/api/employees";
 import { getWorkdayTimeline, listSessions, listActivity } from "@/api/sessions";
-import { listScreenshotPage } from "@/api/screenshots";
+import { downloadScreenshot, listScreenshotPage } from "@/api/screenshots";
 import { listTimesheets } from "@/api/timesheets";
 import { listDevices } from "@/api/devices";
 import { listTeams } from "@/api/teams";
@@ -35,6 +44,8 @@ export const Route = createFileRoute("/_app/employees/$employeeId")({
 function EmployeeDetailPage() {
   const { employeeId } = Route.useParams();
   const [activeTab, setActiveTab] = useState("profile");
+  const [previewScreenshotId, setPreviewScreenshotId] = useState<string | null>(null);
+  const [downloadingScreenshotId, setDownloadingScreenshotId] = useState<string | null>(null);
   const [timelineDay, setTimelineDay] = useState(() => {
     return toDateKey(new Date());
   });
@@ -103,6 +114,8 @@ function EmployeeDetailPage() {
   const device = (devs.data ?? []).find((item) => item.id === e.currentDeviceId);
   const empTeams = (teams.data ?? []).filter((team) => e.teamIds.includes(team.id));
   const empShots = (shots.data ?? []).filter((screenshot) => screenshot.employeeId === e.id);
+  const previewScreenshot =
+    empShots.find((screenshot) => screenshot.id === previewScreenshotId) ?? null;
   const empTs = (ts.data ?? []).filter((timesheet) => timesheet.employeeId === e.id);
   const todayKey = toDateKey(new Date());
   const weekStart = startOfWeek(new Date());
@@ -343,12 +356,56 @@ function EmployeeDetailPage() {
         <TabsContent value="screenshots">
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
             {empShots.slice(0, 12).map((screenshot) => (
-              <ProtectedImage
+              <div
                 key={screenshot.id}
-                src={screenshot.thumbnailUrl}
-                alt=""
-                className="aspect-video w-full rounded-md object-cover ring-1 ring-border"
-              />
+                className="overflow-hidden rounded-lg border bg-card shadow-sm"
+              >
+                <button
+                  type="button"
+                  className="block w-full"
+                  onClick={() => setPreviewScreenshotId(screenshot.id)}
+                  aria-label="Preview screenshot"
+                >
+                  <ProtectedImage
+                    src={screenshot.thumbnailUrl}
+                    alt={`Screenshot captured at ${formatDateTime(screenshot.capturedAt)}`}
+                    className="aspect-video w-full object-cover"
+                  />
+                </button>
+                <div className="space-y-3 p-3">
+                  <p className="truncate text-xs text-muted-foreground">
+                    {formatDateTime(screenshot.capturedAt)}
+                  </p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setPreviewScreenshotId(screenshot.id)}
+                    >
+                      <Eye className="mr-1.5 h-3.5 w-3.5" />
+                      Preview
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      loading={downloadingScreenshotId === screenshot.id}
+                      onClick={async () => {
+                        setDownloadingScreenshotId(screenshot.id);
+                        try {
+                          await downloadScreenshot(screenshot);
+                        } finally {
+                          setDownloadingScreenshotId(null);
+                        }
+                      }}
+                    >
+                      <Download className="mr-1.5 h-3.5 w-3.5" />
+                      Download
+                    </Button>
+                  </div>
+                </div>
+              </div>
             ))}
             {empShots.length === 0 && (
               <p className="text-sm text-muted-foreground col-span-full">No screenshots.</p>
@@ -407,6 +464,45 @@ function EmployeeDetailPage() {
         </TabsContent>
 
       </Tabs>
+      <Dialog
+        open={Boolean(previewScreenshot)}
+        onOpenChange={(open) => !open && setPreviewScreenshotId(null)}
+      >
+        <DialogContent className="max-w-5xl">
+          <DialogHeader>
+            <DialogTitle>Screenshot preview</DialogTitle>
+            <DialogDescription>
+              {previewScreenshot ? formatDateTime(previewScreenshot.capturedAt) : ""}
+            </DialogDescription>
+          </DialogHeader>
+          {previewScreenshot && (
+            <div className="space-y-4">
+              <ProtectedImage
+                src={previewScreenshot.fullUrl}
+                alt={`Screenshot captured at ${formatDateTime(previewScreenshot.capturedAt)}`}
+                className="max-h-[70vh] w-full rounded-lg object-contain"
+              />
+              <div className="flex justify-end">
+                <Button
+                  type="button"
+                  loading={downloadingScreenshotId === previewScreenshot.id}
+                  onClick={async () => {
+                    setDownloadingScreenshotId(previewScreenshot.id);
+                    try {
+                      await downloadScreenshot(previewScreenshot);
+                    } finally {
+                      setDownloadingScreenshotId(null);
+                    }
+                  }}
+                >
+                  <Download className="mr-2 h-4 w-4" />
+                  Download
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

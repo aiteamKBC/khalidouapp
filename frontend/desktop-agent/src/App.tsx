@@ -150,7 +150,7 @@ function App() {
       window.khaliduo.onRequiredUpdate?.((update) => {
         void showRequiredUpdate(update.version);
       }) ?? (() => undefined);
-    const interval = window.setInterval(() => void loadStatus(), 5000);
+    const interval = window.setInterval(() => void loadStatus(), 1000);
 
     return () => {
       mounted = false;
