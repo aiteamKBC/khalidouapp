@@ -1,5 +1,6 @@
 import { apiFetch, apiUrl, withQuery } from "./client";
 import { mapWorkdayTimeline, type BackendWorkdayTimeline } from "./workday";
+import { normalizeAiAcronym } from "@/lib/text";
 import type { WorkdayTimeline } from "@/types";
 
 const STORAGE_KEY = "khaliduo.employee.auth";
@@ -86,6 +87,17 @@ export type PortalLeaveData = {
   }>;
 };
 
+function mapPortalEmployee(employee: PortalEmployee): PortalEmployee {
+  return {
+    ...employee,
+    job_title: employee.job_title ? normalizeAiAcronym(employee.job_title) : employee.job_title,
+  };
+}
+
+function mapPortalTask(task: PortalTask): PortalTask {
+  return { ...task, team_name: normalizeAiAcronym(task.team_name) };
+}
+
 export function readEmployeeToken() {
   if (typeof window === "undefined") return null;
   const token = sessionStorage.getItem(STORAGE_KEY);
@@ -115,7 +127,7 @@ export async function employeeLogin(
         ? { password: credential.password }
         : { access_key: credential.accessKey }),
     }),
-  });
+  }).then((result) => ({ ...result, employee: mapPortalEmployee(result.employee) }));
 }
 
 export async function exchangeEmployeeHandoff(handoffToken: string) {
@@ -125,11 +137,11 @@ export async function exchangeEmployeeHandoff(handoffToken: string) {
       method: "POST",
       body: JSON.stringify({ handoff_token: handoffToken }),
     },
-  );
+  ).then((result) => ({ ...result, employee: mapPortalEmployee(result.employee) }));
 }
 
 export const employeeMe = (token: string) =>
-  apiFetch<PortalEmployee>("/employee-auth/me", {}, token);
+  apiFetch<PortalEmployee>("/employee-auth/me", {}, token).then(mapPortalEmployee);
 
 export const updateEmployeeProfile = (
   token: string,
@@ -142,7 +154,7 @@ export const updateEmployeeProfile = (
       body: JSON.stringify({ name: input.name, avatar_url: input.avatarUrl }),
     },
     token,
-  );
+  ).then(mapPortalEmployee);
 
 export const forgotEmployeeAccessKey = (email: string) =>
   apiFetch("/employee-auth/forgot-access-key", {
@@ -159,7 +171,9 @@ export async function employeeSummary(token: string): Promise<PortalSummary> {
 }
 
 export const employeeTasks = (token: string) =>
-  apiFetch<PortalTask[]>("/employee-portal/tasks", {}, token);
+  apiFetch<PortalTask[]>("/employee-portal/tasks", {}, token).then((tasks) =>
+    tasks.map(mapPortalTask),
+  );
 
 export const employeeProjects = (token: string) =>
   apiFetch<PortalProject[]>("/employee-portal/projects", {}, token);
@@ -193,7 +207,7 @@ export const createEmployeeTask = (
       }),
     },
     token,
-  );
+  ).then(mapPortalTask);
 
 export const updateEmployeeTask = (
   token: string,
@@ -223,7 +237,7 @@ export const updateEmployeeTask = (
       }),
     },
     token,
-  );
+  ).then(mapPortalTask);
 
 export type PortalNotification = {
   id: string;
@@ -249,7 +263,7 @@ export const createEmployeeChecklistItem = (token: string, taskId: string, title
       body: JSON.stringify({ title }),
     },
     token,
-  );
+  ).then(mapPortalTask);
 
 export const updateEmployeeChecklistItem = (
   token: string,

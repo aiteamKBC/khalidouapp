@@ -1,4 +1,5 @@
 import { apiFetch } from "./client";
+import { normalizeAiAcronym } from "@/lib/text";
 
 export type PersonInvitationInput = {
   name: string;
@@ -78,7 +79,7 @@ export async function invitePerson(input: PersonInvitationInput): Promise<Person
       email: input.email,
       kind: input.kind,
       team_ids: input.teamIds,
-      job_title: input.jobTitle || null,
+      job_title: input.jobTitle ? normalizeAiAcronym(input.jobTitle) : null,
       timezone: input.timezone || "Africa/Cairo",
       track_as_employee: input.trackAsEmployee ?? false,
       start_date: input.startDate,

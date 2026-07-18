@@ -1,4 +1,5 @@
 import { apiFetch, apiFile, withQuery } from "./client";
+import { normalizeAiAcronym } from "@/lib/text";
 import type { Project, Task } from "@/types";
 
 type BackendProject = {
@@ -115,7 +116,7 @@ function mapTask(task: BackendTask): Task {
     projectId: task.project_id,
     projectName: task.project_name ?? "",
     teamId: task.team_id ?? "",
-    teamName: task.team_name ?? "",
+    teamName: normalizeAiAcronym(task.team_name ?? ""),
     assigneeEmployeeId: task.assignee_employee_id ?? undefined,
     collaboratorEmployeeIds: task.collaborator_employee_ids ?? [],
     position: task.position ?? 0,

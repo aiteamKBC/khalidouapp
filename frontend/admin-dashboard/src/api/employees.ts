@@ -1,4 +1,5 @@
 import { apiFetch, toMinutes, withQuery } from "./client";
+import { normalizeAiAcronym } from "@/lib/text";
 import type { Employee, EmployeeAccountStatus, EmployeeStatus, EnrollmentCode } from "@/types";
 
 type BackendEmployee = {
@@ -138,7 +139,7 @@ function mapEmployee(status: BackendEmployeeStatus, teamIds: string[]): Employee
     name: employee.name,
     code: employee.employee_code,
     email: employee.email,
-    jobTitle: employee.job_title ?? "",
+    jobTitle: normalizeAiAcronym(employee.job_title ?? ""),
     teamIds,
     status: normalizeEmployeeStatus(status.activity_status),
     sessionStart: status.session_start_time ?? undefined,
@@ -228,7 +229,7 @@ export async function createEmployee(input: EmployeeCreateInput): Promise<Employ
       name: input.name,
       email: input.email,
       employee_code: input.employeeCode || undefined,
-      job_title: input.jobTitle || undefined,
+      job_title: input.jobTitle ? normalizeAiAcronym(input.jobTitle) : undefined,
       timezone: input.timezone || "Africa/Cairo",
       status: "active",
     }),

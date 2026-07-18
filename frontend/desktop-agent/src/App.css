@@ -614,7 +614,7 @@ textarea:focus {
 }
 
 .segment-worked {
-  background: var(--brand);
+  background: var(--green);
 }
 
 .segment-idle {

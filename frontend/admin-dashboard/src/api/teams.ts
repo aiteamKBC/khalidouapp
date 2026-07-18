@@ -1,5 +1,6 @@
 import { apiFetch, toMinutes, withQuery } from "./client";
 import { mapUser } from "./auth";
+import { normalizeAiAcronym } from "@/lib/text";
 import type { Team, User } from "@/types";
 
 type BackendTeam = {
@@ -35,7 +36,7 @@ export type TeamCreateInput = {
 function mapTeam(team: BackendTeam, employeeIds: string[], ownerIds: string[]): Team {
   return {
     id: team.id,
-    name: team.name,
+    name: normalizeAiAcronym(team.name),
     description: team.description ?? "",
     status: team.status === "deleted" ? "archived" : team.status,
     ownerIds,
@@ -80,7 +81,7 @@ export async function createTeam(input: TeamCreateInput): Promise<Team> {
   const team = await apiFetch<BackendTeam>("/teams", {
     method: "POST",
     body: JSON.stringify({
-      name: input.name,
+      name: normalizeAiAcronym(input.name),
       description: input.description || null,
       status: "active",
     }),
@@ -95,7 +96,7 @@ export async function updateTeam(
   const team = await apiFetch<BackendTeam>(`/teams/${id}`, {
     method: "PATCH",
     body: JSON.stringify({
-      name: input.name,
+      name: input.name === undefined ? undefined : normalizeAiAcronym(input.name),
       description: input.description,
       status: input.status,
     }),
