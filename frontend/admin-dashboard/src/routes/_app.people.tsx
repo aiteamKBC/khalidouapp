@@ -284,7 +284,18 @@ function PeopleDirectory({
       isCurrentUser: currentUser?.id === user.id,
       user,
     }));
-    const all = [...adminRows, ...employeeRows];
+    const adminEmployeeIds = new Set(
+      (users.data ?? [])
+        .map((user) => user.trackedEmployeeId ?? user.employeeId)
+        .filter(Boolean),
+    );
+    const adminEmails = new Set((users.data ?? []).map((user) => user.email.toLowerCase()));
+    const unlinkedEmployeeRows = employeeRows.filter(
+      (row) =>
+        !adminEmployeeIds.has(row.id) &&
+        !adminEmails.has(row.email.toLowerCase()),
+    );
+    const all = [...adminRows, ...unlinkedEmployeeRows];
     return all.filter((row) => {
       if (archiveOnly && row.status !== "archived") return false;
       if (!archiveOnly && statusFilter === "all" && row.status === "archived") return false;
