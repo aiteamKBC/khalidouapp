@@ -1,12 +1,13 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, time, timedelta
 from typing import Any
 from uuid import UUID, uuid4
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import ApiError
-from app.models import ActivityEvent, Device, WorkSession
+from app.models import ActivityEvent, Device, Employee, WorkSession
 from app.schemas.session import (
     ActivityEventRequest,
     HeartbeatRequest,
@@ -17,7 +18,8 @@ from app.schemas.session import (
 from app.services.projects import get_employee_task_context, list_employee_tasks
 from app.services.task_workflow import TRACKABLE_STAGES
 
-ACTIVE_SESSION_STATUSES = {"active", "idle", "locked", "sleeping", "offline"}
+ACTIVE_SESSION_STATUSES = {"active", "idle", "locked", "sleeping"}
+UNENDED_SESSION_STATUSES = ACTIVE_SESSION_STATUSES | {"offline"}
 
 
 def utc(value: datetime | None = None) -> datetime:
@@ -26,6 +28,54 @@ def utc(value: datetime | None = None) -> datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=UTC)
     return value.astimezone(UTC)
+
+
+def employee_zone(db: Session, device: Device) -> ZoneInfo:
+    timezone_name = db.scalar(
+        select(Employee.timezone).where(Employee.id == device.employee_id)
+    ) or "UTC"
+    try:
+        return ZoneInfo(timezone_name)
+    except (ZoneInfoNotFoundError, ValueError):
+        return ZoneInfo("UTC")
+
+
+def same_local_day(started_at: datetime, at: datetime, zone: ZoneInfo) -> bool:
+    return utc(started_at).astimezone(zone).date() == utc(at).astimezone(zone).date()
+
+
+def next_local_midnight(started_at: datetime, zone: ZoneInfo) -> datetime:
+    local_started_at = utc(started_at).astimezone(zone)
+    local_midnight = datetime.combine(
+        local_started_at.date() + timedelta(days=1),
+        time.min,
+        tzinfo=zone,
+    )
+    return local_midnight.astimezone(UTC)
+
+
+def close_open_session(
+    db: Session,
+    *,
+    device: Device,
+    session: WorkSession,
+    ended_at: datetime,
+    reason: str,
+) -> None:
+    if session.ended_at is not None:
+        return
+    ended_at = utc(ended_at)
+    session.ended_at = ended_at
+    session.status = "ended"
+    create_activity_event(
+        db,
+        device=device,
+        session=session,
+        event_type="session_ended",
+        event_timestamp=ended_at,
+        idempotency_key=f"session-auto-ended:{session.id}:{reason}",
+        payload={"reason": reason},
+    )
 
 
 def serialize_session(session: WorkSession) -> dict[str, Any]:
@@ -131,25 +181,51 @@ def apply_session_task(db: Session, device: Device, session: WorkSession, task_i
 
 
 def start_or_get_session(db: Session, device: Device, payload: SessionStartRequest) -> dict[str, Any]:
+    now = utc(payload.started_at)
+    zone = employee_zone(db, device)
     current = get_current_session(db, device)
+    if current is not None:
+        if not same_local_day(current.started_at, now, zone):
+            close_open_session(
+                db,
+                device=device,
+                session=current,
+                ended_at=min(now, next_local_midnight(current.started_at, zone)),
+                reason="New local workday started",
+            )
+            current = None
+        elif current.status == "offline":
+            close_open_session(
+                db,
+                device=device,
+                session=current,
+                ended_at=now,
+                reason="Previous agent run was offline",
+            )
+            current = None
+
     if current is not None:
         if payload.task_id is not None and current.task_id != payload.task_id:
             result = switch_session_task(db, device=device, session=current, task_id=payload.task_id)
             return {"session": result["session"], "created": False}
         return {"session": serialize_session(current), "created": False}
 
-    now = utc(payload.started_at)
     other_sessions = db.scalars(
         select(WorkSession).where(
             WorkSession.company_id == device.company_id,
             WorkSession.employee_id == device.employee_id,
             WorkSession.ended_at.is_(None),
-            WorkSession.status.in_(ACTIVE_SESSION_STATUSES),
+            WorkSession.status.in_(UNENDED_SESSION_STATUSES),
         )
     ).all()
     for other in other_sessions:
-        other.ended_at = now
-        other.status = "ended"
+        close_open_session(
+            db,
+            device=device,
+            session=other,
+            ended_at=now,
+            reason="Superseded by a new work session",
+        )
 
     started_at = now
     session = WorkSession(
@@ -206,6 +282,27 @@ def record_heartbeat(
             "restarted": True,
         }
     heartbeat_at = utc(payload.timestamp)
+    zone = employee_zone(db, device)
+    if session.status == "offline" or not same_local_day(session.started_at, heartbeat_at, zone):
+        close_open_session(
+            db,
+            device=device,
+            session=session,
+            ended_at=min(heartbeat_at, next_local_midnight(session.started_at, zone)),
+            reason="Heartbeat arrived after the local workday changed",
+        )
+        db.commit()
+        restarted = start_or_get_session(
+            db,
+            device,
+            SessionStartRequest(started_at=heartbeat_at, task_id=session.task_id),
+        )
+        return {
+            "event_id": None,
+            "duplicate": False,
+            "session": restarted["session"],
+            "restarted": True,
+        }
     elapsed_seconds = max(0, int((heartbeat_at - utc(session.started_at)).total_seconds()))
 
     event, duplicate = create_activity_event(
@@ -331,7 +428,13 @@ def record_agent_event(
     elif payload.event_type == "idle_started":
         session.status = "idle"
     elif payload.event_type == "agent_stopped":
-        session.status = "offline"
+        close_open_session(
+            db,
+            device=device,
+            session=session,
+            ended_at=payload.event_timestamp,
+            reason="Agent stopped",
+        )
     if payload.payload and isinstance(payload.payload.get("idle_seconds"), int):
         session.idle_seconds = max(session.idle_seconds, payload.payload["idle_seconds"])
 

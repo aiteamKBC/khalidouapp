@@ -24,6 +24,19 @@ def test_first_leave_credit_is_prorated_after_six_months():
     assert entitled_credit_days(employee, 2027) == Decimal("21.00")
 
 
+def test_leave_credit_is_full_when_six_months_lands_in_new_year():
+    employee = Employee(
+        name="Mid-year employee",
+        email="midyear@example.com",
+        employee_code="EMP-MID",
+        timezone="Africa/Cairo",
+        start_date=date(2026, 7, 22),
+        annual_leave_days=21,
+    )
+    assert entitled_credit_days(employee, 2026) == Decimal("0.00")
+    assert entitled_credit_days(employee, 2027) == Decimal("21.00")
+
+
 def test_break_must_be_inside_same_day_shift():
     profile = EmployeeWorkProfile(
         shift_start=time(9, 0),

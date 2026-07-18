@@ -1,5 +1,5 @@
 from datetime import UTC, datetime, timedelta
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
@@ -837,6 +837,66 @@ def test_inviting_an_existing_active_employee_is_a_conflict(identity_client):
                 EmailDelivery.recipient == "existing.employee@kentconsultancy.co"
             )
         ) is None
+    finally:
+        db.close()
+
+
+def test_archived_person_can_be_deleted_and_email_reused(identity_client):
+    client, data = identity_client
+    email = "delete.me@kentconsultancy.co"
+    created = client.post(
+        "/api/v1/people/invitations",
+        headers=data["general_headers"],
+        json={
+            "name": "Delete Me",
+            "email": email,
+            "kind": "employee",
+            "team_ids": [str(data["team_a"].id)],
+            **employee_onboarding_payload(),
+        },
+    )
+    assert created.status_code == 200
+    employee_id = created.json()["data"]["employee_id"]
+
+    delete_before_archive = client.delete(
+        f"/api/v1/people/employee/{employee_id}",
+        headers=data["general_headers"],
+    )
+    archived = client.post(
+        f"/api/v1/people/employee/{employee_id}/archive",
+        headers=data["general_headers"],
+    )
+    deleted = client.delete(
+        f"/api/v1/people/employee/{employee_id}",
+        headers=data["general_headers"],
+    )
+    listed = client.get("/api/v1/employees", headers=data["general_headers"])
+    recreated = client.post(
+        "/api/v1/people/invitations",
+        headers=data["general_headers"],
+        json={
+            "name": "Delete Me Again",
+            "email": email,
+            "kind": "employee",
+            "team_ids": [str(data["team_a"].id)],
+            **employee_onboarding_payload(),
+        },
+    )
+
+    assert delete_before_archive.status_code == 409
+    assert archived.status_code == 200
+    assert deleted.status_code == 200
+    assert deleted.json()["data"]["deleted"] is True
+    assert all(item["email"] != email for item in listed.json()["data"])
+    assert recreated.status_code == 200
+
+    db: Session = data["session_factory"]()
+    try:
+        deleted_employee = db.get(Employee, UUID(employee_id))
+        assert deleted_employee is not None
+        assert deleted_employee.status == "deleted"
+        assert deleted_employee.email != email
+        assert deleted_employee.email.startswith("deleted-employee-")
     finally:
         db.close()
 

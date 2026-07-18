@@ -203,6 +203,7 @@ function UsersPage() {
                     variant="ghost"
                     size="sm"
                     className="text-destructive hover:text-destructive"
+                    loading={deactivateMutation.isPending}
                     disabled={user.status !== "active" || deactivateMutation.isPending}
                     onClick={() => deactivateMutation.mutate(user.id)}
                   >

@@ -445,7 +445,12 @@ function App() {
     setTrackingControlMessage(null);
     setIsChangingTracking(true);
     try {
-      const result = status.trackingPaused
+      const shouldResume =
+        status.trackingPaused ||
+        status.trackingStatus === "paused" ||
+        status.trackingStatus === "offline" ||
+        status.trackingStatus === "error";
+      const result = shouldResume
         ? await window.khaliduo.resumeTracking()
         : await window.khaliduo.pauseTracking();
       if (!result.success) {
@@ -454,7 +459,7 @@ function App() {
       }
       setTrackingControlMessage(
         result.message ??
-          (status.trackingPaused
+          (shouldResume
             ? "Tracking resumed. Screenshots follow the company schedule."
             : "Tracking paused. No screenshots will be taken on this device."),
       );
@@ -632,7 +637,7 @@ function App() {
           onClick={() => void refreshStatusAfterEnrollment()}
           title="Refresh status"
         >
-          Synced
+          {status.connectionStatus === "online" ? "Synced" : "Offline"}
         </button>
         {status.enrolled && (
           <button
@@ -970,6 +975,8 @@ function HomeView({
   onOpenScreenshots: () => void;
 }) {
   const isPaused = status.trackingPaused || status.trackingStatus === "paused";
+  const shouldResume =
+    isPaused || status.trackingStatus === "offline" || status.trackingStatus === "error";
   return (
     <section className="k-home">
       <div className="k-center">
@@ -1021,11 +1028,11 @@ function HomeView({
           <div className="k-actions">
             <button
               type="button"
-              className={isPaused ? "k-primary" : "k-warning"}
+              className={shouldResume ? "k-primary" : "k-warning"}
               onClick={onTrackingToggle}
               disabled={isChangingTracking}
             >
-              {isChangingTracking ? "Please wait..." : isPaused ? "Resume" : "Pause"}
+              {isChangingTracking ? "Please wait..." : shouldResume ? "Resume" : "Pause"}
             </button>
           </div>
           <div className="k-hero-meta">

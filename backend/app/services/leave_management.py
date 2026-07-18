@@ -27,6 +27,8 @@ def entitled_credit_days(employee: Employee, year: int) -> Decimal:
         return Decimal("0.00")
     if year > eligible_at.year:
         return annual.quantize(Decimal("0.01"))
+    if employee.start_date.year < eligible_at.year:
+        return annual.quantize(Decimal("0.01"))
     remaining_full_months = 12 - eligible_at.month
     return (Decimal(remaining_full_months) * annual / Decimal(12)).quantize(Decimal("0.01"))
 

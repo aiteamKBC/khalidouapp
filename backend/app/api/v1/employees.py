@@ -69,7 +69,10 @@ def list_employees(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=25, ge=1, le=100),
 ):
-    statement = select(Employee).where(Employee.company_id == current_admin.company_id)
+    statement = select(Employee).where(
+        Employee.company_id == current_admin.company_id,
+        Employee.status != "deleted",
+    )
     statement = apply_employee_scope(statement, db, current_admin, Employee.id, team_id)
     if search:
         pattern = f"%{search}%"
@@ -180,7 +183,10 @@ def list_employee_overviews(
         today_total(WorkSession.idle_seconds),
         today_total(WorkSession.deducted_seconds),
         last_screenshot,
-    ).where(Employee.company_id == current_admin.company_id)
+    ).where(
+        Employee.company_id == current_admin.company_id,
+        Employee.status != "deleted",
+    )
     statement = apply_employee_scope(statement, db, current_admin, Employee.id, team_id)
     if employee_id is not None:
         statement = statement.where(Employee.id == employee_id)

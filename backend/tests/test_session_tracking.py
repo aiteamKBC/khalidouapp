@@ -8,8 +8,13 @@ from sqlalchemy.pool import StaticPool
 
 from app.database.base import Base
 from app.models import ActivityEvent, Company, Device, Employee, WorkSession
-from app.schemas.session import SessionEndRequest, SessionStartRequest
-from app.services.session_tracking import end_session, get_current_session, start_or_get_session
+from app.schemas.session import HeartbeatRequest, SessionEndRequest, SessionStartRequest
+from app.services.session_tracking import (
+    end_session,
+    get_current_session,
+    record_heartbeat,
+    start_or_get_session,
+)
 
 
 @pytest.fixture()
@@ -166,3 +171,71 @@ def test_session_can_start_again_after_end(tracking_context):
     assert restarted["session"]["active_seconds"] == 0
     assert restarted["session"]["idle_seconds"] == 0
     assert str(get_current_session(db, device).id) == restarted["session"]["id"]
+
+
+def test_offline_session_is_not_returned_as_current(tracking_context):
+    db, device = tracking_context
+    offline = WorkSession(
+        company_id=device.company_id,
+        employee_id=device.employee_id,
+        device_id=device.id,
+        started_at=datetime.now(UTC) - timedelta(hours=2),
+        status="offline",
+        active_seconds=3600,
+        idle_seconds=0,
+    )
+    db.add(offline)
+    db.commit()
+
+    assert get_current_session(db, device) is None
+
+    restarted = start_or_get_session(
+        db,
+        device,
+        SessionStartRequest(started_at=datetime.now(UTC)),
+    )
+    db.refresh(offline)
+
+    assert restarted["created"] is True
+    assert restarted["session"]["id"] != str(offline.id)
+    assert offline.ended_at is not None
+    assert offline.status == "ended"
+
+
+def test_heartbeat_after_local_day_changes_restarts_session(tracking_context):
+    db, device = tracking_context
+    started_at = datetime(2026, 7, 16, 9, 0, tzinfo=UTC)
+    heartbeat_at = datetime(2026, 7, 17, 10, 0, tzinfo=UTC)
+    stale = WorkSession(
+        company_id=device.company_id,
+        employee_id=device.employee_id,
+        device_id=device.id,
+        started_at=started_at,
+        status="active",
+        active_seconds=3600,
+        idle_seconds=0,
+    )
+    db.add(stale)
+    db.commit()
+
+    result = record_heartbeat(
+        db,
+        device=device,
+        session_id=stale.id,
+        payload=HeartbeatRequest(
+            event_id=uuid4(),
+            timestamp=heartbeat_at,
+            status="active",
+            active_seconds=30 * 60 * 60,
+            idle_seconds=0,
+            agent_version="1.0.0",
+        ),
+    )
+    db.refresh(stale)
+
+    assert result["restarted"] is True
+    assert result["session"]["id"] != str(stale.id)
+    assert result["session"]["started_at"] == heartbeat_at.isoformat()
+    assert result["session"]["active_seconds"] == 0
+    assert stale.status == "ended"
+    assert stale.ended_at.replace(tzinfo=UTC) == datetime(2026, 7, 17, 0, 0, tzinfo=UTC)

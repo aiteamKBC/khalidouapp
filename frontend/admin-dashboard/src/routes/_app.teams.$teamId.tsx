@@ -350,6 +350,7 @@ function TeamDetailPage() {
                   </SelectContent>
                 </Select>
                 <Button
+                  loading={addMemberMutation.isPending}
                   disabled={!memberId || addMemberMutation.isPending}
                   onClick={() => addMemberMutation.mutate()}
                 >
@@ -408,6 +409,7 @@ function TeamDetailPage() {
                         <Button
                           variant="ghost"
                           size="sm"
+                          loading={removeMemberMutation.isPending}
                           disabled={removeMemberMutation.isPending}
                           onClick={() => removeMemberMutation.mutate(employee.id)}
                         >

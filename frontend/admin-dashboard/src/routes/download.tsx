@@ -36,7 +36,8 @@ function DownloadPage() {
           </CardHeader>
           <CardContent className="space-y-5 p-6">
             <p className="text-sm text-muted-foreground">
-              Install Khaliduo, then enter the one-time enrollment code sent by your administrator.
+              Install Khaliduo, then sign in with your work email and the password you created from
+              the invitation email.
             </p>
             <Button asChild size="lg" className="w-full sm:w-auto">
               <a href={windowsDownloadUrl} download="KhaliduoSetup.exe">
@@ -50,7 +51,7 @@ function DownloadPage() {
               </div>
               <div className="flex gap-2 rounded-lg border p-3">
                 <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-primary" />
-                <span>Your enrollment code connects this computer to your staff account.</span>
+                <span>Your work email can connect more than one computer to your staff account.</span>
               </div>
             </div>
           </CardContent>

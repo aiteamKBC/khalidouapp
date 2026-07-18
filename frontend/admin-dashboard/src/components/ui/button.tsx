@@ -1,6 +1,7 @@
 import * as React from "react";
 import { Slot } from "@radix-ui/react-slot";
 import { cva, type VariantProps } from "class-variance-authority";
+import { Loader2 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
@@ -35,13 +36,52 @@ const buttonVariants = cva(
 export interface ButtonProps
   extends React.ButtonHTMLAttributes<HTMLButtonElement>, VariantProps<typeof buttonVariants> {
   asChild?: boolean;
+  loading?: boolean;
+}
+
+function hasLoadingText(children: React.ReactNode): boolean {
+  if (typeof children === "string") {
+    return /\b(saving|creating|sending|loading|deleting|recording|adding|setting up|signing in)\b/i.test(
+      children,
+    );
+  }
+  if (Array.isArray(children)) {
+    return children.some(hasLoadingText);
+  }
+  return false;
 }
 
 const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
-  ({ className, variant, size, asChild = false, ...props }, ref) => {
+  ({ className, variant, size, asChild = false, disabled, loading, children, ...props }, ref) => {
     const Comp = asChild ? Slot : "button";
+    const isLoading = Boolean(loading ?? (disabled && hasLoadingText(children)));
+    if (asChild) {
+      return (
+        <Comp
+          className={cn(buttonVariants({ variant, size, className }))}
+          ref={ref}
+          {...props}
+        >
+          {children}
+        </Comp>
+      );
+    }
     return (
-      <Comp className={cn(buttonVariants({ variant, size, className }))} ref={ref} {...props} />
+      <Comp
+        className={cn(buttonVariants({ variant, size, className }))}
+        ref={ref}
+        disabled={disabled || isLoading}
+        aria-busy={isLoading || undefined}
+        {...props}
+      >
+        {isLoading && !asChild && (
+          <Loader2
+            className={cn("h-4 w-4 shrink-0 animate-spin", size === "icon" && "m-0")}
+            aria-hidden="true"
+          />
+        )}
+        {!(isLoading && size === "icon") && children}
+      </Comp>
     );
   },
 );

@@ -493,13 +493,25 @@ function syncRuntimeFromSession(session: WorkSession) {
   if (trackingPausedByUser) {
     return;
   }
+  if (session.ended_at || session.status === "ended" || session.status === "offline") {
+    if (currentSessionId === session.id) {
+      currentSessionId = null;
+    }
+    runtimeStatus.sessionStartedAt = null;
+    runtimeStatus.trackingStatus = "offline";
+    runtimeStatus.activeSeconds = session.active_seconds;
+    runtimeStatus.idleSeconds = session.idle_seconds;
+    runtimeStatus.workedTodaySeconds =
+      workedTodayBaseSeconds + runtimeStatus.activeSeconds;
+    lastDurationTickAt = null;
+    return;
+  }
   const changedSession = currentSessionId !== session.id;
   const localActiveSeconds = changedSession ? 0 : runtimeStatus.activeSeconds;
   const localIdleSeconds = changedSession ? 0 : runtimeStatus.idleSeconds;
   currentSessionId = session.id;
   runtimeStatus.sessionStartedAt = session.started_at;
-  runtimeStatus.trackingStatus =
-    session.status === "ended" ? "offline" : session.status;
+  runtimeStatus.trackingStatus = session.status;
   runtimeStatus.activeSeconds = Math.max(
     session.active_seconds,
     localActiveSeconds,
@@ -544,7 +556,7 @@ function recalculateWorkedTime() {
     runtimeStatus.idleSeconds += elapsedSeconds;
   } else if (
     runtimeStatus.trackingStatus === "active" ||
-    runtimeStatus.trackingStatus === "offline"
+    runtimeStatus.trackingStatus === "starting"
   ) {
     runtimeStatus.activeSeconds += elapsedSeconds;
   }

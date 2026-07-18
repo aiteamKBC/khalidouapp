@@ -153,6 +153,13 @@ export function restorePerson(personType: "admin" | "employee", personId: string
   return setPersonArchived(personType, personId, false);
 }
 
+export async function deletePerson(personType: "admin" | "employee", personId: string) {
+  return apiFetch<{ deleted: boolean; person_type: "admin" | "employee" }>(
+    `/people/${personType}/${personId}`,
+    { method: "DELETE" },
+  );
+}
+
 export async function getPersonInvitation(token: string): Promise<PublicPersonInvitation> {
   const row = await apiFetch<{
     valid: boolean;

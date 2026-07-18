@@ -180,6 +180,8 @@ function TimeAdjustmentsPage() {
                     <div className="flex justify-end gap-2">
                       <Button
                         size="sm"
+                        loading={reviewMutation.isPending}
+                        disabled={reviewMutation.isPending}
                         onClick={() =>
                           reviewMutation.mutate({
                             id: request.id,
@@ -187,7 +189,6 @@ function TimeAdjustmentsPage() {
                             approvedMinutes: request.requestedMinutes,
                           })
                         }
-                        disabled={reviewMutation.isPending}
                       >
                         <Check className="h-4 w-4 mr-1" />
                         Approve
@@ -195,10 +196,11 @@ function TimeAdjustmentsPage() {
                       <Button
                         size="sm"
                         variant="outline"
+                        loading={reviewMutation.isPending}
+                        disabled={reviewMutation.isPending}
                         onClick={() =>
                           reviewMutation.mutate({ id: request.id, nextStatus: "rejected" })
                         }
-                        disabled={reviewMutation.isPending}
                       >
                         <X className="h-4 w-4 mr-1" />
                         Reject

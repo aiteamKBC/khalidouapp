@@ -282,6 +282,7 @@ function ScreenshotsPage() {
                     <Button
                       variant="destructive"
                       size="sm"
+                      loading={deleteMutation.isPending}
                       disabled={deleteMutation.isPending}
                       onClick={() => deleteMutation.mutate(current.id)}
                     >

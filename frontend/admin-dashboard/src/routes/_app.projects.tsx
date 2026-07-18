@@ -2358,6 +2358,7 @@ function TaskWorkspacePanel({
           <Button
             size="icon"
             variant="outline"
+            loading={dependencyMutation.isPending}
             disabled={!dependencyId || dependencyMutation.isPending}
             onClick={() => dependencyMutation.mutate()}
           >
@@ -2486,6 +2487,7 @@ function TaskWorkspacePanel({
               <Button
                 type="submit"
                 size="sm"
+                loading={commentMutation.isPending}
                 disabled={!comment.trim() || commentMutation.isPending}
               >
                 Send comment

@@ -8,7 +8,6 @@ import {
   UserCircle,
   ShieldCheck,
   KeyRound,
-  Copy,
   ArrowLeft,
   Activity,
   UsersRound,
@@ -43,11 +42,12 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Switch } from "@/components/ui/switch";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { cn } from "@/lib/utils";
-import { createEnrollmentCode, getEmployee, listEmployees } from "@/api/employees";
+import { getEmployee, listEmployees } from "@/api/employees";
 import { listUsers, updateUser } from "@/api/users";
 import { listTeams } from "@/api/teams";
 import {
   archivePerson,
+  deletePerson,
   invitePerson,
   resendPersonInvitation,
   restorePerson,
@@ -80,8 +80,8 @@ export const Route = createFileRoute("/_app/people")({
 });
 
 // A person is either a tracked Employee (no dashboard login — uses a desktop
-// enrollment code + optional portal key) or an admin User (dashboard login with
-// a password + role). This hub is the single place to create and manage both.
+// email invitation + password) or an admin User (dashboard login with a password
+// + role). This hub is the single place to create and manage both.
 type PersonKind = "employee" | "team_owner" | "general_admin" | "hr";
 type TypeFilter = "all" | "employees" | "admins";
 type RoleFilter = "all" | "employee" | Role;
@@ -102,6 +102,13 @@ type PersonRow = {
   employee?: Employee;
   user?: User;
 };
+
+function employeeDirectoryStatus(employee: Employee): PersonRow["status"] {
+  if (employee.accountStatus === "invited") {
+    return employee.invitation?.status === "expired" ? "expired" : "invited";
+  }
+  return employee.active ? "active" : "archived";
+}
 
 function PeopleHubPage() {
   const { can } = useAuth();
@@ -244,14 +251,7 @@ function PeopleDirectory({
       email: employee.email,
       roleLabel: "Employee",
       detail: employee.jobTitle || "—",
-      status:
-        employee.accountStatus === "invited"
-          ? employee.invitation?.status === "expired"
-            ? "expired"
-            : "invited"
-          : employee.active
-            ? "active"
-            : "archived",
+      status: employeeDirectoryStatus(employee),
       teamIds: employee.teamIds,
       dashboardEmployeeId: employee.id,
       isCurrentUser:
@@ -315,6 +315,7 @@ function PeopleDirectory({
     roleFilter,
     teamFilter,
     statusFilter,
+    archiveOnly,
     q,
   ]);
 
@@ -376,6 +377,20 @@ function PeopleDirectory({
     },
     onError: (error) =>
       toast.error(error instanceof Error ? error.message : "Failed to change archive status"),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (row: PersonRow) => deletePerson(row.kind, row.id),
+    onSuccess: async () => {
+      toast.success("Person deleted");
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["users"] }),
+        queryClient.invalidateQueries({ queryKey: ["employees"] }),
+        queryClient.invalidateQueries({ queryKey: ["teams"] }),
+      ]);
+    },
+    onError: (error) =>
+      toast.error(error instanceof Error ? error.message : "Failed to delete person"),
   });
 
   const resendMutation = useMutation({
@@ -462,6 +477,22 @@ function PeopleDirectory({
     archiveMutation.mutate({ row, archived });
   }
 
+  function deleteArchivedPerson(row: PersonRow) {
+    if (row.isCurrentUser) {
+      toast.error("You cannot delete your own account.");
+      return;
+    }
+    if (row.status !== "archived") {
+      toast.error("Archive this person before deleting them.");
+      return;
+    }
+    const accepted = window.confirm(
+      `Delete ${row.name} permanently from People? Their email will become available again, but historical work records will be kept.`,
+    );
+    if (!accepted) return;
+    deleteMutation.mutate(row);
+  }
+
   return (
     <div>
       {!embedded && (
@@ -484,7 +515,7 @@ function PeopleDirectory({
             </h2>
             <p className="text-xs text-muted-foreground">
               {archiveOnly
-                ? "Restore archived people here. Permanent deletion needs a safe backend endpoint."
+                ? "Restore archived people here, or delete them to free their email for reuse."
                 : "Add employees, Team Managers, or General Admins and choose their teams and sign-in method."}
             </p>
           </div>
@@ -656,6 +687,7 @@ function PeopleDirectory({
                           <Button
                             variant="ghost"
                             size="sm"
+                            loading={resendMutation.isPending}
                             disabled={resendMutation.isPending}
                             onClick={() => resendMutation.mutate(row.employee!.invitation!.id)}
                           >
@@ -670,6 +702,7 @@ function PeopleDirectory({
                           variant="ghost"
                           size="sm"
                           className="text-destructive hover:text-destructive"
+                          loading={archiveMutation.isPending}
                           disabled={archiveMutation.isPending}
                           onClick={() => changeArchiveStatus(row, true)}
                         >
@@ -683,6 +716,7 @@ function PeopleDirectory({
                           <Button
                             variant="ghost"
                             size="sm"
+                            loading={archiveMutation.isPending}
                             disabled={archiveMutation.isPending}
                             onClick={() => changeArchiveStatus(row, false)}
                           >
@@ -692,8 +726,10 @@ function PeopleDirectory({
                             <Button
                               variant="ghost"
                               size="sm"
-                              disabled
-                              title="Permanent deletion is not enabled yet."
+                              className="text-destructive hover:text-destructive"
+                              loading={deleteMutation.isPending}
+                              disabled={deleteMutation.isPending}
+                              onClick={() => deleteArchivedPerson(row)}
                             >
                               <Trash2 className="mr-1.5 h-3.5 w-3.5" /> Delete
                             </Button>
@@ -715,6 +751,7 @@ function PeopleDirectory({
                           variant="ghost"
                           size="sm"
                           className="text-destructive hover:text-destructive"
+                          loading={archiveMutation.isPending}
                           disabled={archiveMutation.isPending}
                           onClick={() => changeArchiveStatus(row, true)}
                         >
@@ -728,6 +765,7 @@ function PeopleDirectory({
                           <Button
                             variant="ghost"
                             size="sm"
+                            loading={archiveMutation.isPending}
                             disabled={archiveMutation.isPending}
                             onClick={() => changeArchiveStatus(row, false)}
                           >
@@ -737,8 +775,10 @@ function PeopleDirectory({
                             <Button
                               variant="ghost"
                               size="sm"
-                              disabled
-                              title="Permanent deletion is not enabled yet."
+                              className="text-destructive hover:text-destructive"
+                              loading={deleteMutation.isPending}
+                              disabled={deleteMutation.isPending}
+                              onClick={() => deleteArchivedPerson(row)}
                             >
                               <Trash2 className="mr-1.5 h-3.5 w-3.5" /> Delete
                             </Button>
@@ -771,6 +811,8 @@ function PeopleDirectory({
         open={wizardOpen}
         onOpenChange={setWizardOpen}
         teams={teams.data ?? []}
+        employees={employees.data ?? []}
+        users={users.data ?? []}
         onCreated={async () => {
           await Promise.all([
             queryClient.invalidateQueries({ queryKey: ["users"] }),
@@ -992,11 +1034,15 @@ function AddPersonWizard({
   open,
   onOpenChange,
   teams,
+  employees,
+  users,
   onCreated,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   teams: Team[];
+  employees: Employee[];
+  users: User[];
   onCreated: () => Promise<void>;
 }) {
   const navigate = useNavigate();
@@ -1016,15 +1062,14 @@ function AddPersonWizard({
   const [hourlyRate, setHourlyRate] = useState("0");
   const [salaryCurrency, setSalaryCurrency] = useState("EGP");
   const [breaks, setBreaks] = useState([
-    { name: "Lunch", start_time: "13:00", end_time: "13:30", minutes: 30, paid: false },
+    { name: "Lunch", start_time: "13:00", end_time: "13:30", minutes: 30, paid: true },
     { name: "Short break", start_time: "15:30", end_time: "15:45", minutes: 15, paid: true },
   ]);
 
-  // Invitation confirmation and optional fallback enrollment (employee only).
+  // Invitation confirmation (employee only).
   const [createdEmployee, setCreatedEmployee] = useState<Employee | null>(null);
   const [createdInvitation, setCreatedInvitation] = useState<PersonInvitationSummary>();
   const [invitationEmailQueued, setInvitationEmailQueued] = useState(false);
-  const [enrollmentCode, setEnrollmentCode] = useState<string>();
 
   function reset() {
     setStep("type");
@@ -1035,11 +1080,10 @@ function AddPersonWizard({
     setTeamIds([]);
     setStartDate(""); setAnnualLeaveDays(21); setShiftStart("09:00"); setShiftEnd("17:00");
     setOffDays([5, 6]); setSalaryType("monthly"); setSalaryAmount("0"); setHourlyRate("0"); setSalaryCurrency("EGP");
-    setBreaks([{ name: "Lunch", start_time: "13:00", end_time: "13:30", minutes: 30, paid: false }, { name: "Short break", start_time: "15:30", end_time: "15:45", minutes: 15, paid: true }]);
+    setBreaks([{ name: "Lunch", start_time: "13:00", end_time: "13:30", minutes: 30, paid: true }, { name: "Short break", start_time: "15:30", end_time: "15:45", minutes: 15, paid: true }]);
     setCreatedEmployee(null);
     setCreatedInvitation(undefined);
     setInvitationEmailQueued(false);
-    setEnrollmentCode(undefined);
   }
 
   function close() {
@@ -1048,8 +1092,39 @@ function AddPersonWizard({
     setTimeout(reset, 200);
   }
 
+  const normalizedEmail = email.trim().toLowerCase();
+  const existingPerson = normalizedEmail
+    ? (() => {
+        const employee = employees.find((item) => item.email.toLowerCase() === normalizedEmail);
+        if (employee) {
+          return {
+            type: "employee" as const,
+            name: employee.name,
+            status: employeeDirectoryStatus(employee),
+            id: employee.id,
+          };
+        }
+        const user = users.find((item) => item.email.toLowerCase() === normalizedEmail);
+        if (user) {
+          return {
+            type: "admin" as const,
+            name: user.name,
+            status: user.status,
+            id: user.id,
+          };
+        }
+        return null;
+      })()
+    : null;
+  const existingPersonMessage = existingPerson
+    ? `${existingPerson.name} already exists as ${existingPerson.type === "employee" ? "an employee" : "an admin"} (${existingPerson.status}).`
+    : null;
+
   const createMutation = useMutation({
     mutationFn: async () => {
+      if (existingPerson) {
+        throw new Error(existingPersonMessage ?? "A person with this email already exists.");
+      }
       const invitation = await invitePerson({
         name,
         email,
@@ -1102,16 +1177,6 @@ function AddPersonWizard({
       toast.error(error instanceof Error ? error.message : "Failed to create person"),
   });
 
-  const codeMutation = useMutation({
-    mutationFn: () => createEnrollmentCode(createdEmployee!.id, 14),
-    onSuccess: (code) => {
-      setEnrollmentCode(code.code);
-      toast.success("Enrollment code created");
-    },
-    onError: (error) =>
-      toast.error(error instanceof Error ? error.message : "Failed to create code"),
-  });
-
   const resendCreatedInvitationMutation = useMutation({
     mutationFn: () => resendPersonInvitation(createdInvitation!.id),
     onSuccess: ({ invitation, emailQueued }) => {
@@ -1127,6 +1192,10 @@ function AddPersonWizard({
 
   function submitForm(event: FormEvent) {
     event.preventDefault();
+    if (existingPerson) {
+      toast.error(existingPersonMessage ?? "A person with this email already exists.");
+      return;
+    }
     setStep(kind === "employee" ? "work" : "review");
   }
 
@@ -1137,19 +1206,105 @@ function AddPersonWizard({
     const hour12 = hours % 12 || 12;
     return { value, label: `${hour12}:${String(minutes).padStart(2, "0")} ${hours < 12 ? "AM" : "PM"}` };
   });
+  const timeToMinutes = (value: string) => {
+    const [hours = 0, minutes = 0] = value.split(":").map(Number);
+    return hours * 60 + minutes;
+  };
+  const minutesToTime = (value: number) => {
+    const safeValue = Math.max(0, Math.min(23 * 60 + 59, Math.round(value)));
+    return `${String(Math.floor(safeValue / 60)).padStart(2, "0")}:${String(safeValue % 60).padStart(2, "0")}`;
+  };
+  const shiftStartMinutes = timeToMinutes(shiftStart);
+  const shiftEndMinutes = timeToMinutes(shiftEnd);
+  const breakTimeOptions = shiftTimeOptions.filter((option) => {
+    const minutes = timeToMinutes(option.value);
+    return minutes >= shiftStartMinutes && minutes <= shiftEndMinutes;
+  });
+  const breakStartOptions = breakTimeOptions.filter((option) => timeToMinutes(option.value) < shiftEndMinutes);
+  const nextBreakEnd = (startTime: string, duration = 15) =>
+    minutesToTime(Math.min(shiftEndMinutes, timeToMinutes(startTime) + Math.max(1, duration)));
+  const addBreak = () =>
+    setBreaks((items) => [
+      ...items,
+      {
+        name: `Break ${items.length + 1}`,
+        start_time: shiftStart,
+        end_time: nextBreakEnd(shiftStart, 15),
+        minutes: 15,
+        paid: true,
+      },
+    ]);
+  const updateBreakStart = (index: number, startTime: string) =>
+    setBreaks((rows) =>
+      rows.map((row, i) => {
+        if (i !== index) return row;
+        const duration = Math.max(1, row.minutes || timeToMinutes(row.end_time) - timeToMinutes(row.start_time) || 15);
+        return { ...row, start_time: startTime, end_time: nextBreakEnd(startTime, duration), minutes: Math.min(duration, Math.max(1, shiftEndMinutes - timeToMinutes(startTime))) };
+      }),
+    );
+  const updateBreakEnd = (index: number, endTime: string) =>
+    setBreaks((rows) =>
+      rows.map((row, i) => {
+        if (i !== index) return row;
+        const startMinutes = timeToMinutes(row.start_time);
+        const safeEndMinutes = Math.max(startMinutes + 1, timeToMinutes(endTime));
+        return {
+          ...row,
+          end_time: minutesToTime(Math.min(shiftEndMinutes, safeEndMinutes)),
+          minutes: Math.max(1, Math.min(shiftEndMinutes, safeEndMinutes) - startMinutes),
+        };
+      }),
+    );
+  useEffect(() => {
+    setBreaks((rows) => {
+      let changed = false;
+      const normalized = rows.map((row) => {
+        const duration = Math.max(1, row.minutes || 15);
+        const startMinutes = Math.max(
+          shiftStartMinutes,
+          Math.min(timeToMinutes(row.start_time), Math.max(shiftStartMinutes, shiftEndMinutes - 1)),
+        );
+        const endMinutes = Math.min(
+          shiftEndMinutes,
+          Math.max(startMinutes + 1, timeToMinutes(row.end_time) <= startMinutes ? startMinutes + duration : timeToMinutes(row.end_time)),
+        );
+        const next = {
+          ...row,
+          start_time: minutesToTime(startMinutes),
+          end_time: minutesToTime(endMinutes),
+          minutes: Math.max(1, endMinutes - startMinutes),
+        };
+        changed =
+          changed ||
+          next.start_time !== row.start_time ||
+          next.end_time !== row.end_time ||
+          next.minutes !== row.minutes;
+        return next;
+      });
+      return changed ? normalized : rows;
+    });
+  }, [breaks, shiftEnd, shiftStart]);
   const firstYearLeaveCredit = (() => {
     if (!startDate) return null;
     const [startYear, startMonth, startDay] = startDate.split("-").map(Number);
     const targetMonthStart = new Date(startYear, startMonth - 1 + 6, 1, 12);
     const targetMonthLastDay = new Date(targetMonthStart.getFullYear(), targetMonthStart.getMonth() + 1, 0).getDate();
     const eligibleAt = new Date(targetMonthStart.getFullYear(), targetMonthStart.getMonth(), Math.min(startDay, targetMonthLastDay), 12);
-    const remainingFullMonths = 12 - (eligibleAt.getMonth() + 1);
+    const fullYearCredit = eligibleAt.getFullYear() > startYear;
+    const remainingFullMonths = fullYearCredit ? 12 : 12 - (eligibleAt.getMonth() + 1);
     return {
       eligibleAt: eligibleAt.toLocaleDateString(),
       months: remainingFullMonths,
-      days: Number(((remainingFullMonths * annualLeaveDays) / 12).toFixed(2)),
+      days: fullYearCredit ? annualLeaveDays : Number(((remainingFullMonths * annualLeaveDays) / 12).toFixed(2)),
+      fullYearCredit,
     };
   })();
+  const displayedLeaveDays = firstYearLeaveCredit?.days ?? annualLeaveDays;
+  const leaveCreditHelp = firstYearLeaveCredit
+    ? firstYearLeaveCredit.fullYearCredit
+      ? `Eligible after 6 months on ${firstYearLeaveCredit.eligibleAt}. New calendar year, so full ${annualLeaveDays} days.`
+      : `Eligible after 6 months on ${firstYearLeaveCredit.eligibleAt}. Rest of year: (${firstYearLeaveCredit.months} months / 12) x ${annualLeaveDays} = ${firstYearLeaveCredit.days} days.`
+    : `Default: ${annualLeaveDays} days per full calendar year.`;
   const shiftMinutes = Math.max(
     0,
     Math.round(
@@ -1187,7 +1342,7 @@ function AddPersonWizard({
               onClick={() => setKind("employee")}
               icon={UserCircle}
               title="Employee"
-              subtitle="Tracked worker. Receives an email invitation to choose a password. A desktop enrollment code remains available as a backup."
+              subtitle="Tracked worker. Receives an email invitation to choose a password, then signs in to the desktop app with that email."
             />
             <TypeOption
               active={kind === "team_owner"}
@@ -1240,6 +1395,11 @@ function AddPersonWizard({
                   onChange={(event) => setEmail(event.target.value)}
                   required
                 />
+                {existingPersonMessage && (
+                  <p className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs font-medium text-destructive">
+                    {existingPersonMessage}
+                  </p>
+                )}
               </div>
               {kind === "employee" && (
                 <div className="space-y-1.5">
@@ -1296,6 +1456,7 @@ function AddPersonWizard({
                   type="submit"
                   disabled={
                     createMutation.isPending ||
+                    Boolean(existingPerson) ||
                     ((kind === "employee" || kind === "team_owner") && teamIds.length === 0)
                   }
                 >
@@ -1316,12 +1477,34 @@ function AddPersonWizard({
           <div className="space-y-5">
             <div className="grid gap-3 sm:grid-cols-2">
               <div><Label>Employment start date</Label><Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} required /></div>
-              <div><Label>Annual leave entitlement</Label><Input type="number" min={0} max={365} value={annualLeaveDays} onChange={(e) => setAnnualLeaveDays(Number(e.target.value))} /><p className="mt-1 text-xs text-muted-foreground">{firstYearLeaveCredit ? `Eligible after 6 months on ${firstYearLeaveCredit.eligibleAt}. ${firstYearLeaveCredit.months} full months remaining × ${annualLeaveDays} ÷ 12 = ${firstYearLeaveCredit.days} days.` : "Default: 21 days per full calendar year."}</p></div>
+              <div><Label>Annual leave entitlement</Label><Input type="number" min={0} max={365} value={displayedLeaveDays} readOnly className="bg-muted" /><p className="mt-1 text-xs text-muted-foreground">{leaveCreditHelp}</p></div>
               <div><Label>Shift starts</Label><Select value={shiftStart} onValueChange={setShiftStart}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent className="max-h-72">{shiftTimeOptions.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectContent></Select></div>
               <div><Label>Shift ends</Label><Select value={shiftEnd} onValueChange={setShiftEnd}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent className="max-h-72">{shiftTimeOptions.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectContent></Select></div>
             </div>
             <div><Label>Weekly days off</Label><div className="mt-2 flex flex-wrap gap-2">{["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((label, day) => <label key={label} className="flex items-center gap-2 rounded-lg border px-3 py-2 text-sm"><Checkbox checked={offDays.includes(day)} onCheckedChange={(checked) => setOffDays((current) => checked ? [...new Set([...current, day])] : current.filter((item) => item !== day))} />{label}</label>)}</div></div>
-            <div className="space-y-3"><div className="flex items-center justify-between"><Label>Breaks (must be inside the shift)</Label><Button type="button" size="sm" variant="outline" onClick={() => setBreaks((items) => [...items, { name: `Break ${items.length + 1}`, start_time: shiftStart, end_time: shiftStart, minutes: 15, paid: false }])}><Plus className="mr-1 h-4 w-4" />Add break</Button></div>{breaks.map((item, index) => <div key={index} className="grid gap-2 rounded-xl border p-3 sm:grid-cols-[1fr_110px_110px_100px_auto]"><Input value={item.name} onChange={(e) => setBreaks((rows) => rows.map((row, i) => i === index ? { ...row, name: e.target.value } : row))} /><Input type="time" value={item.start_time} onChange={(e) => setBreaks((rows) => rows.map((row, i) => i === index ? { ...row, start_time: e.target.value } : row))} /><Input type="time" value={item.end_time} onChange={(e) => setBreaks((rows) => rows.map((row, i) => i === index ? { ...row, end_time: e.target.value, minutes: Math.max(1, Math.round((new Date(`2000-01-01T${e.target.value}`).getTime() - new Date(`2000-01-01T${row.start_time}`).getTime()) / 60000)) } : row))} /><label className="flex items-center gap-2 text-sm"><Switch checked={item.paid} onCheckedChange={(paid) => setBreaks((rows) => rows.map((row, i) => i === index ? { ...row, paid } : row))} />Paid</label><Button type="button" size="icon" variant="ghost" onClick={() => setBreaks((rows) => rows.filter((_, i) => i !== index))}><Trash2 className="h-4 w-4" /></Button></div>)}</div>
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <Label>Breaks (must be inside the shift)</Label>
+                <Button type="button" size="sm" variant="outline" onClick={addBreak}>
+                  <Plus className="mr-1 h-4 w-4" />Add break
+                </Button>
+              </div>
+              {breaks.map((item, index) => (
+                <div key={index} className="grid gap-2 rounded-xl border p-3 sm:grid-cols-[1fr_130px_130px_100px_auto]">
+                  <Input value={item.name} onChange={(e) => setBreaks((rows) => rows.map((row, i) => i === index ? { ...row, name: e.target.value } : row))} />
+                  <Select value={item.start_time} onValueChange={(value) => updateBreakStart(index, value)}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent className="max-h-72">{breakStartOptions.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectContent>
+                  </Select>
+                  <Select value={item.end_time} onValueChange={(value) => updateBreakEnd(index, value)}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent className="max-h-72">{breakTimeOptions.filter((option) => timeToMinutes(option.value) > timeToMinutes(item.start_time)).map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectContent>
+                  </Select>
+                  <label className="flex items-center gap-2 text-sm"><Switch checked={item.paid} onCheckedChange={(paid) => setBreaks((rows) => rows.map((row, i) => i === index ? { ...row, paid } : row))} />Paid</label>
+                  <Button type="button" size="icon" variant="ghost" onClick={() => setBreaks((rows) => rows.filter((_, i) => i !== index))}><Trash2 className="h-4 w-4" /></Button>
+                </div>
+              ))}
+            </div>
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <div><Label>Salary type</Label><Select value={salaryType} onValueChange={(value) => setSalaryType(value as typeof salaryType)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="monthly">Monthly</SelectItem><SelectItem value="hourly">Hourly</SelectItem></SelectContent></Select></div>
               <div><Label>Monthly salary</Label><Input type="number" min={0} step="0.01" value={salaryType === "monthly" ? salaryAmount : calculatedMonthlySalary.toFixed(2)} readOnly={salaryType === "hourly"} className={salaryType === "hourly" ? "bg-muted" : undefined} onKeyDown={(event) => { if (salaryAmount === "0" && /^\d$/.test(event.key)) { event.preventDefault(); setSalaryAmount(event.key); } }} onChange={(e) => setSalaryAmount(e.target.value)} /></div>
@@ -1335,7 +1518,7 @@ function AddPersonWizard({
         )}
 
         {step === "review" && (
-          <div className="space-y-4"><div className="grid gap-3 rounded-xl border bg-muted/25 p-4 sm:grid-cols-2"><div><span className="text-xs text-muted-foreground">Name</span><p className="font-bold">{name}</p></div><div><span className="text-xs text-muted-foreground">Email</span><p className="font-bold">{email}</p></div><div><span className="text-xs text-muted-foreground">Role</span><p className="font-bold">{kindLabel(kind)}</p></div><div><span className="text-xs text-muted-foreground">Teams</span><p className="font-bold">{teams.filter((team) => teamIds.includes(team.id)).map((team) => team.name).join(", ") || "Company-wide"}</p></div>{kind === "employee" && <><div><span className="text-xs text-muted-foreground">Start / annual leave</span><p className="font-bold">{startDate} · {annualLeaveDays} days</p></div><div><span className="text-xs text-muted-foreground">Shift</span><p className="font-bold">{shiftStart}–{shiftEnd}</p></div><div><span className="text-xs text-muted-foreground">Salary</span><p className="font-bold">{salaryAmount} {salaryCurrency} · {salaryType}</p></div><div><span className="text-xs text-muted-foreground">Breaks</span><p className="font-bold">{breaks.map((item) => `${item.name} ${item.start_time}–${item.end_time}`).join(", ")}</p></div></>}</div><p className="text-sm text-muted-foreground">No account or invitation has been created yet. Confirm to save this profile and send the invitation.</p><div className="flex justify-between"><Button variant="ghost" onClick={() => setStep(kind === "employee" ? "work" : "form")}><ArrowLeft className="mr-2 h-4 w-4" />Back</Button><Button disabled={createMutation.isPending} onClick={() => createMutation.mutate()}>{createMutation.isPending ? "Creating..." : "Confirm & send invitation"}</Button></div></div>
+          <div className="space-y-4"><div className="grid gap-3 rounded-xl border bg-muted/25 p-4 sm:grid-cols-2"><div><span className="text-xs text-muted-foreground">Name</span><p className="font-bold">{name}</p></div><div><span className="text-xs text-muted-foreground">Email</span><p className="font-bold">{email}</p></div><div><span className="text-xs text-muted-foreground">Role</span><p className="font-bold">{kindLabel(kind)}</p></div><div><span className="text-xs text-muted-foreground">Teams</span><p className="font-bold">{teams.filter((team) => teamIds.includes(team.id)).map((team) => team.name).join(", ") || "Company-wide"}</p></div>{kind === "employee" && <><div><span className="text-xs text-muted-foreground">Start / annual leave</span><p className="font-bold">{startDate} · {displayedLeaveDays} days</p></div><div><span className="text-xs text-muted-foreground">Shift</span><p className="font-bold">{shiftStart}–{shiftEnd}</p></div><div><span className="text-xs text-muted-foreground">Salary</span><p className="font-bold">{salaryAmount} {salaryCurrency} · {salaryType}</p></div><div><span className="text-xs text-muted-foreground">Breaks</span><p className="font-bold">{breaks.map((item) => `${item.name} ${item.start_time}–${item.end_time}`).join(", ")}</p></div></>}</div><p className="text-sm text-muted-foreground">{existingPersonMessage ?? "No account or invitation has been created yet. Confirm to save this profile and send the invitation."}</p><div className="flex justify-between"><Button variant="ghost" onClick={() => setStep(kind === "employee" ? "work" : "form")}><ArrowLeft className="mr-2 h-4 w-4" />Back</Button><Button disabled={createMutation.isPending || Boolean(existingPerson)} onClick={() => createMutation.mutate()}>{createMutation.isPending ? "Creating..." : "Confirm & send invitation"}</Button></div></div>
         )}
 
         {step === "invited" && createdEmployee && (
@@ -1370,26 +1553,6 @@ function AddPersonWizard({
               )}
             </div>
 
-            <details className="rounded-md border border-border p-3">
-              <summary className="cursor-pointer text-sm font-medium">
-                Backup: create a desktop enrollment code
-              </summary>
-              <p className="mt-2 text-xs text-muted-foreground">
-                Only use this after the employee accepts the invitation and if password-based
-                desktop enrollment is unavailable. The email invitation is the normal setup.
-              </p>
-              <div className="mt-3">
-                <CredentialRow
-                  title="Desktop enrollment code"
-                  subtitle="Used once to link the desktop app. Share it through a secure channel."
-                  value={enrollmentCode}
-                  buttonLabel={enrollmentCode ? "Regenerate" : "Generate backup code"}
-                  onGenerate={() => codeMutation.mutate()}
-                  pending={codeMutation.isPending}
-                />
-              </div>
-            </details>
-
             <div className="flex justify-between gap-2 pt-1">
               <Button
                 type="button"
@@ -1409,53 +1572,6 @@ function AddPersonWizard({
         )}
       </DialogContent>
     </Dialog>
-  );
-}
-
-function CredentialRow({
-  title,
-  subtitle,
-  value,
-  buttonLabel,
-  onGenerate,
-  pending,
-}: {
-  title: string;
-  subtitle: string;
-  value?: string;
-  buttonLabel: string;
-  onGenerate: () => void;
-  pending: boolean;
-}) {
-  return (
-    <div className="rounded-md border border-border p-3">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <div className="text-sm font-medium">{title}</div>
-          <p className="text-xs text-muted-foreground">{subtitle}</p>
-        </div>
-        <Button variant="outline" size="sm" onClick={onGenerate} disabled={pending}>
-          <KeyRound className="mr-2 h-4 w-4" />
-          {pending ? "..." : buttonLabel}
-        </Button>
-      </div>
-      {value && (
-        <div className="mt-3 flex items-center justify-between gap-3 rounded-md border border-success/30 bg-success/10 p-3">
-          <div className="break-all font-mono text-base font-semibold">{value}</div>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={async () => {
-              await navigator.clipboard.writeText(value);
-              toast.success("Copied");
-            }}
-          >
-            <Copy className="mr-2 h-4 w-4" />
-            Copy
-          </Button>
-        </div>
-      )}
-    </div>
   );
 }
 

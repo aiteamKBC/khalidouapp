@@ -243,7 +243,10 @@ def list_users(
     require_capability(current_admin, "access.manage")
     admins = db.scalars(
         select(AdminUser)
-        .where(AdminUser.company_id == current_admin.company_id)
+        .where(
+            AdminUser.company_id == current_admin.company_id,
+            AdminUser.status != "deleted",
+        )
         .order_by(AdminUser.name)
     ).all()
     return success_response(data=[serialize_admin_user(db, admin) for admin in admins])

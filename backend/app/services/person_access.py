@@ -204,6 +204,61 @@ def restore_linked_person(
         db.add(employee)
 
 
+def delete_linked_person_identity(
+    db: Session,
+    admin: AdminUser | None,
+    employee: Employee | None,
+    now: datetime | None = None,
+) -> None:
+    """Remove a person from the directory while keeping historical records intact.
+
+    Work sessions, screenshots, audit logs, and related history point at these
+    rows, so this intentionally anonymizes and retires the identities instead of
+    physically deleting rows that other tables still reference.
+    """
+
+    now = now or datetime.now(UTC)
+    if admin is not None:
+        admin.email = f"deleted-admin-{admin.id}@deleted.local"
+        admin.name = "Deleted admin"
+        admin.status = "deleted"
+        admin.archived_at = now
+        admin.status_before_archive = None
+        admin.avatar_url = None
+        db.execute(
+            update(AdminRefreshToken)
+            .where(
+                AdminRefreshToken.admin_user_id == admin.id,
+                AdminRefreshToken.revoked_at.is_(None),
+            )
+            .values(revoked_at=now)
+        )
+        db.execute(
+            update(AdminPasswordResetToken)
+            .where(
+                AdminPasswordResetToken.admin_user_id == admin.id,
+                AdminPasswordResetToken.used_at.is_(None),
+            )
+            .values(used_at=now)
+        )
+        db.add(admin)
+
+    if employee is not None:
+        employee.email = f"deleted-employee-{employee.id}@deleted.local"
+        employee.name = "Deleted employee"
+        employee.employee_code = f"DEL-{str(employee.id)[:8].upper()}"
+        employee.job_title = None
+        employee.status = "deleted"
+        employee.archived_at = now
+        employee.status_before_archive = None
+        employee.avatar_url = None
+        employee.portal_access_key_hash = None
+        employee.portal_access_key_hint = None
+        employee.portal_password_hash = None
+        revoke_employee_runtime(db, employee, now)
+        db.add(employee)
+
+
 def person_state(admin: AdminUser | None, employee: Employee | None, person_type: str) -> dict:
     return {
         "person_type": person_type,

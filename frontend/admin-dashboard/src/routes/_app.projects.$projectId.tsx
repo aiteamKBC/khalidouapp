@@ -164,6 +164,7 @@ function ProjectDetailPage() {
           </Button>
           <Button
             variant="outline"
+            loading={duplicateMutation.isPending}
             disabled={duplicateMutation.isPending}
             onClick={() => duplicateMutation.mutate()}
           >
@@ -321,7 +322,11 @@ function ProjectDetailPage() {
               </Select>
             </div>
             <div className="flex justify-end">
-              <Button type="submit" disabled={!name.trim() || !teamId || editMutation.isPending}>
+              <Button
+                type="submit"
+                loading={editMutation.isPending}
+                disabled={!name.trim() || !teamId || editMutation.isPending}
+              >
                 Save project
               </Button>
             </div>

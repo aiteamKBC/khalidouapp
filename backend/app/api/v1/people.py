@@ -34,6 +34,7 @@ from app.services.permissions import is_full_admin, require_capability
 from app.services.work_profiles import get_or_create_work_profile, refresh_profile_completed_at
 from app.services.person_access import (
     archive_linked_person,
+    delete_linked_person_identity,
     person_state,
     restore_linked_person,
 )
@@ -466,3 +467,37 @@ def restore_person(
     )
     db.commit()
     return success_response(data=person_state(admin, employee, person_type))
+
+
+@router.delete("/{person_type}/{person_id}")
+def delete_person(
+    person_type: Literal["admin", "employee"],
+    person_id: UUID,
+    request: Request,
+    current_admin: Annotated[AdminUser, Depends(get_current_admin)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    require_capability(current_admin, "people.archive")
+    admin, employee = resolve_person(db, current_admin, person_type, person_id)
+    if admin is not None and admin.id == current_admin.id:
+        raise ApiError("CANNOT_DELETE_SELF", "You cannot delete your own account.", 409)
+    if admin is not None and admin.status != "archived":
+        raise ApiError("PERSON_MUST_BE_ARCHIVED", "Archive this person before deleting them.", 409)
+    if employee is not None and employee.status != "archived":
+        raise ApiError("PERSON_MUST_BE_ARCHIVED", "Archive this person before deleting them.", 409)
+
+    entity_id = admin.id if admin else employee.id
+    entity_name = admin.email if admin else employee.email
+    delete_linked_person_identity(db, admin, employee)
+    record_audit_log(
+        db,
+        current_admin,
+        "deleted",
+        "person",
+        entity_id=entity_id,
+        entity_name=entity_name,
+        details={"person_type": person_type},
+        request=request,
+    )
+    db.commit()
+    return success_response(data={"deleted": True, "person_type": person_type})

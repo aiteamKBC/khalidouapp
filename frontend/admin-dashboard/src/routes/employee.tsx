@@ -179,7 +179,7 @@ function EmployeeLogin({
               />
               <p className="text-xs text-muted-foreground">
                 {useLegacyKey
-                  ? "Use the old key starting with KHW-. The KH- enrollment code is only for linking the Windows app."
+                  ? "Use the old key starting with KHW-. Password sign-in is the normal setup."
                   : "Use the password you chose when accepting your email invitation."}
               </p>
               {useLegacyKey && (
