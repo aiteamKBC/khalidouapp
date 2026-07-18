@@ -393,6 +393,7 @@ def test_general_admin_can_invite_employee_and_other_general_admin(
             "name": "Another General Admin",
             "email": "admin2@kentconsultancy.co",
             "kind": "general_admin",
+            "job_title": "Operations Manager",
             "team_ids": [],
         },
     )
@@ -410,6 +411,8 @@ def test_general_admin_can_invite_employee_and_other_general_admin(
         assert {row.category for row in deliveries} == {"employee_invitation", "admin_welcome"}
         assert invited_employee is not None
         assert invited_admin is not None and invited_admin.role == "general_admin"
+        assert invited_admin.employee is not None
+        assert invited_admin.employee.job_title == "Operations Manager"
     finally:
         db.close()
 

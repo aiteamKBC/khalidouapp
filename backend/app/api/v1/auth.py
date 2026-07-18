@@ -83,6 +83,7 @@ def me(current_admin: Annotated[AdminUser, Depends(get_current_admin)], db: Anno
             "employee_id": str(current_admin.employee_id) if current_admin.employee_id else None,
             "name": current_admin.name,
             "email": current_admin.email,
+            "job_title": current_admin.employee.job_title if current_admin.employee else None,
             "role": current_admin.role,
             "permissions": capabilities_for_admin(current_admin),
             "status": current_admin.status,

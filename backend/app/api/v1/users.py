@@ -25,6 +25,7 @@ from app.services.permissions import (
     require_capability,
 )
 from app.services.person_access import (
+    default_admin_job_title,
     disable_employee_tracking,
     ensure_employee_team_memberships,
     ensure_tracked_employee,
@@ -46,6 +47,7 @@ def serialize_admin_user(db: Session, admin: AdminUser) -> dict:
         "employee_id": str(admin.employee_id) if admin.employee_id else None,
         "name": admin.name,
         "email": admin.email,
+        "job_title": admin.employee.job_title if admin.employee else None,
         "role": admin.role,
         "status": admin.status,
         "permission_mode": admin.permission_mode,
@@ -63,6 +65,7 @@ def team_owner_employee_identity(
     company_id: UUID,
     name: str,
     email: str,
+    job_title: str | None = None,
 ) -> Employee:
     employee = db.scalar(
         select(Employee).where(
@@ -76,12 +79,14 @@ def team_owner_employee_identity(
             name=name,
             email=email.lower(),
             employee_code=f"EMP-{uuid4().hex[:8].upper()}",
-            job_title="Management",
+            job_title=job_title or "Team leader",
             timezone="UTC",
             status="active",
         )
         db.add(employee)
         db.flush()
+    elif job_title:
+        employee.job_title = job_title
     return employee
 
 
@@ -275,15 +280,15 @@ def create_user(
         permission_mode="role",
         data_scope="company" if payload.role in {"general_admin", "hr"} else "assigned_teams",
     )
-    if payload.role == "team_owner":
-        employee = team_owner_employee_identity(
-            db,
-            company_id=current_admin.company_id,
-            name=payload.name,
-            email=email,
-        )
-        admin.employee_id = employee.id
-        employee.portal_password_hash = admin.password_hash
+    employee = team_owner_employee_identity(
+        db,
+        company_id=current_admin.company_id,
+        name=payload.name,
+        email=email,
+        job_title=payload.job_title or default_admin_job_title(admin),
+    )
+    admin.employee_id = employee.id
+    employee.portal_password_hash = admin.password_hash
     db.add(admin)
     db.commit()
     db.refresh(admin)
@@ -335,6 +340,7 @@ def update_user(
         if existing:
             raise ApiError("ADMIN_EMAIL_EXISTS", "An admin user with this email already exists.", 409)
     audit_updates = {key: value for key, value in updates.items() if key != "password" and value is not None}
+    job_title_update = updates.pop("job_title", None)
     new_password = None
     if "password" in updates and updates["password"] is not None:
         ensure_email_allowed(db, to=admin.email, category="admin_password_reset")
@@ -350,6 +356,7 @@ def update_user(
             company_id=admin.company_id,
             name=admin.name,
             email=admin.email,
+            job_title=job_title_update,
         )
         admin.employee_id = employee.id
     if admin.role == "team_owner":
@@ -358,6 +365,12 @@ def update_user(
         employee.portal_password_hash = admin.password_hash
     elif admin.role == "hr":
         admin.data_scope = "company"
+        employee = ensure_tracked_employee(db, admin)
+    else:
+        employee = ensure_tracked_employee(db, admin)
+    if job_title_update is not None:
+        employee.job_title = job_title_update or default_admin_job_title(admin)
+        db.add(employee)
     elif new_password and admin.employee_id:
         sync_linked_employee_password(admin)
     db.add(admin)

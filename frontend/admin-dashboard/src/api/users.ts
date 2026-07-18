@@ -7,6 +7,7 @@ type BackendUser = {
   employee_id?: string | null;
   name: string;
   email: string;
+  job_title?: string | null;
   role: Role;
   permissions?: string[];
   assigned_team_ids?: string[];
@@ -29,6 +30,7 @@ type BackendAuditLogEntry = {
 export type UserCreateInput = {
   name: string;
   email: string;
+  jobTitle?: string;
   password: string;
   role: Role;
 };
@@ -44,6 +46,7 @@ export async function createUser(input: UserCreateInput): Promise<User> {
     body: JSON.stringify({
       name: input.name,
       email: input.email,
+      job_title: input.jobTitle,
       password: input.password,
       role: input.role,
       status: "active",
@@ -58,7 +61,14 @@ export async function updateUser(
 ): Promise<User> {
   const user = await apiFetch<BackendUser>(`/users/${id}`, {
     method: "PATCH",
-    body: JSON.stringify(input),
+    body: JSON.stringify({
+      name: input.name,
+      email: input.email,
+      job_title: input.jobTitle,
+      password: input.password,
+      role: input.role,
+      status: input.status,
+    }),
   });
   return mapUser(user);
 }

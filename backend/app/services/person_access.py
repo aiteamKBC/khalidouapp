@@ -19,6 +19,14 @@ from app.models import (
 )
 
 
+def default_admin_job_title(admin: AdminUser) -> str:
+    if admin.role == "hr":
+        return "HR"
+    if admin.role == "team_owner":
+        return "Team leader"
+    return "General admin"
+
+
 def sync_linked_employee_password(admin: AdminUser) -> None:
     if admin.employee is not None:
         admin.employee.portal_password_hash = admin.password_hash
@@ -52,7 +60,7 @@ def ensure_tracked_employee(db: Session, admin: AdminUser) -> Employee:
             name=admin.name,
             email=admin.email.lower(),
             employee_code=f"EMP-{uuid4().hex[:8].upper()}",
-            job_title="Management",
+            job_title=default_admin_job_title(admin),
             timezone="UTC",
             status="active",
         )
@@ -61,6 +69,8 @@ def ensure_tracked_employee(db: Session, admin: AdminUser) -> Employee:
 
     employee.name = admin.name
     employee.email = admin.email.lower()
+    if not employee.job_title or employee.job_title == "Management":
+        employee.job_title = default_admin_job_title(admin)
     employee.portal_password_hash = admin.password_hash
     employee.status = "active"
     employee.archived_at = None

@@ -258,6 +258,8 @@ function PeopleDirectory({
         currentUser?.employeeId === employee.id || currentUser?.trackedEmployeeId === employee.id,
       employee,
     }));
+    const adminJobTitle = (user: User) =>
+      user.jobTitle && user.jobTitle !== "Management" ? user.jobTitle : "";
     const adminRows: PersonRow[] = (users.data ?? []).map((user) => ({
       id: user.id,
       kind: "admin",
@@ -272,12 +274,13 @@ function PeopleDirectory({
               : "General admin"
             : "Team lead",
       detail:
-        user.dataScope === "company"
+        adminJobTitle(user) ||
+        (user.dataScope === "company"
           ? "All teams"
           : user.teamLeadTeamIds
               .map((id) => teamNames.get(id))
               .filter(Boolean)
-              .join(", ") || "—",
+              .join(", ") || "—"),
       status: user.status === "active" ? "active" : "archived",
       teamIds: user.dataScope === "company" ? activeTeams.map((team) => team.id) : user.teamLeadTeamIds,
       dashboardEmployeeId: user.trackedEmployeeId,
@@ -1412,17 +1415,23 @@ function AddPersonWizard({
                   </p>
                 )}
               </div>
-              {kind === "employee" && (
-                <div className="space-y-1.5">
-                  <Label htmlFor="person-job-title">Job title</Label>
-                  <Input
-                    id="person-job-title"
-                    value={jobTitle}
-                    onChange={(event) => setJobTitle(event.target.value)}
-                    placeholder="e.g. AI Engineer"
-                  />
-                </div>
-              )}
+              <div className="space-y-1.5">
+                <Label htmlFor="person-job-title">Job title</Label>
+                <Input
+                  id="person-job-title"
+                  value={jobTitle}
+                  onChange={(event) => setJobTitle(event.target.value)}
+                  placeholder={
+                    kind === "employee"
+                      ? "e.g. AI Engineer"
+                      : kind === "team_owner"
+                        ? "e.g. AI team lead"
+                        : kind === "hr"
+                          ? "e.g. HR Manager"
+                          : "e.g. Operations Manager"
+                  }
+                />
+              </div>
               {kind === "employee" && (
                 <p className="self-end rounded-md border bg-muted/40 p-3 text-xs text-muted-foreground">
                   We will email a secure, expiring link so the employee can choose their own

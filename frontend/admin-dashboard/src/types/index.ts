@@ -14,6 +14,7 @@ export interface User {
   employeeId?: string;
   name: string;
   email: string;
+  jobTitle?: string;
   role: Role;
   permissions: string[];
   assignedTeamIds: string[];

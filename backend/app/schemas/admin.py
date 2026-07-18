@@ -196,6 +196,7 @@ class ChecklistItemUpdate(BaseModel):
 class AdminUserCreate(BaseModel):
     name: str = Field(min_length=1, max_length=255)
     email: EmailStr
+    job_title: str | None = Field(default=None, max_length=255)
     password: str = Field(min_length=8, max_length=255)
     role: Literal["general_admin", "team_owner", "hr"] = "team_owner"
     status: str = Field(default="active", max_length=50)
@@ -204,6 +205,7 @@ class AdminUserCreate(BaseModel):
 class AdminUserUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=255)
     email: EmailStr | None = None
+    job_title: str | None = Field(default=None, max_length=255)
     password: str | None = Field(default=None, min_length=8, max_length=255)
     role: Literal["general_admin", "team_owner", "hr"] | None = None
     status: str | None = Field(default=None, max_length=50)

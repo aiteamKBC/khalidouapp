@@ -1,4 +1,5 @@
 import { apiFetch } from "./client";
+import { normalizeAiAcronym } from "@/lib/text";
 import type { DataScope, PermissionMode, User } from "@/types";
 
 type BackendAuthTokens = {
@@ -13,6 +14,7 @@ type BackendUser = {
   employee_id?: string | null;
   name: string;
   email: string;
+  job_title?: string | null;
   role: "general_admin" | "team_owner" | "hr";
   permissions?: string[];
   status: "active" | "inactive";
@@ -37,6 +39,7 @@ export function mapUser(user: BackendUser): User {
     employeeId: user.employee_id ?? undefined,
     name: user.name,
     email: user.email,
+    jobTitle: user.job_title ? normalizeAiAcronym(user.job_title) : undefined,
     role: user.role,
     permissions: user.permissions ?? [],
     assignedTeamIds: user.assigned_team_ids ?? [],

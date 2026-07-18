@@ -93,14 +93,23 @@ def invite_person(
     temporary_password: str | None = None
     employee_invitation: EmployeeInvitation | None = None
     raw_invitation_token: str | None = None
-    track_as_employee = payload.kind in {"employee", "team_manager"} or payload.track_as_employee
+    track_as_employee = (
+        payload.kind in {"employee", "team_manager", "general_admin", "hr"}
+        or payload.track_as_employee
+    )
     if track_as_employee and employee is None:
+        default_job_title = {
+            "employee": None,
+            "team_manager": "Team leader",
+            "general_admin": "General admin",
+            "hr": "HR",
+        }[payload.kind]
         employee = Employee(
             company_id=current_admin.company_id,
             name=payload.name.strip(),
             email=email,
             employee_code=f"EMP-{uuid4().hex[:8].upper()}",
-            job_title=payload.job_title or ("Team Leader" if payload.kind == "team_manager" else None),
+            job_title=payload.job_title or default_job_title,
             timezone=payload.timezone,
             status="invited" if payload.kind == "employee" else "active",
             start_date=payload.start_date,
@@ -108,6 +117,15 @@ def invite_person(
         )
         db.add(employee)
         db.flush()
+    elif track_as_employee and employee is not None:
+        employee.name = payload.name.strip()
+        if payload.job_title:
+            employee.job_title = payload.job_title
+        if payload.kind != "employee":
+            employee.status = "active"
+            employee.archived_at = None
+            employee.status_before_archive = None
+        db.add(employee)
 
     if payload.kind in {"team_manager", "general_admin", "hr"}:
         temporary_password = generate_temporary_password()
@@ -115,7 +133,7 @@ def invite_person(
         admin_role = "team_owner" if payload.kind == "team_manager" else payload.kind
         admin = AdminUser(
             company_id=current_admin.company_id,
-            employee_id=employee.id if payload.kind == "team_manager" and employee else None,
+            employee_id=employee.id if employee else None,
             name=payload.name.strip(),
             email=email,
             password_hash=password_hash,
