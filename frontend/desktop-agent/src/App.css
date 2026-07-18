@@ -51,6 +51,16 @@ button {
   cursor: pointer;
 }
 
+.k-icon {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
+}
+
 button:disabled,
 input:disabled,
 select:disabled,
@@ -251,6 +261,11 @@ textarea:disabled {
 }
 
 .k-sidebar button {
+  position: relative;
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
   width: 100%;
   min-height: 36px;
   margin-bottom: 2px;
@@ -264,14 +279,23 @@ textarea:disabled {
   text-align: left;
 }
 
+.k-sidebar button .k-icon {
+  width: 17px;
+  height: 17px;
+  color: var(--text-3);
+}
+
 .k-sidebar button.active {
   color: var(--brand);
   background: var(--brand-weak);
   box-shadow: inset 3px 0 0 var(--brand);
 }
 
+.k-sidebar button.active .k-icon {
+  color: var(--brand);
+}
+
 .k-sidebar b {
-  float: right;
   min-width: 22px;
   padding: 1px 7px;
   border-radius: 999px;
@@ -435,6 +459,24 @@ textarea:focus {
 .k-app[data-tone="stopped"] .k-hero-pill {
   color: var(--amber);
   background: var(--amber-weak);
+}
+
+.k-hero-icon {
+  display: grid;
+  width: 52px;
+  height: 52px;
+  margin-bottom: 10px;
+  place-items: center;
+  border-radius: 16px;
+  color: var(--brand);
+  background: var(--brand-weak);
+  box-shadow: 0 12px 24px -18px var(--brand);
+}
+
+.k-hero-icon .k-icon {
+  width: 25px;
+  height: 25px;
+  stroke-width: 2.1;
 }
 
 .k-hero-pill::before {
@@ -755,12 +797,28 @@ textarea:focus {
 
 .k-timeline div {
   display: grid;
-  grid-template-columns: 112px minmax(0, 1fr) auto;
+  grid-template-columns: 30px 112px minmax(0, 1fr) auto;
   gap: 8px;
   align-items: center;
   min-height: 30px;
   color: var(--text-2);
   font-size: 11px;
+}
+
+.k-timeline-icon {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--text-2);
+  background: var(--surface-3);
+}
+
+.k-timeline-icon .k-icon {
+  width: 15px;
+  height: 15px;
+  stroke-width: 2.4;
 }
 
 .k-timeline b {
@@ -775,8 +833,24 @@ textarea:focus {
   color: var(--green);
 }
 
+.k-line-worked .k-timeline-icon {
+  color: var(--green);
+  background: var(--green-weak);
+}
+
 .k-line-idle b {
   color: var(--amber);
+}
+
+.k-line-idle .k-timeline-icon {
+  color: var(--amber);
+  background: var(--amber-weak);
+}
+
+.k-line-locked .k-timeline-icon,
+.k-line-sleeping .k-timeline-icon {
+  color: var(--text-3);
+  background: var(--surface-3);
 }
 
 .k-task-list {

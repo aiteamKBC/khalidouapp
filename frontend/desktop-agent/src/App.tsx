@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type ReactNode } from "react";
 import Swal, { type SweetAlertResult } from "sweetalert2";
 import type { AgentProject, AgentStatus, AgentTask, IdleAlert, RecentScreenshot, WorkdayTimeline } from "./types/electron";
 import "sweetalert2/dist/sweetalert2.min.css";
@@ -56,6 +56,91 @@ function formatDuration(totalSeconds: number) {
   const minutes = Math.floor((safeSeconds % 3600) / 60).toString().padStart(2, "0");
   const seconds = Math.floor(safeSeconds % 60).toString().padStart(2, "0");
   return `${hours}:${minutes}:${seconds}`;
+}
+
+type KIconName =
+  | "timer"
+  | "tasks"
+  | "more"
+  | "dashboard"
+  | "briefcase"
+  | "worked"
+  | "idle"
+  | "locked"
+  | "sleeping";
+
+function KIcon({ name, className = "" }: { name: KIconName; className?: string }) {
+  const paths: Record<KIconName, ReactNode> = {
+    timer: (
+      <>
+        <path d="M12 7v5l3 2" />
+        <path d="M9 2h6" />
+        <path d="M12 22a8 8 0 1 0 0-16 8 8 0 0 0 0 16Z" />
+      </>
+    ),
+    tasks: (
+      <>
+        <path d="m5 12 3 3 5-6" />
+        <path d="M4 5h16" />
+        <path d="M4 19h16" />
+      </>
+    ),
+    more: (
+      <>
+        <path d="M12 6h.01" />
+        <path d="M12 12h.01" />
+        <path d="M12 18h.01" />
+      </>
+    ),
+    dashboard: (
+      <>
+        <path d="M4 5h16v14H4z" />
+        <path d="M8 15v-4" />
+        <path d="M12 15V9" />
+        <path d="M16 15v-2" />
+      </>
+    ),
+    briefcase: (
+      <>
+        <path d="M9 7V5.8A1.8 1.8 0 0 1 10.8 4h2.4A1.8 1.8 0 0 1 15 5.8V7" />
+        <path d="M4 8h16v10.2A1.8 1.8 0 0 1 18.2 20H5.8A1.8 1.8 0 0 1 4 18.2Z" />
+        <path d="M4 12h16" />
+        <path d="M10 12v2h4v-2" />
+      </>
+    ),
+    worked: (
+      <>
+        <path d="M9 7V5.8A1.8 1.8 0 0 1 10.8 4h2.4A1.8 1.8 0 0 1 15 5.8V7" />
+        <path d="M4 8h16v10.2A1.8 1.8 0 0 1 18.2 20H5.8A1.8 1.8 0 0 1 4 18.2Z" />
+        <path d="M8 13h8" />
+      </>
+    ),
+    idle: (
+      <>
+        <path d="M12 7v5" />
+        <path d="M8 17h8" />
+        <path d="M12 22a8 8 0 1 0 0-16 8 8 0 0 0 0 16Z" />
+      </>
+    ),
+    locked: (
+      <>
+        <path d="M7 11V8a5 5 0 0 1 10 0v3" />
+        <path d="M6 11h12v9H6z" />
+      </>
+    ),
+    sleeping: (
+      <>
+        <path d="M18 15.5A7 7 0 0 1 8.5 6a7 7 0 1 0 9.5 9.5Z" />
+        <path d="M15 4h4l-4 5h4" />
+      </>
+    ),
+  };
+
+  return (
+    <svg className={`k-icon ${className}`} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      {paths[name]}
+    </svg>
+  );
 }
 
 function formatTimestamp(value: string | null) {
@@ -923,16 +1008,23 @@ function Sidebar({
       <nav>
         <span className="k-nav-title">Main</span>
         <button className={activeView === "home" ? "active" : ""} onClick={() => onViewChange("home")}>
-          Timer
+          <KIcon name="timer" />
+          <span>Timer</span>
         </button>
         <button className={activeView === "tasks" ? "active" : ""} onClick={() => onViewChange("tasks")}>
-          Tasks <b>{status.tasks.length}</b>
+          <KIcon name="tasks" />
+          <span>Tasks</span>
+          <b>{status.tasks.length}</b>
         </button>
         <button className={activeView === "more" ? "active" : ""} onClick={() => onViewChange("more")}>
-          More
+          <KIcon name="more" />
+          <span>More</span>
         </button>
         <span className="k-nav-title">Online</span>
-        <button onClick={onOpenDashboard}>Dashboard</button>
+        <button onClick={onOpenDashboard}>
+          <KIcon name="dashboard" />
+          <span>Dashboard</span>
+        </button>
       </nav>
       <div className="k-user">
         <span className="k-avatar">
@@ -1048,6 +1140,9 @@ function HomeView({
         />
 
         <div className="k-hero" style={{ "--progress": targetProgress } as CSSProperties}>
+          <span className="k-hero-icon">
+            <KIcon name="briefcase" />
+          </span>
           <span className="k-hero-pill">{isPaused ? "Paused" : statusLabel}</span>
           <div className="k-ring">
             <strong>{formatDuration(countedTodaySeconds)}</strong>
@@ -1186,6 +1281,9 @@ function Timeline({ timeline }: { timeline: WorkdayTimeline }) {
       <div className="k-timeline">
         {timeline.intervals.slice(-6).map((interval, index) => (
           <div key={`${interval.session_id}-${interval.started_at}-${index}`} className={`k-line-${interval.type}`}>
+            <i className="k-timeline-icon">
+              <KIcon name={interval.type} />
+            </i>
             <span>
               {formatClock(interval.started_at, timeline.timezone)} -{" "}
               {interval.is_current ? "Now" : formatClock(interval.ended_at, timeline.timezone)}
