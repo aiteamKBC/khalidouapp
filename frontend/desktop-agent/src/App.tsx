@@ -38,6 +38,17 @@ const fallbackStatus: AgentStatus = {
 };
 
 const TRACKABLE_TASK_STAGES = new Set(["backlog", "assigned", "in_progress"]);
+const THEME_STORAGE_KEY = "khaliduo-theme";
+const LIGHT_DEFAULT_RESET_KEY = "khaliduo-desktop-light-default-applied";
+
+function initialTheme(): "light" | "dark" {
+  if (window.localStorage.getItem(LIGHT_DEFAULT_RESET_KEY) !== "1") {
+    window.localStorage.removeItem(THEME_STORAGE_KEY);
+    window.localStorage.setItem(LIGHT_DEFAULT_RESET_KEY, "1");
+    return "light";
+  }
+  return window.localStorage.getItem(THEME_STORAGE_KEY) === "dark" ? "dark" : "light";
+}
 
 function formatDuration(totalSeconds: number) {
   const safeSeconds = Math.max(0, Math.floor(totalSeconds));
@@ -112,9 +123,7 @@ function App() {
   const [recentScreenshots, setRecentScreenshots] = useState<RecentScreenshot[] | null>(null);
   const [isLoadingScreenshots, setIsLoadingScreenshots] = useState(false);
   const [screenshotError, setScreenshotError] = useState<string | null>(null);
-  const [theme, setTheme] = useState<"light" | "dark">(() =>
-    window.localStorage.getItem("khaliduo-theme") === "dark" ? "dark" : "light",
-  );
+  const [theme, setTheme] = useState<"light" | "dark">(initialTheme);
   const shownIdleAlertId = useRef<string | null>(null);
   const promptedUpdateVersion = useRef<string | null>(null);
   const updatePromptActive = useRef(false);
@@ -172,7 +181,7 @@ function App() {
   }, [status.selectedTask?.projectId]);
 
   useEffect(() => {
-    window.localStorage.setItem("khaliduo-theme", theme);
+    window.localStorage.setItem(THEME_STORAGE_KEY, theme);
   }, [theme]);
 
   const statusLabel = useMemo(

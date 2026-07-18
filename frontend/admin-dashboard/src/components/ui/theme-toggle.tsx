@@ -6,10 +6,16 @@ type Theme = "light" | "dark";
 const THEME_EVENT = "khaliduo-theme-change";
 const THEME_STORAGE_KEY = "khaliduo-theme-v2";
 const LEGACY_THEME_STORAGE_KEY = "khaliduo-theme";
+const LIGHT_DEFAULT_RESET_KEY = "khaliduo-light-default-applied";
 
 function preferredTheme(): Theme {
   if (typeof window === "undefined") return "light";
   window.localStorage.removeItem(LEGACY_THEME_STORAGE_KEY);
+  if (window.localStorage.getItem(LIGHT_DEFAULT_RESET_KEY) !== "1") {
+    window.localStorage.removeItem(THEME_STORAGE_KEY);
+    window.localStorage.setItem(LIGHT_DEFAULT_RESET_KEY, "1");
+    return "light";
+  }
   const saved = window.localStorage.getItem(THEME_STORAGE_KEY);
   if (saved === "light" || saved === "dark") return saved;
   return "light";
