@@ -1393,6 +1393,11 @@ async function createMainWindow() {
     if (isQuitting) {
       return;
     }
+    if (!runtimeStatus.enrolled || !currentSessionId) {
+      event.preventDefault();
+      app.quit();
+      return;
+    }
     event.preventDefault();
     if (isHandlingWindowClose) {
       return;
