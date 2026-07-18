@@ -125,10 +125,15 @@ function EmployeeLogin({
   const queryClient = useQueryClient();
   const [email, setEmail] = useState("");
   const [credential, setCredential] = useState("");
+  const emailValue = email.trim();
+  const credentialValue = credential.trim();
   const [useLegacyKey, setUseLegacyKey] = useState(false);
   const login = useMutation({
     mutationFn: () =>
-      employeeLogin(email, useLegacyKey ? { accessKey: credential } : { password: credential }),
+      employeeLogin(
+        emailValue,
+        useLegacyKey ? { accessKey: credentialValue } : { password: credentialValue },
+      ),
     onSuccess: (result) => {
       queryClient.removeQueries({ queryKey: ["employee-portal"] });
       saveEmployeeToken(result.access_token);
@@ -136,7 +141,7 @@ function EmployeeLogin({
     },
   });
   const forgot = useMutation({
-    mutationFn: () => forgotEmployeeAccessKey(email),
+    mutationFn: () => forgotEmployeeAccessKey(emailValue),
   });
   return (
     <main className="flex min-h-screen items-center justify-center bg-muted/40 p-5">
@@ -154,6 +159,9 @@ function EmployeeLogin({
               event.preventDefault();
               clearEmployeeToken();
               queryClient.removeQueries({ queryKey: ["employee-portal"] });
+              if (!emailValue || !credentialValue) {
+                return;
+              }
               login.mutate();
             }}
           >
@@ -195,7 +203,7 @@ function EmployeeLogin({
                   <button
                     type="button"
                     className="text-xs text-primary hover:underline"
-                    onClick={() => email.includes("@") && forgot.mutate()}
+                    onClick={() => emailValue.includes("@") && forgot.mutate()}
                   >
                     {forgot.isPending ? "Sending..." : "Forgot access key? Email me a new one"}
                   </button>
@@ -222,7 +230,11 @@ function EmployeeLogin({
             </div>
             {login.error && <p className="text-sm text-destructive">{login.error.message}</p>}
             {initialError && <p className="text-sm text-destructive">{initialError}</p>}
-            <Button className="w-full" type="submit" disabled={login.isPending}>
+            <Button
+              className="w-full"
+              type="submit"
+              disabled={login.isPending || !emailValue || !credentialValue}
+            >
               {login.isPending ? "Signing in..." : "Open my dashboard"}
             </Button>
             <a className="block text-center text-sm text-primary hover:underline" href="/download">

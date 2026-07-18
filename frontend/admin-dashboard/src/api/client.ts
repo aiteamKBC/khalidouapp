@@ -13,6 +13,13 @@ type ApiEnvelope<T> = {
   };
 };
 
+type FastApiValidationError = {
+  detail?: Array<{
+    loc?: Array<string | number>;
+    msg?: string;
+  }>;
+};
+
 export class ApiClientError extends Error {
   constructor(
     message: string,
@@ -73,6 +80,21 @@ function clearAuth() {
 async function parseBody<T>(res: Response): Promise<ApiEnvelope<T> | null> {
   const text = await res.text();
   return text ? (JSON.parse(text) as ApiEnvelope<T>) : null;
+}
+
+function apiErrorMessage<T>(res: Response, body: ApiEnvelope<T> | null): string {
+  if (body?.error?.message) {
+    return body.error.message;
+  }
+
+  const validation = body as FastApiValidationError | null;
+  const firstValidationError = validation?.detail?.[0];
+  if (firstValidationError?.msg) {
+    const field = firstValidationError.loc?.filter((part) => part !== "body").join(".");
+    return field ? `${field}: ${firstValidationError.msg}` : firstValidationError.msg;
+  }
+
+  return res.statusText ? `API ${res.status}: ${res.statusText}` : `API ${res.status}`;
 }
 
 async function refreshAuthTokens(authLocation: PersistedAuthLocation): Promise<RefreshedTokens> {
@@ -164,7 +186,7 @@ export async function apiFetch<T>(
 
   if (!res.ok || body?.success === false) {
     throw new ApiClientError(
-      body?.error?.message ?? `API ${res.status}: ${res.statusText}`,
+      apiErrorMessage(res, body),
       body?.error?.code ?? "API_ERROR",
       res.status,
     );
@@ -184,7 +206,7 @@ export async function apiFetchWithMeta<T>(
   }
   if (!res.ok || body?.success === false) {
     throw new ApiClientError(
-      body?.error?.message ?? `API ${res.status}: ${res.statusText}`,
+      apiErrorMessage(res, body),
       body?.error?.code ?? "API_ERROR",
       res.status,
     );
