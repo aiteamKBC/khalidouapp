@@ -122,6 +122,7 @@ function EmployeeLogin({
   onLoggedIn: (token: string) => void;
   initialError?: string | null;
 }) {
+  const queryClient = useQueryClient();
   const [email, setEmail] = useState("");
   const [credential, setCredential] = useState("");
   const [useLegacyKey, setUseLegacyKey] = useState(false);
@@ -129,6 +130,7 @@ function EmployeeLogin({
     mutationFn: () =>
       employeeLogin(email, useLegacyKey ? { accessKey: credential } : { password: credential }),
     onSuccess: (result) => {
+      queryClient.removeQueries({ queryKey: ["employee-portal"] });
       saveEmployeeToken(result.access_token);
       onLoggedIn(result.access_token);
     },
@@ -147,8 +149,11 @@ function EmployeeLogin({
         <CardContent>
           <form
             className="space-y-4"
+            autoComplete="off"
             onSubmit={(event: FormEvent) => {
               event.preventDefault();
+              clearEmployeeToken();
+              queryClient.removeQueries({ queryKey: ["employee-portal"] });
               login.mutate();
             }}
           >
@@ -156,7 +161,9 @@ function EmployeeLogin({
               <Label htmlFor="employee-email">Work email</Label>
               <Input
                 id="employee-email"
+                name="khaliduo-employee-email"
                 type="email"
+                autoComplete="off"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required
@@ -168,9 +175,10 @@ function EmployeeLogin({
               </Label>
               <Input
                 id="employee-credential"
+                name="khaliduo-employee-credential"
                 type="password"
                 autoCapitalize={useLegacyKey ? "characters" : "none"}
-                autoComplete={useLegacyKey ? "off" : "current-password"}
+                autoComplete="off"
                 spellCheck={false}
                 placeholder={useLegacyKey ? "KHW-XXXXXXXXXXXXXXXX" : undefined}
                 value={credential}
@@ -232,27 +240,33 @@ function EmployeeLogin({
 
 function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () => void }) {
   const queryClient = useQueryClient();
+  const employeePortalQueryKey = ["employee-portal", token] as const;
+  const handleLogout = () => {
+    clearEmployeeToken();
+    queryClient.removeQueries({ queryKey: ["employee-portal"] });
+    onLogout();
+  };
   const [screenshotDay, setScreenshotDay] = useState(() => new Date().toISOString().slice(0, 10));
   const me = useQuery({
-    queryKey: ["employee-portal", "me"],
+    queryKey: [...employeePortalQueryKey, "me"],
     queryFn: () => employeeMe(token),
     retry: false,
   });
   const summary = useQuery({
-    queryKey: ["employee-portal", "summary"],
+    queryKey: [...employeePortalQueryKey, "summary"],
     queryFn: () => employeeSummary(token),
     refetchInterval: 60_000,
   });
   const tasks = useQuery({
-    queryKey: ["employee-portal", "tasks"],
+    queryKey: [...employeePortalQueryKey, "tasks"],
     queryFn: () => employeeTasks(token),
   });
   const projects = useQuery({
-    queryKey: ["employee-portal", "projects"],
+    queryKey: [...employeePortalQueryKey, "projects"],
     queryFn: () => employeeProjects(token),
   });
   const screenshots = useQuery({
-    queryKey: ["employee-portal", "screenshots", screenshotDay],
+    queryKey: [...employeePortalQueryKey, "screenshots", screenshotDay],
     queryFn: () => employeeScreenshots(token, screenshotDay),
   });
   useEffect(() => {
@@ -262,15 +276,15 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
     }, 100);
   }, [screenshots.isSuccess]);
   const requests = useQuery({
-    queryKey: ["employee-portal", "requests"],
+    queryKey: [...employeePortalQueryKey, "requests"],
     queryFn: () => employeeTimeRequests(token),
   });
   const leaveRequests = useQuery({
-    queryKey: ["employee-portal", "leave-requests"],
+    queryKey: [...employeePortalQueryKey, "leave-requests"],
     queryFn: () => employeeLeaveRequests(token),
   });
   const notifications = useQuery({
-    queryKey: ["employee-portal", "notifications"],
+    queryKey: [...employeePortalQueryKey, "notifications"],
     queryFn: () => employeeNotifications(token),
     refetchInterval: 30_000,
   });
@@ -295,11 +309,11 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
   }, [me.data]);
   const profileMutation = useMutation({
     mutationFn: () => updateEmployeeProfile(token, { name: profileName, avatarUrl: profileAvatar }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["employee-portal", "me"] }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: [...employeePortalQueryKey, "me"] }),
   });
   const [workspaceTaskId, setWorkspaceTaskId] = useState<string | null>(null);
   const taskWorkspace = useQuery({
-    queryKey: ["employee-portal", "task-workspace", workspaceTaskId],
+    queryKey: [...employeePortalQueryKey, "task-workspace", workspaceTaskId],
     queryFn: () => employeeTaskWorkspace(token, workspaceTaskId!),
     enabled: Boolean(workspaceTaskId),
   });
@@ -319,7 +333,7 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
       setTaskDescription("");
       setTaskStartDate("");
       setTaskDeadline("");
-      await queryClient.invalidateQueries({ queryKey: ["employee-portal", "tasks"] });
+      await queryClient.invalidateQueries({ queryKey: [...employeePortalQueryKey, "tasks"] });
     },
   });
   const updateTaskMutation = useMutation({
@@ -327,8 +341,8 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
       updateEmployeeTask(token, id, { stage, note }),
     onSuccess: () =>
       Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["employee-portal", "tasks"] }),
-        queryClient.invalidateQueries({ queryKey: ["employee-portal", "notifications"] }),
+        queryClient.invalidateQueries({ queryKey: [...employeePortalQueryKey, "tasks"] }),
+        queryClient.invalidateQueries({ queryKey: [...employeePortalQueryKey, "notifications"] }),
       ]),
   });
   const checklistMutation = useMutation({
@@ -343,7 +357,7 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
             completed: input.completed,
           })
         : createEmployeeChecklistItem(token, input.taskId, input.title ?? ""),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["employee-portal", "tasks"] }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: [...employeePortalQueryKey, "tasks"] }),
   });
   const taskCollaborationMutation = useMutation({
     mutationFn: async (input: { taskId: string; comment?: string; file?: File }) =>
@@ -352,7 +366,7 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
         : createEmployeeTaskComment(token, input.taskId, input.comment ?? ""),
     onSuccess: () =>
       queryClient.invalidateQueries({
-        queryKey: ["employee-portal", "task-workspace", workspaceTaskId],
+        queryKey: [...employeePortalQueryKey, "task-workspace", workspaceTaskId],
       }),
   });
   const createRequest = useMutation({
@@ -361,8 +375,8 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
     onSuccess: async () => {
       setReason("");
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["employee-portal", "requests"] }),
-        queryClient.invalidateQueries({ queryKey: ["employee-portal", "summary"] }),
+        queryClient.invalidateQueries({ queryKey: [...employeePortalQueryKey, "requests"] }),
+        queryClient.invalidateQueries({ queryKey: [...employeePortalQueryKey, "summary"] }),
       ]);
     },
   });
@@ -372,7 +386,7 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
     }),
     onSuccess: async () => {
       setLeaveStart(""); setLeaveEnd(""); setLeaveReason("");
-      await queryClient.invalidateQueries({ queryKey: ["employee-portal", "leave-requests"] });
+      await queryClient.invalidateQueries({ queryKey: [...employeePortalQueryKey, "leave-requests"] });
     },
   });
 
@@ -381,7 +395,7 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
     return (
       <main className="p-8 text-center">
         <p>Your session expired.</p>
-        <Button className="mt-4" onClick={onLogout}>
+        <Button className="mt-4" onClick={handleLogout}>
           Sign in again
         </Button>
       </main>
@@ -410,7 +424,7 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
                 <Download className="mr-2 h-4 w-4" /> Download app
               </a>
             </Button>
-            <Button variant="outline" size="sm" onClick={onLogout}>
+            <Button variant="outline" size="sm" onClick={handleLogout}>
               <LogOut className="mr-2 h-4 w-4" /> Logout
             </Button>
           </div>

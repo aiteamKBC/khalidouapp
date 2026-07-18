@@ -88,14 +88,18 @@ export type PortalLeaveData = {
 
 export function readEmployeeToken() {
   if (typeof window === "undefined") return null;
-  return localStorage.getItem(STORAGE_KEY);
+  const token = sessionStorage.getItem(STORAGE_KEY);
+  localStorage.removeItem(STORAGE_KEY);
+  return token;
 }
 
 export function saveEmployeeToken(token: string) {
-  localStorage.setItem(STORAGE_KEY, token);
+  localStorage.removeItem(STORAGE_KEY);
+  sessionStorage.setItem(STORAGE_KEY, token);
 }
 
 export function clearEmployeeToken() {
+  sessionStorage.removeItem(STORAGE_KEY);
   localStorage.removeItem(STORAGE_KEY);
 }
 
