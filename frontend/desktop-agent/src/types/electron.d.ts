@@ -196,6 +196,9 @@ declare global {
       }>;
       setIdleAlertAttention: (active: boolean) => void;
       setUpdateAttention: (active: boolean) => void;
+      minimizeWindow: () => Promise<void>;
+      toggleMaximizeWindow: () => Promise<void>;
+      closeWindow: () => Promise<void>;
     };
   }
 }

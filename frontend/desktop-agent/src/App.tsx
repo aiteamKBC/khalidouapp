@@ -657,7 +657,30 @@ function App() {
         >
           {theme === "dark" ? "Light" : "Dark"}
         </button>
-        <span className="k-window-controls">- □ ×</span>
+        <div className="k-window-controls" aria-label="Window controls">
+          <button
+            type="button"
+            aria-label="Minimize"
+            onClick={() => void window.khaliduo?.minimizeWindow()}
+          >
+            −
+          </button>
+          <button
+            type="button"
+            aria-label="Maximize or restore"
+            onClick={() => void window.khaliduo?.toggleMaximizeWindow()}
+          >
+            □
+          </button>
+          <button
+            type="button"
+            aria-label="Close"
+            className="k-window-close"
+            onClick={() => void window.khaliduo?.closeWindow()}
+          >
+            ×
+          </button>
+        </div>
       </header>
 
       {["available", "downloading", "ready"].includes(status.updateStatus) && (

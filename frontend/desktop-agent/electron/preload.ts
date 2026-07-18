@@ -37,6 +37,9 @@ contextBridge.exposeInMainWorld("khaliduo", {
     ipcRenderer.send("agent:set-idle-alert-attention", active),
   setUpdateAttention: (active: boolean) =>
     ipcRenderer.send("agent:set-update-attention", active),
+  minimizeWindow: () => ipcRenderer.invoke("window:minimize"),
+  toggleMaximizeWindow: () => ipcRenderer.invoke("window:toggle-maximize"),
+  closeWindow: () => ipcRenderer.invoke("window:close"),
   installUpdate: () => ipcRenderer.invoke("agent:install-update"),
   onRequiredUpdate: (callback: (update: { version: string | null }) => void) => {
     const listener = (

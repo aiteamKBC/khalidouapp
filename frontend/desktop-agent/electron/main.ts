@@ -1361,6 +1361,7 @@ async function createMainWindow() {
     minWidth: 980,
     minHeight: 640,
     show: false,
+    frame: false,
     autoHideMenuBar: true,
     title: "Khaliduo Status",
     icon: getAppIconPath(),
@@ -1975,6 +1976,26 @@ ipcMain.handle("agent:pause-tracking", () => pauseTracking());
 ipcMain.handle("agent:resume-tracking", () => resumeTracking());
 
 ipcMain.handle("agent:logout", () => logoutDevice());
+
+ipcMain.handle("window:minimize", () => {
+  mainWindow?.minimize();
+});
+
+ipcMain.handle("window:toggle-maximize", () => {
+  if (!mainWindow) {
+    return;
+  }
+
+  if (mainWindow.isMaximized()) {
+    mainWindow.unmaximize();
+  } else {
+    mainWindow.maximize();
+  }
+});
+
+ipcMain.handle("window:close", () => {
+  mainWindow?.close();
+});
 
 ipcMain.handle("agent:open-employee-dashboard", async (_, section?: string) => {
   try {
