@@ -260,7 +260,7 @@ textarea:disabled {
   text-transform: uppercase;
 }
 
-.k-sidebar button {
+.k-sidebar nav button {
   position: relative;
   display: grid;
   grid-template-columns: 22px minmax(0, 1fr) auto;
@@ -279,19 +279,19 @@ textarea:disabled {
   text-align: left;
 }
 
-.k-sidebar button .k-icon {
+.k-sidebar nav button .k-icon {
   width: 17px;
   height: 17px;
   color: var(--text-3);
 }
 
-.k-sidebar button.active {
+.k-sidebar nav button.active {
   color: var(--brand);
   background: var(--brand-weak);
   box-shadow: inset 3px 0 0 var(--brand);
 }
 
-.k-sidebar button.active .k-icon {
+.k-sidebar nav button.active .k-icon {
   color: var(--brand);
 }
 
@@ -352,8 +352,22 @@ textarea:disabled {
 }
 
 .k-plain-danger {
-  margin: 0 8px 10px;
-  color: var(--red) !important;
+  width: calc(100% - 20px);
+  min-height: 36px;
+  margin: 0 10px 12px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  color: var(--red);
+  background: transparent;
+  font-size: 12.5px;
+  font-weight: 900;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.k-plain-danger:hover {
+  border-color: rgb(220 38 38 / 20%);
+  background: rgb(220 38 38 / 8%);
 }
 
 .k-home {
@@ -1052,7 +1066,7 @@ textarea:focus {
     display: none !important;
   }
 
-  .k-sidebar button {
+  .k-sidebar nav button {
     width: auto;
     min-width: 88px;
     text-align: center;
