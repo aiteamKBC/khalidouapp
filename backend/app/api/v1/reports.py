@@ -13,6 +13,7 @@ from app.api.v1.team_auth import accessible_employee_ids_statement, apply_employ
 from app.core.responses import success_response
 from app.database.session import get_db
 from app.models import AdminUser, Employee, Screenshot, TimeAdjustmentRequest, WorkSession
+from app.services.permissions import require_capability
 
 router = APIRouter(prefix="/reports", tags=["reports"])
 
@@ -23,6 +24,7 @@ def summary(
     db: Annotated[Session, Depends(get_db)],
     team_id: UUID | None = None,
 ):
+    require_capability(current_admin, "reports.view")
     employee_scope = accessible_employee_ids_statement(db, current_admin, team_id)
 
     def scoped(statement, employee_column):
@@ -69,6 +71,7 @@ def employee_report(
     db: Annotated[Session, Depends(get_db)],
     team_id: UUID | None = None,
 ):
+    require_capability(current_admin, "reports.view")
     statement = (
         select(
             Employee.id,
@@ -126,6 +129,7 @@ def export_csv(
     db: Annotated[Session, Depends(get_db)],
     team_id: UUID | None = None,
 ):
+    require_capability(current_admin, "reports.export")
     rows = employee_report(current_admin, db, team_id)["data"]
     output = StringIO()
     writer = csv.DictWriter(output, fieldnames=["employee_id", "name", "email", "active_seconds", "idle_seconds", "total_seconds"])

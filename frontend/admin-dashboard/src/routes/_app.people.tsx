@@ -18,6 +18,16 @@ import {
   Trash2,
 } from "lucide-react";
 import { PageHeader } from "@/components/ui/page-header";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Card } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -195,6 +205,8 @@ function PeopleDirectory({
   const [teamFilter, setTeamFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [wizardOpen, setWizardOpen] = useState(false);
+  const [archiveTarget, setArchiveTarget] = useState<PersonRow | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<PersonRow | null>(null);
 
   // Admin edit ("manage access") state.
   const [editUser, setEditUser] = useState<User | null>(null);
@@ -483,10 +495,8 @@ function PeopleDirectory({
       return;
     }
     if (archived) {
-      const accepted = window.confirm(
-        `Archive ${row.name}? They will lose access and new tracking will stop, but their history will be kept.`,
-      );
-      if (!accepted) return;
+      setArchiveTarget(row);
+      return;
     }
     archiveMutation.mutate({ row, archived });
   }
@@ -500,11 +510,7 @@ function PeopleDirectory({
       toast.error("Archive this person before deleting them.");
       return;
     }
-    const accepted = window.confirm(
-      `Delete ${row.name} permanently from People? Their email will become available again, but historical work records will be kept.`,
-    );
-    if (!accepted) return;
-    deleteMutation.mutate(row);
+    setDeleteTarget(row);
   }
 
   return (
@@ -1040,6 +1046,58 @@ function PeopleDirectory({
           </form>
         </DialogContent>
       </Dialog>
+
+      <AlertDialog
+        open={archiveTarget !== null}
+        onOpenChange={(open) => !open && setArchiveTarget(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Archive {archiveTarget?.name}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              They will lose access and new tracking will stop, but their history will be kept.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={archiveMutation.isPending}
+              onClick={() => {
+                if (archiveTarget) archiveMutation.mutate({ row: archiveTarget, archived: true });
+                setArchiveTarget(null);
+              }}
+            >
+              Archive
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={deleteTarget !== null}
+        onOpenChange={(open) => !open && setDeleteTarget(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete {deleteTarget?.name} permanently?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Their email will become available again, but historical work records will be kept.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={deleteMutation.isPending}
+              onClick={() => {
+                if (deleteTarget) deleteMutation.mutate(deleteTarget);
+                setDeleteTarget(null);
+              }}
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

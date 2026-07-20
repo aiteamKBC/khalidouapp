@@ -68,6 +68,9 @@ function nextAttemptAt(attempts: number) {
   return new Date(Date.now() + backoffMs).toISOString();
 }
 
+/** After this many failed attempts, an item stops being retried (status becomes 'dead') so it can no longer block the rest of the queue. */
+const MAX_SYNC_ATTEMPTS = 10;
+
 export async function initializeLocalDatabase() {
   if (database) {
     return;
@@ -181,11 +184,13 @@ export function markPendingEventUploaded(id: string) {
 }
 
 export function markPendingEventFailed(id: string, attempts: number) {
+  const nextAttempts = attempts + 1;
+  const status = nextAttempts >= MAX_SYNC_ATTEMPTS ? 'dead' : 'failed';
   database?.run(
     `update pending_events
-     set status = 'failed', attempts = ?, next_attempt_at = ?, updated_at = ?
+     set status = ?, attempts = ?, next_attempt_at = ?, updated_at = ?
      where id = ?`,
-    [attempts + 1, nextAttemptAt(attempts + 1), new Date().toISOString(), id],
+    [status, nextAttempts, nextAttemptAt(nextAttempts), new Date().toISOString(), id],
   );
   persist();
 }
@@ -228,11 +233,13 @@ export function markPendingScreenshotUploaded(screenshotId: string) {
 }
 
 export function markPendingScreenshotFailed(screenshotId: string, attempts: number) {
+  const nextAttempts = attempts + 1;
+  const status = nextAttempts >= MAX_SYNC_ATTEMPTS ? 'dead' : 'failed';
   database?.run(
     `update pending_screenshots
-     set status = 'failed', attempts = ?, next_attempt_at = ?, updated_at = ?
+     set status = ?, attempts = ?, next_attempt_at = ?, updated_at = ?
      where screenshot_id = ?`,
-    [attempts + 1, nextAttemptAt(attempts + 1), new Date().toISOString(), screenshotId],
+    [status, nextAttempts, nextAttemptAt(nextAttempts), new Date().toISOString(), screenshotId],
   );
   persist();
 }

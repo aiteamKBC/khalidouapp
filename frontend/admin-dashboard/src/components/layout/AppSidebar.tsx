@@ -210,16 +210,6 @@ export function AppSidebar({ onNavigate }: { onNavigate?: () => void }) {
                 {user.name}
               </div>
               <div className="truncate font-semibold">{roleLabel}</div>
-              <div className="hidden">
-                {user.role === "team_owner"
-                  ? "Team lead"
-                  : user.role === "hr"
-                    ? "HR"
-                    : "General admin"}
-                {user.role === "general_admin" && user.teamLeadTeamIds.length > 0
-                  ? " · Team lead"
-                  : ""}
-              </div>
             </div>
             <button
               onClick={() => logout()}

@@ -8,12 +8,13 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_admin
 from app.api.v1.admin_utils import apply_pagination, count_for, pagination_meta
-from app.api.v1.team_auth import apply_employee_scope, ensure_employee_access, require_general_admin
+from app.api.v1.team_auth import apply_employee_scope, ensure_employee_access
 from app.core.responses import success_response
 from app.database.session import get_db
 from app.models import AdminUser, Employee, TimeAdjustmentRequest
 from app.schemas.admin import TimeAdjustmentReview
 from app.services.audit import record_audit_log
+from app.services.permissions import require_capability
 from app.services.time_adjustments import get_time_adjustment_or_404, serialize_time_adjustment_request
 
 router = APIRouter(prefix="/time-adjustment-requests", tags=["time-adjustment-requests"])
@@ -57,7 +58,7 @@ def review_time_adjustment_request(
     current_admin: Annotated[AdminUser, Depends(get_current_admin)],
     db: Annotated[Session, Depends(get_db)],
 ):
-    require_general_admin(current_admin)
+    require_capability(current_admin, "time_requests.manage")
     row = get_time_adjustment_or_404(db, current_admin.company_id, request_id)
     ensure_employee_access(db, current_admin, row.employee_id)
     row.status = payload.status

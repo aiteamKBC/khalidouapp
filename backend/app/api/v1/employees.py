@@ -46,6 +46,7 @@ from app.services.employee_invitations import (
 )
 from app.schemas.admin import EmployeeWorkProfileUpdate
 from app.services.permissions import require_capability
+from app.services.person_access import disable_employee_tracking
 from app.services.work_profiles import (
     get_or_create_work_profile,
     payroll_preview,
@@ -665,8 +666,15 @@ def update_employee(
             "The employee must accept the invitation before the account can be activated.",
             409,
         )
+    turning_inactive = changes.get("status") == "inactive" and employee.status != "inactive"
     for key, value in changes.items():
+        if key == "status":
+            continue
         setattr(employee, key, value.lower() if key == "email" and isinstance(value, str) else value)
+    if turning_inactive:
+        disable_employee_tracking(db, employee)
+    elif "status" in changes:
+        employee.status = changes["status"]
     db.add(employee)
     db.commit()
     db.refresh(employee)
@@ -688,7 +696,7 @@ def update_employee(
 def delete_employee(employee_id: UUID, request: Request, current_admin: Annotated[AdminUser, Depends(get_current_admin)], db: Annotated[Session, Depends(get_db)]):
     require_capability(current_admin, "people.archive")
     employee = get_employee_or_404(db, current_admin, employee_id)
-    employee.status = "inactive"
+    disable_employee_tracking(db, employee)
     db.add(employee)
     db.commit()
     record_audit_log(

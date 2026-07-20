@@ -90,6 +90,16 @@ def get_current_device(
     if device is None:
         raise ApiError("UNAUTHORIZED", "Device is not active.", 401)
 
+    employee = db.scalar(
+        select(Employee).where(
+            Employee.id == device.employee_id,
+            Employee.company_id == company_id,
+            Employee.status == "active",
+        )
+    )
+    if employee is None:
+        raise ApiError("UNAUTHORIZED", "Employee account is not active.", 401)
+
     return DeviceAuthContext(device=device, token_record=token_record)
 
 

@@ -1055,7 +1055,7 @@ async function syncPendingQueues(forcePendingEvents = false) {
       markPendingEventFailed(event.id, event.attempts);
       runtimeStatus.connectionStatus = "offline";
       log.warn("Pending event sync failed", error);
-      break;
+      continue;
     }
   }
 
@@ -1084,7 +1084,7 @@ async function syncPendingQueues(forcePendingEvents = false) {
       markPendingScreenshotFailed(screenshot.screenshotId, screenshot.attempts);
       runtimeStatus.connectionStatus = "offline";
       log.warn("Pending screenshot sync failed", error);
-      break;
+      continue;
     }
   }
   rebuildTrayMenu();

@@ -23,6 +23,7 @@ from app.core.responses import success_response
 from app.database.session import get_db
 from app.models import AdminUser, Screenshot, WorkSession
 from app.services.audit import record_audit_log
+from app.services.permissions import require_capability
 from app.services.projects import get_project_or_404, get_task_or_404
 from app.services.screenshots import serialize_screenshot
 from app.storage.local import LocalScreenshotStorage
@@ -170,6 +171,7 @@ def get_screenshot_thumbnail(
 
 @router.delete("/{screenshot_id}")
 def delete_screenshot(screenshot_id: UUID, request: Request, current_admin: Annotated[AdminUser, Depends(get_current_admin)], db: Annotated[Session, Depends(get_db)]):
+    require_capability(current_admin, "screenshots.manage")
     screenshot = get_accessible_screenshot_or_404(db, current_admin, screenshot_id)
     from datetime import UTC, datetime
 

@@ -50,6 +50,7 @@ import { PageHeader } from "@/components/ui/page-header";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { useNotePrompt } from "@/components/note-prompt-dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -150,6 +151,7 @@ function stageLabel(stage: string) {
 }
 
 function ProjectsPage() {
+  const { prompt, dialog: notePromptDialog } = useNotePrompt();
   const { scopedTeamIds, user } = useAuth();
   const search = Route.useSearch();
   const navigate = useNavigate();
@@ -494,7 +496,7 @@ function ProjectsPage() {
     return workflowStages;
   }
 
-  function moveTask(task: Task, stage: string) {
+  async function moveTask(task: Task, stage: string) {
     if (task.stage === stage) return;
     if (["new_requests", "ready_for_review"].includes(task.stage)) {
       toast.info("Use the review actions to approve or return this task.");
@@ -508,7 +510,7 @@ function ProjectsPage() {
       toast.error("A General admin or another team manager must review your task.");
       return;
     }
-    const notes = stageChangeNotes(task, stage);
+    const notes = await stageChangeNotes(task, stage);
     if (notes === null) return;
     moveTaskMutation.mutate({ id: task.id, stage, ...notes });
   }
@@ -521,7 +523,7 @@ function ProjectsPage() {
     setDragOverStage((event.over?.data.current?.stage as string | undefined) ?? null);
   }
 
-  function handleDragEnd(event: DragEndEvent) {
+  async function handleDragEnd(event: DragEndEvent) {
     const source = kanbanTasks.find((task) => task.id === String(event.active.id));
     const targetId = event.over ? String(event.over.id) : null;
     const targetTask = targetId ? kanbanTasks.find((task) => task.id === targetId) : null;
@@ -549,7 +551,7 @@ function ProjectsPage() {
       ? targetTask.position
       : kanbanTasks.filter((task) => task.stage === targetStage).length;
     if (source.stage === targetStage && source.position === targetPosition) return;
-    const notes = stageChangeNotes(source, targetStage);
+    const notes = await stageChangeNotes(source, targetStage);
     if (notes === null) return;
     moveTaskMutation.mutate({
       id: source.id,
@@ -562,19 +564,26 @@ function ProjectsPage() {
     }
   }
 
-  function stageChangeNotes(task: Task, stage: string) {
+  async function stageChangeNotes(task: Task, stage: string) {
     if (stage === "blocked") {
-      const blockedReason = window.prompt("What is blocking this task?")?.trim();
+      const blockedReason = await prompt({
+        title: "Block task",
+        description: "What is blocking this task?",
+      });
       return blockedReason ? { blockedReason } : null;
     }
     if (task.stage === "blocked" && stage !== "blocked") {
-      const blockResolutionNote = window.prompt("How was the blocker resolved?")?.trim();
+      const blockResolutionNote = await prompt({
+        title: "Resolve blocker",
+        description: "How was the blocker resolved?",
+      });
       return blockResolutionNote ? { blockResolutionNote } : null;
     }
     if (stage === "completed" && task.checklist.some((item) => !item.completed)) {
-      const completionNote = window
-        .prompt("The checklist is incomplete. Add a completion reason, or cancel the move.")
-        ?.trim();
+      const completionNote = await prompt({
+        title: "Complete task",
+        description: "The checklist is incomplete. Add a completion reason, or cancel the move.",
+      });
       return completionNote ? { completionNote } : null;
     }
     return {};
@@ -844,12 +853,12 @@ function ProjectsPage() {
                                       <span
                                         className={`mt-1 inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase ${
                                           task.priority === "urgent"
-                                            ? "bg-red-100 text-red-700"
+                                            ? "bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300"
                                             : task.priority === "high"
-                                              ? "bg-orange-100 text-orange-700"
+                                              ? "bg-orange-100 text-orange-700 dark:bg-orange-950 dark:text-orange-300"
                                               : task.priority === "low"
-                                                ? "bg-slate-100 text-slate-600"
-                                                : "bg-blue-100 text-blue-700"
+                                                ? "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300"
+                                                : "bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300"
                                         }`}
                                       >
                                         {task.priority}
@@ -1298,17 +1307,17 @@ function ProjectsPage() {
                   </SheetHeader>
 
                   {selectedTask.stage === "new_requests" && (
-                    <div className="mt-4 flex flex-wrap items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3">
+                    <div className="mt-4 flex flex-wrap items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 dark:border-amber-900 dark:bg-amber-950">
                       <div className="mr-auto">
-                        <p className="font-medium text-amber-950">
+                        <p className="font-medium text-amber-950 dark:text-amber-200">
                           Employee request awaiting approval
                         </p>
-                        <p className="text-xs text-amber-800">
+                        <p className="text-xs text-amber-800 dark:text-amber-300">
                           Approve it into Assigned, or reject it with a reason.
                         </p>
                       </div>
                       {isSelfReview ? (
-                        <p className="max-w-sm text-xs font-medium text-amber-900">
+                        <p className="max-w-sm text-xs font-medium text-amber-900 dark:text-amber-200">
                           You cannot review your own task. A General admin or another team manager
                           must decide this request.
                         </p>
@@ -1328,8 +1337,11 @@ function ProjectsPage() {
                           <Button
                             size="sm"
                             variant="outline"
-                            onClick={() => {
-                              const note = window.prompt("Why is this request rejected?")?.trim();
+                            onClick={async () => {
+                              const note = await prompt({
+                                title: "Reject request",
+                                description: "Why is this request rejected?",
+                              });
                               if (!note) return;
                               workflowMutation.mutate({
                                 action: "reject-request",
@@ -1345,15 +1357,17 @@ function ProjectsPage() {
                     </div>
                   )}
                   {selectedTask.stage === "ready_for_review" && (
-                    <div className="mt-4 flex flex-wrap items-center gap-2 rounded-xl border border-sky-200 bg-sky-50 p-3">
+                    <div className="mt-4 flex flex-wrap items-center gap-2 rounded-xl border border-sky-200 bg-sky-50 p-3 dark:border-sky-900 dark:bg-sky-950">
                       <div className="mr-auto">
-                        <p className="font-medium text-sky-950">Ready for manager review</p>
-                        <p className="text-xs text-sky-800">
+                        <p className="font-medium text-sky-950 dark:text-sky-200">
+                          Ready for manager review
+                        </p>
+                        <p className="text-xs text-sky-800 dark:text-sky-300">
                           Review the checklist and tracked work before deciding.
                         </p>
                       </div>
                       {isSelfReview ? (
-                        <p className="max-w-sm text-xs font-medium text-sky-900">
+                        <p className="max-w-sm text-xs font-medium text-sky-900 dark:text-sky-200">
                           You cannot review your own work. A General admin or another team manager
                           must approve or return it.
                         </p>
@@ -1361,20 +1375,22 @@ function ProjectsPage() {
                         <>
                           <Button
                             size="sm"
-                            onClick={() => {
+                            onClick={async () => {
                               const hasIncomplete = selectedTask.checklist.some(
                                 (item) => !item.completed,
                               );
                               const note = hasIncomplete
-                                ? window
-                                    .prompt("The checklist is incomplete. Add an approval reason.")
-                                    ?.trim()
+                                ? await prompt({
+                                    title: "Approve & complete",
+                                    description:
+                                      "The checklist is incomplete. Add an approval reason.",
+                                  })
                                 : undefined;
                               if (hasIncomplete && !note) return;
                               workflowMutation.mutate({
                                 action: "approve-review",
                                 taskId: selectedTask.id,
-                                note,
+                                note: note ?? undefined,
                               });
                             }}
                           >
@@ -1399,8 +1415,11 @@ function ProjectsPage() {
                           <Button
                             size="sm"
                             variant="outline"
-                            onClick={() => {
-                              const note = window.prompt("What should be changed?")?.trim();
+                            onClick={async () => {
+                              const note = await prompt({
+                                title: "Return for changes",
+                                description: "What should be changed?",
+                              });
                               if (!note) return;
                               workflowMutation.mutate({
                                 action: "return-review",
@@ -1922,6 +1941,7 @@ function ProjectsPage() {
           </form>
         </DialogContent>
       </Dialog>
+      {notePromptDialog}
     </div>
   );
 }

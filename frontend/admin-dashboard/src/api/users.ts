@@ -40,21 +40,6 @@ export async function listUsers(): Promise<User[]> {
   return users.map(mapUser);
 }
 
-export async function createUser(input: UserCreateInput): Promise<User> {
-  const user = await apiFetch<BackendUser>("/users", {
-    method: "POST",
-    body: JSON.stringify({
-      name: input.name,
-      email: input.email,
-      job_title: input.jobTitle,
-      password: input.password,
-      role: input.role,
-      status: "active",
-    }),
-  });
-  return mapUser(user);
-}
-
 export async function updateUser(
   id: string,
   input: Partial<UserCreateInput> & { status?: string },
@@ -71,10 +56,6 @@ export async function updateUser(
     }),
   });
   return mapUser(user);
-}
-
-export async function deactivateUser(id: string): Promise<void> {
-  await apiFetch(`/users/${id}`, { method: "DELETE" });
 }
 
 export async function listAuditLog(): Promise<AuditLogEntry[]> {

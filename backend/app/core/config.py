@@ -1,8 +1,10 @@
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+INSECURE_DEFAULT_SECRET = "change-me-in-development"
 
 
 class Settings(BaseSettings):
@@ -16,10 +18,10 @@ class Settings(BaseSettings):
     app_env: str = Field(default="development", alias="APP_ENV")
     app_name: str = Field(default="Khaliduo", alias="APP_NAME")
     database_url: str = Field(default="", alias="DATABASE_URL")
-    jwt_secret_key: str = Field(default="change-me-in-development", alias="JWT_SECRET_KEY")
+    jwt_secret_key: str = Field(default=INSECURE_DEFAULT_SECRET, alias="JWT_SECRET_KEY")
     jwt_access_token_expire_minutes: int = Field(default=30, alias="JWT_ACCESS_TOKEN_EXPIRE_MINUTES")
     jwt_refresh_token_expire_days: int = Field(default=7, alias="JWT_REFRESH_TOKEN_EXPIRE_DAYS")
-    device_token_secret: str = Field(default="change-me-in-development", alias="DEVICE_TOKEN_SECRET")
+    device_token_secret: str = Field(default=INSECURE_DEFAULT_SECRET, alias="DEVICE_TOKEN_SECRET")
     cors_origins: list[str] = Field(
         default=[
             "http://localhost:5173",
@@ -79,6 +81,14 @@ class Settings(BaseSettings):
             return []
         return [origin.strip() for origin in value.split(",") if origin.strip()]
 
+    @model_validator(mode="after")
+    def reject_insecure_production_secrets(self) -> "Settings":
+        if self.app_env.lower() == "production":
+            if self.jwt_secret_key == INSECURE_DEFAULT_SECRET:
+                raise ValueError("JWT_SECRET_KEY must be set to a real secret in production.")
+            if self.device_token_secret == INSECURE_DEFAULT_SECRET:
+                raise ValueError("DEVICE_TOKEN_SECRET must be set to a real secret in production.")
+        return self
 
 
 @lru_cache

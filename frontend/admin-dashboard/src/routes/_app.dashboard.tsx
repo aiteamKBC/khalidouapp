@@ -25,6 +25,7 @@ import {
 } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
+import { MetricTile } from "@/components/ui/metric-tile";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { ProtectedImage } from "@/components/ProtectedImage";
@@ -355,45 +356,45 @@ function DashboardPage() {
       />
 
       <div className="mb-4 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
-        <QuickSignal
+        <MetricTile
           onClick={() => setAttentionOpen(true)}
           value={attentionCount}
           label={attentionCount ? "Need attention" : "All healthy"}
-          sublabel={attentionCount ? "Open issue list" : "Live summary"}
+          hint={attentionCount ? "Open issue list" : "Live summary"}
           icon={attentionCount ? AlertTriangle : CheckCircle2}
-          tone={attentionCount ? "warning" : "success"}
+          tone={attentionCount ? "amber" : "green"}
         />
-        <QuickSignal
+        <MetricTile
           to="/time-adjustments"
           value={requests.data?.length ?? 0}
           label="Time requests"
-          sublabel="Pending review"
+          hint="Pending review"
           icon={TimerReset}
-          tone="info"
+          tone="blue"
         />
-        <QuickSignal
+        <MetricTile
           to="/employees"
           value={inactiveToday.length}
           label="Not started"
-          sublabel="Today"
+          hint="Today"
           icon={Users}
           tone="muted"
         />
-        <QuickSignal
+        <MetricTile
           to="/devices"
           value={offlineDevices.length}
           label="Devices offline"
-          sublabel={`of ${devices.data?.length ?? 0} devices`}
+          hint={`of ${devices.data?.length ?? 0} devices`}
           icon={Monitor}
           tone="danger"
         />
-        <QuickSignal
+        <MetricTile
           to="/teams"
           value={teamsWithoutOwner.length}
           label="Teams unowned"
-          sublabel="Assign an owner"
+          hint="Assign an owner"
           icon={AlertTriangle}
-          tone="warning"
+          tone="amber"
         />
       </div>
 
@@ -923,65 +924,6 @@ function DashboardPage() {
         </div>
       </div>
     </div>
-  );
-}
-
-function QuickSignal({
-  to,
-  onClick,
-  value,
-  label,
-  sublabel,
-  icon: Icon,
-  tone,
-}: {
-  to?: "/time-adjustments" | "/employees" | "/devices" | "/teams" | "/live-activity";
-  onClick?: () => void;
-  value: number;
-  label: string;
-  sublabel: string;
-  icon: LucideIcon;
-  tone: "warning" | "danger" | "muted" | "info" | "success";
-}) {
-  const styles = {
-    warning: "bg-[#fbf1dd] text-[#c47d0e] dark:bg-[#2c2413] dark:text-[#e0a648]",
-    danger: "bg-[#fbe9e9] text-[#dc2626] dark:bg-[#331a1d] dark:text-[#f2626e]",
-    muted: "bg-[#efe9f1] text-[#5d5578] dark:bg-[#271d3a] dark:text-[#a79dbb]",
-    info: "bg-[#e8eefc] text-[#3b6fe0] dark:bg-[#182543] dark:text-[#6f9bf0]",
-    success: "bg-[#e6f6ec] text-[#16a34a] dark:bg-[#123122] dark:text-[#37d17f]",
-  }[tone];
-  const content = (
-    <>
-      <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-[11px] ${styles}`}>
-        <Icon className="h-5 w-5" />
-      </span>
-      <span className="min-w-0">
-        <strong className="font-mono-numeric block text-2xl font-extrabold leading-none">
-          {value}
-        </strong>
-        <span className="mt-1.5 block truncate text-xs font-bold">{label}</span>
-        <span className="mt-0.5 block truncate text-[10.5px] font-semibold text-muted-foreground">
-          {sublabel}
-        </span>
-      </span>
-    </>
-  );
-
-  const className =
-    "studio-card group flex min-w-0 items-start gap-3 rounded-[14px] border bg-card p-3.5 text-left transition hover:-translate-y-0.5 hover:border-[#e5185d]/20";
-
-  if (onClick) {
-    return (
-      <button type="button" onClick={onClick} className={className}>
-        {content}
-      </button>
-    );
-  }
-
-  return (
-    <Link to={to ?? "/dashboard"} className={className}>
-      {content}
-    </Link>
   );
 }
 

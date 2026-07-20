@@ -46,7 +46,6 @@ export function requiredPermissionForPath(pathname: string): PermissionKey | und
   if (pathname.startsWith("/reports")) return permissions.reportsView;
   if (pathname.startsWith("/settings/tracking")) return permissions.settingsView;
   if (pathname.startsWith("/audit-log")) return permissions.auditView;
-  if (pathname.startsWith("/users")) return permissions.accessManage;
   if (pathname.startsWith("/notifications")) return permissions.notificationsView;
   if (pathname.startsWith("/employees")) return permissions.peopleView;
   if (pathname.startsWith("/live-activity")) return permissions.liveActivityView;

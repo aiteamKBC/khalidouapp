@@ -23,6 +23,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { DatePicker } from "@/components/ui/date-picker";
+import { useNotePrompt } from "@/components/note-prompt-dialog";
 import {
   clearEmployeeToken,
   createEmployeeTimeRequest,
@@ -251,6 +252,7 @@ function EmployeeLogin({
 }
 
 function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () => void }) {
+  const { prompt, dialog: notePromptDialog } = useNotePrompt();
   const queryClient = useQueryClient();
   const employeePortalQueryKey = ["employee-portal", token] as const;
   const handleLogout = () => {
@@ -596,18 +598,28 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
                           "cancelled",
                         ].includes(task.stage)
                       }
-                      onChange={(event) => {
+                      onChange={async (event) => {
                         const stage = event.target.value;
                         const note =
                           stage === "blocked"
-                            ? window.prompt("What is blocking this task?")?.trim()
+                            ? await prompt({
+                                title: "Block task",
+                                description: "What is blocking this task?",
+                              })
                             : task.stage === "blocked" && stage === "in_progress"
-                              ? window.prompt("How was the blocker resolved?")?.trim()
+                              ? await prompt({
+                                  title: "Resolve blocker",
+                                  description: "How was the blocker resolved?",
+                                })
                               : stage === "ready_for_review"
-                                ? window.prompt("Optional note for the reviewer")?.trim()
+                                ? await prompt({
+                                    title: "Submit for review",
+                                    description: "Optional note for the reviewer",
+                                    required: false,
+                                  })
                                 : undefined;
                         if ((stage === "blocked" || task.stage === "blocked") && !note) return;
-                        updateTaskMutation.mutate({ id: task.id, stage, note });
+                        updateTaskMutation.mutate({ id: task.id, stage, note: note ?? undefined });
                       }}
                     >
                       {Array.from(
@@ -680,8 +692,8 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
                       {!["completed", "rejected", "cancelled"].includes(task.stage) && (
                         <button
                           className="font-medium text-primary"
-                          onClick={() => {
-                            const title = window.prompt("Checklist item")?.trim();
+                          onClick={async () => {
+                            const title = await prompt({ title: "Add checklist item" });
                             if (title) checklistMutation.mutate({ taskId: task.id, title });
                           }}
                         >
@@ -726,8 +738,8 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
                       type="button"
                       size="sm"
                       variant="ghost"
-                      onClick={() => {
-                        const comment = window.prompt("Write a comment")?.trim();
+                      onClick={async () => {
+                        const comment = await prompt({ title: "Add comment" });
                         if (comment) taskCollaborationMutation.mutate({ taskId: task.id, comment });
                       }}
                     >
@@ -964,6 +976,7 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
           </CardContent>
         </Card>
       </div>
+      {notePromptDialog}
     </main>
   );
 }

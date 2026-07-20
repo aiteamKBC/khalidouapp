@@ -20,7 +20,7 @@ class EmployeeUpdate(BaseModel):
     employee_code: str | None = Field(default=None, max_length=80)
     job_title: str | None = Field(default=None, max_length=255)
     timezone: str | None = Field(default=None, max_length=80)
-    status: str | None = Field(default=None, max_length=50)
+    status: Literal["active", "inactive"] | None = None
     weekly_capacity_minutes: int | None = Field(default=None, ge=60, le=10080)
 
 
