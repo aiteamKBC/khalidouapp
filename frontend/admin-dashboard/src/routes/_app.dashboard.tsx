@@ -135,12 +135,14 @@ function DashboardPage() {
     queryKey: ["dashboard", scope],
     queryFn: () => getDashboardSummary(scope),
     staleTime: 30_000,
+    refetchInterval: 15_000,
     placeholderData: (previous) => previous,
   });
   const emps = useQuery({
     queryKey: ["employees", scope],
     queryFn: () => listEmployees(scope),
     staleTime: 20_000,
+    refetchInterval: 15_000,
     placeholderData: (previous) => previous,
   });
   const month = useQuery({
@@ -183,6 +185,7 @@ function DashboardPage() {
     queryFn: () => listDevices(scope),
     enabled: loadActions,
     staleTime: 30_000,
+    refetchInterval: 15_000,
     placeholderData: (previous) => previous,
   });
   const requests = useQuery({

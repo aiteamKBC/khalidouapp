@@ -182,6 +182,7 @@ def apply_session_task(db: Session, device: Device, session: WorkSession, task_i
 
 def start_or_get_session(db: Session, device: Device, payload: SessionStartRequest) -> dict[str, Any]:
     now = utc(payload.started_at)
+    device.last_seen_at = now
     zone = employee_zone(db, device)
     current = get_current_session(db, device)
     if current is not None:
@@ -275,6 +276,8 @@ def record_heartbeat(
     session = get_owned_session(db, device, session_id)
     if session.ended_at is not None:
         restarted = start_or_get_session(db, device, SessionStartRequest(started_at=payload.timestamp))
+        device.last_seen_at = utc(payload.timestamp)
+        db.commit()
         return {
             "event_id": None,
             "duplicate": False,
@@ -297,6 +300,8 @@ def record_heartbeat(
             device,
             SessionStartRequest(started_at=heartbeat_at, task_id=session.task_id),
         )
+        device.last_seen_at = heartbeat_at
+        db.commit()
         return {
             "event_id": None,
             "duplicate": False,
