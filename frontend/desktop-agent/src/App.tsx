@@ -597,7 +597,6 @@ function App() {
       setStatus(await window.khaliduo.getAgentStatus());
       setActiveView("home");
       setEmployeePassword("");
-      setEnrollmentCode("");
       setTrackingControlMessage(null);
     } finally {
       setIsLoggingOut(false);
