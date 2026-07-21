@@ -123,6 +123,32 @@ export type TimeAdjustmentRequest = {
   created_at: string;
 };
 
+export type LeaveRequest = {
+  id: string;
+  start_date: string;
+  end_date: string;
+  requested_days: number;
+  leave_type: "annual" | "sick" | "unpaid";
+  reason?: string | null;
+  status: "pending" | "approved" | "rejected";
+  reviewed_by_name?: string | null;
+  reviewed_at?: string | null;
+  created_at?: string;
+};
+
+export type LeaveBalance = {
+  year: number;
+  credit_days: number;
+  used_days: number;
+  pending_days: number;
+  remaining_days: number;
+};
+
+export type LeaveRequestsPayload = {
+  balance: LeaveBalance;
+  requests: LeaveRequest[];
+};
+
 export type AgentPeriodSummary = {
   active_seconds: number;
   tracked_active_seconds: number;
@@ -631,6 +657,33 @@ export async function createTimeAdjustmentRequest(options: {
     `${getApiBaseUrl()}/agent/time-adjustment-requests`,
     {
       requested_minutes: options.requestedMinutes,
+      reason: options.reason,
+    },
+    { headers: getAuthHeaders() },
+  );
+  return response.data.data;
+}
+
+export async function listLeaveRequests() {
+  const response = await axios.get<ApiSuccess<LeaveRequestsPayload>>(
+    `${getApiBaseUrl()}/agent/leave-requests`,
+    { headers: getAuthHeaders() },
+  );
+  return response.data.data;
+}
+
+export async function createLeaveRequest(options: {
+  startDate: string;
+  endDate: string;
+  leaveType: "annual" | "sick" | "unpaid";
+  reason?: string;
+}) {
+  const response = await axios.post<ApiSuccess<LeaveRequest>>(
+    `${getApiBaseUrl()}/agent/leave-requests`,
+    {
+      start_date: options.startDate,
+      end_date: options.endDate,
+      leave_type: options.leaveType,
       reason: options.reason,
     },
     { headers: getAuthHeaders() },

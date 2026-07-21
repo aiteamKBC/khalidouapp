@@ -26,6 +26,7 @@ const fallbackStatus: AgentStatus = {
   projects: [],
   selectedTask: null,
   timeAdjustmentRequests: [],
+  leaveRequests: null,
   timeSummary: null,
   dailyTargetSeconds: 8 * 60 * 60,
   dailyTargetProgressPercent: 0,
@@ -193,6 +194,12 @@ function App() {
   const [timeRequestReason, setTimeRequestReason] = useState("");
   const [timeRequestError, setTimeRequestError] = useState<string | null>(null);
   const [timeRequestSuccess, setTimeRequestSuccess] = useState<string | null>(null);
+  const [leaveStartDate, setLeaveStartDate] = useState("");
+  const [leaveEndDate, setLeaveEndDate] = useState("");
+  const [leaveReason, setLeaveReason] = useState("");
+  const [leaveRequestError, setLeaveRequestError] = useState<string | null>(null);
+  const [leaveRequestSuccess, setLeaveRequestSuccess] = useState<string | null>(null);
+  const [isSubmittingLeaveRequest, setIsSubmittingLeaveRequest] = useState(false);
   const [isSubmittingTimeRequest, setIsSubmittingTimeRequest] = useState(false);
   const [taskError, setTaskError] = useState<string | null>(null);
   const [isSubmittingTask, setIsSubmittingTask] = useState(false);
@@ -397,8 +404,8 @@ function App() {
       setTimeRequestError("Device must be enrolled before sending a request.");
       return;
     }
-    if (!Number.isFinite(timeRequestMinutes) || timeRequestMinutes < 1 || timeRequestMinutes > 720) {
-      setTimeRequestError("Minutes must be between 1 and 720.");
+    if (!Number.isFinite(timeRequestMinutes) || timeRequestMinutes < 1 || timeRequestMinutes > 120) {
+      setTimeRequestError("Early leave requests can be up to 2 hours.");
       return;
     }
     if (timeRequestReason.trim().length < 3) {
@@ -417,10 +424,49 @@ function App() {
         return;
       }
       setTimeRequestReason("");
-      setTimeRequestSuccess("Request sent.");
+      setTimeRequestSuccess("Early leave request sent to HR/admin.");
       if (result.status) setStatus(result.status);
     } finally {
       setIsSubmittingTimeRequest(false);
+    }
+  }
+
+  async function handleLeaveRequest(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setLeaveRequestError(null);
+    setLeaveRequestSuccess(null);
+    if (!window.khaliduo || !status.enrolled) {
+      setLeaveRequestError("Device must be enrolled before sending a request.");
+      return;
+    }
+    if (!leaveStartDate || !leaveEndDate) {
+      setLeaveRequestError("Choose the start and end dates.");
+      return;
+    }
+    if (leaveEndDate < leaveStartDate) {
+      setLeaveRequestError("End date must be on or after the start date.");
+      return;
+    }
+
+    setIsSubmittingLeaveRequest(true);
+    try {
+      const result = await window.khaliduo.createLeaveRequest({
+        startDate: leaveStartDate,
+        endDate: leaveEndDate,
+        leaveType: "annual",
+        reason: leaveReason.trim() || undefined,
+      });
+      if (!result.success) {
+        setLeaveRequestError(result.message ?? "Holiday request failed.");
+        return;
+      }
+      setLeaveStartDate("");
+      setLeaveEndDate("");
+      setLeaveReason("");
+      setLeaveRequestSuccess("Holiday request sent to HR/admin.");
+      if (result.status) setStatus(result.status);
+    } finally {
+      setIsSubmittingLeaveRequest(false);
     }
   }
 
@@ -940,7 +986,17 @@ function App() {
               timeRequestReason={timeRequestReason}
               timeRequestError={timeRequestError}
               timeRequestSuccess={timeRequestSuccess}
+              leaveStartDate={leaveStartDate}
+              leaveEndDate={leaveEndDate}
+              leaveReason={leaveReason}
+              leaveRequestError={leaveRequestError}
+              leaveRequestSuccess={leaveRequestSuccess}
+              isSubmittingLeaveRequest={isSubmittingLeaveRequest}
               isSubmittingTimeRequest={isSubmittingTimeRequest}
+              onLeaveStartDateChange={setLeaveStartDate}
+              onLeaveEndDateChange={setLeaveEndDate}
+              onLeaveReasonChange={setLeaveReason}
+              onSubmitLeaveRequest={handleLeaveRequest}
               onTimeRequestMinutesChange={setTimeRequestMinutes}
               onTimeRequestReasonChange={setTimeRequestReason}
               onSubmitTimeRequest={handleTimeRequest}
@@ -1499,7 +1555,17 @@ function MoreView({
   timeRequestReason,
   timeRequestError,
   timeRequestSuccess,
+  leaveStartDate,
+  leaveEndDate,
+  leaveReason,
+  leaveRequestError,
+  leaveRequestSuccess,
+  isSubmittingLeaveRequest,
   isSubmittingTimeRequest,
+  onLeaveStartDateChange,
+  onLeaveEndDateChange,
+  onLeaveReasonChange,
+  onSubmitLeaveRequest,
   onTimeRequestMinutesChange,
   onTimeRequestReasonChange,
   onSubmitTimeRequest,
@@ -1511,7 +1577,17 @@ function MoreView({
   timeRequestReason: string;
   timeRequestError: string | null;
   timeRequestSuccess: string | null;
+  leaveStartDate: string;
+  leaveEndDate: string;
+  leaveReason: string;
+  leaveRequestError: string | null;
+  leaveRequestSuccess: string | null;
+  isSubmittingLeaveRequest: boolean;
   isSubmittingTimeRequest: boolean;
+  onLeaveStartDateChange: (value: string) => void;
+  onLeaveEndDateChange: (value: string) => void;
+  onLeaveReasonChange: (value: string) => void;
+  onSubmitLeaveRequest: (event: FormEvent<HTMLFormElement>) => void;
   onTimeRequestMinutesChange: (value: number) => void;
   onTimeRequestReasonChange: (value: string) => void;
   onSubmitTimeRequest: (event: FormEvent<HTMLFormElement>) => void;
@@ -1532,7 +1608,62 @@ function MoreView({
       </details>
 
       <div className="k-panel">
-        <h2>Manual time request</h2>
+        <h2>Request holiday</h2>
+        <p className="k-muted">
+          Annual credit: {status.leaveRequests?.balance.remaining_days ?? "-"} of{" "}
+          {status.leaveRequests?.balance.credit_days ?? "-"} days remaining.
+        </p>
+        <form className="k-form" onSubmit={onSubmitLeaveRequest}>
+          <div className="k-form-grid">
+            <label>
+              From
+              <input
+                type="date"
+                value={leaveStartDate}
+                onChange={(event) => onLeaveStartDateChange(event.target.value)}
+                required
+              />
+            </label>
+            <label>
+              To
+              <input
+                type="date"
+                value={leaveEndDate}
+                onChange={(event) => onLeaveEndDateChange(event.target.value)}
+                required
+              />
+            </label>
+          </div>
+          <label>
+            Reason (optional)
+            <textarea
+              value={leaveReason}
+              onChange={(event) => onLeaveReasonChange(event.target.value)}
+              maxLength={1000}
+              placeholder="Family event, personal appointment..."
+            />
+          </label>
+          <button className="k-primary" disabled={isSubmittingLeaveRequest}>
+            {isSubmittingLeaveRequest ? "Sending..." : "Request holiday"}
+          </button>
+          {leaveRequestError && <p className="k-error">{leaveRequestError}</p>}
+          {leaveRequestSuccess && <p className="k-success">{leaveRequestSuccess}</p>}
+        </form>
+        {status.leaveRequests?.requests?.length ? (
+          <div className="k-mini-list">
+            {status.leaveRequests.requests.slice(0, 3).map((request) => (
+              <div key={request.id}>
+                <span>{request.start_date} – {request.end_date}</span>
+                <strong>{request.status}</strong>
+              </div>
+            ))}
+          </div>
+        ) : null}
+      </div>
+
+      <div className="k-panel">
+        <h2>Early leave permission</h2>
+        <p className="k-muted">Request up to 2 hours per week for approved early leave or short permission.</p>
         <form className="k-form" onSubmit={onSubmitTimeRequest}>
           <label>
             Date
@@ -1544,7 +1675,7 @@ function MoreView({
               <input
                 type="number"
                 min={0}
-                max={12}
+                max={2}
                 value={Math.floor(timeRequestMinutes / 60)}
                 onChange={(event) => onTimeRequestMinutesChange(Number(event.target.value) * 60 + (timeRequestMinutes % 60))}
               />

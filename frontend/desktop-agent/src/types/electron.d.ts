@@ -26,6 +26,7 @@ export type AgentStatus = {
   projects: AgentProject[];
   selectedTask: AgentTask | null;
   timeAdjustmentRequests: TimeAdjustmentRequest[];
+  leaveRequests: LeaveRequestsPayload | null;
   timeSummary: {
     today: AgentPeriodSummary;
     week: AgentPeriodSummary;
@@ -130,6 +131,32 @@ export type TimeAdjustmentRequest = {
   created_at: string;
 };
 
+export type LeaveRequest = {
+  id: string;
+  start_date: string;
+  end_date: string;
+  requested_days: number;
+  leave_type: "annual" | "sick" | "unpaid";
+  reason?: string | null;
+  status: "pending" | "approved" | "rejected";
+  reviewed_by_name?: string | null;
+  reviewed_at?: string | null;
+  created_at?: string;
+};
+
+export type LeaveBalance = {
+  year: number;
+  credit_days: number;
+  used_days: number;
+  pending_days: number;
+  remaining_days: number;
+};
+
+export type LeaveRequestsPayload = {
+  balance: LeaveBalance;
+  requests: LeaveRequest[];
+};
+
 export type IdleAlert = {
   id: string;
   lostSeconds: number;
@@ -198,6 +225,17 @@ declare global {
         success: boolean;
         message?: string;
         request?: TimeAdjustmentRequest;
+        status?: AgentStatus;
+      }>;
+      createLeaveRequest: (input: {
+        startDate: string;
+        endDate: string;
+        leaveType?: "annual" | "sick" | "unpaid";
+        reason?: string;
+      }) => Promise<{
+        success: boolean;
+        message?: string;
+        request?: LeaveRequest;
         status?: AgentStatus;
       }>;
       setIdleAlertAttention: (active: boolean) => void;

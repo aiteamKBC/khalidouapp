@@ -17,8 +17,9 @@ from app.core.config import settings
 from app.core.exceptions import ApiError
 from app.core.security import create_employee_handoff_token
 from app.database.session import get_db
-from app.models import Employee, Project, Screenshot, Task, Team, TeamMember, TimeAdjustmentRequest
+from app.models import Employee, LeaveRequest, Project, Screenshot, Task, Team, TeamMember, TimeAdjustmentRequest
 from app.schemas.agent import (
+    AgentLeaveRequestCreate,
     AgentTaskCreate,
     AgentTaskUpdate,
     AgentTimeAdjustmentRequestCreate,
@@ -68,10 +69,12 @@ from app.services.task_workflow import (
     stop_task_tracking,
 )
 from app.services.activity_timeline import build_workday_timeline
+from app.services.leave_management import requested_workdays, serialize_balance, serialize_leave_request
 from app.services.time_adjustments import (
     create_employee_time_adjustment_request,
     serialize_time_adjustment_request,
 )
+from app.services.work_profiles import get_or_create_work_profile
 
 router = APIRouter(prefix="/agent", tags=["desktop-agent"])
 
@@ -638,3 +641,74 @@ def create_time_adjustment_request(
         reason=payload.reason,
     )
     return success_response(data=serialize_time_adjustment_request(row))
+
+
+@router.get("/leave-requests")
+def list_leave_requests(
+    context: Annotated[DeviceAuthContext, Depends(get_current_device)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    employee = db.get(Employee, context.device.employee_id)
+    if employee is None:
+        raise ApiError("EMPLOYEE_NOT_FOUND", "Employee profile was not found.", 404)
+    rows = db.scalars(
+        select(LeaveRequest)
+        .where(
+            LeaveRequest.company_id == context.device.company_id,
+            LeaveRequest.employee_id == context.device.employee_id,
+        )
+        .order_by(LeaveRequest.created_at.desc())
+        .limit(10)
+    ).all()
+    return success_response(
+        data={
+            "balance": serialize_balance(db, employee, date.today().year),
+            "requests": [serialize_leave_request(row) for row in rows],
+        }
+    )
+
+
+@router.post("/leave-requests")
+def create_leave_request(
+    payload: AgentLeaveRequestCreate,
+    context: Annotated[DeviceAuthContext, Depends(get_current_device)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    employee = db.get(Employee, context.device.employee_id)
+    if employee is None:
+        raise ApiError("EMPLOYEE_NOT_FOUND", "Employee profile was not found.", 404)
+    if payload.end_date < payload.start_date:
+        raise ApiError("INVALID_LEAVE_DATES", "End date must be on or after start date.", 400)
+    if payload.start_date.year != payload.end_date.year:
+        raise ApiError("LEAVE_YEAR_BOUNDARY", "A holiday request must stay within one calendar year.", 400)
+    profile = get_or_create_work_profile(db, employee)
+    days = requested_workdays(payload.start_date, payload.end_date, profile.working_days)
+    if days < 1:
+        raise ApiError("NO_WORKDAYS", "The selected period contains no working days.", 400)
+    balance = serialize_balance(db, employee, payload.start_date.year)
+    if payload.leave_type == "annual" and days > balance["remaining_days"]:
+        raise ApiError("INSUFFICIENT_LEAVE_CREDIT", "You do not have enough holiday credit.", 409)
+    overlap = db.scalar(
+        select(LeaveRequest.id).where(
+            LeaveRequest.employee_id == employee.id,
+            LeaveRequest.status.in_(["pending", "approved"]),
+            LeaveRequest.start_date <= payload.end_date,
+            LeaveRequest.end_date >= payload.start_date,
+        )
+    )
+    if overlap:
+        raise ApiError("OVERLAPPING_LEAVE_REQUEST", "You already have a holiday request in this period.", 409)
+    row = LeaveRequest(
+        company_id=employee.company_id,
+        employee_id=employee.id,
+        start_date=payload.start_date,
+        end_date=payload.end_date,
+        requested_days=days,
+        leave_type=payload.leave_type,
+        reason=payload.reason.strip() if payload.reason else None,
+        status="pending",
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return success_response(data=serialize_leave_request(row))

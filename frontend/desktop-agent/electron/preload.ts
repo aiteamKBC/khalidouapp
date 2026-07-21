@@ -34,6 +34,12 @@ contextBridge.exposeInMainWorld("khaliduo", {
       requestedMinutes,
       reason,
     ),
+  createLeaveRequest: (input: {
+    startDate: string;
+    endDate: string;
+    leaveType?: "annual" | "sick" | "unpaid";
+    reason?: string;
+  }) => ipcRenderer.invoke("agent:create-leave-request", input),
   setIdleAlertAttention: (active: boolean) =>
     ipcRenderer.send("agent:set-idle-alert-attention", active),
   setUpdateAttention: (active: boolean) =>

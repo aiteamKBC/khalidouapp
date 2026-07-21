@@ -20,8 +20,10 @@ import {
   createEmployeePortalHandoff,
   downloadAgentScreenshot,
   createAgentTask,
+  createLeaveRequest,
   createTimeAdjustmentRequest,
   listAgentProjects,
+  listLeaveRequests,
   listAgentRecentScreenshots,
   listAgentTasks,
   initiateScreenshot,
@@ -36,6 +38,7 @@ import {
   type AgentProject,
   type AgentSummary,
   type PauseState,
+  type LeaveRequestsPayload,
   type TimeAdjustmentRequest,
   uploadScreenshot,
   updateSessionTask,
@@ -106,6 +109,7 @@ type AgentRuntimeStatus = {
   projects: AgentProject[];
   selectedTask: RuntimeTask | null;
   timeAdjustmentRequests: TimeAdjustmentRequest[];
+  leaveRequests: LeaveRequestsPayload | null;
   timeSummary: Pick<AgentSummary, "today" | "week" | "month"> | null;
   dailyTargetSeconds: number;
   dailyTargetProgressPercent: number;
@@ -218,6 +222,7 @@ const runtimeStatus: AgentRuntimeStatus = {
   projects: [],
   selectedTask: null,
   timeAdjustmentRequests: [],
+  leaveRequests: null,
   timeSummary: null,
   dailyTargetSeconds: 8 * 60 * 60,
   dailyTargetProgressPercent: 0,
@@ -306,6 +311,7 @@ async function activateEnrolledDevice(identity: StoredIdentity) {
   await startTrackingAutomatically();
   await refreshTasks();
   await refreshTimeAdjustmentRequests();
+  await refreshLeaveRequests();
   rebuildTrayMenu();
 }
 
@@ -636,6 +642,18 @@ async function refreshTimeAdjustmentRequests() {
     runtimeStatus.timeAdjustmentRequests = await listTimeAdjustmentRequests();
   } catch (error) {
     log.warn("Failed to refresh time adjustment requests", error);
+  }
+}
+
+async function refreshLeaveRequests() {
+  if (!runtimeStatus.enrolled) {
+    runtimeStatus.leaveRequests = null;
+    return;
+  }
+  try {
+    runtimeStatus.leaveRequests = await listLeaveRequests();
+  } catch (error) {
+    log.warn("Failed to refresh leave requests", error);
   }
 }
 
@@ -1209,6 +1227,7 @@ async function startTrackingAutomatically() {
     startTimers();
     void heartbeatTick();
     void refreshTimeAdjustmentRequests();
+    void refreshLeaveRequests();
   } catch (error) {
     runtimeStatus.connectionStatus = "offline";
     runtimeStatus.trackingStatus = "offline";
@@ -2272,6 +2291,41 @@ ipcMain.handle(
       return {
         success: false,
         message: getUserFacingError(error, "Time adjustment request failed."),
+      };
+    }
+  },
+);
+
+ipcMain.handle(
+  "agent:create-leave-request",
+  async (
+    _,
+    input: {
+      startDate: string;
+      endDate: string;
+      leaveType?: "annual" | "sick" | "unpaid";
+      reason?: string;
+    },
+  ) => {
+    try {
+      const request = await createLeaveRequest({
+        startDate: input.startDate,
+        endDate: input.endDate,
+        leaveType: input.leaveType ?? "annual",
+        reason: input.reason,
+      });
+      await refreshLeaveRequests();
+      runtimeStatus.connectionStatus = "online";
+      runtimeStatus.lastSuccessfulSyncAt = new Date().toISOString();
+      rebuildTrayMenu();
+      return { success: true, request, status: runtimeStatusPayload() };
+    } catch (error) {
+      runtimeStatus.connectionStatus = "offline";
+      rebuildTrayMenu();
+      log.error("Holiday request failed", error);
+      return {
+        success: false,
+        message: getUserFacingError(error, "Holiday request failed."),
       };
     }
   },
