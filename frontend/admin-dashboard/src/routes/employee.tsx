@@ -47,7 +47,6 @@ import {
   saveEmployeeToken,
   updateEmployeeTask,
   updateEmployeeProfile,
-  forgotEmployeeAccessKey,
   employeeLeaveRequests,
   createEmployeeLeaveRequest,
   type PortalPeriod,
@@ -128,21 +127,13 @@ function EmployeeLogin({
   const [credential, setCredential] = useState("");
   const emailValue = email.trim();
   const credentialValue = credential.trim();
-  const [useLegacyKey, setUseLegacyKey] = useState(false);
   const login = useMutation({
-    mutationFn: () =>
-      employeeLogin(
-        emailValue,
-        useLegacyKey ? { accessKey: credentialValue } : { password: credentialValue },
-      ),
+    mutationFn: () => employeeLogin(emailValue, credentialValue),
     onSuccess: (result) => {
       queryClient.removeQueries({ queryKey: ["employee-portal"] });
       saveEmployeeToken(result.access_token);
       onLoggedIn(result.access_token);
     },
-  });
-  const forgot = useMutation({
-    mutationFn: () => forgotEmployeeAccessKey(emailValue),
   });
   return (
     <main className="flex min-h-screen items-center justify-center bg-muted/40 p-5">
@@ -179,55 +170,22 @@ function EmployeeLogin({
               />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="employee-credential">
-                {useLegacyKey ? "Legacy employee portal key" : "Password"}
-              </Label>
+              <Label htmlFor="employee-credential">Password</Label>
               <Input
                 id="employee-credential"
                 name="khaliduo-employee-credential"
                 type="password"
-                autoCapitalize={useLegacyKey ? "characters" : "none"}
+                autoCapitalize="none"
                 autoComplete="off"
                 spellCheck={false}
-                placeholder={useLegacyKey ? "KHW-XXXXXXXXXXXXXXXX" : undefined}
                 value={credential}
                 onChange={(e) => setCredential(e.target.value)}
                 required
               />
               <p className="text-xs text-muted-foreground">
-                {useLegacyKey
-                  ? "Use the old key starting with KHW-. Password sign-in is the normal setup."
-                  : "Use the password you chose when accepting your email invitation."}
+                Use the password you chose when accepting your email invitation, or the password
+                your admin set for you.
               </p>
-              {useLegacyKey && (
-                <>
-                  <button
-                    type="button"
-                    className="text-xs text-primary hover:underline"
-                    onClick={() => emailValue.includes("@") && forgot.mutate()}
-                  >
-                    {forgot.isPending ? "Sending..." : "Forgot access key? Email me a new one"}
-                  </button>
-                  {forgot.isSuccess && (
-                    <p className="text-xs text-emerald-600">
-                      If the account exists, a new key was emailed.
-                    </p>
-                  )}
-                  {forgot.error && (
-                    <p className="text-xs text-destructive">{forgot.error.message}</p>
-                  )}
-                </>
-              )}
-              <button
-                type="button"
-                className="block text-xs text-primary hover:underline"
-                onClick={() => {
-                  setUseLegacyKey((current) => !current);
-                  setCredential("");
-                }}
-              >
-                {useLegacyKey ? "Sign in with my password" : "Use a legacy portal key instead"}
-              </button>
             </div>
             {login.error && <p className="text-sm text-destructive">{login.error.message}</p>}
             {initialError && <p className="text-sm text-destructive">{initialError}</p>}

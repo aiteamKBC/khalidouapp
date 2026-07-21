@@ -262,8 +262,6 @@ def delete_linked_person_identity(
         employee.archived_at = now
         employee.status_before_archive = None
         employee.avatar_url = None
-        employee.portal_access_key_hash = None
-        employee.portal_access_key_hint = None
         employee.portal_password_hash = None
         revoke_employee_runtime(db, employee, now)
         db.add(employee)

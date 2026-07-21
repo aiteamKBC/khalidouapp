@@ -9,6 +9,12 @@ GENERAL_ADMIN = "general_admin"
 TEAM_MANAGER = "team_owner"
 HR_MANAGER = "hr"
 
+ROLE_RANKS: dict[str, int] = {
+    TEAM_MANAGER: 1,
+    HR_MANAGER: 2,
+    GENERAL_ADMIN: 3,
+}
+
 PERMISSION_CATALOG: tuple[dict[str, str], ...] = (
     {"key": "dashboard.view", "label": "View dashboard", "group": "General", "description": "Open the administration dashboard."},
     {"key": "access.manage", "label": "Manage access", "group": "Administration", "description": "Create admin accounts and change individual access."},
@@ -67,31 +73,7 @@ LEGACY_TEAM_CAPABILITIES = frozenset(
 
 ROLE_CAPABILITIES: dict[str, frozenset[str]] = {
     GENERAL_ADMIN: MANAGED_PERMISSION_KEYS | LEGACY_GENERAL_CAPABILITIES,
-    HR_MANAGER: frozenset(
-        {
-            "dashboard.view",
-            "audit.view",
-            "people.view",
-            "people.manage",
-            "people.archive",
-            "teams.view",
-            "live_activity.view",
-            "screenshots.view",
-            "timesheets.view",
-            "time_requests.view",
-            "time_requests.manage",
-            "breaks.view",
-            "leave_requests.view",
-            "leave_requests.manage",
-            "devices.view",
-            "projects.view",
-            "notifications.view",
-            "reports.view",
-            "reports.export",
-            "payroll.view",
-            "payroll.manage",
-        }
-    ),
+    HR_MANAGER: MANAGED_PERMISSION_KEYS | LEGACY_GENERAL_CAPABILITIES,
     TEAM_MANAGER: frozenset(
         {
             "teams.view",
@@ -116,6 +98,7 @@ ROLE_CAPABILITIES: dict[str, frozenset[str]] = {
 ROLE_CAPABILITIES[GENERAL_ADMIN] = (
     ROLE_CAPABILITIES[GENERAL_ADMIN] | ROLE_CAPABILITIES[TEAM_MANAGER]
 )
+ROLE_CAPABILITIES[HR_MANAGER] = ROLE_CAPABILITIES[GENERAL_ADMIN]
 
 VALID_PERMISSION_KEYS = frozenset().union(*ROLE_CAPABILITIES.values())
 FULL_ADMIN_REQUIRED_PERMISSIONS = frozenset(
@@ -180,6 +163,48 @@ def is_full_admin(admin: AdminUser) -> bool:
     return has_company_data_scope(admin) and FULL_ADMIN_REQUIRED_PERMISSIONS.issubset(
         capabilities_for_admin(admin)
     )
+
+
+def is_super_admin(admin: AdminUser) -> bool:
+    return bool(getattr(admin, "is_super_admin", False))
+
+
+def role_rank(admin_or_role: AdminUser | str) -> int:
+    if isinstance(admin_or_role, AdminUser):
+        if is_super_admin(admin_or_role):
+            return 4
+        return ROLE_RANKS.get(admin_or_role.role, 0)
+    return ROLE_RANKS.get(admin_or_role, 0)
+
+
+def can_manage_admin(actor: AdminUser, target: AdminUser) -> bool:
+    if is_super_admin(target):
+        return False
+    if is_super_admin(actor):
+        return actor.company_id == target.company_id
+    return actor.company_id == target.company_id and has_capability(actor, "access.manage")
+
+
+def require_can_manage_admin(actor: AdminUser, target: AdminUser) -> None:
+    if actor.id == target.id:
+        return
+    if not can_manage_admin(actor, target):
+        raise ApiError(
+            "CANNOT_MANAGE_ADMIN",
+            "You can only manage admin accounts below your own access level.",
+            403,
+        )
+
+
+def require_can_assign_role(actor: AdminUser, role: str) -> None:
+    if is_super_admin(actor):
+        return
+    if not has_capability(actor, "access.manage"):
+        raise ApiError(
+            "CANNOT_ASSIGN_ROLE",
+            "You can only assign roles below your own access level.",
+            403,
+        )
 
 
 def replace_permission_overrides(

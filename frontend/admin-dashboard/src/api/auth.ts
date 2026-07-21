@@ -16,6 +16,7 @@ type BackendUser = {
   email: string;
   job_title?: string | null;
   role: "general_admin" | "team_owner" | "hr";
+  is_super_admin?: boolean;
   permissions?: string[];
   status: "active" | "inactive";
   assigned_team_ids?: string[];
@@ -41,6 +42,7 @@ export function mapUser(user: BackendUser): User {
     email: user.email,
     jobTitle: user.job_title ? normalizeAiAcronym(user.job_title) : undefined,
     role: user.role,
+    isSuperAdmin: user.is_super_admin ?? false,
     permissions: user.permissions ?? [],
     assignedTeamIds: user.assigned_team_ids ?? [],
     permissionMode: user.permission_mode ?? "role",

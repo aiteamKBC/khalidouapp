@@ -23,23 +23,24 @@ import { Button } from "@/components/ui/button";
 import { listAuditLog, listUsers } from "@/api/users";
 import { formatDateTime } from "@/lib/format";
 import { useAuth } from "@/lib/auth";
+import { permissions } from "@/lib/permissions";
 
 export const Route = createFileRoute("/_app/audit-log")({
   component: AuditLogPage,
 });
 
 function AuditLogPage() {
-  const { hasRole } = useAuth();
-  const isGeneralAdmin = hasRole("general_admin");
+  const { can } = useAuth();
+  const canViewAudit = can(permissions.auditView);
   const log = useQuery({
     queryKey: ["audit"],
     queryFn: listAuditLog,
-    enabled: isGeneralAdmin,
+    enabled: canViewAudit,
   });
   const users = useQuery({
     queryKey: ["users"],
     queryFn: listUsers,
-    enabled: isGeneralAdmin,
+    enabled: canViewAudit,
   });
   const [userId, setUserId] = useState("all");
   const [action, setAction] = useState("all");
@@ -65,7 +66,7 @@ function AuditLogPage() {
     return true;
   });
 
-  if (!isGeneralAdmin) return <Navigate to="/dashboard" replace />;
+  if (!canViewAudit) return <Navigate to="/dashboard" replace />;
 
   return (
     <div className="studio-page">

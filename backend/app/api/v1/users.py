@@ -19,9 +19,12 @@ from app.services.permissions import (
     capabilities_for_admin,
     capabilities_for_role,
     is_full_admin,
+    is_super_admin,
     permission_catalog_payload,
     permission_overrides_for_admin,
     replace_permission_overrides,
+    require_can_assign_role,
+    require_can_manage_admin,
     require_capability,
 )
 from app.services.person_access import (
@@ -49,6 +52,7 @@ def serialize_admin_user(db: Session, admin: AdminUser) -> dict:
         "email": admin.email,
         "job_title": admin.employee.job_title if admin.employee else None,
         "role": admin.role,
+        "is_super_admin": is_super_admin(admin),
         "status": admin.status,
         "permission_mode": admin.permission_mode,
         "data_scope": admin.data_scope,
@@ -95,6 +99,7 @@ def serialize_admin_access(db: Session, admin: AdminUser) -> dict:
     return {
         "admin_user_id": str(admin.id),
         "role": admin.role,
+        "is_super_admin": is_super_admin(admin),
         "permission_mode": admin.permission_mode,
         "data_scope": admin.data_scope,
         "base_permissions": sorted(capabilities_for_role(admin.role) & MANAGED_PERMISSION_KEYS),
@@ -134,6 +139,7 @@ def get_user_access(
 ):
     require_capability(current_admin, "access.manage")
     admin = get_general_admin_or_404(db, current_admin, admin_user_id)
+    require_can_manage_admin(current_admin, admin)
     return success_response(data=serialize_admin_access(db, admin))
 
 
@@ -147,10 +153,18 @@ def update_user_access(
 ):
     require_capability(current_admin, "access.manage")
     admin = get_general_admin_or_404(db, current_admin, admin_user_id)
+    require_can_manage_admin(current_admin, admin)
+    if admin.id == current_admin.id:
+        raise ApiError(
+            "CANNOT_CHANGE_OWN_ACCESS",
+            "You cannot change your own role or permission set from this screen.",
+            409,
+        )
     was_full_admin = admin.status == "active" and is_full_admin(admin)
     changes = payload.model_dump(exclude_unset=True)
 
     if payload.role is not None:
+        require_can_assign_role(current_admin, payload.role)
         admin.role = payload.role
     if payload.permission_mode is not None:
         admin.permission_mode = payload.permission_mode
@@ -266,6 +280,7 @@ def create_user(
     db: Annotated[Session, Depends(get_db)],
 ):
     require_capability(current_admin, "access.manage")
+    require_can_assign_role(current_admin, payload.role)
     email = payload.email.lower()
     if db.scalar(select(AdminUser.id).where(AdminUser.company_id == current_admin.company_id, AdminUser.email == email)):
         raise ApiError("ADMIN_EMAIL_EXISTS", "An admin user with this email already exists.", 409)
@@ -327,7 +342,20 @@ def update_user(
 ):
     require_capability(current_admin, "access.manage")
     admin = get_general_admin_or_404(db, current_admin, admin_user_id)
+    require_can_manage_admin(current_admin, admin)
     updates = payload.model_dump(exclude_unset=True)
+    if is_super_admin(admin):
+        locked_updates = set(updates) - {"name", "job_title", "password"}
+        if locked_updates:
+            raise ApiError(
+                "SUPER_ADMIN_LOCKED",
+                "The protected owner account only allows name, job title, and password changes.",
+                409,
+            )
+    if updates.get("role") is not None:
+        if admin.id == current_admin.id:
+            raise ApiError("CANNOT_CHANGE_OWN_ROLE", "You cannot change your own role.", 409)
+        require_can_assign_role(current_admin, updates["role"])
     if "email" in updates and updates["email"] is not None:
         updates["email"] = updates["email"].lower()
         existing = db.scalar(
@@ -410,6 +438,7 @@ def deactivate_user(
 ):
     require_capability(current_admin, "people.archive")
     admin = get_general_admin_or_404(db, current_admin, admin_user_id)
+    require_can_manage_admin(current_admin, admin)
     admin.status = "inactive"
     db.add(admin)
     db.commit()

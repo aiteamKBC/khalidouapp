@@ -8,6 +8,7 @@ export type DeviceStatus = "online" | "offline" | "revoked";
 export type TeamStatus = "active" | "archived";
 export type UserStatus = "active" | "inactive";
 export type EnrollmentCodeStatus = "active" | "used" | "expired" | "revoked";
+export type TeamMemberRole = "team_manager" | "team_lead" | "senior" | "member" | "trainee";
 
 export interface User {
   id: string;
@@ -16,6 +17,7 @@ export interface User {
   email: string;
   jobTitle?: string;
   role: Role;
+  isSuperAdmin: boolean;
   permissions: string[];
   assignedTeamIds: string[];
   permissionMode: PermissionMode;
@@ -97,6 +99,7 @@ export interface Employee {
   code: string;
   email: string;
   jobTitle: string;
+  teamRole?: TeamMemberRole;
   teamIds: string[];
   status: EmployeeStatus;
   sessionStart?: string;
@@ -118,7 +121,6 @@ export interface Employee {
     expiresAt: string;
   };
   portalAccessEnabled: boolean;
-  portalAccessKeyHint?: string;
   portalLastLoginAt?: string;
   portalLastLoginIp?: string;
   portalLastUserAgent?: string;

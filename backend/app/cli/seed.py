@@ -51,12 +51,19 @@ def main() -> None:
             )
         )
         if admin is None:
+            has_super_admin = session.scalar(
+                select(AdminUser.id).where(
+                    AdminUser.company_id == company.id,
+                    AdminUser.is_super_admin.is_(True),
+                )
+            )
             admin = AdminUser(
                 company_id=company.id,
                 name=admin_name,
                 email=admin_email,
                 password_hash=hash_password(admin_password),
                 role="general_admin",
+                is_super_admin=has_super_admin is None,
                 status="active",
             )
             session.add(admin)

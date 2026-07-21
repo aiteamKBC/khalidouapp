@@ -30,12 +30,13 @@ from app.models import (
     AdminUser,
     Device,
     Employee,
+    EmployeeWorkProfile,
     EnrollmentCode,
     Screenshot,
     TeamMember,
     WorkSession,
 )
-from app.schemas.admin import EmployeeCreate, EmployeeUpdate, EnrollmentCodeCreate
+from app.schemas.admin import EmployeeCreate, EmployeePasswordUpdate, EmployeeUpdate, EnrollmentCodeCreate
 from app.services.audit import record_audit_log
 from app.services.email import (
     enqueue_employee_invitation_email,
@@ -48,6 +49,7 @@ from app.schemas.admin import EmployeeWorkProfileUpdate
 from app.services.permissions import require_capability
 from app.services.person_access import disable_employee_tracking
 from app.services.work_profiles import (
+    DEFAULT_BREAK_RULES,
     get_or_create_work_profile,
     payroll_preview,
     profile_completeness,
@@ -99,6 +101,44 @@ def list_employees(
             for employee in employees
         ],
         meta=pagination_meta(total, page, page_size),
+    )
+
+
+@router.get("/employees/break-rules")
+def list_employee_break_rules(
+    current_admin: Annotated[AdminUser, Depends(get_current_admin)],
+    db: Annotated[Session, Depends(get_db)],
+    team_id: UUID | None = None,
+):
+    """Break rules for every employee in scope in a single query.
+
+    Avoids one /employees/{id}/work-profile round trip per employee, which is
+    slow when the database has significant network latency.
+    """
+
+    require_capability(current_admin, "payroll.view")
+    statement = (
+        select(Employee.id, Employee.name, Employee.email, EmployeeWorkProfile.break_rules)
+        .select_from(Employee)
+        .outerjoin(EmployeeWorkProfile, EmployeeWorkProfile.employee_id == Employee.id)
+        .where(
+            Employee.company_id == current_admin.company_id,
+            Employee.status != "deleted",
+        )
+    )
+    statement = apply_employee_scope(statement, db, current_admin, Employee.id, team_id)
+    statement = statement.order_by(Employee.name)
+    rows = db.execute(statement).all()
+    return success_response(
+        data=[
+            {
+                "employee_id": str(employee_id),
+                "name": name,
+                "email": email,
+                "break_rules": break_rules if break_rules is not None else DEFAULT_BREAK_RULES,
+            }
+            for employee_id, name, email, break_rules in rows
+        ]
     )
 
 
@@ -197,15 +237,18 @@ def list_employee_overviews(
     employee_ids = [row[0].id for row in rows]
     invitations_by_employee = latest_employee_invitations(db, employee_ids)
     teams_by_employee: dict[UUID, list[str]] = {item: [] for item in employee_ids}
+    team_role_by_employee: dict[UUID, str] = {}
     if employee_ids:
         memberships = db.execute(
-            select(TeamMember.employee_id, TeamMember.team_id).where(
+            select(TeamMember.employee_id, TeamMember.team_id, TeamMember.role).where(
                 TeamMember.employee_id.in_(employee_ids),
                 TeamMember.status == "active",
             )
         ).all()
-        for membership_employee_id, membership_team_id in memberships:
+        for membership_employee_id, membership_team_id, membership_role in memberships:
             teams_by_employee.setdefault(membership_employee_id, []).append(str(membership_team_id))
+            if team_id is not None and membership_team_id == team_id:
+                team_role_by_employee[membership_employee_id] = membership_role or "member"
 
     data = []
     for row in rows:
@@ -263,6 +306,7 @@ def list_employee_overviews(
                     else None
                 ),
                 "team_ids": teams_by_employee.get(employee.id, []),
+                "team_role": team_role_by_employee.get(employee.id),
             }
         )
     return success_response(data=data)
@@ -331,11 +375,6 @@ def get_employee_or_404(
 def generate_enrollment_code() -> str:
     alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
     return "KH-" + "".join(secrets.choice(alphabet) for _ in range(12))
-
-
-def generate_portal_access_key() -> str:
-    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-    return "KHW-" + "".join(secrets.choice(alphabet) for _ in range(16))
 
 
 def serialize_enrollment_code(code: EnrollmentCode, include_plain_code: str | None = None) -> dict:
@@ -485,66 +524,6 @@ def get_employee_payroll_preview(
     )
 
 
-@router.post("/employees/{employee_id}/portal-access-key")
-def create_employee_portal_access_key(
-    employee_id: UUID,
-    request: Request,
-    background_tasks: BackgroundTasks,
-    current_admin: Annotated[AdminUser, Depends(get_current_admin)],
-    db: Annotated[Session, Depends(get_db)],
-):
-    require_capability(current_admin, "devices.manage")
-    employee = get_employee_or_404(db, current_admin, employee_id)
-    plain_key = generate_portal_access_key()
-    employee.portal_access_key_hash = hash_password(plain_key)
-    employee.portal_access_key_hint = f"{plain_key[:8]}..."
-    db.add(employee)
-    record_audit_log(
-        db,
-        current_admin,
-        "created",
-        "employee_portal_access_key",
-        entity_id=employee.id,
-        entity_name=employee.email,
-        request=request,
-    )
-    db.commit()
-    return success_response(
-        data={
-            "employee_id": str(employee.id),
-            "email": employee.email,
-            "access_key": plain_key,
-            "access_key_hint": employee.portal_access_key_hint,
-            "email_queued": False,
-        }
-    )
-
-
-@router.delete("/employees/{employee_id}/portal-access-key")
-def revoke_employee_portal_access_key(
-    employee_id: UUID,
-    request: Request,
-    current_admin: Annotated[AdminUser, Depends(get_current_admin)],
-    db: Annotated[Session, Depends(get_db)],
-):
-    require_capability(current_admin, "devices.manage")
-    employee = get_employee_or_404(db, current_admin, employee_id)
-    employee.portal_access_key_hash = None
-    employee.portal_access_key_hint = None
-    db.add(employee)
-    record_audit_log(
-        db,
-        current_admin,
-        "revoked",
-        "employee_portal_access_key",
-        entity_id=employee.id,
-        entity_name=employee.email,
-        request=request,
-    )
-    db.commit()
-    return success_response(data={"revoked": True})
-
-
 @router.get("/employees/{employee_id}/enrollment-codes")
 def list_employee_enrollment_codes(
     employee_id: UUID,
@@ -686,6 +665,35 @@ def update_employee(
         entity_id=employee.id,
         entity_name=employee.email,
         details=payload.model_dump(exclude_unset=True),
+        request=request,
+    )
+    db.commit()
+    return success_response(data=serialize_employee(employee))
+
+
+@router.patch("/employees/{employee_id}/password")
+def update_employee_password(
+    employee_id: UUID,
+    payload: EmployeePasswordUpdate,
+    request: Request,
+    current_admin: Annotated[AdminUser, Depends(get_current_admin)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    require_capability(current_admin, "people.manage")
+    employee = get_employee_or_404(db, current_admin, employee_id)
+    employee.portal_password_hash = hash_password(payload.password)
+    if employee.status == "invited":
+        employee.status = "active"
+    db.add(employee)
+    db.commit()
+    db.refresh(employee)
+    record_audit_log(
+        db,
+        current_admin,
+        "password_reset",
+        "employee",
+        entity_id=employee.id,
+        entity_name=employee.email,
         request=request,
     )
     db.commit()

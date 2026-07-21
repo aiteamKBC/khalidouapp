@@ -2,10 +2,8 @@ from datetime import UTC, datetime
 from typing import Annotated
 from uuid import UUID
 
-import secrets
-
-from fastapi import APIRouter, BackgroundTasks, Depends, Request
-from sqlalchemy import func, or_, select
+from fastapi import APIRouter, Depends, Request
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 import jwt
 
@@ -13,24 +11,17 @@ from app.api.deps import get_current_employee
 from app.api.v1.admin_utils import serialize_employee
 from app.core.exceptions import ApiError
 from app.core.responses import success_response
-from app.core.security import create_employee_access_token, decode_jwt_token, hash_password, verify_password
+from app.core.security import create_employee_access_token, decode_jwt_token, verify_password
 from app.database.session import get_db
 from app.models import AdminUser, Employee
 from app.schemas.employee_portal import (
-    EmployeeForgotAccessRequest,
     EmployeePortalHandoff,
     EmployeePortalLogin,
     EmployeeProfileUpdate,
 )
-from app.services.email import enqueue_portal_key_email, ensure_email_allowed
 from app.services.person_access import ensure_tracked_employee
 
 router = APIRouter(prefix="/employee-auth", tags=["employee-auth"])
-
-
-def generate_portal_key() -> str:
-    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-    return "KHW-" + "".join(secrets.choice(alphabet) for _ in range(16))
 
 
 def validate_avatar(value: str | None) -> str | None:
@@ -61,23 +52,13 @@ def record_employee_portal_login(employee: Employee, request: Request, db: Sessi
     db.commit()
 
 
-def normalize_portal_access_key(value: str) -> str:
-    return "".join(value.split()).upper()
-
-
 @router.post("/login")
 def login(payload: EmployeePortalLogin, request: Request, db: Annotated[Session, Depends(get_db)]):
-    normalized_access_key = (
-        normalize_portal_access_key(payload.access_key) if payload.access_key else None
-    )
     candidates = db.scalars(
         select(Employee).where(
             func.lower(Employee.email) == payload.email.lower(),
             Employee.status == "active",
-            or_(
-                Employee.portal_password_hash.is_not(None),
-                Employee.portal_access_key_hash.is_not(None),
-            ),
+            Employee.portal_password_hash.is_not(None),
         )
     ).all()
     employee = next(
@@ -86,28 +67,12 @@ def login(payload: EmployeePortalLogin, request: Request, db: Annotated[Session,
             for candidate in candidates
             if (
                 candidate.portal_password_hash
-                and (
-                    (
-                        payload.password
-                        and verify_password(
-                            payload.password, candidate.portal_password_hash
-                        )
-                    )
-                    or (
-                        payload.access_key
-                        and verify_password(payload.access_key, candidate.portal_password_hash)
-                    )
-                )
-            )
-            or (
-                candidate.portal_access_key_hash
-                and normalized_access_key
-                and verify_password(normalized_access_key, candidate.portal_access_key_hash)
+                and verify_password(payload.password, candidate.portal_password_hash)
             )
         ),
         None,
     )
-    if employee is None and payload.password:
+    if employee is None:
         admin = db.scalar(
             select(AdminUser).where(
                 func.lower(AdminUser.email) == payload.email.lower(),
@@ -120,7 +85,7 @@ def login(payload: EmployeePortalLogin, request: Request, db: Annotated[Session,
     if employee is None:
         raise ApiError(
             "INVALID_EMPLOYEE_LOGIN",
-            "Email or employee password/access key is incorrect.",
+            "Email or employee password is incorrect.",
             401,
         )
 
@@ -182,33 +147,3 @@ def update_me(
     db.commit()
     db.refresh(current_employee)
     return success_response(data=serialize_employee(current_employee))
-
-
-@router.post("/forgot-access-key")
-def forgot_access_key(
-    payload: EmployeeForgotAccessRequest,
-    background_tasks: BackgroundTasks,
-    db: Annotated[Session, Depends(get_db)],
-):
-    employee = db.scalar(
-        select(Employee).where(
-            func.lower(Employee.email) == payload.email.lower(),
-            Employee.status == "active",
-        )
-    )
-    if employee is not None:
-        ensure_email_allowed(db, to=employee.email, category="employee_portal_key")
-        key = generate_portal_key()
-        employee.portal_access_key_hash = hash_password(key)
-        employee.portal_access_key_hint = f"{key[:8]}..."
-        db.add(employee)
-        db.commit()
-        enqueue_portal_key_email(
-            db,
-            background_tasks,
-            company_id=employee.company_id,
-            to=employee.email,
-            name=employee.name,
-            access_key=key,
-        )
-    return success_response(data={"message": "If the account exists, a new access key was sent."})

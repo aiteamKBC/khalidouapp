@@ -1,7 +1,7 @@
 import { apiFetch, toMinutes, withQuery } from "./client";
 import { mapUser } from "./auth";
 import { normalizeAiAcronym } from "@/lib/text";
-import type { Team, User } from "@/types";
+import type { Team, TeamMemberRole, User } from "@/types";
 
 type BackendTeam = {
   id: string;
@@ -108,10 +108,25 @@ export async function deleteTeam(id: string): Promise<void> {
   await apiFetch(`/teams/${id}`, { method: "DELETE" });
 }
 
-export async function addTeamMember(teamId: string, employeeId: string): Promise<void> {
+export async function addTeamMember(
+  teamId: string,
+  employeeId: string,
+  role: TeamMemberRole = "member",
+): Promise<void> {
   await apiFetch(`/teams/${teamId}/members`, {
     method: "POST",
-    body: JSON.stringify({ employee_id: employeeId, status: "active" }),
+    body: JSON.stringify({ employee_id: employeeId, status: "active", role }),
+  });
+}
+
+export async function updateTeamMemberRole(
+  teamId: string,
+  employeeId: string,
+  role: TeamMemberRole,
+): Promise<void> {
+  await apiFetch(`/teams/${teamId}/members/${employeeId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ role }),
   });
 }
 

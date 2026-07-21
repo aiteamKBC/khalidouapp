@@ -5,7 +5,7 @@ from typing import Annotated, Literal
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Request
-from sqlalchemy import select
+from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_admin
@@ -14,8 +14,17 @@ from app.core.exceptions import ApiError
 from app.core.responses import success_response
 from app.core.security import hash_password
 from app.database.session import get_db
-from app.models import AdminUser, Employee, EmployeeInvitation, Team, TeamMember, TeamOwner
-from app.schemas.admin import PersonInvitationCreate
+from app.models import (
+    AdminPasswordResetToken,
+    AdminRefreshToken,
+    AdminUser,
+    Employee,
+    EmployeeInvitation,
+    Team,
+    TeamMember,
+    TeamOwner,
+)
+from app.schemas.admin import PersonInvitationCreate, PersonRoleUpdate
 from app.schemas.employee_portal import EmployeeInvitationAccept
 from app.services.audit import record_audit_log
 from app.services.email import (
@@ -30,11 +39,19 @@ from app.services.employee_invitations import (
     revoke_other_pending_invitations,
     serialize_employee_invitation,
 )
-from app.services.permissions import is_full_admin, require_capability
+from app.services.permissions import (
+    is_full_admin,
+    require_can_assign_role,
+    require_can_manage_admin,
+    require_capability,
+)
 from app.services.work_profiles import get_or_create_work_profile, refresh_profile_completed_at
 from app.services.person_access import (
     archive_linked_person,
     delete_linked_person_identity,
+    default_admin_job_title,
+    ensure_employee_team_memberships,
+    ensure_tracked_employee,
     person_state,
     restore_linked_person,
 )
@@ -60,6 +77,9 @@ def invite_person(
     email = payload.email.lower()
     if payload.kind in {"employee", "team_manager"} and not payload.team_ids:
         raise ApiError("TEAM_REQUIRED", "Employees and team managers need at least one team.", 400)
+    if payload.kind in {"team_manager", "general_admin", "hr"}:
+        role_to_assign = "team_owner" if payload.kind == "team_manager" else payload.kind
+        require_can_assign_role(current_admin, role_to_assign)
 
     teams = list(
         db.scalars(
@@ -418,6 +438,189 @@ def resolve_person(
     return admin, employee
 
 
+def revoke_admin_runtime(db: Session, admin: AdminUser) -> None:
+    now = datetime.now(UTC)
+    db.execute(
+        update(AdminRefreshToken)
+        .where(
+            AdminRefreshToken.admin_user_id == admin.id,
+            AdminRefreshToken.revoked_at.is_(None),
+        )
+        .values(revoked_at=now)
+    )
+    db.execute(
+        update(AdminPasswordResetToken)
+        .where(
+            AdminPasswordResetToken.admin_user_id == admin.id,
+            AdminPasswordResetToken.used_at.is_(None),
+        )
+        .values(used_at=now)
+    )
+
+
+def validate_active_teams(
+    db: Session,
+    current_admin: AdminUser,
+    team_ids: list[UUID],
+) -> list[Team]:
+    unique_team_ids = list(dict.fromkeys(team_ids))
+    if not unique_team_ids:
+        return []
+    teams = list(
+        db.scalars(
+            select(Team).where(
+                Team.id.in_(unique_team_ids),
+                Team.company_id == current_admin.company_id,
+                Team.status == "active",
+            )
+        ).all()
+    )
+    if len(teams) != len(unique_team_ids):
+        raise ApiError("INVALID_TEAM", "One or more selected teams are not available.", 400)
+    return teams
+
+
+@router.patch("/{person_type}/{person_id}/role")
+def update_person_role(
+    person_type: Literal["admin", "employee"],
+    person_id: UUID,
+    payload: PersonRoleUpdate,
+    request: Request,
+    current_admin: Annotated[AdminUser, Depends(get_current_admin)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    require_capability(current_admin, "access.manage")
+    admin, employee = resolve_person(db, current_admin, person_type, person_id)
+
+    if admin is not None:
+        if admin.id == current_admin.id:
+            raise ApiError("CANNOT_CHANGE_OWN_ROLE", "You cannot change your own role.", 409)
+        require_can_manage_admin(current_admin, admin)
+
+    if payload.role != "employee":
+        require_can_assign_role(current_admin, payload.role)
+
+    if admin is not None and admin.is_super_admin:
+        raise ApiError(
+            "PROTECTED_OWNER",
+            "Protected owner account: this is the company's primary Super Admin. Its role and access level cannot be changed.",
+            409,
+        )
+
+    if payload.role == "team_owner" and not payload.team_ids:
+        raise ApiError("TEAM_REQUIRED", "A Team Lead needs at least one assigned team.", 400)
+
+    teams = validate_active_teams(
+        db,
+        current_admin,
+        payload.team_ids if payload.role == "team_owner" else [],
+    )
+
+    if employee is None and admin is not None:
+        employee = ensure_tracked_employee(db, admin)
+    if employee is None:
+        raise ApiError("EMPLOYEE_REQUIRED", "This person needs an employee profile first.", 409)
+
+    if payload.password:
+        password_hash = hash_password(payload.password)
+    elif admin is not None:
+        password_hash = admin.password_hash
+    elif employee.portal_password_hash:
+        password_hash = employee.portal_password_hash
+    else:
+        password_hash = hash_password(generate_temporary_password())
+
+    if payload.role == "employee":
+        if admin is not None:
+            admin.status = "deleted"
+            admin.archived_at = datetime.now(UTC)
+            admin.status_before_archive = None
+            revoke_admin_runtime(db, admin)
+            db.execute(delete(TeamOwner).where(TeamOwner.admin_user_id == admin.id))
+            db.add(admin)
+        employee.status = "active"
+        employee.archived_at = None
+        employee.status_before_archive = None
+        employee.portal_password_hash = password_hash
+        db.add(employee)
+        next_admin = admin
+    else:
+        if admin is None:
+            admin = db.scalar(
+                select(AdminUser).where(
+                    AdminUser.company_id == current_admin.company_id,
+                    AdminUser.email == employee.email.lower(),
+                )
+            )
+        if admin is None:
+            admin = AdminUser(
+                company_id=current_admin.company_id,
+                employee_id=employee.id,
+                name=employee.name,
+                email=employee.email.lower(),
+                password_hash=password_hash,
+                role=payload.role,
+                status="active",
+                permission_mode="role",
+                data_scope="assigned_teams" if payload.role == "team_owner" else "company",
+            )
+            db.add(admin)
+            db.flush()
+        else:
+            if admin.employee_id and admin.employee_id != employee.id:
+                raise ApiError(
+                    "ADMIN_EMAIL_LINKED",
+                    "This email is already linked to another admin account.",
+                    409,
+                )
+            admin.employee_id = employee.id
+            admin.name = employee.name
+            admin.email = employee.email.lower()
+            admin.password_hash = password_hash
+            admin.role = payload.role
+            admin.status = "active"
+            admin.archived_at = None
+            admin.status_before_archive = None
+            admin.permission_mode = "role"
+            admin.data_scope = "assigned_teams" if payload.role == "team_owner" else "company"
+            db.add(admin)
+
+        employee.status = "active"
+        employee.portal_password_hash = password_hash
+        if not employee.job_title or employee.job_title == "Management":
+            employee.job_title = default_admin_job_title(admin)
+        db.add(employee)
+
+        db.execute(delete(TeamOwner).where(TeamOwner.admin_user_id == admin.id))
+        if payload.role == "team_owner":
+            for team in teams:
+                db.add(TeamOwner(team_id=team.id, admin_user_id=admin.id))
+            ensure_employee_team_memberships(db, employee, [team.id for team in teams])
+        next_admin = admin
+
+    record_audit_log(
+        db,
+        current_admin,
+        "role_changed",
+        "person",
+        entity_id=next_admin.id if next_admin else employee.id,
+        entity_name=employee.email,
+        details={
+            "person_type": person_type,
+            "role": payload.role,
+            "team_ids": [str(team.id) for team in teams],
+        },
+        request=request,
+    )
+    db.commit()
+    return success_response(
+        data={
+            **person_state(next_admin, employee, "admin" if payload.role != "employee" else "employee"),
+            "role": payload.role,
+        }
+    )
+
+
 @router.post("/{person_type}/{person_id}/archive")
 def archive_person(
     person_type: Literal["admin", "employee"],
@@ -430,6 +633,8 @@ def archive_person(
     admin, employee = resolve_person(db, current_admin, person_type, person_id)
     if admin is not None and admin.id == current_admin.id:
         raise ApiError("CANNOT_ARCHIVE_SELF", "You cannot archive your own account.", 409)
+    if admin is not None:
+        require_can_manage_admin(current_admin, admin)
     if admin is not None and admin.status == "active" and is_full_admin(admin):
         other_full_admin = any(
             is_full_admin(item)
@@ -472,6 +677,8 @@ def restore_person(
 ):
     require_capability(current_admin, "people.archive")
     admin, employee = resolve_person(db, current_admin, person_type, person_id)
+    if admin is not None:
+        require_can_manage_admin(current_admin, admin)
     restore_linked_person(db, admin, employee)
     record_audit_log(
         db,
@@ -499,6 +706,8 @@ def delete_person(
     admin, employee = resolve_person(db, current_admin, person_type, person_id)
     if admin is not None and admin.id == current_admin.id:
         raise ApiError("CANNOT_DELETE_SELF", "You cannot delete your own account.", 409)
+    if admin is not None:
+        require_can_manage_admin(current_admin, admin)
     if admin is not None and admin.status != "archived":
         raise ApiError("PERSON_MUST_BE_ARCHIVED", "Archive this person before deleting them.", 409)
     if employee is not None and employee.status != "archived":

@@ -121,6 +121,12 @@ export type PersonArchiveResult = {
   employeeStatus?: string;
 };
 
+export type PersonRole = "employee" | "team_owner" | "hr" | "general_admin";
+
+export type PersonRoleResult = PersonArchiveResult & {
+  role: PersonRole;
+};
+
 async function setPersonArchived(
   personType: "admin" | "employee",
   personId: string,
@@ -159,6 +165,38 @@ export async function deletePerson(personType: "admin" | "employee", personId: s
     `/people/${personType}/${personId}`,
     { method: "DELETE" },
   );
+}
+
+export async function updatePersonRole(
+  personType: "admin" | "employee",
+  personId: string,
+  input: { role: PersonRole; teamIds?: string[]; password?: string },
+): Promise<PersonRoleResult> {
+  const row = await apiFetch<{
+    person_type: "admin" | "employee";
+    admin_user_id?: string | null;
+    employee_id?: string | null;
+    archived: boolean;
+    admin_status?: string | null;
+    employee_status?: string | null;
+    role: PersonRole;
+  }>(`/people/${personType}/${personId}/role`, {
+    method: "PATCH",
+    body: JSON.stringify({
+      role: input.role,
+      team_ids: input.teamIds ?? [],
+      password: input.password || undefined,
+    }),
+  });
+  return {
+    personType: row.person_type,
+    adminUserId: row.admin_user_id ?? undefined,
+    employeeId: row.employee_id ?? undefined,
+    archived: row.archived,
+    adminStatus: row.admin_status ?? undefined,
+    employeeStatus: row.employee_status ?? undefined,
+    role: row.role,
+  };
 }
 
 export async function getPersonInvitation(token: string): Promise<PublicPersonInvitation> {

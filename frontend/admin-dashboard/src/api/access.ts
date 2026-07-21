@@ -18,6 +18,7 @@ export type PermissionCatalog = {
 export type AdminAccess = {
   adminUserId: string;
   role: Role;
+  isSuperAdmin: boolean;
   permissionMode: PermissionMode;
   dataScope: DataScope;
   basePermissions: string[];
@@ -47,6 +48,7 @@ type BackendCatalog = {
 type BackendAccess = {
   admin_user_id: string;
   role: Role;
+  is_super_admin?: boolean;
   permission_mode: PermissionMode;
   data_scope: DataScope;
   base_permissions: string[];
@@ -61,6 +63,7 @@ function mapAccess(row: BackendAccess): AdminAccess {
   return {
     adminUserId: row.admin_user_id,
     role: row.role,
+    isSuperAdmin: row.is_super_admin ?? false,
     permissionMode: row.permission_mode,
     dataScope: row.data_scope,
     basePermissions: row.base_permissions,

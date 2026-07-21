@@ -25,6 +25,7 @@ import { listEmployees } from "@/api/employees";
 import { listTeams } from "@/api/teams";
 import { listTimeAdjustmentRequests, reviewTimeAdjustmentRequest } from "@/api/timeAdjustments";
 import { useAuth } from "@/lib/auth";
+import { permissions } from "@/lib/permissions";
 import { formatDate, formatDateTime, formatMinutes } from "@/lib/format";
 import { toast } from "sonner";
 import type { TimeAdjustmentStatus } from "@/types";
@@ -34,7 +35,7 @@ export const Route = createFileRoute("/_app/time-adjustments")({
 });
 
 function TimeAdjustmentsPage() {
-  const { hasRole, scopedTeamIds } = useAuth();
+  const { can, scopedTeamIds } = useAuth();
   const scope = scopedTeamIds();
   const queryClient = useQueryClient();
   const [teamId, setTeamId] = useState("all");
@@ -84,7 +85,7 @@ function TimeAdjustmentsPage() {
       toast.error(error instanceof Error ? error.message : "Failed to review request"),
   });
 
-  const canReview = hasRole("general_admin");
+  const canReview = can(permissions.timeRequestsManage);
   const visibleEmployees =
     teamId === "all"
       ? (employees.data ?? [])

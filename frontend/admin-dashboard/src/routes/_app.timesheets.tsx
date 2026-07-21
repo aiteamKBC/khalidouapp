@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
-import { Download } from "lucide-react";
+import { Activity, Camera, Clock3, Coffee, Download } from "lucide-react";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card } from "@/components/ui/card";
 import {
@@ -28,6 +28,7 @@ import { listEmployees } from "@/api/employees";
 import { listTeams } from "@/api/teams";
 import { useAuth } from "@/lib/auth";
 import { formatMinutes, downloadCSV } from "@/lib/format";
+import type { LucideIcon } from "lucide-react";
 
 export const Route = createFileRoute("/_app/timesheets")({
   component: TimesheetsPage,
@@ -39,7 +40,7 @@ function TimesheetsPage() {
   const emps = useQuery({ queryKey: ["employees", scope], queryFn: () => listEmployees(scope) });
   const teams = useQuery({ queryKey: ["teams", scope], queryFn: () => listTeams(scope) });
 
-  const [view, setView] = useState<"daily" | "weekly" | "monthly">("daily");
+  const [view, setView] = useState<"daily" | "weekly" | "monthly">("weekly");
   const [date, setDate] = useState("");
   const [teamId, setTeamId] = useState("all");
   const [empId, setEmpId] = useState("all");
@@ -66,6 +67,15 @@ function TimesheetsPage() {
 
   const empName = (id: string) => (emps.data ?? []).find((e) => e.id === id)?.name ?? id;
   const teamName = (id: string) => (teams.data ?? []).find((t) => t.id === id)?.name ?? id;
+  const totals = filtered.reduce(
+    (sum, row) => ({
+      total: sum.total + row.totalMinutes,
+      active: sum.active + row.activeMinutes,
+      idle: sum.idle + row.idleMinutes,
+      screenshots: sum.screenshots + row.screenshotCount,
+    }),
+    { total: 0, active: 0, idle: 0, screenshots: 0 },
+  );
 
   return (
     <div className="studio-page">
@@ -150,7 +160,98 @@ function TimesheetsPage() {
         </div>
       </Card>
 
-      <Card className="overflow-x-auto">
+      <div className="mb-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <TimesheetMetric icon={Clock3} label="Total time" value={formatMinutes(totals.total)} />
+        <TimesheetMetric
+          icon={Activity}
+          label="Active"
+          value={formatMinutes(totals.active)}
+          tone="green"
+        />
+        <TimesheetMetric
+          icon={Coffee}
+          label="Idle"
+          value={formatMinutes(totals.idle)}
+          tone="amber"
+        />
+        <TimesheetMetric icon={Camera} label="Screenshots" value={totals.screenshots} />
+      </div>
+
+      <Card className="mb-4 overflow-hidden">
+        <div className="divide-y divide-border">
+          {ts.isLoading
+            ? Array.from({ length: 6 }).map((_, index) => (
+                <div key={index} className="p-4">
+                  <div className="h-16 animate-pulse rounded-2xl bg-muted" />
+                </div>
+              ))
+            : paged.map((t) => {
+                const activePct = t.totalMinutes
+                  ? Math.round((t.activeMinutes / t.totalMinutes) * 100)
+                  : 0;
+                const idlePct = t.totalMinutes
+                  ? Math.round((t.idleMinutes / t.totalMinutes) * 100)
+                  : 0;
+                return (
+                  <div
+                    key={t.id}
+                    className="grid gap-4 p-4 transition hover:bg-muted/40 lg:grid-cols-[minmax(0,1.25fr)_minmax(260px,1fr)_auto]"
+                  >
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-extrabold">{empName(t.employeeId)}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {teamName(t.teamId)} · {t.date}
+                      </p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {t.startTime ?? "—"} → {t.endTime ?? "In progress"}
+                      </p>
+                    </div>
+
+                    <div>
+                      <div className="mb-2 flex items-center justify-between text-xs">
+                        <span className="font-bold text-muted-foreground">Work mix</span>
+                        <span className="font-mono-numeric font-extrabold">
+                          {formatMinutes(t.totalMinutes)}
+                        </span>
+                      </div>
+                      <div className="flex h-3 overflow-hidden rounded-full bg-muted">
+                        <span
+                          className="bg-success"
+                          style={{ width: `${Math.max(0, activePct)}%` }}
+                        />
+                        <span
+                          className="bg-warning"
+                          style={{ width: `${Math.max(0, idlePct)}%` }}
+                        />
+                      </div>
+                      <div className="mt-2 grid grid-cols-3 gap-2 text-[11px] text-muted-foreground">
+                        <span>Active {formatMinutes(t.activeMinutes)}</span>
+                        <span>Idle {formatMinutes(t.idleMinutes)}</span>
+                        <span>Manual {formatMinutes(t.adjustmentMinutes)}</span>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+                      <span className="rounded-full bg-muted px-2.5 py-1 text-xs font-bold text-muted-foreground">
+                        {t.screenshotCount} shots
+                      </span>
+                      <span className="rounded-full bg-muted px-2.5 py-1 text-xs font-bold text-muted-foreground">
+                        {t.points.toFixed(2)} pts
+                      </span>
+                      <StatusBadge status={t.status} />
+                    </div>
+                  </div>
+                );
+              })}
+          {!ts.isLoading && paged.length === 0 && (
+            <div className="py-12 text-center text-sm text-muted-foreground">
+              No timesheets match these filters.
+            </div>
+          )}
+        </div>
+      </Card>
+
+      <Card className="hidden overflow-x-auto">
         <Table>
           <TableHeader>
             <TableRow>
@@ -216,5 +317,39 @@ function TimesheetsPage() {
         </div>
       </Card>
     </div>
+  );
+}
+
+function TimesheetMetric({
+  icon: Icon,
+  label,
+  value,
+  tone = "default",
+}: {
+  icon: LucideIcon;
+  label: string;
+  value: string | number;
+  tone?: "default" | "green" | "amber";
+}) {
+  const toneClass = {
+    default: "bg-primary/10 text-primary",
+    green: "bg-success/10 text-success",
+    amber: "bg-warning/20 text-warning-foreground",
+  }[tone];
+
+  return (
+    <Card className="p-5">
+      <div className="flex min-h-[96px] flex-col items-center justify-center gap-3 text-center">
+        <span className={`grid h-11 w-11 place-items-center rounded-2xl ${toneClass}`}>
+          <Icon className="h-5 w-5" />
+        </span>
+        <div>
+          <p className="font-mono-numeric text-3xl font-extrabold leading-none">{value}</p>
+          <p className="mt-2 text-xs font-extrabold uppercase tracking-wide text-muted-foreground">
+            {label}
+          </p>
+        </div>
+      </div>
+    </Card>
   );
 }

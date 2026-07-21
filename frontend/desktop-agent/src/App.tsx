@@ -181,7 +181,6 @@ function App() {
   const [status, setStatus] = useState<AgentStatus>(fallbackStatus);
   const [employeeEmail, setEmployeeEmail] = useState("");
   const [employeePassword, setEmployeePassword] = useState("");
-  const [enrollmentCode, setEnrollmentCode] = useState("");
   const [enrollmentError, setEnrollmentError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [activeView, setActiveView] = useState<"home" | "tasks" | "more">("home");
@@ -380,29 +379,6 @@ function App() {
       }
 
       setEmployeeEmail("");
-      await refreshStatusAfterEnrollment();
-    } finally {
-      setIsSubmitting(false);
-    }
-  }
-
-  async function handleCodeEnrollment(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setEnrollmentError(null);
-    if (!window.khaliduo) {
-      setEnrollmentError(desktopRuntimeMessage);
-      return;
-    }
-
-    setIsSubmitting(true);
-    try {
-      const result = await window.khaliduo.enrollDevice(enrollmentCode);
-      if (!result.success) {
-        setEnrollmentError(result.message ?? "Enrollment failed.");
-        return;
-      }
-
-      setEnrollmentCode("");
       await refreshStatusAfterEnrollment();
     } finally {
       setIsSubmitting(false);
@@ -794,15 +770,12 @@ function App() {
         <EnrollmentView
           employeeEmail={employeeEmail}
           employeePassword={employeePassword}
-          enrollmentCode={enrollmentCode}
           enrollmentError={enrollmentError}
           isSubmitting={isSubmitting}
           isDesktopRuntime={isDesktopRuntime}
           onEmailChange={setEmployeeEmail}
           onPasswordChange={setEmployeePassword}
-          onEnrollmentCodeChange={setEnrollmentCode}
           onCredentialEnrollment={handleCredentialEnrollment}
-          onCodeEnrollment={handleCodeEnrollment}
         />
       ) : (
         <>
@@ -904,27 +877,21 @@ function App() {
 function EnrollmentView({
   employeeEmail,
   employeePassword,
-  enrollmentCode,
   enrollmentError,
   isSubmitting,
   isDesktopRuntime,
   onEmailChange,
   onPasswordChange,
-  onEnrollmentCodeChange,
   onCredentialEnrollment,
-  onCodeEnrollment,
 }: {
   employeeEmail: string;
   employeePassword: string;
-  enrollmentCode: string;
   enrollmentError: string | null;
   isSubmitting: boolean;
   isDesktopRuntime: boolean;
   onEmailChange: (value: string) => void;
   onPasswordChange: (value: string) => void;
-  onEnrollmentCodeChange: (value: string) => void;
   onCredentialEnrollment: (event: FormEvent<HTMLFormElement>) => void;
-  onCodeEnrollment: (event: FormEvent<HTMLFormElement>) => void;
 }) {
   return (
     <section className="k-enrollment">
@@ -961,25 +928,6 @@ function EnrollmentView({
             {isSubmitting ? "Signing in..." : "Sign in and link device"}
           </button>
         </form>
-        <details>
-          <summary>Use a one-time enrollment code instead</summary>
-          <form className="k-form" onSubmit={onCodeEnrollment}>
-            <label>
-              Enrollment code
-              <input
-                value={enrollmentCode}
-                onChange={(event) => onEnrollmentCodeChange(event.target.value)}
-                autoComplete="one-time-code"
-                placeholder="KH-XXXXXXXXXXXX"
-                disabled={isSubmitting}
-                required
-              />
-            </label>
-            <button type="submit" disabled={isSubmitting || !isDesktopRuntime}>
-              {isSubmitting ? "Enrolling..." : "Enroll"}
-            </button>
-          </form>
-        </details>
         {enrollmentError && <p className="k-error">{enrollmentError}</p>}
       </div>
     </section>

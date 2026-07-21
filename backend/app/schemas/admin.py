@@ -24,6 +24,10 @@ class EmployeeUpdate(BaseModel):
     weekly_capacity_minutes: int | None = Field(default=None, ge=60, le=10080)
 
 
+class EmployeePasswordUpdate(BaseModel):
+    password: str = Field(min_length=8, max_length=255)
+
+
 class BreakRule(BaseModel):
     name: str = Field(min_length=1, max_length=80)
     minutes: int = Field(ge=1, le=240)
@@ -94,6 +98,12 @@ class TeamUpdate(BaseModel):
 class TeamMemberCreate(BaseModel):
     employee_id: UUID
     status: str = Field(default="active", max_length=50)
+    role: Literal["team_manager", "team_lead", "senior", "member", "trainee"] = "member"
+
+
+class TeamMemberUpdate(BaseModel):
+    role: Literal["team_manager", "team_lead", "senior", "member", "trainee"] | None = None
+    status: str | None = Field(default=None, max_length=50)
 
 
 class TeamOwnerCreate(BaseModel):
@@ -231,6 +241,12 @@ class AdminAccessUpdate(BaseModel):
     permission_overrides: dict[str, bool] | None = None
     team_lead_team_ids: list[UUID] | None = None
     track_as_employee: bool | None = None
+
+
+class PersonRoleUpdate(BaseModel):
+    role: Literal["employee", "team_owner", "hr", "general_admin"]
+    team_ids: list[UUID] = Field(default_factory=list)
+    password: str | None = Field(default=None, min_length=8, max_length=255)
 
 
 class TimeAdjustmentReview(BaseModel):

@@ -23,25 +23,25 @@ export function StatCard({
   }[tone];
 
   return (
-    <Card className="group overflow-hidden hover:-translate-y-0.5 hover:border-primary/15 hover:shadow-md">
+    <Card className="group overflow-hidden transition hover:-translate-y-0.5 hover:border-primary/15 hover:shadow-md">
       <CardContent className="p-5">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              {label}
-            </p>
-            <p className="font-mono-numeric mt-2 text-2xl font-extrabold text-foreground">
-              {value}
-            </p>
-            {hint && <p className="mt-1 text-xs text-muted-foreground">{hint}</p>}
-          </div>
+        <div className="flex min-h-[108px] flex-col items-center justify-center gap-3 text-center">
           {Icon && (
             <div
-              className={`grid h-11 w-11 shrink-0 place-items-center rounded-xl transition-transform group-hover:scale-105 ${toneClass}`}
+              className={`grid h-11 w-11 shrink-0 place-items-center rounded-2xl transition-transform group-hover:scale-105 ${toneClass}`}
             >
               <Icon className="h-5 w-5" />
             </div>
           )}
+          <div className="min-w-0">
+            <p className="font-mono-numeric text-3xl font-extrabold leading-none text-foreground">
+              {value}
+            </p>
+            <p className="mt-2 text-xs font-extrabold uppercase tracking-wide text-muted-foreground">
+              {label}
+            </p>
+            {hint && <p className="mt-1 text-xs text-muted-foreground">{hint}</p>}
+          </div>
         </div>
       </CardContent>
     </Card>

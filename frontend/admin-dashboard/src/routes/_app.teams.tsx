@@ -28,6 +28,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { useAuth } from "@/lib/auth";
+import { permissions } from "@/lib/permissions";
 import { addTeamMember, addTeamOwner, createTeam, listTeams } from "@/api/teams";
 import { listEmployees } from "@/api/employees";
 import { listUsers } from "@/api/users";
@@ -45,7 +46,9 @@ function TeamsPage() {
 }
 
 function TeamsList() {
-  const { scopedTeamIds, hasRole } = useAuth();
+  const { scopedTeamIds, can } = useAuth();
+  const canManageTeams = can(permissions.teamsManage);
+  const canManageAccess = can(permissions.accessManage);
   const scope = scopedTeamIds();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
@@ -58,7 +61,7 @@ function TeamsList() {
   const owners = useQuery({
     queryKey: ["users"],
     queryFn: listUsers,
-    enabled: hasRole("general_admin"),
+    enabled: canManageAccess,
   });
 
   const [q, setQ] = useState("");
@@ -105,7 +108,8 @@ function TeamsList() {
     return (teams.data ?? []).filter((team) => {
       if (q && !team.name.toLowerCase().includes(q.toLowerCase())) return false;
       if (status !== "all" && team.status !== status) return false;
-      if (ownerId !== "all" && !team.ownerIds.includes(ownerId)) return false;
+      if (ownerId === "none" && team.ownerIds.length > 0) return false;
+      if (ownerId !== "all" && ownerId !== "none" && !team.ownerIds.includes(ownerId)) return false;
       return true;
     });
   }, [teams.data, q, status, ownerId]);
@@ -138,7 +142,7 @@ function TeamsList() {
         title="Teams"
         description="Organize employees into teams and assign owners."
         actions={
-          hasRole("general_admin") && (
+          canManageTeams && (
             <Button onClick={() => setCreateOpen(true)}>
               <Plus className="h-4 w-4 mr-2" />
               New team
@@ -201,20 +205,19 @@ function TeamsList() {
               <SelectItem value="archived">Archived</SelectItem>
             </SelectContent>
           </Select>
-          {hasRole("general_admin") && (
+          {canManageAccess && (
             <Select value={ownerId} onValueChange={setOwnerId}>
               <SelectTrigger className="w-48">
                 <SelectValue placeholder="Owner" />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All owners</SelectItem>
-                {(owners.data ?? [])
-                  .filter((user) => user.role === "team_owner")
-                  .map((user) => (
-                    <SelectItem key={user.id} value={user.id}>
-                      {user.name}
-                    </SelectItem>
-                  ))}
+                <SelectItem value="none">No owner</SelectItem>
+                {(owners.data ?? []).map((user) => (
+                  <SelectItem key={user.id} value={user.id}>
+                    {user.name} · {user.role === "general_admin" ? "General admin" : user.role === "hr" ? "HR" : "Team manager"}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
           )}
@@ -247,7 +250,112 @@ function TeamsList() {
         </Card>
       )}
 
-      <Card>
+      {teams.isLoading ? (
+        <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
+          {Array.from({ length: 6 }).map((_, index) => (
+            <Skeleton key={`team-card-skeleton-${index}`} className="h-56 rounded-2xl" />
+          ))}
+        </div>
+      ) : rows.length === 0 ? (
+        <Card className="py-12 text-center text-sm text-muted-foreground">
+          {hasActiveFilters ? "No teams match your filters." : "No teams have been created yet."}
+        </Card>
+      ) : (
+        <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
+          {rows.map((team) => {
+            const members = (emps.data ?? []).filter((employee) =>
+              employee.teamIds.includes(team.id),
+            );
+            const online = members.filter((employee) => employee.status !== "offline").length;
+            const workedMinutes = members.reduce(
+              (sum, employee) => sum + employee.workedTodayMinutes,
+              0,
+            );
+            const lastHeartbeat = members
+              .map((member) => member.lastHeartbeat)
+              .filter(Boolean)
+              .sort()
+              .reverse()[0];
+            const ownerNames = team.ownerIds
+              .map((id) => (owners.data ?? []).find((user) => user.id === id)?.name)
+              .filter(Boolean);
+            return (
+              <Card
+                key={team.id}
+                className="group overflow-hidden p-5 transition hover:-translate-y-0.5 hover:border-primary/20 hover:shadow-lg"
+              >
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex min-w-0 items-center gap-3">
+                    <span className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-primary/10 text-primary">
+                      <UsersRound className="h-5 w-5" />
+                    </span>
+                    <div className="min-w-0">
+                      <h3 className="truncate text-lg font-extrabold">{team.name}</h3>
+                      <p className="truncate text-xs text-muted-foreground">
+                        {team.description || "No description yet"}
+                      </p>
+                    </div>
+                  </div>
+                  <StatusBadge status={team.status} />
+                </div>
+
+                <div className="mt-5 grid grid-cols-2 gap-3">
+                  <TeamMiniMetric label="Members" value={emps.isError ? "—" : members.length} />
+                  <TeamMiniMetric label="Online" value={emps.isError ? "—" : online} tone="green" />
+                  <TeamMiniMetric
+                    label="Hours today"
+                    value={emps.isError ? "—" : formatMinutes(workedMinutes)}
+                  />
+                  <TeamMiniMetric
+                    label="Latest"
+                    value={emps.isError ? "—" : formatRelative(lastHeartbeat)}
+                  />
+                </div>
+
+                <div className="mt-5 rounded-2xl bg-muted/45 p-3">
+                  <p className="text-[11px] font-extrabold uppercase tracking-wide text-muted-foreground">
+                    Team manager
+                  </p>
+                  <p className="mt-1 truncate text-sm font-semibold">
+                    {ownerNames.length ? ownerNames.join(", ") : "No manager assigned"}
+                  </p>
+                </div>
+
+                <div className="mt-4 flex items-center justify-between gap-3">
+                  <div className="flex -space-x-2">
+                    {members.slice(0, 5).map((member) => (
+                      <span
+                        key={member.id}
+                        title={member.name}
+                        className="grid h-8 w-8 place-items-center rounded-full border-2 border-card bg-muted text-[10px] font-bold"
+                      >
+                        {member.name
+                          .split(" ")
+                          .map((part) => part[0])
+                          .join("")
+                          .slice(0, 2)
+                          .toUpperCase()}
+                      </span>
+                    ))}
+                    {members.length > 5 && (
+                      <span className="grid h-8 w-8 place-items-center rounded-full border-2 border-card bg-primary/10 text-[10px] font-bold text-primary">
+                        +{members.length - 5}
+                      </span>
+                    )}
+                  </div>
+                  <Button asChild size="sm">
+                    <Link to="/teams/$teamId" params={{ teamId: team.id }}>
+                      Open workspace
+                    </Link>
+                  </Button>
+                </div>
+              </Card>
+            );
+          })}
+        </div>
+      )}
+
+      <Card className="hidden">
         <Table>
           <TableHeader>
             <TableRow>
@@ -453,6 +561,31 @@ function TeamsList() {
           </form>
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+function TeamMiniMetric({
+  label,
+  value,
+  tone = "default",
+}: {
+  label: string;
+  value: string | number;
+  tone?: "default" | "green";
+}) {
+  return (
+    <div className="rounded-2xl border bg-background/70 p-3 text-center">
+      <p
+        className={`font-mono-numeric text-xl font-extrabold ${
+          tone === "green" ? "text-success" : "text-foreground"
+        }`}
+      >
+        {value}
+      </p>
+      <p className="mt-1 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
+        {label}
+      </p>
     </div>
   );
 }

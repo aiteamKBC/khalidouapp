@@ -32,23 +32,23 @@ export function MetricTile({
   onClick?: () => void;
 }) {
   const className =
-    "studio-card group flex min-w-0 items-center gap-3 rounded-2xl border bg-card p-4 text-left transition hover:-translate-y-0.5 hover:border-primary/15 hover:shadow-md";
+    "studio-card group flex min-h-[120px] min-w-0 flex-col items-center justify-center gap-3 rounded-2xl border bg-card p-4 text-center transition hover:-translate-y-0.5 hover:border-primary/15 hover:shadow-md";
 
   const content = (
     <>
       <span
         className={cn(
-          "grid h-11 w-11 shrink-0 place-items-center rounded-xl transition-transform group-hover:scale-105",
+          "grid h-11 w-11 shrink-0 place-items-center rounded-2xl transition-transform group-hover:scale-105",
           tones[tone],
         )}
       >
         <Icon className="h-5 w-5" />
       </span>
       <div className="min-w-0">
-        <p className="font-mono-numeric truncate text-2xl font-extrabold leading-none">{value}</p>
-        <p className="mt-1.5 truncate text-xs font-bold">{label}</p>
+        <p className="font-mono-numeric truncate text-3xl font-extrabold leading-none">{value}</p>
+        <p className="mt-2 truncate text-xs font-extrabold uppercase tracking-wide text-muted-foreground">{label}</p>
         {hint && (
-          <p className="mt-0.5 truncate text-[10.5px] font-semibold text-muted-foreground">
+          <p className="mt-1 truncate text-[10.5px] font-semibold text-muted-foreground">
             {hint}
           </p>
         )}

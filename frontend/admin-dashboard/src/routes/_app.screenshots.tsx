@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
-import { ChevronLeft, ChevronRight, Download, ImageOff, Trash2 } from "lucide-react";
+import { ArrowLeft, ChevronLeft, ChevronRight, Download, Folder, ImageOff, Trash2 } from "lucide-react";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card } from "@/components/ui/card";
 import {
@@ -22,6 +22,7 @@ import { listEmployees } from "@/api/employees";
 import { listTasks } from "@/api/projects";
 import { listTeams } from "@/api/teams";
 import { useAuth } from "@/lib/auth";
+import { permissions } from "@/lib/permissions";
 import { formatDateTime } from "@/lib/format";
 import { toast } from "sonner";
 import type { Screenshot } from "@/types";
@@ -30,8 +31,19 @@ export const Route = createFileRoute("/_app/screenshots")({
   component: ScreenshotsPage,
 });
 
+function initials(name: string): string {
+  return name
+    .split(" ")
+    .map((part) => part[0])
+    .filter(Boolean)
+    .join("")
+    .slice(0, 2)
+    .toUpperCase();
+}
+
 function ScreenshotsPage() {
-  const { scopedTeamIds, hasRole } = useAuth();
+  const { scopedTeamIds, can } = useAuth();
+  const canManageScreenshots = can(permissions.screenshotsManage);
   const scope = scopedTeamIds();
   const queryClient = useQueryClient();
   const emps = useQuery({ queryKey: ["employees", scope], queryFn: () => listEmployees(scope) });
@@ -45,6 +57,7 @@ function ScreenshotsPage() {
   const [teamId, setTeamId] = useState("all");
   const [date, setDate] = useState("");
   const [page, setPage] = useState(1);
+  const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null);
   const shots = useQuery({
     queryKey: ["screenshots", scope, page, empId, teamId, date],
     queryFn: () =>
@@ -74,16 +87,38 @@ function ScreenshotsPage() {
       toast.error(error instanceof Error ? error.message : "Failed to delete screenshot"),
   });
 
-  useEffect(() => setPage(1), [empId, teamId, date]);
+  useEffect(() => {
+    setPage(1);
+    setSelectedFolderId(null);
+    setOpenIdx(null);
+  }, [empId, teamId, date]);
 
   const filtered = shots.data?.items ?? [];
 
-  const current = openIdx != null ? filtered[openIdx] : null;
+  const current = openIdx != null ? filtered.filter((shot) => !selectedFolderId || shot.employeeId === selectedFolderId)[openIdx] : null;
   const empOf = (id: string) =>
     (emps.data ?? []).find((employee) => employee.id === id)?.name ?? "-";
   const teamOf = (id: string) => (teams.data ?? []).find((team) => team.id === id)?.name ?? "-";
   const taskOf = (screenshot: Screenshot) =>
     (tasks.data ?? []).find((task) => task.id === screenshot.taskId);
+  const groupedShots = [
+    ...filtered
+      .reduce((groups, shot) => {
+        groups.set(shot.employeeId, [...(groups.get(shot.employeeId) ?? []), shot]);
+        return groups;
+      }, new Map<string, Screenshot[]>())
+      .entries(),
+  ]
+    .map(([employeeId, items]) => ({
+      employeeId,
+      employeeName: empOf(employeeId),
+      items: [...items].sort((a, b) => +new Date(b.capturedAt) - +new Date(a.capturedAt)),
+    }))
+    .sort((a, b) => a.employeeName.localeCompare(b.employeeName));
+  const selectedFolder = selectedFolderId
+    ? groupedShots.find((group) => group.employeeId === selectedFolderId)
+    : null;
+  const visibleShots = selectedFolder ? selectedFolder.items : filtered;
 
   return (
     <div className="studio-page">
@@ -154,7 +189,113 @@ function ScreenshotsPage() {
           description="Try adjusting the filters or check back later."
         />
       ) : (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+        <>
+          {!selectedFolder ? (
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+              {groupedShots.map((group) => (
+                <button
+                  key={group.employeeId}
+                  type="button"
+                  onClick={() => {
+                    setSelectedFolderId(group.employeeId);
+                    setOpenIdx(null);
+                  }}
+                  className="group rounded-2xl border bg-card p-4 text-left shadow-sm transition hover:-translate-y-1 hover:border-primary/30 hover:shadow-lg"
+                >
+                  <div className="relative h-36 overflow-hidden rounded-2xl bg-muted">
+                    <div className="absolute left-4 top-4 z-10 grid h-14 w-14 place-items-center rounded-2xl bg-primary text-primary-foreground shadow-lg">
+                      <Folder className="h-7 w-7" />
+                    </div>
+                    <div className="absolute bottom-3 right-3 grid grid-cols-3 gap-1">
+                      {group.items.slice(0, 3).map((shot, index) => (
+                        <div
+                          key={shot.id}
+                          className="h-16 w-24 overflow-hidden rounded-lg border-2 border-card bg-card shadow-md"
+                          style={{ transform: `rotate(${(index - 1) * 3}deg)` }}
+                        >
+                          <ProtectedImage
+                            src={shot.thumbnailUrl}
+                            alt=""
+                            className="h-full w-full object-cover"
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="mt-4 flex items-center gap-3">
+                    <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-primary/10 text-xs font-extrabold text-primary">
+                      {initials(group.employeeName)}
+                    </span>
+                    <div className="min-w-0">
+                      <h3 className="truncate text-base font-extrabold">{group.employeeName}</h3>
+                      <p className="text-xs text-muted-foreground">
+                        {group.items.length} screenshots · latest {formatDateTime(group.items[0].capturedAt)}
+                      </p>
+                    </div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setSelectedFolderId(null);
+                    setOpenIdx(null);
+                  }}
+                >
+                  <ArrowLeft className="mr-2 h-4 w-4" />
+                  Back to folders
+                </Button>
+                <div className="text-sm text-muted-foreground">
+                  {selectedFolder.employeeName} · {selectedFolder.items.length} screenshots
+                </div>
+              </div>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+                {visibleShots.map((shot, index) => (
+                  <button
+                    key={shot.id}
+                    onClick={() => setOpenIdx(index)}
+                    className="group overflow-hidden rounded-2xl border bg-card p-2 text-left transition duration-200 hover:-translate-y-1 hover:border-[#e5185d]/25 hover:shadow-lg"
+                  >
+                    <div className="aspect-video overflow-hidden rounded-xl bg-muted ring-1 ring-border">
+                      {failedIds.has(shot.id) ? (
+                        <div className="grid h-full w-full place-items-center text-xs text-muted-foreground">
+                          <ImageOff className="h-6 w-6" />
+                        </div>
+                      ) : (
+                        <ProtectedImage
+                          src={shot.thumbnailUrl}
+                          alt=""
+                          onLoadError={() =>
+                            setFailedIds((previous) => new Set(previous).add(shot.id))
+                          }
+                          className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.04]"
+                        />
+                      )}
+                    </div>
+                    <div className="flex items-center justify-between gap-2 px-1 pb-1 pt-3 text-xs">
+                      <div className="truncate">
+                        <div className="truncate font-medium text-foreground">
+                          {shot.displayName || "Captured screen"}
+                        </div>
+                        <div className="truncate text-muted-foreground">
+                          {formatDateTime(shot.capturedAt)}
+                        </div>
+                      </div>
+                      {shot.isIdle && <StatusBadge status="idle" />}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="hidden grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
           {filtered.map((shot, index) => (
             <button
               key={shot.id}
@@ -189,7 +330,8 @@ function ScreenshotsPage() {
               </div>
             </button>
           ))}
-        </div>
+          </div>
+        </>
       )}
 
       {shots.data && shots.data.pages > 1 && (
@@ -260,9 +402,9 @@ function ScreenshotsPage() {
                     variant="outline"
                     size="sm"
                     onClick={() =>
-                      setOpenIdx((index) => Math.min(filtered.length - 1, (index ?? 0) + 1))
+                      setOpenIdx((index) => Math.min(visibleShots.length - 1, (index ?? 0) + 1))
                     }
-                    disabled={openIdx === filtered.length - 1}
+                    disabled={openIdx === visibleShots.length - 1}
                   >
                     <ChevronRight className="h-4 w-4" />
                   </Button>
@@ -278,7 +420,7 @@ function ScreenshotsPage() {
                     <Download className="h-4 w-4 mr-1" />
                     Download
                   </Button>
-                  {hasRole("general_admin") && (
+                  {canManageScreenshots && (
                     <Button
                       variant="destructive"
                       size="sm"

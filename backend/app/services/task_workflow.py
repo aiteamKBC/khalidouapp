@@ -151,12 +151,12 @@ def notify_project_admins(
     *,
     workflow_request_id: UUID | None = None,
 ) -> None:
-    general_admin_ids = set(
+    company_admin_ids = set(
         db.scalars(
             select(AdminUser.id).where(
                 AdminUser.company_id == task.company_id,
                 AdminUser.status == "active",
-                AdminUser.role == "general_admin",
+                AdminUser.role.in_(("general_admin", "hr")),
             )
         ).all()
     )
@@ -172,11 +172,11 @@ def notify_project_admins(
     owner_ids = {
         admin_id
         for admin_id, employee_id, role in owner_rows
-        if role == "general_admin"
+        if role in {"general_admin", "hr"}
         or employee_id is None
         or employee_id != task.assignee_employee_id
     }
-    for admin_id in general_admin_ids | owner_ids:
+    for admin_id in company_admin_ids | owner_ids:
         create_notification(
             db,
             company_id=task.company_id,

@@ -133,9 +133,11 @@ export function AppSidebar({ onNavigate }: { onNavigate?: () => void }) {
     }))
     .filter((group) => group.items.length > 0);
   const roleLabel = user
-    ? `${user.role === "team_owner" ? "Team lead" : user.role === "hr" ? "HR" : "General admin"}${
-        user.role === "general_admin" && user.teamLeadTeamIds.length > 0 ? " / Team lead" : ""
-      }`
+    ? user.isSuperAdmin
+      ? "Super admin"
+      : `${user.role === "team_owner" ? "Team lead" : user.role === "hr" ? "HR" : "General admin"}${
+          user.role === "general_admin" && user.teamLeadTeamIds.length > 0 ? " / Team lead" : ""
+        }`
     : "";
 
   return (

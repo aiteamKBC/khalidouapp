@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/table";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { useAuth } from "@/lib/auth";
+import { permissions } from "@/lib/permissions";
 import { listEmployees } from "@/api/employees";
 import { listTeams } from "@/api/teams";
 import { formatMinutes, formatRelative } from "@/lib/format";
@@ -41,7 +42,8 @@ function EmployeesPage() {
 }
 
 export function EmployeesList({ embedded = false }: { embedded?: boolean }) {
-  const { scopedTeamIds, hasRole } = useAuth();
+  const { scopedTeamIds, can } = useAuth();
+  const canManagePeople = can(permissions.peopleManage);
   const scope = scopedTeamIds();
   const emps = useQuery({
     queryKey: ["employees", scope],
@@ -96,7 +98,7 @@ export function EmployeesList({ embedded = false }: { embedded?: boolean }) {
           title="Employees"
           description="Monitor employee activity. Add or manage people from the People page."
           actions={
-            hasRole("general_admin") && (
+            canManagePeople && (
               <Button asChild>
                 <Link to="/people" search={{ tab: "directory" }}>
                   <Plus className="h-4 w-4 mr-2" />

@@ -24,8 +24,6 @@ class Employee(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     timezone: Mapped[str] = mapped_column(String(80), nullable=False, default="UTC")
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="active")
     weekly_capacity_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=2400)
-    portal_access_key_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    portal_access_key_hint: Mapped[str | None] = mapped_column(String(40), nullable=True)
     portal_password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
     portal_last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     portal_last_login_ip: Mapped[str | None] = mapped_column(String(64), nullable=True)

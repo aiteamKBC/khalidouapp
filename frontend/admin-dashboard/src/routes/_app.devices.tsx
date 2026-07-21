@@ -26,6 +26,7 @@ import {
 import { listDevices, revokeDevice } from "@/api/devices";
 import { listEmployees } from "@/api/employees";
 import { useAuth } from "@/lib/auth";
+import { permissions } from "@/lib/permissions";
 import { formatRelative, formatDate } from "@/lib/format";
 import { toast } from "sonner";
 import { Laptop, ShieldCheck, WifiOff } from "lucide-react";
@@ -41,7 +42,8 @@ function DevicesPage() {
 }
 
 function DevicesList() {
-  const { scopedTeamIds, hasRole } = useAuth();
+  const { scopedTeamIds, can } = useAuth();
+  const canManageDevices = can(permissions.devicesManage);
   const scope = scopedTeamIds();
   const queryClient = useQueryClient();
   const devs = useQuery({ queryKey: ["devices", scope], queryFn: () => listDevices(scope) });
@@ -130,7 +132,7 @@ function DevicesList() {
                         View
                       </Link>
                     </Button>
-                    {hasRole("general_admin") && device.tokenStatus === "valid" && (
+                    {canManageDevices && device.tokenStatus === "valid" && (
                       <Button
                         variant="ghost"
                         size="sm"

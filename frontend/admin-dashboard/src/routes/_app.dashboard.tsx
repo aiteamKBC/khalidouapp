@@ -45,6 +45,10 @@ export const Route = createFileRoute("/_app/dashboard")({
   component: DashboardPage,
 });
 
+const LIVE_REFRESH_MS = 15_000;
+const ACTION_REFRESH_MS = 30_000;
+const MEDIA_REFRESH_MS = 60_000;
+
 // ---------- date helpers ----------
 function startOfWeek(d: Date): Date {
   const x = new Date(d);
@@ -134,21 +138,28 @@ function DashboardPage() {
   const summary = useQuery({
     queryKey: ["dashboard", scope],
     queryFn: () => getDashboardSummary(scope),
-    staleTime: 30_000,
-    refetchInterval: 15_000,
+    staleTime: 10_000,
+    refetchInterval: LIVE_REFRESH_MS,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: "always",
     placeholderData: (previous) => previous,
   });
   const emps = useQuery({
     queryKey: ["employees", scope],
     queryFn: () => listEmployees(scope),
-    staleTime: 20_000,
-    refetchInterval: 15_000,
+    staleTime: 10_000,
+    refetchInterval: LIVE_REFRESH_MS,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: "always",
     placeholderData: (previous) => previous,
   });
   const month = useQuery({
     queryKey: ["timesheets", "monthly", scope],
     queryFn: () => listTimesheets(scope, "monthly"),
-    staleTime: 60_000,
+    staleTime: 30_000,
+    refetchInterval: ACTION_REFRESH_MS,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: "always",
     placeholderData: (previous) => previous,
   });
   const primaryReady = summary.isFetched && emps.isFetched;
@@ -171,21 +182,29 @@ function DashboardPage() {
     queryFn: () => listScreenshots(scope, { pageSize: 24 }),
     enabled: loadMedia,
     staleTime: 45_000,
+    refetchInterval: MEDIA_REFRESH_MS,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: "always",
     placeholderData: (previous) => previous,
   });
   const teams = useQuery({
     queryKey: ["teams", scope],
     queryFn: () => listTeams(scope),
     enabled: loadActions,
-    staleTime: 60_000,
+    staleTime: 30_000,
+    refetchInterval: ACTION_REFRESH_MS,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: "always",
     placeholderData: (previous) => previous,
   });
   const devices = useQuery({
     queryKey: ["devices", scope],
     queryFn: () => listDevices(scope),
     enabled: loadActions,
-    staleTime: 30_000,
-    refetchInterval: 15_000,
+    staleTime: 10_000,
+    refetchInterval: LIVE_REFRESH_MS,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: "always",
     placeholderData: (previous) => previous,
   });
   const requests = useQuery({
@@ -193,6 +212,9 @@ function DashboardPage() {
     queryFn: () => listTimeAdjustmentRequests({ scopedTeamIds: scope, status: "pending" }),
     enabled: loadActions,
     staleTime: 30_000,
+    refetchInterval: ACTION_REFRESH_MS,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: "always",
     placeholderData: (previous) => previous,
   });
 

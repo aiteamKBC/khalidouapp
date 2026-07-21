@@ -294,7 +294,7 @@ function EmployeeDetailPage() {
                   <div className="rounded-xl border border-border p-3">
                     <div className="mb-2 font-semibold">Access & device</div>
                     <div className="space-y-2">
-                      <Row k="Portal access" v={e.portalAccessEnabled ? "Enabled" : "Invitation/password"} />
+                      <Row k="Password access" v={e.portalAccessEnabled ? "Enabled" : "Invitation pending"} />
                       <Row k="Portal last login" v={formatDateTime(e.portalLastLoginAt)} />
                       <Row k="Device" v={device?.name || e.currentDeviceName || "-"} />
                       <Row

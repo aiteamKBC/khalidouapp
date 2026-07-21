@@ -20,6 +20,7 @@ import { getScreenshotStorageStatus } from "@/api/screenshots";
 import { Progress } from "@/components/ui/progress";
 import type { TrackingSettings } from "@/types";
 import { useAuth } from "@/lib/auth";
+import { permissions } from "@/lib/permissions";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/_app/settings/tracking")({
@@ -27,8 +28,8 @@ export const Route = createFileRoute("/_app/settings/tracking")({
 });
 
 function TrackingSettingsPage() {
-  const { hasRole } = useAuth();
-  const canEdit = hasRole("general_admin");
+  const { can } = useAuth();
+  const canEdit = can(permissions.settingsManage);
   const qc = useQueryClient();
   const query = useQuery({ queryKey: ["tracking-settings"], queryFn: getTrackingSettings });
   const storage = useQuery({

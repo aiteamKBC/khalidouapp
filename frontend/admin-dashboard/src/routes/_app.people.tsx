@@ -16,7 +16,19 @@ import {
   Archive,
   ArchiveRestore,
   Trash2,
+  Pencil,
+  MoreHorizontal,
+  LayoutDashboard,
+  CalendarCheck,
+  Banknote,
+  BarChart3,
+  Settings,
+  ClipboardList,
+  Users,
+  Clock3,
+  Eye,
 } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { PageHeader } from "@/components/ui/page-header";
 import {
   AlertDialog,
@@ -29,7 +41,14 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Card } from "@/components/ui/card";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -39,6 +58,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   Table,
   TableBody,
@@ -50,9 +76,10 @@ import {
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Switch } from "@/components/ui/switch";
+import { Skeleton } from "@/components/ui/skeleton";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { cn } from "@/lib/utils";
-import { getEmployee, listEmployees } from "@/api/employees";
+import { getEmployee, listEmployees, updateEmployee, updateEmployeePassword } from "@/api/employees";
 import { listUsers, updateUser } from "@/api/users";
 import { listTeams } from "@/api/teams";
 import {
@@ -61,7 +88,9 @@ import {
   invitePerson,
   resendPersonInvitation,
   restorePerson,
+  updatePersonRole,
   type PersonInvitationSummary,
+  type PersonRole,
 } from "@/api/people";
 import {
   getAdminAccess,
@@ -93,10 +122,11 @@ export const Route = createFileRoute("/_app/people")({
 // email invitation + password) or an admin User (dashboard login with a password
 // + role). This hub is the single place to create and manage both.
 type PersonKind = "employee" | "team_owner" | "general_admin" | "hr";
+type EditableRole = PersonRole;
 type TypeFilter = "all" | "employees" | "admins";
 type RoleFilter = "all" | "employee" | Role;
 type StatusFilter = "all" | "active" | "invited" | "archived";
-type AccessPreset = Role | "custom";
+type AccessPreset = EditableRole | "custom";
 
 type PersonRow = {
   id: string;
@@ -109,9 +139,40 @@ type PersonRow = {
   teamIds: string[];
   dashboardEmployeeId?: string;
   isCurrentUser: boolean;
+  isSuperAdmin?: boolean;
   employee?: Employee;
   user?: User;
 };
+
+function adminRank(user?: User | null) {
+  if (!user) return 0;
+  if (user.isSuperAdmin) return 4;
+  return roleRankValue(user.role);
+}
+
+function roleRankValue(role: Role) {
+  if (role === "general_admin") return 3;
+  if (role === "hr") return 2;
+  return 1;
+}
+
+function canManageAdminUser(actor?: User | null, target?: User | null) {
+  if (!actor || !target) return false;
+  if (target.isSuperAdmin) return false;
+  if (actor.isSuperAdmin) return actor.id !== target.id;
+  return actor.id !== target.id && actor.permissions.includes(permissions.accessManage);
+}
+
+function canAssignRole(actor: User | null | undefined, role: EditableRole) {
+  if (!actor) return false;
+  if (actor.isSuperAdmin) return true;
+  return actor.permissions.includes(permissions.accessManage);
+}
+
+function assignableRoles(actor?: User | null): EditableRole[] {
+  if (!actor?.permissions.includes(permissions.accessManage) && !actor?.isSuperAdmin) return [];
+  return ["employee", "team_owner", "hr", "general_admin"];
+}
 
 function employeeDirectoryStatus(employee: Employee): PersonRow["status"] {
   if (employee.accountStatus === "invited") {
@@ -207,25 +268,43 @@ function PeopleDirectory({
   const [wizardOpen, setWizardOpen] = useState(false);
   const [archiveTarget, setArchiveTarget] = useState<PersonRow | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<PersonRow | null>(null);
+  const [employeePasswordRow, setEmployeePasswordRow] = useState<PersonRow | null>(null);
+  const [employeePassword, setEmployeePassword] = useState("");
+  const [editEmployeeRow, setEditEmployeeRow] = useState<PersonRow | null>(null);
+  const [editEmployeeName, setEditEmployeeName] = useState("");
+  const [editEmployeeEmail, setEditEmployeeEmail] = useState("");
+  const [editEmployeeJobTitle, setEditEmployeeJobTitle] = useState("");
 
   // Admin edit ("manage access") state.
+  const [editPersonRow, setEditPersonRow] = useState<PersonRow | null>(null);
   const [editUser, setEditUser] = useState<User | null>(null);
   const [editName, setEditName] = useState("");
   const [editEmail, setEditEmail] = useState("");
+  const [editJobTitle, setEditJobTitle] = useState("");
   const [editPassword, setEditPassword] = useState("");
-  const [editRole, setEditRole] = useState<Role>("team_owner");
+  const [editRole, setEditRole] = useState<EditableRole>("employee");
   const [editPreset, setEditPreset] = useState<AccessPreset>("team_owner");
   const [editPermissionMode, setEditPermissionMode] = useState<PermissionMode>("role");
   const [editDataScope, setEditDataScope] = useState<DataScope>("assigned_teams");
   const [editTeamIds, setEditTeamIds] = useState<string[]>([]);
   const [editTrackAsEmployee, setEditTrackAsEmployee] = useState(false);
   const [editPermissions, setEditPermissions] = useState<string[]>([]);
-  const canChangeRoles = currentUser?.role === "general_admin";
+  const [showFullPermissions, setShowFullPermissions] = useState(false);
+  const canManageAccess = can(permissions.accessManage);
+  const editingSelf = Boolean(
+    (editUser && currentUser?.id === editUser.id) ||
+      (editPersonRow?.employee &&
+        (currentUser?.employeeId === editPersonRow.employee.id ||
+          currentUser?.trackedEmployeeId === editPersonRow.employee.id)),
+  );
+  const isProtectedOwner = Boolean(editPersonRow?.isSuperAdmin);
+  const canChangeRoles = canManageAccess && Boolean(editPersonRow) && !editingSelf && !isProtectedOwner;
+  const allowedRoleOptions = useMemo(() => assignableRoles(currentUser), [currentUser]);
 
   const catalog = useQuery({
     queryKey: ["permission-catalog"],
     queryFn: getPermissionCatalog,
-    enabled: Boolean(editUser) && can(permissions.accessManage),
+    enabled: Boolean(editUser) && canManageAccess,
     staleTime: 5 * 60_000,
   });
 
@@ -254,6 +333,11 @@ function PeopleDirectory({
     () => (teams.data ?? []).filter((team) => team.status === "active"),
     [teams.data],
   );
+  const directoryLoading =
+    employees.isPending || teams.isPending || (canManageAccess && users.isPending);
+  const directoryRefreshing =
+    !directoryLoading &&
+    (employees.isFetching || teams.isFetching || (canManageAccess && users.isFetching));
 
   const rows = useMemo<PersonRow[]>(() => {
     const employeeRows: PersonRow[] = (employees.data ?? []).map((employee) => ({
@@ -277,8 +361,9 @@ function PeopleDirectory({
       kind: "admin",
       name: user.name,
       email: user.email,
-      roleLabel:
-        user.role === "hr"
+      roleLabel: user.isSuperAdmin
+        ? "Super admin · General admin"
+        : user.role === "hr"
           ? "HR"
           : user.role === "general_admin"
             ? user.teamLeadTeamIds.length
@@ -297,6 +382,7 @@ function PeopleDirectory({
       teamIds: user.dataScope === "company" ? activeTeams.map((team) => team.id) : user.teamLeadTeamIds,
       dashboardEmployeeId: user.trackedEmployeeId,
       isCurrentUser: currentUser?.id === user.id,
+      isSuperAdmin: user.isSuperAdmin,
       user,
     }));
     const adminEmployeeIds = new Set(
@@ -347,12 +433,35 @@ function PeopleDirectory({
 
   const updateMutation = useMutation({
     mutationFn: async () => {
-      if (!editUser) throw new Error("Choose a person to manage.");
-      await updateUser(editUser.id, {
-        name: editName,
-        email: editEmail,
-        password: editPassword || undefined,
-      });
+      if (!editPersonRow) throw new Error("Choose a person to manage.");
+      const currentRole: EditableRole =
+        editPersonRow.kind === "admin" ? editPersonRow.user!.role : "employee";
+      if (editPersonRow.kind === "admin" && editUser) {
+        await updateUser(editUser.id, {
+          name: editName,
+          email: editUser.isSuperAdmin ? undefined : editEmail,
+          jobTitle: editJobTitle,
+          password: editPassword || undefined,
+        });
+      } else if (editPersonRow.employee) {
+        await updateEmployee(editPersonRow.employee.id, {
+          name: editName,
+          email: editEmail,
+          jobTitle: editJobTitle,
+        });
+      }
+      if (canChangeRoles || editPersonRow.kind === "employee") {
+        const roleChanged = editRole !== currentRole;
+        if (roleChanged || (editPersonRow.kind === "employee" && editPassword)) {
+          await updatePersonRole(editPersonRow.kind, editPersonRow.id, {
+            role: editRole,
+            teamIds: editRole === "team_owner" ? editTeamIds : [],
+            password: editPassword || undefined,
+          });
+        }
+      }
+      if (!canChangeRoles || editRole === "employee") return null;
+      if (!editUser) return null;
       const base = new Set(
         editPermissionMode === "role" ? (catalog.data?.rolePresets?.[editRole] ?? []) : [],
       );
@@ -369,14 +478,15 @@ function PeopleDirectory({
       return updateAdminAccess(editUser.id, {
         role: editRole,
         permissionMode: editPermissionMode,
-        dataScope: editRole === "team_owner" ? "assigned_teams" : editDataScope,
+        dataScope: editRole === "team_owner" ? "assigned_teams" : "company",
         permissionOverrides: overrides,
-        teamLeadTeamIds: editTeamIds,
+        teamLeadTeamIds: editRole === "team_owner" ? editTeamIds : [],
         trackAsEmployee: editTrackAsEmployee,
       });
     },
     onSuccess: async () => {
       toast.success("Access updated");
+      setEditPersonRow(null);
       setEditUser(null);
       setEditPassword("");
       await Promise.all([
@@ -431,44 +541,100 @@ function PeopleDirectory({
       toast.error(error instanceof Error ? error.message : "Failed to resend invitation"),
   });
 
-  function openEdit(user: User) {
+  const employeePasswordMutation = useMutation({
+    mutationFn: () => {
+      if (!employeePasswordRow?.employee) throw new Error("Choose an employee first.");
+      return updateEmployeePassword(employeePasswordRow.employee.id, employeePassword);
+    },
+    onSuccess: async () => {
+      toast.success("Employee password updated");
+      setEmployeePasswordRow(null);
+      setEmployeePassword("");
+      await queryClient.invalidateQueries({ queryKey: ["employees"] });
+    },
+    onError: (error) =>
+      toast.error(error instanceof Error ? error.message : "Failed to update employee password"),
+  });
+
+  const employeeEditMutation = useMutation({
+    mutationFn: () => {
+      if (!editEmployeeRow?.employee) throw new Error("Choose an employee first.");
+      return updateEmployee(editEmployeeRow.employee.id, {
+        name: editEmployeeName,
+        email: editEmployeeEmail,
+        jobTitle: editEmployeeJobTitle,
+      });
+    },
+    onSuccess: async () => {
+      toast.success("Employee details updated");
+      setEditEmployeeRow(null);
+      await queryClient.invalidateQueries({ queryKey: ["employees"] });
+      await queryClient.invalidateQueries({ queryKey: ["teams"] });
+    },
+    onError: (error) =>
+      toast.error(error instanceof Error ? error.message : "Failed to update employee"),
+  });
+
+  function openAccess(row: PersonRow) {
+    const user = row.user ?? null;
+    setEditPersonRow(row);
     setEditUser(user);
-    setEditName(user.name);
-    setEditEmail(user.email);
+    setEditName(row.name);
+    setEditEmail(row.email);
+    setEditJobTitle(user?.jobTitle ?? row.employee?.jobTitle ?? "");
     setEditPassword("");
-    setEditRole(user.role);
-    setEditPreset(user.permissionMode === "custom" ? "custom" : user.role);
-    setEditPermissionMode(user.permissionMode);
-    setEditDataScope(user.dataScope);
-    setEditTeamIds(user.teamLeadTeamIds);
-    setEditTrackAsEmployee(user.trackAsEmployee);
-    setEditPermissions(user.permissions);
+    setEditRole(user?.role ?? "employee");
+    setEditPreset(user ? (user.permissionMode === "custom" ? "custom" : user.role) : "employee");
+    setEditPermissionMode(user?.permissionMode ?? "role");
+    setEditDataScope(user?.dataScope ?? "assigned_teams");
+    setEditTeamIds(user?.teamLeadTeamIds ?? row.teamIds);
+    setEditTrackAsEmployee(user?.trackAsEmployee ?? false);
+    setEditPermissions(user?.permissions ?? []);
+    setShowFullPermissions(false);
+  }
+
+  function openEmployeeEdit(row: PersonRow) {
+    setEditEmployeeRow(row);
+    setEditEmployeeName(row.employee?.name ?? row.name);
+    setEditEmployeeEmail(row.employee?.email ?? row.email);
+    setEditEmployeeJobTitle(row.employee?.jobTitle ?? "");
   }
 
   function choosePreset(preset: AccessPreset) {
     if (!canChangeRoles) {
-      toast.error("Only General admins can change roles.");
+      toast.error("You can only change roles below your own access level.");
       return;
     }
     setEditPreset(preset);
     if (preset === "custom") {
       setEditPermissionMode("custom");
+      setShowFullPermissions(true);
+      return;
+    }
+    if (!canAssignRole(currentUser, preset)) {
+      toast.error("You can only assign roles below your own access level.");
       return;
     }
     setEditRole(preset);
     setEditPermissionMode("role");
     setEditDataScope(preset === "general_admin" || preset === "hr" ? "company" : "assigned_teams");
-    setEditPermissions(catalog.data?.rolePresets?.[preset] ?? []);
+    setEditPermissions(preset === "employee" ? [] : catalog.data?.rolePresets?.[preset] ?? []);
   }
 
-  function changeBaseRole(role: Role) {
+  function changeBaseRole(role: EditableRole) {
     if (!canChangeRoles) {
-      toast.error("Only General admins can change roles.");
+      toast.error("You can only change roles below your own access level.");
+      return;
+    }
+    if (!canAssignRole(currentUser, role)) {
+      toast.error("You can only assign roles below your own access level.");
       return;
     }
     setEditRole(role);
-    if (role === "team_owner") {
+    if (role === "team_owner" || role === "employee") {
       setEditDataScope("assigned_teams");
+    } else {
+      setEditDataScope("company");
     }
     if (editPermissionMode === "custom" && editPreset !== "custom") {
       setEditPreset("custom");
@@ -476,6 +642,10 @@ function PeopleDirectory({
   }
 
   function changeDataScope(scope: DataScope) {
+    if (editRole !== "team_owner" && scope === "assigned_teams") {
+      toast.error("HR and General admin have company-wide visibility.");
+      return;
+    }
     if (editRole === "team_owner" && scope === "company") {
       toast.error("Team leads can only see assigned teams.");
       return;
@@ -485,6 +655,7 @@ function PeopleDirectory({
 
   const visiblePermissionKeys = useMemo(() => {
     if (!catalog.data) return [];
+    if (editRole === "employee") return [];
     if (editPermissionMode === "custom") return editPermissions;
     return catalog.data.rolePresets?.[editRole] ?? [];
   }, [catalog.data, editPermissionMode, editPermissions, editRole]);
@@ -539,6 +710,11 @@ function PeopleDirectory({
                 : "Add employees, Team Managers, or General Admins and choose their teams and sign-in method."}
             </p>
           </div>
+          {directoryRefreshing && (
+            <span className="rounded-full bg-muted px-3 py-1 text-xs font-bold text-muted-foreground">
+              Refreshing…
+            </span>
+          )}
           {!archiveOnly && (
             <Button onClick={() => setWizardOpen(true)}>
               <Plus className="mr-2 h-4 w-4" /> Add person
@@ -656,11 +832,49 @@ function PeopleDirectory({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {rows.map((row) => (
+            {directoryLoading ? (
+              Array.from({ length: 6 }).map((_, index) => (
+                <TableRow key={`people-loading-${index}`}>
+                  <TableCell>
+                    <Skeleton className="h-4 w-32" />
+                  </TableCell>
+                  <TableCell>
+                    <Skeleton className="h-4 w-56" />
+                  </TableCell>
+                  <TableCell>
+                    <Skeleton className="h-4 w-28" />
+                  </TableCell>
+                  <TableCell>
+                    <Skeleton className="h-4 w-36" />
+                  </TableCell>
+                  <TableCell>
+                    <Skeleton className="h-4 w-20" />
+                  </TableCell>
+                  <TableCell>
+                    <Skeleton className="h-6 w-20 rounded-full" />
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex justify-end gap-2">
+                      <Skeleton className="h-9 w-36 rounded-full" />
+                      <Skeleton className="h-9 w-9 rounded-md" />
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))
+            ) : rows.map((row) => (
               <TableRow key={`${row.kind}-${row.id}`}>
                 <TableCell className="font-medium">{row.name}</TableCell>
                 <TableCell className="text-sm text-muted-foreground">{row.email}</TableCell>
-                <TableCell className="text-sm">{row.roleLabel}</TableCell>
+                <TableCell className="text-sm">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span>{row.roleLabel}</span>
+                    {row.isSuperAdmin && (
+                      <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wide text-amber-700">
+                        Protected
+                      </span>
+                    )}
+                  </div>
+                </TableCell>
                 <TableCell className="text-sm">{row.detail}</TableCell>
                 <TableCell className="text-xs text-muted-foreground">
                   {row.kind === "employee"
@@ -672,8 +886,8 @@ function PeopleDirectory({
                 <TableCell>
                   <StatusBadge status={row.status} />
                 </TableCell>
-                <TableCell className="space-x-1 text-right">
-                  <div className="flex flex-wrap justify-end gap-1">
+                <TableCell className="text-right">
+                  <div className="flex items-center justify-end gap-2">
                     {row.dashboardEmployeeId && (row.kind === "admin" || row.status === "active") && (
                       <Button
                         variant="outline"
@@ -690,7 +904,7 @@ function PeopleDirectory({
                         Employee profile
                       </Button>
                     )}
-                    {row.isCurrentUser && !row.dashboardEmployeeId && (
+                    {row.isCurrentUser && !row.dashboardEmployeeId ? (
                       <Button
                         variant="outline"
                         size="sm"
@@ -699,114 +913,89 @@ function PeopleDirectory({
                         <UserCircle className="mr-1.5 h-3.5 w-3.5" />
                         My profile
                       </Button>
-                    )}
-                    {row.kind === "employee" ? (
-                    <>
-                      {(row.status === "invited" || row.status === "expired") &&
-                        row.employee?.invitation && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            loading={resendMutation.isPending}
-                            disabled={resendMutation.isPending}
-                            onClick={() => resendMutation.mutate(row.employee!.invitation!.id)}
-                          >
-                            <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
-                            Resend invitation
-                          </Button>
+                    ) : null}
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button variant="outline" size="sm" className="px-2.5">
+                          <MoreHorizontal className="h-4 w-4" />
+                          <span className="sr-only">Open actions</span>
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" className="w-52">
+                        {row.kind === "employee" ? (
+                          <>
+                            {canManageAccess && row.status !== "archived" && (
+                              <DropdownMenuItem onSelect={() => openAccess(row)}>
+                                <KeyRound className="h-4 w-4" />
+                                Access & password
+                              </DropdownMenuItem>
+                            )}
+                            {can(permissions.peopleManage) && row.status !== "archived" && (
+                              <DropdownMenuItem onSelect={() => openEmployeeEdit(row)}>
+                                <Pencil className="h-4 w-4" />
+                                Edit profile
+                              </DropdownMenuItem>
+                            )}
+                            {(row.status === "invited" || row.status === "expired") &&
+                              row.employee?.invitation && (
+                                <DropdownMenuItem
+                                  disabled={resendMutation.isPending}
+                                  onSelect={() => resendMutation.mutate(row.employee!.invitation!.id)}
+                                >
+                                  <RefreshCw className="h-4 w-4" />
+                                  Resend invitation
+                                </DropdownMenuItem>
+                              )}
+                          </>
+                        ) : (
+                          <>
+                            {canManageAccess &&
+                              row.user &&
+                              (row.isCurrentUser || canManageAdminUser(currentUser, row.user)) && (
+                              <DropdownMenuItem onSelect={() => openAccess(row)}>
+                                <KeyRound className="h-4 w-4" />
+                                Access & password
+                              </DropdownMenuItem>
+                            )}
+                          </>
                         )}
-                      {can(permissions.peopleArchive) &&
-                        !row.isCurrentUser &&
-                        row.status !== "archived" && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="text-destructive hover:text-destructive"
-                          loading={archiveMutation.isPending}
-                          disabled={archiveMutation.isPending}
-                          onClick={() => changeArchiveStatus(row, true)}
-                        >
-                          <Archive className="mr-1.5 h-3.5 w-3.5" /> Archive
-                        </Button>
-                      )}
-                      {can(permissions.peopleArchive) &&
-                        !row.isCurrentUser &&
-                        row.status === "archived" && (
-                        <>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            loading={archiveMutation.isPending}
-                            disabled={archiveMutation.isPending}
-                            onClick={() => changeArchiveStatus(row, false)}
-                          >
-                            <ArchiveRestore className="mr-1.5 h-3.5 w-3.5" /> Restore
-                          </Button>
-                          {archiveOnly && (
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="text-destructive hover:text-destructive"
-                              loading={deleteMutation.isPending}
-                              disabled={deleteMutation.isPending}
-                              onClick={() => deleteArchivedPerson(row)}
-                            >
-                              <Trash2 className="mr-1.5 h-3.5 w-3.5" /> Delete
-                            </Button>
-                          )}
-                        </>
-                      )}
-                    </>
-                  ) : (
-                    <>
-                      {!row.isCurrentUser && canChangeRoles && (
-                        <Button variant="ghost" size="sm" onClick={() => openEdit(row.user!)}>
-                          Permissions
-                        </Button>
-                      )}
-                      {can(permissions.peopleArchive) &&
-                        !row.isCurrentUser &&
-                        row.status !== "archived" && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="text-destructive hover:text-destructive"
-                          loading={archiveMutation.isPending}
-                          disabled={archiveMutation.isPending}
-                          onClick={() => changeArchiveStatus(row, true)}
-                        >
-                          <Archive className="mr-1.5 h-3.5 w-3.5" /> Archive
-                        </Button>
-                      )}
-                      {can(permissions.peopleArchive) &&
-                        !row.isCurrentUser &&
-                        row.status === "archived" && (
-                        <>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            loading={archiveMutation.isPending}
-                            disabled={archiveMutation.isPending}
-                            onClick={() => changeArchiveStatus(row, false)}
-                          >
-                            <ArchiveRestore className="mr-1.5 h-3.5 w-3.5" /> Restore
-                          </Button>
-                          {archiveOnly && (
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="text-destructive hover:text-destructive"
-                              loading={deleteMutation.isPending}
-                              disabled={deleteMutation.isPending}
-                              onClick={() => deleteArchivedPerson(row)}
-                            >
-                              <Trash2 className="mr-1.5 h-3.5 w-3.5" /> Delete
-                            </Button>
-                          )}
-                        </>
-                      )}
-                    </>
-                  )}
+                        {can(permissions.peopleArchive) && !row.isCurrentUser && !row.isSuperAdmin && (
+                          <>
+                            <DropdownMenuSeparator />
+                            {row.status !== "archived" ? (
+                              <DropdownMenuItem
+                                disabled={archiveMutation.isPending}
+                                className="text-destructive focus:text-destructive"
+                                onSelect={() => changeArchiveStatus(row, true)}
+                              >
+                                <Archive className="h-4 w-4" />
+                                Archive
+                              </DropdownMenuItem>
+                            ) : (
+                              <>
+                                <DropdownMenuItem
+                                  disabled={archiveMutation.isPending}
+                                  onSelect={() => changeArchiveStatus(row, false)}
+                                >
+                                  <ArchiveRestore className="h-4 w-4" />
+                                  Restore
+                                </DropdownMenuItem>
+                                {archiveOnly && (
+                                  <DropdownMenuItem
+                                    disabled={deleteMutation.isPending}
+                                    className="text-destructive focus:text-destructive"
+                                    onSelect={() => deleteArchivedPerson(row)}
+                                  >
+                                    <Trash2 className="h-4 w-4" />
+                                    Delete
+                                  </DropdownMenuItem>
+                                )}
+                              </>
+                            )}
+                          </>
+                        )}
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                     {row.isCurrentUser && (
                       <span className="inline-flex items-center rounded-full bg-muted px-2.5 py-1 text-xs font-bold text-muted-foreground">
                         You
@@ -833,6 +1022,7 @@ function PeopleDirectory({
         teams={teams.data ?? []}
         employees={employees.data ?? []}
         users={users.data ?? []}
+        currentUser={currentUser}
         onCreated={async () => {
           await Promise.all([
             queryClient.invalidateQueries({ queryKey: ["users"] }),
@@ -843,36 +1033,36 @@ function PeopleDirectory({
       />
 
       {/* Manage admin access */}
-      <Dialog open={!!editUser} onOpenChange={(open) => !open && setEditUser(null)}>
-        <DialogContent className="max-h-[88vh] overflow-hidden p-0 sm:max-w-3xl">
-          <DialogHeader className="border-b px-5 py-4">
-            <DialogTitle>Role & permissions</DialogTitle>
+      <Dialog
+        open={!!editPersonRow}
+        onOpenChange={(open) => {
+          if (!open) {
+            setEditPersonRow(null);
+            setEditUser(null);
+          }
+        }}
+      >
+        <DialogContent className="flex max-h-[88vh] flex-col overflow-hidden p-0 sm:max-w-3xl">
+          <DialogHeader className="shrink-0 border-b px-5 py-4">
+            <DialogTitle>Access, password & permissions</DialogTitle>
+            <DialogDescription>
+              Choose the person&apos;s role, password tools, visibility scope, and what they can access.
+            </DialogDescription>
           </DialogHeader>
           <form
-            className="flex min-h-0 flex-col"
+            className="flex min-h-0 flex-1 flex-col"
             onSubmit={(event) => {
               event.preventDefault();
               updateMutation.mutate();
             }}
           >
-            <div className="max-h-[calc(88vh-132px)] space-y-3 overflow-y-auto px-5 py-4">
-              <div className="rounded-xl border bg-muted/25 p-3">
-                <p className="text-sm font-extrabold">How roles work</p>
-                <div className="mt-2 grid gap-2 text-xs text-muted-foreground sm:grid-cols-3">
-                  <RoleExplainer
-                    title="Team lead"
-                    body="Assigned teams only. No company-wide admin or payroll visibility."
-                  />
-                  <RoleExplainer
-                    title="HR"
-                    body="People, invitations, schedules, payroll and HR operations."
-                  />
-                  <RoleExplainer
-                    title="General admin"
-                    body="Company-wide access. Can also be team lead when needed."
-                  />
-                </div>
-              </div>
+            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-4 pb-6">
+              {editUser?.isSuperAdmin && (
+                <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-800">
+                  Protected owner account: this is the company&apos;s primary Super Admin. Role,
+                  access scope, archive, delete, and email changes are locked.
+                </p>
+              )}
 
               <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-1.5">
@@ -891,19 +1081,37 @@ function PeopleDirectory({
                   type="email"
                   value={editEmail}
                   onChange={(event) => setEditEmail(event.target.value)}
+                  disabled={editUser?.isSuperAdmin}
                   required
+                />
+                {editUser?.isSuperAdmin && (
+                  <p className="text-xs text-muted-foreground">
+                    Email is locked for the protected owner account.
+                  </p>
+                )}
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="edit-job-title">Job title</Label>
+                <Input
+                  id="edit-job-title"
+                  value={editJobTitle}
+                  onChange={(event) => setEditJobTitle(event.target.value)}
+                  placeholder="e.g. Operations Manager"
                 />
               </div>
               <div className="space-y-1.5">
-                <Label htmlFor="edit-password">New password</Label>
+                <Label htmlFor="edit-password">Reset password</Label>
                 <Input
                   id="edit-password"
                   type="password"
                   value={editPassword}
                   onChange={(event) => setEditPassword(event.target.value)}
                   minLength={editPassword ? 8 : undefined}
-                  placeholder="Leave blank to keep current"
+                  placeholder="Type a new password, or leave blank"
                 />
+                <p className="text-xs text-muted-foreground">
+                  If filled, the new password will replace the current one. Share it securely.
+                </p>
               </div>
               <div className="space-y-1.5">
                 <Label>Role preset</Label>
@@ -916,51 +1124,80 @@ function PeopleDirectory({
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="team_owner">Team lead</SelectItem>
-                    <SelectItem value="hr">HR</SelectItem>
-                    <SelectItem value="general_admin">General admin</SelectItem>
+                    {allowedRoleOptions.includes("employee") && (
+                      <SelectItem value="employee">Employee</SelectItem>
+                    )}
+                    {allowedRoleOptions.includes("team_owner") && (
+                      <SelectItem value="team_owner">Team lead</SelectItem>
+                    )}
+                    {allowedRoleOptions.includes("hr") && <SelectItem value="hr">HR</SelectItem>}
+                    {allowedRoleOptions.includes("general_admin") && (
+                      <SelectItem value="general_admin">General admin</SelectItem>
+                    )}
                     <SelectItem value="custom">Custom permissions</SelectItem>
                   </SelectContent>
                 </Select>
                 {!canChangeRoles && (
                   <p className="text-xs text-muted-foreground">
-                    Only General admins can change roles and permission presets.
+                    {isProtectedOwner
+                      ? "Protected owner role changes are locked."
+                      : editingSelf
+                      ? "You can reset your password here, but role changes for your own account are locked for safety."
+                      : "You need Manage access permission to change roles and permission presets."}
                   </p>
                 )}
               </div>
               </div>
 
               <div className="rounded-xl border p-3">
-              <Label>Access scope</Label>
-              <div className="mt-2 grid gap-2 sm:grid-cols-2">
-                <button
-                  type="button"
-                  onClick={() => changeDataScope("assigned_teams")}
-                  className={cn(
-                    "rounded-lg border p-3 text-left text-sm transition hover:bg-muted/60",
-                    editDataScope === "assigned_teams" && "border-[#e5185d] bg-[#fce3ec]/50",
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <Label>Access scope</Label>
+                  {editRole !== "team_owner" && (
+                    <span className="rounded-full bg-success/10 px-2.5 py-1 text-[11px] font-bold text-success">
+                      {editRole === "employee" ? "Own account" : "Whole company"}
+                    </span>
                   )}
-                >
-                  <span className="font-bold">Assigned teams</span>
-                  <span className="mt-1 block text-xs text-muted-foreground">
-                    Best for Team leads. They only see selected teams.
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  disabled={editRole === "team_owner"}
-                  onClick={() => changeDataScope("company")}
-                  className={cn(
-                    "rounded-lg border p-3 text-left text-sm transition hover:bg-muted/60 disabled:cursor-not-allowed disabled:opacity-45",
-                    editDataScope === "company" && "border-[#e5185d] bg-[#fce3ec]/50",
+                </div>
+                <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                  {editRole === "employee" ? (
+                    <button
+                      type="button"
+                      disabled
+                      className="rounded-lg border border-[#e5185d] bg-[#fce3ec]/50 p-3 text-left text-sm"
+                    >
+                      <span className="font-bold">Own account only</span>
+                      <span className="mt-1 block text-xs text-muted-foreground">
+                        Employees only see their own dashboard, timesheets, leave, and schedule.
+                      </span>
+                    </button>
+                  ) : editRole === "team_owner" ? (
+                    <button
+                      type="button"
+                      disabled={!canChangeRoles}
+                      onClick={() => changeDataScope("assigned_teams")}
+                      className={cn(
+                        "rounded-lg border p-3 text-left text-sm transition hover:bg-muted/60 disabled:cursor-not-allowed disabled:opacity-45",
+                        "border-[#e5185d] bg-[#fce3ec]/50",
+                      )}
+                    >
+                      <span className="font-bold">Assigned teams</span>
+                      <span className="mt-1 block text-xs text-muted-foreground">
+                        Team leads only see the teams assigned below.
+                      </span>
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      disabled
+                      className="rounded-lg border border-[#e5185d] bg-[#fce3ec]/50 p-3 text-left text-sm"
+                    >
+                      <span className="font-bold">Whole company</span>
+                      <span className="mt-1 block text-xs text-muted-foreground">
+                        HR and General admin have company-wide visibility.
+                      </span>
+                    </button>
                   )}
-                >
-                  <span className="font-bold">Whole company</span>
-                  <span className="mt-1 block text-xs text-muted-foreground">
-                    Best for General admin and HR.
-                  </span>
-                </button>
-              </div>
+                </div>
               </div>
 
               {editPermissionMode === "custom" && (
@@ -968,26 +1205,32 @@ function PeopleDirectory({
                 <Label>Base role for this custom account</Label>
                 <Select
                   value={editRole}
-                  onValueChange={(value) => changeBaseRole(value as Role)}
+                  onValueChange={(value) => changeBaseRole(value as EditableRole)}
                   disabled={!canChangeRoles}
                 >
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="team_owner">Team lead</SelectItem>
-                    <SelectItem value="hr">HR</SelectItem>
-                    <SelectItem value="general_admin">General admin</SelectItem>
+                    {allowedRoleOptions.includes("employee") && (
+                      <SelectItem value="employee">Employee</SelectItem>
+                    )}
+                    {allowedRoleOptions.includes("team_owner") && (
+                      <SelectItem value="team_owner">Team lead</SelectItem>
+                    )}
+                    {allowedRoleOptions.includes("hr") && <SelectItem value="hr">HR</SelectItem>}
+                    {allowedRoleOptions.includes("general_admin") && (
+                      <SelectItem value="general_admin">General admin</SelectItem>
+                    )}
                   </SelectContent>
                 </Select>
                 <p className="text-xs text-muted-foreground">
-                  Team lead is limited to selected teams. General admin can be company-wide and can
-                  also be assigned teams.
+                  Team lead is limited to selected teams. General admin and HR can be company-wide.
                 </p>
               </div>
               )}
 
-              {(editRole === "team_owner" || editRole === "general_admin") && (
+              {canChangeRoles && editRole === "team_owner" && (
                 <TeamAccessSelector
                   teams={teams.data ?? []}
                   teamIds={editTeamIds}
@@ -999,20 +1242,28 @@ function PeopleDirectory({
                 />
               )}
 
-              {(editRole === "team_owner" || editRole === "general_admin") && (
+              <RoleAccessSummary
+                role={editRole}
+                mode={editPermissionMode}
+                permissionCount={visiblePermissionKeys.length}
+                showFull={showFullPermissions}
+                onToggleFull={() => setShowFullPermissions((value) => !value)}
+              />
+
+              {canChangeRoles && editRole === "team_owner" && (
                 <div className="flex items-center justify-between gap-3 rounded-xl border p-3">
-                <div>
-                  <Label>Also track as employee</Label>
-                  <p className="text-xs text-muted-foreground">
-                    Use this when the admin/team lead also works on tasks and needs their own
-                    employee dashboard.
-                  </p>
+                  <div>
+                    <Label>Also track as employee</Label>
+                    <p className="text-xs text-muted-foreground">
+                      Use this when the team lead also works on tasks and needs their own employee
+                      dashboard.
+                    </p>
+                  </div>
+                  <Switch checked={editTrackAsEmployee} onCheckedChange={setEditTrackAsEmployee} />
                 </div>
-                <Switch checked={editTrackAsEmployee} onCheckedChange={setEditTrackAsEmployee} />
-              </div>
               )}
 
-              {editPermissionMode === "custom" && catalog.data && (
+              {showFullPermissions && editPermissionMode === "custom" && catalog.data && (
                 <PermissionChecklist
                   permissions={catalog.data.permissions}
                   selected={editPermissions}
@@ -1025,7 +1276,7 @@ function PeopleDirectory({
                 />
               )}
 
-              {catalog.data && (
+              {showFullPermissions && catalog.data && (
                 <PermissionPreview
                   role={editRole}
                   mode={editPermissionMode}
@@ -1035,14 +1286,95 @@ function PeopleDirectory({
               )}
             </div>
 
-            <div className="flex justify-end gap-2 border-t bg-card px-5 py-4">
-              <Button type="button" variant="outline" onClick={() => setEditUser(null)}>
+            <div className="flex shrink-0 justify-end gap-2 border-t bg-card px-5 py-4">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  setEditPersonRow(null);
+                  setEditUser(null);
+                }}
+              >
                 Cancel
               </Button>
               <Button type="submit" disabled={updateMutation.isPending}>
                 {updateMutation.isPending ? "Saving..." : "Save access"}
               </Button>
             </div>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={editEmployeeRow !== null}
+        onOpenChange={(open) => {
+          if (!open) setEditEmployeeRow(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit employee — {editEmployeeRow?.name}</DialogTitle>
+            <DialogDescription>
+              Update the employee identity shown across People, Teams, screenshots, and timesheets.
+            </DialogDescription>
+          </DialogHeader>
+          <form
+            className="space-y-4"
+            onSubmit={(event) => {
+              event.preventDefault();
+              employeeEditMutation.mutate();
+            }}
+          >
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label htmlFor="employee-edit-name">Name</Label>
+                <Input
+                  id="employee-edit-name"
+                  value={editEmployeeName}
+                  onChange={(event) => setEditEmployeeName(event.target.value)}
+                  required
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="employee-edit-email">Work email</Label>
+                <Input
+                  id="employee-edit-email"
+                  type="email"
+                  value={editEmployeeEmail}
+                  onChange={(event) => setEditEmployeeEmail(event.target.value)}
+                  required
+                />
+              </div>
+              <div className="space-y-1.5 sm:col-span-2">
+                <Label htmlFor="employee-edit-job-title">Job title</Label>
+                <Input
+                  id="employee-edit-job-title"
+                  value={editEmployeeJobTitle}
+                  onChange={(event) => setEditEmployeeJobTitle(event.target.value)}
+                  placeholder="e.g. AI Engineer"
+                />
+                <p className="text-xs text-muted-foreground">
+                  This is the job title shown under the employee. Admin/HR/team-lead permissions
+                  are managed separately from Access & password.
+                </p>
+              </div>
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setEditEmployeeRow(null)}>
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                loading={employeeEditMutation.isPending}
+                disabled={
+                  employeeEditMutation.isPending ||
+                  !editEmployeeName.trim() ||
+                  !editEmployeeEmail.includes("@")
+                }
+              >
+                Save employee
+              </Button>
+            </DialogFooter>
           </form>
         </DialogContent>
       </Dialog>
@@ -1098,6 +1430,66 @@ function PeopleDirectory({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <Dialog
+        open={employeePasswordRow !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setEmployeePasswordRow(null);
+            setEmployeePassword("");
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Set employee password — {employeePasswordRow?.name}</DialogTitle>
+            <DialogDescription>
+              Set or reset the password this employee uses for the employee portal and desktop
+              sign-in.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="rounded-xl border bg-muted/25 p-3 text-sm">
+              <p className="font-semibold">{employeePasswordRow?.email}</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                This replaces the employee password. Share it with the employee securely.
+              </p>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="employee-password">New password</Label>
+              <Input
+                id="employee-password"
+                type="password"
+                value={employeePassword}
+                onChange={(event) => setEmployeePassword(event.target.value)}
+                minLength={8}
+                placeholder="Minimum 8 characters"
+                autoFocus
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setEmployeePasswordRow(null);
+                setEmployeePassword("");
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              loading={employeePasswordMutation.isPending}
+              disabled={employeePasswordMutation.isPending || employeePassword.length < 8}
+              onClick={() => employeePasswordMutation.mutate()}
+            >
+              Set password
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -1108,6 +1500,7 @@ function AddPersonWizard({
   teams,
   employees,
   users,
+  currentUser,
   onCreated,
 }: {
   open: boolean;
@@ -1115,6 +1508,7 @@ function AddPersonWizard({
   teams: Team[];
   employees: Employee[];
   users: User[];
+  currentUser?: User | null;
   onCreated: () => Promise<void>;
 }) {
   const navigate = useNavigate();
@@ -1137,6 +1531,9 @@ function AddPersonWizard({
     { name: "Lunch", start_time: "13:00", end_time: "13:30", minutes: 30, paid: true },
     { name: "Short break", start_time: "15:30", end_time: "15:45", minutes: 15, paid: true },
   ]);
+  const canCreateTeamLeader = canAssignRole(currentUser, "team_owner");
+  const canCreateHr = canAssignRole(currentUser, "hr");
+  const canCreateGeneralAdmin = canAssignRole(currentUser, "general_admin");
 
   // Invitation confirmation (employee only).
   const [createdEmployee, setCreatedEmployee] = useState<Employee | null>(null);
@@ -1157,6 +1554,12 @@ function AddPersonWizard({
     setCreatedInvitation(undefined);
     setInvitationEmailQueued(false);
   }
+
+  useEffect(() => {
+    if (kind === "general_admin" && !canCreateGeneralAdmin) setKind("employee");
+    if (kind === "hr" && !canCreateHr) setKind("employee");
+    if (kind === "team_owner" && !canCreateTeamLeader) setKind("employee");
+  }, [canCreateGeneralAdmin, canCreateHr, canCreateTeamLeader, kind]);
 
   function close() {
     onOpenChange(false);
@@ -1416,27 +1819,33 @@ function AddPersonWizard({
               title="Employee"
               subtitle="Tracked worker. Receives an email invitation to choose a password, then signs in to the desktop app with that email."
             />
-            <TypeOption
-              active={kind === "team_owner"}
-              onClick={() => setKind("team_owner")}
-              icon={UserPlus}
-              title="Team leader"
-              subtitle="Manages assigned teams in the dashboard and has an Employee profile, so they can receive and track their own tasks."
-            />
-            <TypeOption
-              active={kind === "general_admin"}
-              onClick={() => setKind("general_admin")}
-              icon={ShieldCheck}
-              title="General admin"
-              subtitle="Company-wide admin with access to every team and permission to review a team leader's own task."
-            />
-            <TypeOption
-              active={kind === "hr"}
-              onClick={() => setKind("hr")}
-              icon={KeyRound}
-              title="HR"
-              subtitle="Manages employee profiles, schedules, payroll, deductions, overtime and invitations."
-            />
+            {canCreateTeamLeader && (
+              <TypeOption
+                active={kind === "team_owner"}
+                onClick={() => setKind("team_owner")}
+                icon={UserPlus}
+                title="Team leader"
+                subtitle="Manages assigned teams in the dashboard and has an Employee profile, so they can receive and track their own tasks."
+              />
+            )}
+            {canCreateGeneralAdmin && (
+              <TypeOption
+                active={kind === "general_admin"}
+                onClick={() => setKind("general_admin")}
+                icon={ShieldCheck}
+                title="General admin"
+                subtitle="Company-wide admin with access to every team and permission to review a team leader's own task."
+              />
+            )}
+            {canCreateHr && (
+              <TypeOption
+                active={kind === "hr"}
+                onClick={() => setKind("hr")}
+                icon={KeyRound}
+                title="HR"
+                subtitle="Manages employee profiles, schedules, payroll, deductions, overtime and invitations."
+              />
+            )}
             <div className="flex justify-end gap-2 pt-1">
               <Button variant="outline" onClick={close}>
                 Cancel
@@ -1688,11 +2097,231 @@ function TypeOption({
   );
 }
 
-function RoleExplainer({ title, body }: { title: string; body: string }) {
+type AccessCard = {
+  icon: LucideIcon;
+  title: string;
+  description: string;
+  count: string;
+};
+
+function accessCardsForRole(role: EditableRole): AccessCard[] {
+  if (role === "employee") {
+    return [
+      {
+        icon: Activity,
+        title: "My activity",
+        description: "Their own timer, sessions, and activity only.",
+        count: "Own data",
+      },
+      {
+        icon: Clock3,
+        title: "My timesheets",
+        description: "Personal worked time and attendance history.",
+        count: "Own data",
+      },
+      {
+        icon: CalendarCheck,
+        title: "My leave",
+        description: "Their own leave balance and holiday requests.",
+        count: "Own data",
+      },
+      {
+        icon: ClipboardList,
+        title: "My schedule",
+        description: "Personal shift, breaks, and workday rules.",
+        count: "Own data",
+      },
+    ];
+  }
+  if (role === "team_owner") {
+    return [
+      {
+        icon: UsersRound,
+        title: "Assigned teams",
+        description: "Only teams selected for this lead.",
+        count: "Team scope",
+      },
+      {
+        icon: Users,
+        title: "Team members",
+        description: "People and activity inside assigned teams.",
+        count: "Members",
+      },
+      {
+        icon: Clock3,
+        title: "Timesheets",
+        description: "Team attendance and worked time.",
+        count: "Team only",
+      },
+      {
+        icon: CalendarCheck,
+        title: "Leave requests",
+        description: "Holiday requests from assigned team members.",
+        count: "Team only",
+      },
+      {
+        icon: BarChart3,
+        title: "Team reports",
+        description: "Reports and tasks for assigned teams.",
+        count: "Scoped",
+      },
+    ];
+  }
+  if (role === "hr") {
+    return [
+      {
+        icon: LayoutDashboard,
+        title: "Company dashboard",
+        description: "Full workforce visibility across the company.",
+        count: "All teams",
+      },
+      {
+        icon: UsersRound,
+        title: "All employees",
+        description: "Profiles, invitations, schedules, and status.",
+        count: "Company-wide",
+      },
+      {
+        icon: CalendarCheck,
+        title: "Leave & holidays",
+        description: "Review balances and holiday requests.",
+        count: "All requests",
+      },
+      {
+        icon: ClipboardList,
+        title: "Schedules",
+        description: "Workdays, breaks, shifts, and time requests.",
+        count: "All staff",
+      },
+      {
+        icon: Banknote,
+        title: "Payroll",
+        description: "Salary rules, overtime, and payroll previews.",
+        count: "Full view",
+      },
+      {
+        icon: BarChart3,
+        title: "HR reports",
+        description: "Company reports for people and attendance.",
+        count: "Company-wide",
+      },
+    ];
+  }
+  return [
+    {
+      icon: LayoutDashboard,
+      title: "Company dashboard",
+      description: "Full visibility across people, teams, and work.",
+      count: "All teams",
+    },
+    {
+      icon: UsersRound,
+      title: "All employees",
+      description: "Manage people, profiles, roles, and access.",
+      count: "Company-wide",
+    },
+    {
+      icon: CalendarCheck,
+      title: "Leave & schedules",
+      description: "Holiday requests, shifts, breaks, and time reviews.",
+      count: "All staff",
+    },
+    {
+      icon: Banknote,
+      title: "Payroll",
+      description: "Salary, overtime, deductions, and payroll previews.",
+      count: "Full view",
+    },
+    {
+      icon: Settings,
+      title: "Settings & audit",
+      description: "Tracking settings, audit log, and system controls.",
+      count: "Admin tools",
+    },
+    {
+      icon: KeyRound,
+      title: "Access management",
+      description: "Passwords, roles, permissions, and account actions.",
+      count: "Full control",
+    },
+  ];
+}
+
+function RoleAccessSummary({
+  role,
+  mode,
+  permissionCount,
+  showFull,
+  onToggleFull,
+}: {
+  role: EditableRole;
+  mode: PermissionMode;
+  permissionCount: number;
+  showFull: boolean;
+  onToggleFull: () => void;
+}) {
+  const cards = accessCardsForRole(role);
+  const isCompanyWide = role === "hr" || role === "general_admin";
+
   return (
-    <div className="rounded-lg border bg-card p-3">
-      <p className="font-bold text-foreground">{title}</p>
-      <p className="mt-1 leading-relaxed">{body}</p>
+    <div className="rounded-xl border bg-muted/15 p-3">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Label>What this role can access</Label>
+            <span className="rounded-full bg-primary/10 px-2.5 py-1 text-[11px] font-extrabold text-primary">
+              {roleLabel(role)}
+              {mode === "custom" ? " · custom" : ""}
+            </span>
+          </div>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {role === "employee"
+              ? "This role only sees their own account after saving."
+              : isCompanyWide
+                ? "This role has company-wide visibility after saving."
+                : "This role only sees assigned teams after saving."}
+          </p>
+        </div>
+        <Button type="button" variant="ghost" size="sm" onClick={onToggleFull}>
+          <Eye className="mr-1.5 h-3.5 w-3.5" />
+          {showFull ? "Hide full permissions" : "View full permissions"}
+        </Button>
+      </div>
+
+      <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+        {cards.map((card) => (
+          <RoleAccessCard key={card.title} card={card} />
+        ))}
+      </div>
+      <p className="mt-2 text-[11px] text-muted-foreground">
+        {role === "employee"
+          ? "Employee access uses the employee portal and desktop app, not the admin dashboard."
+          : `${permissionCount} permission signals included in this preset.`}
+      </p>
+    </div>
+  );
+}
+
+function RoleAccessCard({ card }: { card: AccessCard }) {
+  const Icon = card.icon;
+  return (
+    <div className="rounded-lg border bg-card/80 p-3">
+      <div className="flex items-start gap-2.5">
+        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-[#fce3ec] text-[#e5185d]">
+          <Icon className="h-4 w-4" />
+        </span>
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-sm font-extrabold text-foreground">{card.title}</p>
+            <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-bold text-muted-foreground">
+              {card.count}
+            </span>
+          </div>
+          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+            {card.description}
+          </p>
+        </div>
+      </div>
     </div>
   );
 }
@@ -1726,7 +2355,7 @@ function PermissionChecklist({
           {selected.length} selected
         </span>
       </div>
-      <div className="grid max-h-[240px] gap-2 overflow-y-auto pr-1 md:grid-cols-2">
+      <div className="grid gap-2 md:grid-cols-2">
         {Object.entries(grouped).map(([group, items]) => (
           <div key={group} className="rounded-lg border bg-muted/20 p-2.5">
             <p className="mb-2 text-xs font-extrabold uppercase tracking-wide text-muted-foreground">
@@ -1762,7 +2391,7 @@ function PermissionPreview({
   permissions,
   selectedKeys,
 }: {
-  role: Role;
+  role: EditableRole;
   mode: PermissionMode;
   permissions: PermissionDefinition[];
   selectedKeys: string[];
@@ -1780,7 +2409,7 @@ function PermissionPreview({
     <div className="rounded-xl border bg-muted/20 p-3">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <Label>Visible permissions</Label>
+          <Label>Full permission details</Label>
           <p className="mt-1 text-xs text-muted-foreground">
             Current selection for{" "}
             <span className="font-bold text-foreground">
@@ -1800,7 +2429,7 @@ function PermissionPreview({
       {groupEntries.length === 0 ? (
         <p className="mt-3 text-xs text-muted-foreground">No permissions selected.</p>
       ) : (
-        <div className="mt-3 grid max-h-[190px] gap-2 overflow-y-auto pr-1 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
           {groupEntries.map(([group, items]) => (
             <div key={group} className="rounded-lg border bg-card p-3">
               <p className="text-xs font-extrabold uppercase tracking-wide text-muted-foreground">
@@ -1873,7 +2502,8 @@ function kindLabel(kind: PersonKind): string {
   return "General admin";
 }
 
-function roleLabel(role: Role): string {
+function roleLabel(role: EditableRole): string {
+  if (role === "employee") return "Employee";
   if (role === "team_owner") return "Team lead";
   if (role === "hr") return "HR";
   return "General admin";

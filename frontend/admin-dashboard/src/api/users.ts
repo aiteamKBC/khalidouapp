@@ -9,6 +9,7 @@ type BackendUser = {
   email: string;
   job_title?: string | null;
   role: Role;
+  is_super_admin?: boolean;
   permissions?: string[];
   assigned_team_ids?: string[];
   status: "active" | "inactive";

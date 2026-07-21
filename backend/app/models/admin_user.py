@@ -2,7 +2,7 @@ from uuid import UUID
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database.base import Base
@@ -31,6 +31,7 @@ class AdminUser(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     email: Mapped[str] = mapped_column(String(320), nullable=False, index=True)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     role: Mapped[str] = mapped_column(String(50), nullable=False, default="general_admin")
+    is_super_admin: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="active")
     permission_mode: Mapped[str] = mapped_column(String(20), nullable=False, default="role")
     data_scope: Mapped[str] = mapped_column(
@@ -52,3 +53,12 @@ class AdminUser(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         back_populates="reviewed_by_admin",
         foreign_keys="TaskWorkflowRequest.reviewed_by_admin_user_id",
     )
+
+    @property
+    def job_title(self) -> str | None:
+        return self.employee.job_title if self.employee else None
+
+    @job_title.setter
+    def job_title(self, value: str | None) -> None:
+        if self.employee is not None:
+            self.employee.job_title = value

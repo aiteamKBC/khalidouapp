@@ -351,35 +351,14 @@ def enqueue_enrollment_code_email(
     )
 
 
-def _portal_message(*, to: str, name: str, access_key: str) -> tuple[str, str]:
+def _deprecated_portal_message(*, to: str, name: str, password: str) -> tuple[str, str]:
     body = (
         f"Hi {name},\n\nYou can sign in to your Khaliduo employee portal here:\n"
-        f"{settings.app_public_url.rstrip('/')}/employee\n\nEmail: {to}\nAccess key: {access_key}\n\n"
-        f"Keep this key private. If you lose it, ask an administrator to issue a new one.\n\n"
+        f"{settings.app_public_url.rstrip('/')}/employee\n\nEmail: {to}\nPassword: {password}\n\n"
+        f"Keep this password private. If you lose it, ask an administrator to reset it.\n\n"
         f"— {settings.app_name}"
     )
-    return f"{settings.app_name}: your portal access key", body
-
-
-def enqueue_portal_key_email(
-    db: Session,
-    background_tasks: BackgroundTasks,
-    *,
-    company_id: UUID,
-    to: str,
-    name: str,
-    access_key: str,
-) -> bool:
-    subject, body = _portal_message(to=to, name=name, access_key=access_key)
-    return enqueue_email_once(
-        db,
-        background_tasks,
-        company_id=company_id,
-        to=to,
-        category="employee_portal_key",
-        subject=subject,
-        body=body,
-    )
+    return f"{settings.app_name}: your employee portal password", body
 
 
 # Backwards-compatible direct send helpers for scripts outside the API.
@@ -392,11 +371,4 @@ def send_enrollment_code_email(*, to: str, name: str, code: str, expires_at: str
     logger.warning("[email] device enrollment emails are disabled by policy for %s", to.lower())
     return
     subject, body = _enrollment_message(name=name, code=code, expires_at=expires_at)
-    send_email(to, subject, body)
-
-
-def send_portal_key_email(*, to: str, name: str, access_key: str) -> None:
-    logger.warning("[email] portal key emails are disabled by policy for %s", to.lower())
-    return
-    subject, body = _portal_message(to=to, name=name, access_key=access_key)
     send_email(to, subject, body)

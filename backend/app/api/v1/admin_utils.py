@@ -51,10 +51,7 @@ def serialize_employee(employee: Employee, invitation=None) -> dict[str, Any]:
           "avatar_url": employee.avatar_url,
           "start_date": employee.start_date.isoformat() if employee.start_date else None,
           "annual_leave_days": employee.annual_leave_days,
-        "portal_access_enabled": bool(
-            employee.portal_password_hash or employee.portal_access_key_hash
-        ),
-        "portal_access_key_hint": employee.portal_access_key_hint,
+        "portal_access_enabled": bool(employee.portal_password_hash),
         "portal_last_login_at": employee.portal_last_login_at.isoformat() if employee.portal_last_login_at else None,
         "portal_last_login_ip": employee.portal_last_login_ip,
         "portal_last_user_agent": employee.portal_last_user_agent,

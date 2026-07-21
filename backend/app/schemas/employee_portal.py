@@ -1,19 +1,12 @@
 from datetime import date
 from uuid import UUID
 
-from pydantic import BaseModel, EmailStr, Field, model_validator
+from pydantic import BaseModel, EmailStr, Field
 
 
 class EmployeePortalLogin(BaseModel):
     email: EmailStr
-    password: str | None = Field(default=None, min_length=8, max_length=255)
-    access_key: str | None = Field(default=None, min_length=8, max_length=120)
-
-    @model_validator(mode="after")
-    def require_credential(self):
-        if not self.password and not self.access_key:
-            raise ValueError("password or access_key is required")
-        return self
+    password: str = Field(min_length=8, max_length=255)
 
 
 class EmployeeInvitationAccept(BaseModel):
@@ -22,10 +15,6 @@ class EmployeeInvitationAccept(BaseModel):
 
 class EmployeePortalHandoff(BaseModel):
     handoff_token: str = Field(min_length=20, max_length=4096)
-
-
-class EmployeeForgotAccessRequest(BaseModel):
-    email: EmailStr
 
 
 class EmployeeProfileUpdate(BaseModel):

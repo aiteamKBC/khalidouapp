@@ -1,6 +1,12 @@
 import { apiFetch, toMinutes, withQuery } from "./client";
 import { normalizeAiAcronym } from "@/lib/text";
-import type { Employee, EmployeeAccountStatus, EmployeeStatus, EnrollmentCode } from "@/types";
+import type {
+  Employee,
+  EmployeeAccountStatus,
+  EmployeeStatus,
+  EnrollmentCode,
+  TeamMemberRole,
+} from "@/types";
 
 type BackendEmployee = {
   id: string;
@@ -16,7 +22,6 @@ type BackendEmployee = {
     expires_at: string;
   } | null;
   portal_access_enabled?: boolean;
-  portal_access_key_hint?: string | null;
   portal_last_login_at?: string | null;
   portal_last_login_ip?: string | null;
   portal_last_user_agent?: string | null;
@@ -45,6 +50,7 @@ type BackendEmployeeStatus = {
   last_screenshot?: string | null;
   device?: BackendDevice | null;
   team_ids?: string[];
+  team_role?: TeamMemberRole | null;
 };
 
 type BackendEnrollmentCode = {
@@ -64,6 +70,11 @@ export type EmployeeCreateInput = {
   employeeCode?: string;
   jobTitle?: string;
   timezone?: string;
+};
+
+export type EmployeeUpdateInput = Partial<EmployeeCreateInput> & {
+  status?: "active" | "inactive";
+  weeklyCapacityMinutes?: number;
 };
 
 export type WorkProfile = {
@@ -140,6 +151,7 @@ function mapEmployee(status: BackendEmployeeStatus, teamIds: string[]): Employee
     code: employee.employee_code,
     email: employee.email,
     jobTitle: normalizeAiAcronym(employee.job_title ?? ""),
+    teamRole: status.team_role ?? undefined,
     teamIds,
     status: normalizeEmployeeStatus(status.activity_status),
     sessionStart: status.session_start_time ?? undefined,
@@ -163,7 +175,6 @@ function mapEmployee(status: BackendEmployeeStatus, teamIds: string[]): Employee
         }
       : undefined,
     portalAccessEnabled: employee.portal_access_enabled === true,
-    portalAccessKeyHint: employee.portal_access_key_hint ?? undefined,
     portalLastLoginAt: employee.portal_last_login_at ?? undefined,
     portalLastLoginIp: employee.portal_last_login_ip ?? undefined,
     portalLastUserAgent: employee.portal_last_user_agent ?? undefined,
@@ -237,6 +248,36 @@ export async function createEmployee(input: EmployeeCreateInput): Promise<Employ
   return (await getEmployee(created.id))!;
 }
 
+export async function updateEmployee(
+  employeeId: string,
+  input: EmployeeUpdateInput,
+): Promise<Employee> {
+  await apiFetch<BackendEmployee>(`/employees/${employeeId}`, {
+    method: "PATCH",
+    body: JSON.stringify({
+      name: input.name,
+      email: input.email,
+      employee_code: input.employeeCode,
+      job_title: input.jobTitle === undefined ? undefined : normalizeAiAcronym(input.jobTitle),
+      timezone: input.timezone,
+      status: input.status,
+      weekly_capacity_minutes: input.weeklyCapacityMinutes,
+    }),
+  });
+  return (await getEmployee(employeeId))!;
+}
+
+export async function updateEmployeePassword(
+  employeeId: string,
+  password: string,
+): Promise<Employee> {
+  await apiFetch(`/employees/${employeeId}/password`, {
+    method: "PATCH",
+    body: JSON.stringify({ password }),
+  });
+  return (await getEmployee(employeeId))!;
+}
+
 export async function listEnrollmentCodes(employeeId: string): Promise<EnrollmentCode[]> {
   const rows = await apiFetch<BackendEnrollmentCode[]>(`/employees/${employeeId}/enrollment-codes`);
   return rows.map(mapEnrollmentCode);
@@ -264,29 +305,35 @@ export async function revokeEnrollmentCode(
   return mapEnrollmentCode(row);
 }
 
-export async function createPortalAccessKey(employeeId: string): Promise<{
-  email: string;
-  accessKey: string;
-  accessKeyHint: string;
-}> {
-  const row = await apiFetch<{
-    email: string;
-    access_key: string;
-    access_key_hint: string;
-  }>(`/employees/${employeeId}/portal-access-key`, { method: "POST" });
-  return {
-    email: row.email,
-    accessKey: row.access_key,
-    accessKeyHint: row.access_key_hint,
-  };
-}
-
-export async function revokePortalAccessKey(employeeId: string): Promise<void> {
-  await apiFetch(`/employees/${employeeId}/portal-access-key`, { method: "DELETE" });
-}
-
 export async function getWorkProfile(employeeId: string): Promise<WorkProfile> {
   return mapWorkProfile(await apiFetch(`/employees/${employeeId}/work-profile`));
+}
+
+export type EmployeeBreakRules = {
+  employeeId: string;
+  name: string;
+  email: string;
+  breakRules: WorkProfile["breakRules"];
+};
+
+export async function listEmployeeBreakRules(
+  scopedTeamIds?: string[],
+): Promise<EmployeeBreakRules[]> {
+  const teamId = scopedTeamIds?.length === 1 ? scopedTeamIds[0] : undefined;
+  const rows = await apiFetch<
+    Array<{
+      employee_id: string;
+      name: string;
+      email: string;
+      break_rules: WorkProfile["breakRules"];
+    }>
+  >(withQuery("/employees/break-rules", { team_id: teamId }));
+  return rows.map((row) => ({
+    employeeId: row.employee_id,
+    name: row.name,
+    email: row.email,
+    breakRules: row.break_rules,
+  }));
 }
 
 export async function updateWorkProfile(employeeId: string, input: WorkProfileInput): Promise<WorkProfile> {

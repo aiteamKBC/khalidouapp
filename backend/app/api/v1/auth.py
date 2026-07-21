@@ -30,7 +30,7 @@ from app.services.admin_auth import (
     refresh_admin_tokens,
 )
 from app.services.audit import record_audit_log
-from app.services.permissions import capabilities_for_admin
+from app.services.permissions import capabilities_for_admin, is_super_admin
 
 router = APIRouter(prefix="/auth", tags=["admin-auth"])
 
@@ -85,6 +85,7 @@ def me(current_admin: Annotated[AdminUser, Depends(get_current_admin)], db: Anno
             "email": current_admin.email,
             "job_title": current_admin.employee.job_title if current_admin.employee else None,
             "role": current_admin.role,
+            "is_super_admin": is_super_admin(current_admin),
             "permissions": capabilities_for_admin(current_admin),
             "status": current_admin.status,
             "avatar_url": current_admin.avatar_url,

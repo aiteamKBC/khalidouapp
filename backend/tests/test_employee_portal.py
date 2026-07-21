@@ -3,14 +3,9 @@ from datetime import date
 import pytest
 
 from app.api.v1.employee_portal import period_summary
-from app.api.v1.employee_auth import normalize_portal_access_key
 from app.core.exceptions import ApiError
 from app.schemas.agent import AgentTaskCreate
 from app.services.projects import validate_task_dates
-
-
-def test_portal_access_key_normalization() -> None:
-    assert normalize_portal_access_key("  khw-abcd 1234\n") == "KHW-ABCD1234"
 
 
 def test_period_summary_uses_one_point_per_active_hour() -> None:

@@ -39,7 +39,7 @@ from app.models import (
     TimeAdjustmentRequest,
     WorkSession,
 )
-from app.schemas.admin import TeamCreate, TeamMemberCreate, TeamOwnerCreate, TeamUpdate
+from app.schemas.admin import TeamCreate, TeamMemberCreate, TeamMemberUpdate, TeamOwnerCreate, TeamUpdate
 from app.services.audit import record_audit_log
 from app.services.projects import ensure_general_work_project
 from app.services.screenshots import serialize_screenshot
@@ -193,13 +193,18 @@ def delete_team(team_id: UUID, request: Request, current_admin: Annotated[AdminU
 @router.get("/{team_id}/members")
 def list_team_members(team_id: UUID, current_admin: Annotated[AdminUser, Depends(get_current_admin)], db: Annotated[Session, Depends(get_db)]):
     ensure_team_access(db, current_admin, team_id)
-    members = db.scalars(
-        select(Employee)
+    rows = db.execute(
+        select(Employee, TeamMember.role)
         .join(TeamMember, TeamMember.employee_id == Employee.id)
         .where(TeamMember.team_id == team_id, TeamMember.status == "active")
         .order_by(Employee.name)
     ).all()
-    return success_response(data=[serialize_employee(member) for member in members])
+    data = []
+    for member, role in rows:
+        item = serialize_employee(member)
+        item["team_role"] = role or "member"
+        data.append(item)
+    return success_response(data=data)
 
 
 @router.post("/{team_id}/members")
@@ -216,6 +221,7 @@ def add_team_member(
     existing = db.scalar(select(TeamMember).where(TeamMember.team_id == team_id, TeamMember.employee_id == employee.id))
     if existing:
         existing.status = payload.status
+        existing.role = payload.role
         db.add(existing)
         db.commit()
         record_audit_log(
@@ -225,12 +231,12 @@ def add_team_member(
             "team",
             entity_id=team.id,
             entity_name=team.name,
-            details={"employee": employee.email, "status": payload.status},
+            details={"employee": employee.email, "status": payload.status, "role": payload.role},
             request=request,
         )
         db.commit()
         return success_response(data={"added": True, "employee_id": str(employee.id)})
-    db.add(TeamMember(team_id=team_id, employee_id=employee.id, status=payload.status))
+    db.add(TeamMember(team_id=team_id, employee_id=employee.id, status=payload.status, role=payload.role))
     db.commit()
     record_audit_log(
         db,
@@ -239,11 +245,49 @@ def add_team_member(
         "team",
         entity_id=team.id,
         entity_name=team.name,
-        details={"employee": employee.email, "status": payload.status},
+        details={"employee": employee.email, "status": payload.status, "role": payload.role},
         request=request,
     )
     db.commit()
     return success_response(data={"added": True, "employee_id": str(employee.id)})
+
+
+@router.patch("/{team_id}/members/{employee_id}")
+def update_team_member(
+    team_id: UUID,
+    employee_id: UUID,
+    payload: TeamMemberUpdate,
+    request: Request,
+    current_admin: Annotated[AdminUser, Depends(get_current_admin)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    require_general_admin(current_admin)
+    team = ensure_team_access(db, current_admin, team_id)
+    member = db.scalar(
+        select(TeamMember).where(
+            TeamMember.team_id == team_id,
+            TeamMember.employee_id == employee_id,
+        )
+    )
+    if member is None:
+        raise ApiError("TEAM_MEMBER_NOT_FOUND", "Team member was not found.", 404)
+    changes = payload.model_dump(exclude_unset=True)
+    for key, value in changes.items():
+        setattr(member, key, value)
+    db.add(member)
+    db.commit()
+    record_audit_log(
+        db,
+        current_admin,
+        "member_updated",
+        "team",
+        entity_id=team.id,
+        entity_name=team.name,
+        details={"employee_id": str(employee_id), **changes},
+        request=request,
+    )
+    db.commit()
+    return success_response(data={"updated": True, "employee_id": str(employee_id)})
 
 
 @router.delete("/{team_id}/members/{employee_id}")
@@ -292,6 +336,7 @@ def list_team_owners(team_id: UUID, current_admin: Annotated[AdminUser, Depends(
                 "employee_id": str(owner.employee_id) if owner.employee_id else None,
                 "name": owner.name,
                 "email": owner.email,
+                "job_title": owner.employee.job_title if owner.employee else None,
                 "role": owner.role,
                 "status": owner.status,
             }
