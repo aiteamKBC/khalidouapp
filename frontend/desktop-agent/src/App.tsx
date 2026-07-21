@@ -1276,8 +1276,7 @@ function HomeView({
       : status.extraTimeStatus === "pending_overtime"
         ? "HR/Admin must approve this time before payroll."
         : "Recorded for review. It will not be paid unless HR/Admin approves it.";
-  const arcDegrees = Math.round((targetProgress / 100) * 270);
-  const needleDegrees = -135 + arcDegrees;
+  const arcDegrees = Math.round((targetProgress / 100) * 300);
   return (
     <section className="k-home">
       <div className="k-center">
@@ -1322,7 +1321,6 @@ function HomeView({
             {
               "--progress": targetProgress,
               "--arc-degrees": `${arcDegrees}deg`,
-              "--needle-degrees": `${needleDegrees}deg`,
             } as CSSProperties
           }
         >
@@ -1337,7 +1335,6 @@ function HomeView({
             <span className="k-gauge-mark mark-4">4h</span>
             <span className="k-gauge-mark mark-6">6h</span>
             <span className="k-gauge-mark mark-8">8h</span>
-            <i className="k-gauge-needle" />
             <div className="k-gauge-readout">
               <strong>{formatDuration(countedTodaySeconds)}</strong>
               <small>{targetProgress}% of {formatDuration(status.dailyTargetSeconds)}</small>

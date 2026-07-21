@@ -536,10 +536,10 @@ textarea:focus {
 
 .k-ring {
   position: relative;
-  width: 276px;
-  height: 224px;
-  margin: 10px 0 6px;
-  border-radius: 276px 276px 28px 28px;
+  width: 310px;
+  height: 270px;
+  margin: 4px 0 0;
+  border-radius: 50%;
   background: transparent;
   text-align: center;
 }
@@ -547,41 +547,40 @@ textarea:focus {
 .k-ring::before {
   content: "";
   position: absolute;
-  inset: 0;
+  inset: 8px;
   border-radius: 50%;
   background:
-    radial-gradient(circle at 50% 62%, var(--surface) 0 47%, transparent 47.5%),
-    conic-gradient(from 225deg, var(--green) var(--arc-degrees, 0deg), var(--surface-3) 0 270deg, transparent 270deg);
-  filter: drop-shadow(0 18px 28px rgb(36 30 78 / 10%));
-  mask: radial-gradient(circle at 50% 62%, transparent 0 47%, #000 47.5% 58%, transparent 58.5%);
+    conic-gradient(from 210deg, #22d3ee 0deg, #22c55e var(--arc-degrees, 0deg), transparent var(--arc-degrees, 0deg) 300deg, transparent 300deg),
+    conic-gradient(from 210deg, transparent 0deg, transparent var(--arc-degrees, 0deg), #ece7f3 var(--arc-degrees, 0deg) 300deg, transparent 300deg);
+  filter: drop-shadow(0 14px 24px rgb(34 197 94 / 13%));
+  mask: radial-gradient(circle, transparent 0 64%, #000 64.8% 74.5%, transparent 75.2%);
 }
 
 .k-app[data-tone="paused"] .k-ring::before {
   background:
-    radial-gradient(circle at 50% 62%, var(--surface) 0 47%, transparent 47.5%),
-    conic-gradient(from 225deg, var(--amber) var(--arc-degrees, 0deg), var(--surface-3) 0 270deg, transparent 270deg);
+    conic-gradient(from 210deg, #facc15 0deg, #f59e0b var(--arc-degrees, 0deg), transparent var(--arc-degrees, 0deg) 300deg, transparent 300deg),
+    conic-gradient(from 210deg, transparent 0deg, transparent var(--arc-degrees, 0deg), #ece7f3 var(--arc-degrees, 0deg) 300deg, transparent 300deg);
 }
 
 .k-app[data-tone="overtime"] .k-ring::before {
   background:
-    radial-gradient(circle at 50% 62%, var(--surface) 0 47%, transparent 47.5%),
-    conic-gradient(from 225deg, var(--amber) 270deg, transparent 270deg);
+    conic-gradient(from 210deg, #fb7185 0deg, #f97316 300deg, transparent 300deg);
 }
 
 .k-ring::after {
   content: "";
   position: absolute;
-  inset: 38px;
+  inset: 48px;
   border-radius: 50%;
   background:
-    radial-gradient(circle, rgb(229 24 93 / 8%), transparent 58%),
-    linear-gradient(145deg, rgb(255 255 255 / 90%), var(--surface));
-  box-shadow: inset 0 0 0 1px var(--border);
+    radial-gradient(circle at 50% 45%, rgb(34 211 238 / 8%), transparent 44%),
+    radial-gradient(circle at 50% 68%, rgb(229 24 93 / 7%), transparent 58%),
+    linear-gradient(145deg, rgb(255 255 255 / 96%), var(--surface));
+  box-shadow: inset 0 0 0 1px rgb(231 223 231 / 75%);
 }
 
 .k-gauge-readout,
-.k-gauge-mark,
-.k-gauge-needle {
+.k-gauge-mark {
   position: relative;
   z-index: 1;
 }
@@ -589,16 +588,16 @@ textarea:focus {
 .k-gauge-readout {
   position: absolute;
   left: 50%;
-  bottom: 30px;
+  top: 49%;
   display: grid;
-  width: 190px;
-  transform: translateX(-50%);
+  width: 220px;
+  transform: translate(-50%, -50%);
 }
 
 .k-gauge-readout strong {
   color: var(--text);
   font-family: var(--mono);
-  font-size: 34px;
+  font-size: 38px;
   font-weight: 900;
   font-variant-numeric: tabular-nums;
   line-height: 1;
@@ -623,67 +622,34 @@ textarea:focus {
   position: absolute;
   color: var(--text-3);
   font-family: var(--mono);
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 900;
 }
 
 .mark-0 {
-  left: 31px;
-  bottom: 48px;
+  left: 74px;
+  bottom: 54px;
 }
 
 .mark-2 {
-  left: 48px;
-  top: 116px;
+  left: 44px;
+  top: 126px;
 }
 
 .mark-4 {
-  left: 88px;
-  top: 55px;
+  left: 50%;
+  top: 52px;
+  transform: translateX(-50%);
 }
 
 .mark-6 {
-  right: 88px;
-  top: 55px;
+  right: 44px;
+  top: 126px;
 }
 
 .mark-8 {
-  right: 31px;
-  bottom: 48px;
-}
-
-.k-gauge-needle {
-  position: absolute;
-  left: 50%;
-  top: 61%;
-  width: 94px;
-  height: 10px;
-  border-radius: 999px;
-  background: linear-gradient(90deg, transparent, var(--text-3) 18%, var(--text) 100%);
-  box-shadow: 0 8px 16px rgb(36 30 78 / 18%);
-  transform: translate(-9px, -50%) rotate(var(--needle-degrees, -135deg));
-  transform-origin: 9px 50%;
-}
-
-.k-gauge-needle::after {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: 50%;
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  background: var(--surface);
-  box-shadow: inset 0 0 0 4px var(--green), 0 4px 12px rgb(36 30 78 / 18%);
-  transform: translate(-50%, -50%);
-}
-
-.k-app[data-tone="paused"] .k-gauge-needle::after {
-  box-shadow: inset 0 0 0 4px var(--amber), 0 4px 12px rgb(36 30 78 / 18%);
-}
-
-.k-app[data-tone="overtime"] .k-gauge-needle::after {
-  box-shadow: inset 0 0 0 4px var(--amber), 0 4px 12px rgb(36 30 78 / 18%);
+  right: 74px;
+  bottom: 54px;
 }
 
 .k-hero p {
