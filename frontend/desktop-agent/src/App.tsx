@@ -1007,6 +1007,12 @@ function App() {
               onTrackingToggle={() => void handleTrackingToggle()}
               onLoadScreenshots={() => void handleLoadRecentScreenshots()}
               onOpenScreenshots={() => void handleOpenDashboard("screenshots")}
+              onRequestManualTime={() => {
+                if (!timeRequestReason.trim()) {
+                  setTimeRequestReason("Please review idle/manual time for today.");
+                }
+                setActiveView("more");
+              }}
             />
           )}
           {activeView === "tasks" && (
@@ -1232,6 +1238,7 @@ function HomeView({
   onTrackingToggle,
   onLoadScreenshots,
   onOpenScreenshots,
+  onRequestManualTime,
 }: {
   status: AgentStatus;
   statusLabel: string;
@@ -1260,6 +1267,7 @@ function HomeView({
   onTrackingToggle: () => void;
   onLoadScreenshots: () => void;
   onOpenScreenshots: () => void;
+  onRequestManualTime: () => void;
 }) {
   const isPaused = status.trackingPaused || status.trackingStatus === "paused";
   const shouldResume =
@@ -1276,6 +1284,12 @@ function HomeView({
       : status.extraTimeStatus === "pending_overtime"
         ? "HR/Admin must approve this time before payroll."
         : "Recorded for review. It will not be paid unless HR/Admin approves it.";
+  const overtimeStatus =
+    extraSeconds <= 0
+      ? "No overtime"
+      : status.extraTimeStatus === "pending_overtime"
+        ? "Pending approval"
+        : "Recorded only";
   const arcDegrees = Math.round((targetProgress / 100) * 300);
   return (
     <section className="k-home">
@@ -1369,12 +1383,16 @@ function HomeView({
               <strong>{formatDuration(normalSeconds)}</strong>
             </div>
             <div>
-              <span>Extra</span>
+              <span>Overtime</span>
               <strong>{formatDuration(extraSeconds)}</strong>
+              <small className="k-meta-note">{overtimeStatus}</small>
             </div>
             <div>
               <span>Idle</span>
               <strong>{formatDuration(status.idleSeconds)}</strong>
+              <button type="button" className="k-meta-action" onClick={onRequestManualTime}>
+                Request manual time
+              </button>
             </div>
           </div>
         </div>
@@ -1870,8 +1888,10 @@ function MoreView({
       </div>
 
       <div className="k-panel">
-        <h2>Early leave permission</h2>
-        <p className="k-muted">Request up to 2 hours per week for approved early leave or short permission.</p>
+        <h2>Manual time / permission request</h2>
+        <p className="k-muted">
+          Use this for approved manual time, idle review, offline work, or up to 2 hours weekly early leave permission.
+        </p>
         <form className="k-form" onSubmit={onSubmitTimeRequest}>
           <label>
             Date
@@ -1908,7 +1928,7 @@ function MoreView({
               onChange={(event) => onTimeRequestReasonChange(event.target.value)}
               minLength={3}
               maxLength={1000}
-              placeholder="Offline meeting, client visit, workshop..."
+              placeholder="Idle should be counted, offline meeting, client visit, workshop..."
               required
             />
           </label>

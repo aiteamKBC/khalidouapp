@@ -740,6 +740,27 @@ textarea:focus {
   font-variant-numeric: tabular-nums;
 }
 
+.k-meta-note {
+  display: block;
+  margin-top: 4px;
+  color: var(--amber);
+  font-size: 10px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.k-meta-action {
+  margin-top: 6px;
+  padding: 0;
+  border: 0;
+  color: var(--brand);
+  background: transparent;
+  font-size: 10.5px;
+  font-weight: 900;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
 .k-stat-grid {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
