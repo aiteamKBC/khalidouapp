@@ -213,6 +213,8 @@ function App() {
   const [newTaskProjectId, setNewTaskProjectId] = useState("");
   const [newTaskStartDate, setNewTaskStartDate] = useState("");
   const [newTaskDeadline, setNewTaskDeadline] = useState("");
+  const [taskCompletionNote, setTaskCompletionNote] = useState("");
+  const [newChecklistTitle, setNewChecklistTitle] = useState("");
   const [trackingControlMessage, setTrackingControlMessage] = useState<string | null>(null);
   const [isChangingTracking, setIsChangingTracking] = useState(false);
   const [dashboardError, setDashboardError] = useState<string | null>(null);
@@ -278,6 +280,11 @@ function App() {
       setProjectFilterId(status.selectedTask.projectId);
     }
   }, [status.selectedTask?.projectId]);
+
+  useEffect(() => {
+    setTaskCompletionNote("");
+    setNewChecklistTitle("");
+  }, [status.selectedTask?.id]);
 
   useEffect(() => {
     window.localStorage.setItem(THEME_STORAGE_KEY, theme);
@@ -531,6 +538,7 @@ function App() {
 
   async function handleTaskStage(
     stage: "assigned" | "in_progress" | "ready_for_review" | "blocked",
+    noteOverride?: string,
   ) {
     if (!window.khaliduo || !status.selectedTask) return;
     if (!status.selectedTask.canUpdateStage) {
@@ -541,7 +549,9 @@ function App() {
     setTrackingControlMessage(null);
     setIsSubmittingTask(true);
     const note =
-      stage === "blocked"
+      noteOverride !== undefined
+        ? noteOverride.trim()
+        : stage === "blocked"
         ? window
             .prompt(
               "Describe the obstacle blocking this task. Reporting it will stop tracking this task.",
@@ -563,11 +573,48 @@ function App() {
       );
     } else if (stage === "ready_for_review") {
       setTrackingControlMessage("Finished work submitted. Waiting for approval.");
+      setTaskCompletionNote("");
     }
     if (result.status) {
       setStatus(result.status);
     }
     setIsSubmittingTask(false);
+  }
+
+  async function handleAddChecklistItem() {
+    const task = status.selectedTask;
+    const title = newChecklistTitle.trim();
+    if (!window.khaliduo || !task || !title) return;
+    setTaskError(null);
+    setIsSubmittingTask(true);
+    try {
+      const result = await window.khaliduo.createTaskChecklistItem(task.id, title);
+      if (!result.success) {
+        setTaskError(result.message ?? "Checklist update failed.");
+        return;
+      }
+      setNewChecklistTitle("");
+      if (result.status) setStatus(result.status);
+    } finally {
+      setIsSubmittingTask(false);
+    }
+  }
+
+  async function handleToggleChecklistItem(itemId: string, completed: boolean) {
+    const task = status.selectedTask;
+    if (!window.khaliduo || !task) return;
+    setTaskError(null);
+    setIsSubmittingTask(true);
+    try {
+      const result = await window.khaliduo.updateTaskChecklistItem(task.id, itemId, completed);
+      if (!result.success) {
+        setTaskError(result.message ?? "Checklist update failed.");
+        return;
+      }
+      if (result.status) setStatus(result.status);
+    } finally {
+      setIsSubmittingTask(false);
+    }
   }
 
   async function handleTrackingToggle() {
@@ -976,8 +1023,14 @@ function App() {
               newTaskProjectId={newTaskProjectId}
               newTaskStartDate={newTaskStartDate}
               newTaskDeadline={newTaskDeadline}
+              taskCompletionNote={taskCompletionNote}
+              newChecklistTitle={newChecklistTitle}
               onTaskChange={(taskId) => void handleTaskChange(taskId)}
-              onTaskStage={(stage) => void handleTaskStage(stage)}
+              onTaskStage={(stage, note) => void handleTaskStage(stage, note)}
+              onChecklistToggle={(itemId, completed) => void handleToggleChecklistItem(itemId, completed)}
+              onChecklistTitleChange={setNewChecklistTitle}
+              onAddChecklistItem={() => void handleAddChecklistItem()}
+              onTaskCompletionNoteChange={setTaskCompletionNote}
               onTrackingToggle={() => void handleTrackingToggle()}
               onNewTaskNameChange={setNewTaskName}
               onNewTaskDescriptionChange={setNewTaskDescription}
@@ -1448,8 +1501,14 @@ function TasksView({
   newTaskProjectId,
   newTaskStartDate,
   newTaskDeadline,
+  taskCompletionNote,
+  newChecklistTitle,
   onTaskChange,
   onTaskStage,
+  onChecklistToggle,
+  onChecklistTitleChange,
+  onAddChecklistItem,
+  onTaskCompletionNoteChange,
   onTrackingToggle,
   onNewTaskNameChange,
   onNewTaskDescriptionChange,
@@ -1471,8 +1530,17 @@ function TasksView({
   newTaskProjectId: string;
   newTaskStartDate: string;
   newTaskDeadline: string;
+  taskCompletionNote: string;
+  newChecklistTitle: string;
   onTaskChange: (taskId: string) => void;
-  onTaskStage: (stage: "assigned" | "in_progress" | "ready_for_review" | "blocked") => void;
+  onTaskStage: (
+    stage: "assigned" | "in_progress" | "ready_for_review" | "blocked",
+    note?: string,
+  ) => void;
+  onChecklistToggle: (itemId: string, completed: boolean) => void;
+  onChecklistTitleChange: (value: string) => void;
+  onAddChecklistItem: () => void;
+  onTaskCompletionNoteChange: (value: string) => void;
   onTrackingToggle: () => void;
   onNewTaskNameChange: (value: string) => void;
   onNewTaskDescriptionChange: (value: string) => void;
@@ -1482,6 +1550,13 @@ function TasksView({
   onNewTaskDeadlineChange: (value: string) => void;
   onCreateTask: () => void;
 }) {
+  const selectedTask = status.selectedTask;
+  const checklist = selectedTask?.checklist ?? [];
+  const completedChecklistCount = checklist.filter((item) => item.completed).length;
+  const canEditSelectedTask =
+    Boolean(selectedTask?.canUpdateStage) &&
+    !["ready_for_review", "completed", "rejected", "cancelled"].includes(selectedTask?.stage ?? "");
+
   return (
     <section className="k-page">
       <div className="k-panel">
@@ -1562,6 +1637,85 @@ function TasksView({
             </select>
           </label>
         </div>
+        {selectedTask && (
+          <div className="k-task-work-card">
+            <div className="k-task-work-header">
+              <div>
+                <h3>{selectedTask.name}</h3>
+                <p>
+                  {selectedTask.teamName} / {selectedTask.projectName}
+                  {selectedTask.description ? ` · ${selectedTask.description}` : ""}
+                </p>
+              </div>
+              <span className="k-task-stage-pill">{selectedTask.stage.replaceAll("_", " ")}</span>
+            </div>
+
+            <div className="k-checklist-box">
+              <div className="k-section-row">
+                <strong>Checklist</strong>
+                <small>
+                  {completedChecklistCount}/{checklist.length || 0} complete
+                </small>
+              </div>
+              {checklist.length > 0 ? (
+                <div className="k-checklist-items">
+                  {checklist.map((item) => (
+                    <label key={item.id} className={item.completed ? "done" : ""}>
+                      <input
+                        type="checkbox"
+                        checked={item.completed}
+                        disabled={!canEditSelectedTask || isSubmittingTask}
+                        onChange={(event) => onChecklistToggle(item.id, event.target.checked)}
+                      />
+                      <span>{item.title}</span>
+                    </label>
+                  ))}
+                </div>
+              ) : (
+                <p className="k-muted">No checklist yet. Add the steps you need to finish.</p>
+              )}
+              {canEditSelectedTask && (
+                <div className="k-checklist-add">
+                  <input
+                    value={newChecklistTitle}
+                    maxLength={500}
+                    placeholder="Add a checklist step..."
+                    disabled={isSubmittingTask}
+                    onChange={(event) => onChecklistTitleChange(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        onAddChecklistItem();
+                      }
+                    }}
+                  />
+                  <button type="button" disabled={!newChecklistTitle.trim() || isSubmittingTask} onClick={onAddChecklistItem}>
+                    Add
+                  </button>
+                </div>
+              )}
+            </div>
+
+            <label className="k-completion-note">
+              What did you do?
+              <textarea
+                value={taskCompletionNote}
+                maxLength={1000}
+                rows={3}
+                placeholder="Write what you completed, links, blockers, or delivery notes..."
+                disabled={!canEditSelectedTask || isSubmittingTask}
+                onChange={(event) => onTaskCompletionNoteChange(event.target.value)}
+              />
+            </label>
+            <button
+              className="k-primary"
+              disabled={!canEditSelectedTask || isSubmittingTask}
+              onClick={() => onTaskStage("ready_for_review", taskCompletionNote)}
+            >
+              {isSubmittingTask ? "Submitting..." : "Complete / submit work"}
+            </button>
+          </div>
+        )}
         <div className="k-task-list k-task-list-grid">
           {trackableTasks.map((task) => (
             <button

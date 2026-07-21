@@ -96,6 +96,7 @@ export type WorkdayTimeline = {
 export type AgentTask = {
   id: string;
   name: string;
+  description: string | null;
   stage:
     | "new_requests"
     | "backlog"
@@ -111,6 +112,15 @@ export type AgentTask = {
   projectName: string;
   teamId: string;
   teamName: string;
+  reviewNote: string | null;
+  completionNote: string | null;
+  checklist: Array<{
+    id: string;
+    title: string;
+    completed: boolean;
+    position: number;
+    assigneeEmployeeId: string | null;
+  }>;
   activeSeconds: number;
   idleSeconds: number;
   trackedSeconds: number;
@@ -216,6 +226,15 @@ declare global {
         taskId: string,
         stage: "assigned" | "in_progress" | "ready_for_review" | "blocked",
         note?: string,
+      ) => Promise<{ success: boolean; message?: string; status?: AgentStatus }>;
+      createTaskChecklistItem: (
+        taskId: string,
+        title: string,
+      ) => Promise<{ success: boolean; message?: string; status?: AgentStatus }>;
+      updateTaskChecklistItem: (
+        taskId: string,
+        itemId: string,
+        completed: boolean,
       ) => Promise<{ success: boolean; message?: string; status?: AgentStatus }>;
       onIdleAlert: (callback: (alert: IdleAlert) => void) => () => void;
       onRequiredUpdate: (

@@ -28,6 +28,10 @@ contextBridge.exposeInMainWorld("khaliduo", {
   }) => ipcRenderer.invoke("agent:create-task", options),
   updateTaskStage: (taskId: string, stage: string, note?: string) =>
     ipcRenderer.invoke("agent:update-task-stage", taskId, stage, note),
+  createTaskChecklistItem: (taskId: string, title: string) =>
+    ipcRenderer.invoke("agent:create-task-checklist-item", taskId, title),
+  updateTaskChecklistItem: (taskId: string, itemId: string, completed: boolean) =>
+    ipcRenderer.invoke("agent:update-task-checklist-item", taskId, itemId, completed),
   createTimeAdjustmentRequest: (requestedMinutes: number, reason: string) =>
     ipcRenderer.invoke(
       "agent:create-time-adjustment-request",

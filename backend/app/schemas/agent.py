@@ -59,3 +59,11 @@ class AgentTaskUpdate(BaseModel):
     deadline: date | None = None
     estimated_minutes: int | None = Field(default=None, ge=1, le=100000)
     note: str | None = Field(default=None, max_length=1000)
+
+
+class AgentChecklistItemCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=500)
+
+
+class AgentChecklistItemUpdate(BaseModel):
+    completed: bool | None = None

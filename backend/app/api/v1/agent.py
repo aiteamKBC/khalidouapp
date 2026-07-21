@@ -17,8 +17,10 @@ from app.core.config import settings
 from app.core.exceptions import ApiError
 from app.core.security import create_employee_handoff_token
 from app.database.session import get_db
-from app.models import Employee, LeaveRequest, Project, Screenshot, Task, Team, TeamMember, TimeAdjustmentRequest
+from app.models import Employee, LeaveRequest, Project, Screenshot, Task, TaskChecklistItem, Team, TeamMember, TimeAdjustmentRequest
 from app.schemas.agent import (
+    AgentChecklistItemCreate,
+    AgentChecklistItemUpdate,
     AgentLeaveRequestCreate,
     AgentTaskCreate,
     AgentTaskUpdate,
@@ -420,6 +422,88 @@ def update_own_task(
                 f"review-requested:{datetime.now(UTC).isoformat()}",
                 workflow_request_id=workflow_request.id,
             )
+    db.commit()
+    db.refresh(task)
+    return success_response(data=serialize_task(task, project, team))
+
+
+@router.post("/tasks/{task_id}/checklist")
+def create_own_task_checklist_item(
+    task_id: UUID,
+    payload: AgentChecklistItemCreate,
+    context: Annotated[DeviceAuthContext, Depends(get_current_device)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    task = db.scalar(
+        select(Task).where(
+            Task.id == task_id,
+            Task.company_id == context.device.company_id,
+            Task.assignee_employee_id == context.device.employee_id,
+            Task.status == "active",
+        )
+    )
+    if task is None:
+        raise ApiError("TASK_NOT_FOUND", "You can only update your own task.", 404)
+    if task.stage in {"completed", "rejected", "cancelled", "ready_for_review"}:
+        raise ApiError("TASK_STAGE_LOCKED", "Closed or submitted tasks cannot be changed.", 409)
+    item = TaskChecklistItem(
+        task_id=task.id,
+        title=payload.title.strip(),
+        assignee_employee_id=context.device.employee_id,
+        position=max((entry.position for entry in task.checklist_items), default=-1) + 1,
+    )
+    db.add(item)
+    employee = db.get(Employee, context.device.employee_id)
+    project = db.scalar(select(Project).where(Project.id == task.project_id))
+    team = db.scalar(select(Team).where(Team.id == project.team_id))
+    record_task_activity(
+        db,
+        task,
+        "checklist_item_added",
+        employee=employee,
+        details={"item": item.title},
+    )
+    db.commit()
+    db.refresh(task)
+    return success_response(data=serialize_task(task, project, team))
+
+
+@router.patch("/tasks/{task_id}/checklist/{item_id}")
+def update_own_task_checklist_item(
+    task_id: UUID,
+    item_id: UUID,
+    payload: AgentChecklistItemUpdate,
+    context: Annotated[DeviceAuthContext, Depends(get_current_device)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    task = db.scalar(
+        select(Task).where(
+            Task.id == task_id,
+            Task.company_id == context.device.company_id,
+            Task.assignee_employee_id == context.device.employee_id,
+            Task.status == "active",
+        )
+    )
+    if task is None:
+        raise ApiError("TASK_NOT_FOUND", "You can only update your own task.", 404)
+    if task.stage in {"completed", "rejected", "cancelled", "ready_for_review"}:
+        raise ApiError("TASK_STAGE_LOCKED", "Closed or submitted tasks cannot be changed.", 409)
+    item = db.scalar(select(TaskChecklistItem).where(TaskChecklistItem.id == item_id, TaskChecklistItem.task_id == task.id))
+    if item is None:
+        raise ApiError("CHECKLIST_ITEM_NOT_FOUND", "Checklist item was not found.", 404)
+    changes = payload.model_dump(exclude_unset=True)
+    for field, value in changes.items():
+        setattr(item, field, value)
+    employee = db.get(Employee, context.device.employee_id)
+    project = db.scalar(select(Project).where(Project.id == task.project_id))
+    team = db.scalar(select(Team).where(Team.id == project.team_id))
+    record_task_activity(
+        db,
+        task,
+        "checklist_item_completed" if changes.get("completed") is True else "checklist_item_updated",
+        employee=employee,
+        details={"item": item.title, **changes},
+    )
     db.commit()
     db.refresh(task)
     return success_response(data=serialize_task(task, project, team))

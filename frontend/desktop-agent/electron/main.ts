@@ -20,6 +20,7 @@ import {
   createEmployeePortalHandoff,
   downloadAgentScreenshot,
   createAgentTask,
+  createAgentTaskChecklistItem,
   createLeaveRequest,
   createTimeAdjustmentRequest,
   listAgentProjects,
@@ -44,6 +45,7 @@ import {
   uploadScreenshot,
   updateSessionTask,
   updateAgentTaskStage,
+  updateAgentTaskChecklistItem,
   type TrackingConfig,
   type WorkSession,
 } from "./services/agentApi.js";
@@ -140,6 +142,7 @@ type AgentRuntimeStatus = {
 type RuntimeTask = {
   id: string;
   name: string;
+  description: string | null;
   projectId: string;
   projectName: string;
   teamId: string;
@@ -155,6 +158,15 @@ type RuntimeTask = {
     | "rejected"
     | "cancelled";
   canUpdateStage: boolean;
+  reviewNote: string | null;
+  completionNote: string | null;
+  checklist: Array<{
+    id: string;
+    title: string;
+    completed: boolean;
+    position: number;
+    assigneeEmployeeId: string | null;
+  }>;
   activeSeconds: number;
   idleSeconds: number;
   trackedSeconds: number;
@@ -270,12 +282,22 @@ function mapTask(task: ApiAgentTask): RuntimeTask {
   return {
     id: task.id,
     name: task.name,
+    description: task.description ?? null,
     projectId: task.project_id,
     projectName: task.project_name,
     teamId: task.team_id,
     teamName: task.team_name,
     stage: task.stage,
     canUpdateStage: task.can_update_stage,
+    reviewNote: task.review_note ?? null,
+    completionNote: task.completion_note ?? null,
+    checklist: (task.checklist ?? []).map((item) => ({
+      id: item.id,
+      title: item.title,
+      completed: item.completed,
+      position: item.position,
+      assigneeEmployeeId: item.assignee_employee_id,
+    })),
     activeSeconds: task.active_seconds ?? 0,
     idleSeconds: task.idle_seconds ?? 0,
     trackedSeconds: task.tracked_seconds ?? 0,
@@ -2301,6 +2323,54 @@ ipcMain.handle(
       return {
         success: false,
         message: getUserFacingError(error, "Task stage update failed."),
+      };
+    }
+  },
+);
+
+ipcMain.handle(
+  "agent:create-task-checklist-item",
+  async (_, taskId: string, title: string) => {
+    try {
+      const task = runtimeStatus.tasks.find((item) => item.id === taskId);
+      if (!task?.canUpdateStage) {
+        return {
+          success: false,
+          message: "Only the primary assignee can edit this task checklist.",
+        };
+      }
+      await createAgentTaskChecklistItem(taskId, title);
+      await refreshTasks();
+      return { success: true, status: runtimeStatusPayload() };
+    } catch (error) {
+      log.error("Task checklist creation failed", error);
+      return {
+        success: false,
+        message: getUserFacingError(error, "Checklist update failed."),
+      };
+    }
+  },
+);
+
+ipcMain.handle(
+  "agent:update-task-checklist-item",
+  async (_, taskId: string, itemId: string, completed: boolean) => {
+    try {
+      const task = runtimeStatus.tasks.find((item) => item.id === taskId);
+      if (!task?.canUpdateStage) {
+        return {
+          success: false,
+          message: "Only the primary assignee can edit this task checklist.",
+        };
+      }
+      await updateAgentTaskChecklistItem(taskId, itemId, completed);
+      await refreshTasks();
+      return { success: true, status: runtimeStatusPayload() };
+    } catch (error) {
+      log.error("Task checklist update failed", error);
+      return {
+        success: false,
+        message: getUserFacingError(error, "Checklist update failed."),
       };
     }
   },

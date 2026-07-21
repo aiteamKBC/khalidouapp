@@ -89,6 +89,7 @@ export type SessionPayload = {
 export type AgentTask = {
   id: string;
   name: string;
+  description?: string | null;
   stage:
     | "new_requests"
     | "backlog"
@@ -104,6 +105,15 @@ export type AgentTask = {
   project_name: string;
   team_id: string;
   team_name: string;
+  review_note?: string | null;
+  completion_note?: string | null;
+  checklist: Array<{
+    id: string;
+    title: string;
+    completed: boolean;
+    position: number;
+    assignee_employee_id: string | null;
+  }>;
   active_seconds: number;
   idle_seconds: number;
   tracked_seconds: number;
@@ -435,6 +445,28 @@ export async function updateAgentTaskStage(
   const response = await axios.patch<ApiSuccess<AgentTask>>(
     `${getApiBaseUrl()}/agent/tasks/${taskId}`,
     { stage, note: note ?? null },
+    { headers: getAuthHeaders() },
+  );
+  return response.data.data;
+}
+
+export async function createAgentTaskChecklistItem(taskId: string, title: string) {
+  const response = await axios.post<ApiSuccess<AgentTask>>(
+    `${getApiBaseUrl()}/agent/tasks/${taskId}/checklist`,
+    { title },
+    { headers: getAuthHeaders() },
+  );
+  return response.data.data;
+}
+
+export async function updateAgentTaskChecklistItem(
+  taskId: string,
+  itemId: string,
+  completed: boolean,
+) {
+  const response = await axios.patch<ApiSuccess<AgentTask>>(
+    `${getApiBaseUrl()}/agent/tasks/${taskId}/checklist/${itemId}`,
+    { completed },
     { headers: getAuthHeaders() },
   );
   return response.data.data;
