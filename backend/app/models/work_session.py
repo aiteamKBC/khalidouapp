@@ -23,3 +23,6 @@ class WorkSession(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     active_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     idle_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     deducted_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    normal_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    extra_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    paid_pause_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

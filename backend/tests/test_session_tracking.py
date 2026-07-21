@@ -1,5 +1,5 @@
 from datetime import UTC, datetime, timedelta
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import create_engine, func, select
@@ -7,12 +7,24 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.database.base import Base
-from app.models import ActivityEvent, Company, Device, Employee, WorkSession
-from app.schemas.session import HeartbeatRequest, SessionEndRequest, SessionStartRequest
+from app.core.exceptions import ApiError
+from app.models import (
+    ActivityEvent,
+    Company,
+    Device,
+    Employee,
+    EmployeeWorkProfile,
+    OvertimeRecord,
+    PauseBalance,
+    PauseSession,
+    WorkSession,
+)
+from app.schemas.session import HeartbeatRequest, PauseStartRequest, SessionEndRequest, SessionStartRequest
 from app.services.session_tracking import (
     end_session,
     get_current_session,
     record_heartbeat,
+    start_paid_pause,
     start_or_get_session,
 )
 
@@ -239,3 +251,119 @@ def test_heartbeat_after_local_day_changes_restarts_session(tracking_context):
     assert result["session"]["active_seconds"] == 0
     assert stale.status == "ended"
     assert stale.ended_at.replace(tzinfo=UTC) == datetime(2026, 7, 17, 0, 0, tzinfo=UTC)
+
+
+def test_paid_pause_auto_resumes_and_consumes_daily_balance(tracking_context):
+    db, device = tracking_context
+    started = start_or_get_session(
+        db,
+        device,
+        SessionStartRequest(started_at=datetime.now(UTC) - timedelta(minutes=5)),
+    )
+    session_id = started["session"]["id"]
+
+    paused = start_paid_pause(
+        db,
+        device=device,
+        session_id=UUID(session_id),
+        payload=PauseStartRequest(requested_minutes=3, idempotency_key="pause-test"),
+    )
+
+    assert paused["pause"]["active_pause"] is not None
+    assert paused["pause"]["remaining_seconds"] == 7 * 60
+
+    pause = db.scalar(select(PauseSession).where(PauseSession.work_session_id == UUID(session_id)))
+    assert pause is not None
+    pause.scheduled_end_at = datetime.now(UTC) - timedelta(seconds=1)
+    db.commit()
+
+    heartbeat = record_heartbeat(
+        db,
+        device=device,
+        session_id=UUID(session_id),
+        payload=HeartbeatRequest(
+            event_id=uuid4(),
+            timestamp=datetime.now(UTC),
+            status="active",
+            active_seconds=5 * 60,
+            idle_seconds=0,
+            agent_version="1.0.0",
+        ),
+    )
+
+    assert heartbeat["pause"]["active_pause"] is None
+    assert heartbeat["pause"]["used_seconds"] == 3 * 60
+    assert heartbeat["session"]["paid_pause_seconds"] == 3 * 60
+    assert db.scalar(
+        select(func.count()).select_from(ActivityEvent).where(
+            ActivityEvent.session_id == UUID(session_id),
+            ActivityEvent.event_type == "paid_pause_auto_resumed",
+        )
+    ) == 1
+
+
+def test_paid_pause_rejects_requests_after_daily_balance_is_used(tracking_context):
+    db, device = tracking_context
+    started = start_or_get_session(
+        db,
+        device,
+        SessionStartRequest(started_at=datetime.now(UTC) - timedelta(minutes=5)),
+    )
+    balance = db.scalar(
+        select(PauseBalance).where(
+            PauseBalance.employee_id == device.employee_id,
+            PauseBalance.work_date == datetime.now(UTC).date(),
+        )
+    )
+    assert balance is not None
+    balance.used_seconds = 10 * 60
+    db.commit()
+
+    with pytest.raises(ApiError) as error:
+        start_paid_pause(
+            db,
+            device=device,
+            session_id=UUID(started["session"]["id"]),
+            payload=PauseStartRequest(requested_minutes=1, idempotency_key="pause-exhausted"),
+        )
+
+    assert error.value.code == "PAUSE_BALANCE_EXHAUSTED"
+
+
+def test_heartbeat_splits_normal_and_overtime_when_employee_is_eligible(tracking_context):
+    db, device = tracking_context
+    profile = EmployeeWorkProfile(
+        company_id=device.company_id,
+        employee_id=device.employee_id,
+        required_daily_minutes=8 * 60,
+        overtime_enabled=True,
+    )
+    db.add(profile)
+    started = start_or_get_session(
+        db,
+        device,
+        SessionStartRequest(started_at=datetime.now(UTC) - timedelta(hours=9)),
+    )
+    db.commit()
+
+    heartbeat = record_heartbeat(
+        db,
+        device=device,
+        session_id=UUID(started["session"]["id"]),
+        payload=HeartbeatRequest(
+            event_id=uuid4(),
+            timestamp=datetime.now(UTC),
+            status="active",
+            active_seconds=9 * 60 * 60,
+            idle_seconds=0,
+            agent_version="1.0.0",
+        ),
+    )
+
+    overtime = db.scalar(select(OvertimeRecord).where(OvertimeRecord.work_session_id == UUID(started["session"]["id"])))
+    assert heartbeat["workday"]["normal_seconds"] == 8 * 60 * 60
+    assert heartbeat["workday"]["extra_seconds"] == 60 * 60
+    assert heartbeat["workday"]["extra_time_status"] == "pending_overtime"
+    assert overtime is not None
+    assert overtime.status == "pending"
+    assert overtime.recorded_extra_seconds == 60 * 60

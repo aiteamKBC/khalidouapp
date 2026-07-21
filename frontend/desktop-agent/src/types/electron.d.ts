@@ -34,6 +34,9 @@ export type AgentStatus = {
   dailyTargetSeconds: number;
   dailyTargetProgressPercent: number;
   activityPercent: number;
+  paidPauseEndsAt: string | null;
+  paidPauseRemainingSeconds: number;
+  paidPauseBalanceRemainingSeconds: number | null;
   recentTasks: AgentTask[];
   todayTimeline: WorkdayTimeline | null;
   lastIdleAlert: IdleAlert | null;
@@ -151,7 +154,10 @@ declare global {
         email: string,
         password: string,
       ) => Promise<{ success: boolean; message?: string }>;
-      pauseTracking: () => Promise<{ success: boolean; message?: string }>;
+      pauseTracking: (options?: {
+        requestedMinutes?: number;
+        reason?: string;
+      }) => Promise<{ success: boolean; message?: string }>;
       resumeTracking: () => Promise<{ success: boolean; message?: string }>;
       logout: () => Promise<{ success: boolean; message?: string }>;
       openEmployeeDashboard: (section?: "screenshots") => Promise<{

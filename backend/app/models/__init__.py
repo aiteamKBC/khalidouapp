@@ -12,6 +12,9 @@ from app.models.employee_work_profile import EmployeeWorkProfile
 from app.models.employee_invitation import EmployeeInvitation
 from app.models.leave_balance import LeaveBalance
 from app.models.leave_request import LeaveRequest
+from app.models.overtime_record import OvertimeRecord
+from app.models.pause_balance import PauseBalance
+from app.models.pause_session import PauseSession
 from app.models.email_delivery import EmailDelivery
 from app.models.enrollment_code import EnrollmentCode
 from app.models.project import Project
@@ -47,6 +50,9 @@ __all__ = [
     "EmployeeInvitation",
     "LeaveBalance",
     "LeaveRequest",
+    "OvertimeRecord",
+    "PauseBalance",
+    "PauseSession",
     "EmailDelivery",
     "EnrollmentCode",
     "Project",

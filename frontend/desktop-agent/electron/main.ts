@@ -29,11 +29,13 @@ import {
   sendQueuedRequest,
   sendActivityEvent,
   sendHeartbeat,
+  startPaidPause,
   startSession,
   type ScreenshotMetadata,
   type AgentTask as ApiAgentTask,
   type AgentProject,
   type AgentSummary,
+  type PauseState,
   type TimeAdjustmentRequest,
   uploadScreenshot,
   updateSessionTask,
@@ -108,6 +110,9 @@ type AgentRuntimeStatus = {
   dailyTargetSeconds: number;
   dailyTargetProgressPercent: number;
   activityPercent: number;
+  paidPauseEndsAt: string | null;
+  paidPauseRemainingSeconds: number;
+  paidPauseBalanceRemainingSeconds: number | null;
   recentTasks: RuntimeTask[];
   todayTimeline: AgentSummary["today_timeline"] | null;
   lastIdleAlert: IdleLossAlert | null;
@@ -183,6 +188,7 @@ let isInstallingUpdate = false;
 let hasPromptedForDownloadedUpdate = false;
 let lastFullSummaryRefreshAt = 0;
 let lastMetadataRefreshAt = 0;
+let paidPauseTimer: ReturnType<typeof setTimeout> | null = null;
 let trackingConfig: TrackingConfig = {
   screenshot_enabled: true,
   screenshot_interval_minutes: 10,
@@ -216,6 +222,9 @@ const runtimeStatus: AgentRuntimeStatus = {
   dailyTargetSeconds: 8 * 60 * 60,
   dailyTargetProgressPercent: 0,
   activityPercent: 0,
+  paidPauseEndsAt: null,
+  paidPauseRemainingSeconds: 0,
+  paidPauseBalanceRemainingSeconds: null,
   recentTasks: [],
   todayTimeline: null,
   lastIdleAlert: null,
@@ -552,6 +561,13 @@ function recalculateWorkedTime() {
   }
   lastDurationTickAt += elapsedSeconds * 1000;
 
+  if (runtimeStatus.paidPauseEndsAt) {
+    runtimeStatus.paidPauseRemainingSeconds = Math.max(
+      0,
+      Math.ceil((new Date(runtimeStatus.paidPauseEndsAt).getTime() - now) / 1000),
+    );
+  }
+
   if (runtimeStatus.trackingStatus === "idle") {
     runtimeStatus.idleSeconds += elapsedSeconds;
   } else if (
@@ -784,6 +800,7 @@ async function heartbeatTick() {
     if (latestLocalStatus !== status) {
       runtimeStatus.trackingStatus = latestLocalStatus;
     }
+    applyPauseState(result.pause);
     if (Date.now() - lastFullSummaryRefreshAt > 5 * 60 * 1000) {
       lastFullSummaryRefreshAt = Date.now();
       await refreshWorkedTodayTotal();
@@ -1208,7 +1225,45 @@ async function startTrackingAutomatically() {
   }
 }
 
-async function pauseTracking(reason = "Paused by employee") {
+function clearPaidPauseTimer() {
+  if (paidPauseTimer) {
+    clearTimeout(paidPauseTimer);
+    paidPauseTimer = null;
+  }
+}
+
+function schedulePaidPauseAutoResume(endsAt: string) {
+  clearPaidPauseTimer();
+  runtimeStatus.paidPauseEndsAt = endsAt;
+  runtimeStatus.trackingPaused = true;
+  const delayMs = Math.max(0, new Date(endsAt).getTime() - Date.now());
+  runtimeStatus.paidPauseRemainingSeconds = Math.ceil(delayMs / 1000);
+  paidPauseTimer = setTimeout(() => {
+    runtimeStatus.trackingPaused = false;
+    runtimeStatus.paidPauseEndsAt = null;
+    runtimeStatus.paidPauseRemainingSeconds = 0;
+    runtimeStatus.trackingStatus = currentSessionId ? "active" : runtimeStatus.trackingStatus;
+    rebuildTrayMenu();
+    void heartbeatTick();
+  }, delayMs);
+}
+
+function applyPauseState(pause?: PauseState | null) {
+  if (!pause) return;
+  runtimeStatus.paidPauseBalanceRemainingSeconds = pause.remaining_seconds;
+  if (pause.active_pause) {
+    schedulePaidPauseAutoResume(pause.active_pause.scheduled_end_at);
+    return;
+  }
+  if (runtimeStatus.trackingPaused && runtimeStatus.paidPauseEndsAt) {
+    runtimeStatus.trackingPaused = false;
+    runtimeStatus.paidPauseEndsAt = null;
+    runtimeStatus.paidPauseRemainingSeconds = 0;
+    clearPaidPauseTimer();
+  }
+}
+
+async function stopTrackingSession(reason = "Stopped by employee") {
   recalculateWorkedTime();
   trackingPausedByUser = true;
   runtimeStatus.trackingPaused = true;
@@ -1277,6 +1332,45 @@ async function pauseTracking(reason = "Paused by employee") {
   }
 }
 
+async function pauseTracking(options?: string | { requestedMinutes?: number; reason?: string }) {
+  if (!runtimeStatus.enrolled || !currentSessionId) {
+    return {
+      success: false,
+      message: "Start your shift before using paid pause.",
+    };
+  }
+  const requestedMinutes =
+    typeof options === "object" && options?.requestedMinutes
+      ? options.requestedMinutes
+      : 10;
+  const reason =
+    typeof options === "string" ? options : typeof options === "object" ? options.reason : undefined;
+
+  try {
+    const result = await startPaidPause({
+      sessionId: currentSessionId,
+      requestedMinutes,
+      reason,
+    });
+    applyPauseState(result.pause);
+    runtimeStatus.connectionStatus = "online";
+    runtimeStatus.lastSuccessfulSyncAt = new Date().toISOString();
+    rebuildTrayMenu();
+    return {
+      success: true,
+      message: `Paid pause started for ${requestedMinutes} minute(s). Auto resume will happen when it ends.`,
+    };
+  } catch (error) {
+    const message = axios.isAxiosError(error)
+      ? (error.response?.data as { message?: string } | undefined)?.message
+      : undefined;
+    return {
+      success: false,
+      message: message ?? "Paid pause could not be started.",
+    };
+  }
+}
+
 async function resumeTracking() {
   if (!runtimeStatus.enrolled) {
     return {
@@ -1286,6 +1380,9 @@ async function resumeTracking() {
   }
   trackingPausedByUser = false;
   runtimeStatus.trackingPaused = false;
+  runtimeStatus.paidPauseEndsAt = null;
+  runtimeStatus.paidPauseRemainingSeconds = 0;
+  clearPaidPauseTimer();
   runtimeStatus.trackingStatus = "starting";
   saveTrackingPreferences();
   await startTrackingAutomatically();
@@ -1305,7 +1402,7 @@ async function logoutDevice() {
     } catch (error) {
       log.warn("Final sync before sign-out failed", error);
     }
-    await pauseTracking("Employee signed out from this device");
+    await stopTrackingSession("Employee signed out from this device");
   }
 
   clearRuntimeTimers();
@@ -1409,19 +1506,23 @@ async function createMainWindow() {
         title: "Close Khaliduo",
         message: trackingPausedByUser
           ? "Khaliduo is currently paused."
+          : runtimeStatus.trackingPaused
+          ? "Khaliduo is currently in paid pause."
           : "Tracking and screenshots are currently active.",
         detail:
-          "Choose whether Khaliduo should keep tracking, pause in the notification area, or quit completely.",
+          "Choose whether Khaliduo should keep tracking, hide, or quit completely.",
         buttons: trackingPausedByUser
           ? ["Hide (Keep Paused)", "Resume Tracking & Hide", "Quit Khaliduo"]
-          : ["Hide & Keep Tracking", "Pause Tracking & Hide", "Quit Khaliduo"],
+          : runtimeStatus.trackingPaused
+          ? ["Hide (Keep Paid Pause)", "Resume Tracking & Hide", "Quit Khaliduo"]
+          : ["Hide & Keep Tracking", "Start 10m Paid Pause & Hide", "Quit Khaliduo"],
         defaultId: 0,
         cancelId: 0,
         noLink: true,
       })
       .then(async ({ response }) => {
         if (response === 1) {
-          if (trackingPausedByUser) {
+          if (trackingPausedByUser || runtimeStatus.trackingPaused) {
             await resumeTracking();
           } else {
             await pauseTracking("Paused while closing the status window");
@@ -1976,7 +2077,7 @@ ipcMain.handle(
   },
 );
 
-ipcMain.handle("agent:pause-tracking", () => pauseTracking());
+ipcMain.handle("agent:pause-tracking", (_event, options) => pauseTracking(options));
 
 ipcMain.handle("agent:resume-tracking", () => resumeTracking());
 

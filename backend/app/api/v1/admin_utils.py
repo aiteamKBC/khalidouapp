@@ -99,6 +99,9 @@ def serialize_work_session(session: WorkSession) -> dict[str, Any]:
         "raw_active_seconds": session.active_seconds,
         "deducted_seconds": session.deducted_seconds,
         "idle_seconds": session.idle_seconds,
+        "normal_seconds": session.normal_seconds,
+        "extra_seconds": session.extra_seconds,
+        "paid_pause_seconds": session.paid_pause_seconds,
         "created_at": session.created_at.isoformat(),
         "updated_at": session.updated_at.isoformat(),
     }

@@ -15,6 +15,9 @@ const fallbackStatus: AgentStatus = {
   workedTodaySeconds: 0,
   activeSeconds: 0,
   idleSeconds: 0,
+  paidPauseEndsAt: null,
+  paidPauseRemainingSeconds: 0,
+  paidPauseBalanceRemainingSeconds: null,
   connectionStatus: "offline",
   lastScreenshotAt: null,
   lastSuccessfulSyncAt: null,
@@ -520,9 +523,48 @@ function App() {
         status.trackingStatus === "paused" ||
         status.trackingStatus === "offline" ||
         status.trackingStatus === "error";
+      let pauseOptions: { requestedMinutes?: number; reason?: string } | undefined;
+      if (!shouldResume) {
+        const remainingSeconds = status.paidPauseBalanceRemainingSeconds ?? 600;
+        if (remainingSeconds < 60) {
+          await Swal.fire({
+            title: "Daily pause limit reached",
+            text: "You have used your paid pause allowance for today. Please request extra pause time from HR or admin.",
+            icon: "info",
+            confirmButtonText: "OK",
+            confirmButtonColor: "#2b1b67",
+          });
+          return;
+        }
+        const remainingMinutes = Math.floor(remainingSeconds / 60);
+        const pauseChoice = await Swal.fire({
+          title: "Start paid pause",
+          text: `You have ${remainingMinutes} minute(s) available today.`,
+          input: "number",
+          inputValue: Math.min(5, remainingMinutes),
+          inputAttributes: {
+            min: "1",
+            max: String(remainingMinutes),
+            step: "1",
+          },
+          showCancelButton: true,
+          confirmButtonText: "Start pause",
+          cancelButtonText: "Cancel",
+          confirmButtonColor: "#d28a00",
+          inputValidator: (value) => {
+            const minutes = Number(value);
+            if (!Number.isFinite(minutes) || minutes < 1 || minutes > remainingMinutes) {
+              return `Choose between 1 and ${remainingMinutes} minute(s).`;
+            }
+            return null;
+          },
+        });
+        if (!pauseChoice.isConfirmed) return;
+        pauseOptions = { requestedMinutes: Number(pauseChoice.value) };
+      }
       const result = shouldResume
         ? await window.khaliduo.resumeTracking()
-        : await window.khaliduo.pauseTracking();
+        : await window.khaliduo.pauseTracking(pauseOptions);
       if (!result.success) {
         setTrackingControlMessage(result.message ?? "The tracking state could not be changed.");
         return;
@@ -531,7 +573,7 @@ function App() {
         result.message ??
           (shouldResume
             ? "Tracking resumed. Screenshots follow the company schedule."
-            : "Tracking paused. No screenshots will be taken on this device."),
+            : "Paid pause started. Tracking and screenshots continue under company policy."),
       );
       setStatus(await window.khaliduo.getAgentStatus());
     } finally {

@@ -7,11 +7,21 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import ApiError
-from app.models import ActivityEvent, Device, Employee, WorkSession
+from app.models import (
+    ActivityEvent,
+    Device,
+    Employee,
+    EmployeeWorkProfile,
+    OvertimeRecord,
+    PauseBalance,
+    PauseSession,
+    WorkSession,
+)
 from app.schemas.session import (
     ActivityEventRequest,
     HeartbeatRequest,
     SessionEndRequest,
+    PauseStartRequest,
     SessionTaskUpdateRequest,
     SessionStartRequest,
 )
@@ -20,6 +30,8 @@ from app.services.task_workflow import TRACKABLE_STAGES
 
 ACTIVE_SESSION_STATUSES = {"active", "idle", "locked", "sleeping"}
 UNENDED_SESSION_STATUSES = ACTIVE_SESSION_STATUSES | {"offline"}
+DEFAULT_REQUIRED_DAILY_SECONDS = 8 * 60 * 60
+DEFAULT_DAILY_PAUSE_SECONDS = 10 * 60
 
 
 def utc(value: datetime | None = None) -> datetime:
@@ -92,8 +104,187 @@ def serialize_session(session: WorkSession) -> dict[str, Any]:
         "status": session.status,
         "active_seconds": session.active_seconds,
         "idle_seconds": session.idle_seconds,
+        "normal_seconds": session.normal_seconds,
+        "extra_seconds": session.extra_seconds,
+        "paid_pause_seconds": session.paid_pause_seconds,
         "created_at": utc(session.created_at).isoformat(),
         "updated_at": utc(session.updated_at).isoformat(),
+    }
+
+
+def local_work_date(db: Session, employee_id: UUID, at: datetime) -> tuple[Any, ZoneInfo]:
+    timezone_name = db.scalar(select(Employee.timezone).where(Employee.id == employee_id)) or "UTC"
+    try:
+        zone = ZoneInfo(timezone_name)
+    except (ZoneInfoNotFoundError, ValueError):
+        zone = ZoneInfo("UTC")
+    return utc(at).astimezone(zone).date(), zone
+
+
+def employee_required_daily_seconds(db: Session, employee_id: UUID) -> int:
+    required_minutes = db.scalar(
+        select(EmployeeWorkProfile.required_daily_minutes).where(
+            EmployeeWorkProfile.employee_id == employee_id
+        )
+    )
+    return max(60, int(required_minutes or 480)) * 60
+
+
+def employee_overtime_enabled(db: Session, employee_id: UUID) -> bool:
+    return bool(
+        db.scalar(
+            select(EmployeeWorkProfile.overtime_enabled).where(
+                EmployeeWorkProfile.employee_id == employee_id
+            )
+        )
+    )
+
+
+def sync_session_time_buckets(db: Session, session: WorkSession) -> None:
+    required_seconds = employee_required_daily_seconds(db, session.employee_id)
+    worked_seconds = max(0, session.active_seconds - session.deducted_seconds)
+    session.normal_seconds = min(worked_seconds, required_seconds)
+    session.extra_seconds = max(0, worked_seconds - required_seconds)
+
+    if session.extra_seconds > 0:
+        work_date, _ = local_work_date(db, session.employee_id, session.started_at)
+        record = db.scalar(
+            select(OvertimeRecord).where(OvertimeRecord.work_session_id == session.id)
+        )
+        enabled = employee_overtime_enabled(db, session.employee_id)
+        status = "pending" if enabled else "recorded_not_counted"
+        if record is None:
+            record = OvertimeRecord(
+                company_id=session.company_id,
+                employee_id=session.employee_id,
+                work_session_id=session.id,
+                work_date=work_date,
+                overtime_enabled_snapshot=enabled,
+                recorded_extra_seconds=session.extra_seconds,
+                status=status,
+            )
+        else:
+            record.recorded_extra_seconds = max(record.recorded_extra_seconds, session.extra_seconds)
+            if record.approved_seconds <= 0:
+                record.status = status
+        db.add(record)
+
+
+def get_or_create_pause_balance(
+    db: Session,
+    *,
+    company_id: UUID,
+    employee_id: UUID,
+    at: datetime,
+) -> PauseBalance:
+    work_date, _ = local_work_date(db, employee_id, at)
+    balance = db.scalar(
+        select(PauseBalance).where(
+            PauseBalance.employee_id == employee_id,
+            PauseBalance.work_date == work_date,
+        )
+    )
+    if balance is None:
+        balance = PauseBalance(
+            company_id=company_id,
+            employee_id=employee_id,
+            work_date=work_date,
+            base_seconds=DEFAULT_DAILY_PAUSE_SECONDS,
+            extra_approved_seconds=0,
+            used_seconds=0,
+        )
+        db.add(balance)
+        db.flush()
+    return balance
+
+
+def active_pause_for_session(db: Session, session: WorkSession) -> PauseSession | None:
+    return db.scalar(
+        select(PauseSession)
+        .where(
+            PauseSession.work_session_id == session.id,
+            PauseSession.status == "active",
+            PauseSession.ended_at.is_(None),
+        )
+        .order_by(PauseSession.started_at.desc())
+    )
+
+
+def finalize_due_pause(db: Session, session: WorkSession, *, at: datetime | None = None) -> None:
+    now = utc(at)
+    pause = active_pause_for_session(db, session)
+    if pause is None or utc(pause.scheduled_end_at) > now:
+        return
+    pause.ended_at = pause.scheduled_end_at
+    pause.status = "completed"
+    pause.used_seconds = pause.requested_seconds
+    balance = db.get(PauseBalance, pause.pause_balance_id)
+    if balance is not None:
+        balance.used_seconds = max(balance.used_seconds, 0) + pause.used_seconds
+        session.paid_pause_seconds = max(session.paid_pause_seconds, balance.used_seconds)
+        db.add(balance)
+    create_activity_event(
+        db,
+        device=db.get(Device, session.device_id),
+        session=session,
+        event_type="paid_pause_auto_resumed",
+        event_timestamp=pause.ended_at,
+        idempotency_key=f"paid-pause-auto-resumed:{pause.id}",
+        payload={"pause_session_id": str(pause.id), "used_seconds": pause.used_seconds},
+    )
+    db.add_all([pause, session])
+
+
+def pause_state_payload(db: Session, session: WorkSession, *, at: datetime | None = None) -> dict[str, Any]:
+    now = utc(at)
+    finalize_due_pause(db, session, at=now)
+    balance = get_or_create_pause_balance(
+        db,
+        company_id=session.company_id,
+        employee_id=session.employee_id,
+        at=now,
+    )
+    active_pause = active_pause_for_session(db, session)
+    total = balance.base_seconds + balance.extra_approved_seconds
+    active_reserved = active_pause.requested_seconds if active_pause else 0
+    remaining = max(0, total - balance.used_seconds - active_reserved)
+    return {
+        "work_date": balance.work_date.isoformat(),
+        "base_seconds": balance.base_seconds,
+        "extra_approved_seconds": balance.extra_approved_seconds,
+        "used_seconds": balance.used_seconds,
+        "reserved_seconds": active_reserved,
+        "remaining_seconds": remaining,
+        "active_pause": None
+        if active_pause is None
+        else {
+            "id": str(active_pause.id),
+            "started_at": utc(active_pause.started_at).isoformat(),
+            "scheduled_end_at": utc(active_pause.scheduled_end_at).isoformat(),
+            "requested_seconds": active_pause.requested_seconds,
+            "remaining_seconds": max(0, int((utc(active_pause.scheduled_end_at) - now).total_seconds())),
+            "status": active_pause.status,
+        },
+    }
+
+
+def workday_state_payload(db: Session, session: WorkSession) -> dict[str, Any]:
+    required_seconds = employee_required_daily_seconds(db, session.employee_id)
+    overtime_enabled = employee_overtime_enabled(db, session.employee_id)
+    sync_session_time_buckets(db, session)
+    return {
+        "required_normal_seconds": required_seconds,
+        "normal_seconds": session.normal_seconds,
+        "normal_remaining_seconds": max(0, required_seconds - session.normal_seconds),
+        "extra_seconds": session.extra_seconds,
+        "overtime_enabled": overtime_enabled,
+        "extra_time_status": (
+            "none"
+            if session.extra_seconds <= 0
+            else "pending_overtime"
+            if overtime_enabled
+            else "recorded_not_counted"
+        ),
     }
 
 
@@ -208,8 +399,13 @@ def start_or_get_session(db: Session, device: Device, payload: SessionStartReque
     if current is not None:
         if payload.task_id is not None and current.task_id != payload.task_id:
             result = switch_session_task(db, device=device, session=current, task_id=payload.task_id)
-            return {"session": result["session"], "created": False}
-        return {"session": serialize_session(current), "created": False}
+            current = get_owned_session(db, device, UUID(result["session"]["id"]))
+            response = session_response(db, current, created=False)
+            db.commit()
+            return response
+        response = session_response(db, current, created=False)
+        db.commit()
+        return response
 
     other_sessions = db.scalars(
         select(WorkSession).where(
@@ -258,12 +454,102 @@ def start_or_get_session(db: Session, device: Device, payload: SessionStartReque
     )
     db.commit()
     db.refresh(session)
-    return {"session": serialize_session(session), "created": True}
+    response = session_response(db, session, created=True)
+    db.commit()
+    return response
 
 
 def current_session_response(db: Session, device: Device) -> dict[str, Any]:
     current = get_current_session(db, device)
-    return {"session": serialize_session(current) if current else None}
+    if current is None:
+        return {"session": None, "workday": None, "pause": None}
+    response = session_response(db, current)
+    db.commit()
+    return response
+
+
+def session_response(db: Session, session: WorkSession, *, created: bool | None = None) -> dict[str, Any]:
+    workday = workday_state_payload(db, session)
+    pause = pause_state_payload(db, session)
+    payload: dict[str, Any] = {
+        "session": serialize_session(session),
+        "workday": workday,
+        "pause": pause,
+    }
+    if created is not None:
+        payload["created"] = created
+    return payload
+
+
+def start_paid_pause(
+    db: Session,
+    *,
+    device: Device,
+    session_id: UUID,
+    payload: PauseStartRequest,
+) -> dict[str, Any]:
+    session = get_owned_session(db, device, session_id)
+    if session.ended_at is not None:
+        raise ApiError("SESSION_ENDED", "This work session has already ended.", 409)
+    now = utc()
+    finalize_due_pause(db, session, at=now)
+    if active_pause_for_session(db, session) is not None:
+        raise ApiError("PAUSE_ALREADY_ACTIVE", "A paid pause is already running.", 409)
+    requested_seconds = payload.requested_minutes * 60
+    balance = get_or_create_pause_balance(
+        db,
+        company_id=session.company_id,
+        employee_id=session.employee_id,
+        at=now,
+    )
+    remaining = balance.base_seconds + balance.extra_approved_seconds - balance.used_seconds
+    if requested_seconds > remaining:
+        raise ApiError(
+            "PAUSE_BALANCE_EXHAUSTED",
+            "You have used your daily paid Pause allowance.",
+            409,
+            details={"remaining_seconds": max(0, remaining)},
+        )
+    idempotency_key = payload.idempotency_key or f"paid-pause:{session.id}:{now.isoformat()}"
+    existing = db.scalar(
+        select(PauseSession).where(
+            PauseSession.work_session_id == session.id,
+            PauseSession.idempotency_key == idempotency_key,
+        )
+    )
+    if existing is None:
+        pause = PauseSession(
+            company_id=session.company_id,
+            employee_id=session.employee_id,
+            work_session_id=session.id,
+            pause_balance_id=balance.id,
+            started_at=now,
+            scheduled_end_at=now + timedelta(seconds=requested_seconds),
+            requested_seconds=requested_seconds,
+            status="active",
+            reason=payload.reason,
+            idempotency_key=idempotency_key,
+        )
+        db.add(pause)
+        db.flush()
+        create_activity_event(
+            db,
+            device=device,
+            session=session,
+            event_type="paid_pause_started",
+            event_timestamp=now,
+            idempotency_key=f"paid-pause-started:{pause.id}",
+            payload={
+                "pause_session_id": str(pause.id),
+                "requested_seconds": requested_seconds,
+                "reason": payload.reason,
+            },
+        )
+    db.commit()
+    db.refresh(session)
+    response = session_response(db, session)
+    db.commit()
+    return response
 
 
 def record_heartbeat(
@@ -281,7 +567,7 @@ def record_heartbeat(
         return {
             "event_id": None,
             "duplicate": False,
-            "session": restarted["session"],
+            **restarted,
             "restarted": True,
         }
     heartbeat_at = utc(payload.timestamp)
@@ -305,7 +591,7 @@ def record_heartbeat(
         return {
             "event_id": None,
             "duplicate": False,
-            "session": restarted["session"],
+            **restarted,
             "restarted": True,
         }
     elapsed_seconds = max(0, int((heartbeat_at - utc(session.started_at)).total_seconds()))
@@ -328,14 +614,18 @@ def record_heartbeat(
             payload.active_seconds if payload.active_seconds is not None else max(0, elapsed_seconds - session.idle_seconds)
         )
         session.active_seconds = max(session.active_seconds, next_active_seconds)
+        finalize_due_pause(db, session, at=heartbeat_at)
+        sync_session_time_buckets(db, session)
 
     db.commit()
     db.refresh(session)
-    return {
+    response = {
         "event_id": str(event.id),
         "duplicate": duplicate,
-        "session": serialize_session(session),
+        **session_response(db, session),
     }
+    db.commit()
+    return response
 
 
 def update_session_task(
@@ -352,7 +642,7 @@ def update_session_task(
             raise ApiError("SESSION_ENDED", "This work session has already ended.", 409)
         session = current
     if session.task_id == payload.task_id:
-        return {"event_id": None, "duplicate": False, "session": serialize_session(session)}
+        return {"event_id": None, "duplicate": False, **session_response(db, session)}
     return switch_session_task(db, device=device, session=session, task_id=payload.task_id)
 
 
@@ -401,11 +691,13 @@ def switch_session_task(
     )
     db.commit()
     db.refresh(next_session)
-    return {
+    response = {
         "event_id": str(event.id),
         "duplicate": duplicate,
-        "session": serialize_session(next_session),
+        **session_response(db, next_session),
     }
+    db.commit()
+    return response
 
 
 def record_agent_event(
@@ -445,11 +737,13 @@ def record_agent_event(
 
     db.commit()
     db.refresh(session)
-    return {
+    response = {
         "event_id": str(event.id),
         "duplicate": duplicate,
-        "session": serialize_session(session),
+        **session_response(db, session),
     }
+    db.commit()
+    return response
 
 
 def end_session(
@@ -482,4 +776,6 @@ def end_session(
     )
     db.commit()
     db.refresh(session)
-    return {"session": serialize_session(session)}
+    response = session_response(db, session)
+    db.commit()
+    return response

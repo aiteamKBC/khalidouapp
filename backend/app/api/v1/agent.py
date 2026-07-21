@@ -29,6 +29,7 @@ from app.schemas.agent import (
 from app.schemas.session import (
     ActivityEventRequest,
     HeartbeatRequest,
+    PauseStartRequest,
     SessionEndRequest,
     SessionTaskUpdateRequest,
     SessionStartRequest,
@@ -46,6 +47,7 @@ from app.services.session_tracking import (
     end_session,
     record_agent_event,
     record_heartbeat,
+    start_paid_pause,
     start_or_get_session,
     update_session_task,
 )
@@ -471,6 +473,16 @@ def heartbeat(
 ):
     context.device.last_ip_address = request.client.host if request.client else context.device.last_ip_address
     return success_response(data=record_heartbeat(db, device=context.device, session_id=session_id, payload=payload))
+
+
+@router.post("/sessions/{session_id}/pause")
+def paid_pause(
+    session_id: UUID,
+    payload: PauseStartRequest,
+    context: Annotated[DeviceAuthContext, Depends(get_current_device)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    return success_response(data=start_paid_pause(db, device=context.device, session_id=session_id, payload=payload))
 
 
 @router.post("/sessions/{session_id}/events")

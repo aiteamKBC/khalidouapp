@@ -53,8 +53,22 @@ export type WorkSession = {
   status: "active" | "idle" | "locked" | "sleeping" | "offline" | "ended";
   active_seconds: number;
   idle_seconds: number;
+  normal_seconds?: number;
+  extra_seconds?: number;
+  paid_pause_seconds?: number;
   created_at: string;
   updated_at: string;
+};
+
+export type PauseState = {
+  remaining_seconds: number;
+  active_pause: {
+    id: string;
+    scheduled_end_at: string;
+    requested_seconds: number;
+    remaining_seconds: number;
+    status: string;
+  } | null;
 };
 
 export type AgentTask = {
@@ -416,6 +430,29 @@ export async function endSession(options: {
   return response.data.data;
 }
 
+export async function startPaidPause(options: {
+  sessionId: string;
+  requestedMinutes: number;
+  reason?: string;
+  idempotencyKey?: string;
+}) {
+  const response = await axios.post<
+    ApiSuccess<{
+      session: WorkSession;
+      pause: PauseState;
+    }>
+  >(
+    `${getApiBaseUrl()}/agent/sessions/${options.sessionId}/pause`,
+    {
+      requested_minutes: options.requestedMinutes,
+      reason: options.reason ?? null,
+      idempotency_key: options.idempotencyKey ?? randomUUID(),
+    },
+    { headers: getAuthHeaders() },
+  );
+  return response.data.data;
+}
+
 export async function updateSessionTask(
   sessionId: string,
   taskId: string | null,
@@ -437,7 +474,7 @@ export async function sendHeartbeat(options: {
   agentVersion: string;
 }) {
   const response = await axios.post<
-    ApiSuccess<{ session: WorkSession; duplicate: boolean }>
+    ApiSuccess<{ session: WorkSession; duplicate: boolean; pause?: PauseState }>
   >(
     `${getApiBaseUrl()}/agent/sessions/${options.sessionId}/heartbeat`,
     {

@@ -36,3 +36,9 @@ class SessionEndRequest(BaseModel):
 
 class SessionTaskUpdateRequest(BaseModel):
     task_id: UUID | None = None
+
+
+class PauseStartRequest(BaseModel):
+    requested_minutes: int = Field(ge=1, le=240)
+    reason: str | None = Field(default=None, max_length=500)
+    idempotency_key: str | None = Field(default=None, min_length=1, max_length=120)

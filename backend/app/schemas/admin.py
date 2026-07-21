@@ -56,6 +56,9 @@ class EmployeeWorkProfileUpdate(BaseModel):
     required_daily_minutes: int | None = Field(default=None, ge=60, le=1440)
     break_rules: list[BreakRule] | None = None
     late_grace_minutes: int | None = Field(default=None, ge=0, le=240)
+    no_show_threshold_minutes: int | None = Field(default=None, ge=0, le=1440)
+    schedule_type: Literal["fixed", "flexible"] | None = None
+    weekly_early_leave_minutes: int | None = Field(default=None, ge=0, le=1440)
     deduction_policy: DeductionPolicy | None = None
     overtime_enabled: bool | None = None
     overtime_basis: Literal["beyond_daily_required", "outside_shift", "either"] | None = None
