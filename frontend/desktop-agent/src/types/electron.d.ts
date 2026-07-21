@@ -205,6 +205,7 @@ declare global {
       minimizeWindow: () => Promise<void>;
       toggleMaximizeWindow: () => Promise<void>;
       closeWindow: () => Promise<void>;
+      checkForUpdates: () => Promise<{ success: boolean; message?: string }>;
     };
   }
 }

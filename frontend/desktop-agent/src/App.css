@@ -222,6 +222,12 @@ textarea:disabled {
   border-color: transparent;
 }
 
+.k-title-button:disabled,
+.k-theme-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
 .k-update {
   grid-column: 2;
   z-index: 10;

@@ -207,6 +207,7 @@ function App() {
   const [dashboardError, setDashboardError] = useState<string | null>(null);
   const [isOpeningDashboard, setIsOpeningDashboard] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
   const [recentScreenshots, setRecentScreenshots] = useState<RecentScreenshot[] | null>(null);
   const [isLoadingScreenshots, setIsLoadingScreenshots] = useState(false);
   const [screenshotError, setScreenshotError] = useState<string | null>(null);
@@ -731,6 +732,45 @@ function App() {
     }
   }
 
+  async function handleUpdateButton() {
+    if (!window.khaliduo || isCheckingUpdate) return;
+    setIsCheckingUpdate(true);
+    try {
+      const result =
+        status.updateStatus === "ready"
+          ? await window.khaliduo.installUpdate()
+          : await window.khaliduo.checkForUpdates();
+      if (result?.success === false) {
+        await Swal.fire({
+          title: "Update check failed",
+          text: result.message ?? "Khaliduo could not check for updates.",
+          icon: "error",
+          confirmButtonText: "OK",
+        });
+      }
+      const nextStatus = await window.khaliduo.getAgentStatus();
+      setStatus(nextStatus);
+    } finally {
+      setIsCheckingUpdate(false);
+    }
+  }
+
+  const updateButtonLabel =
+    status.updateStatus === "ready"
+      ? "Install update"
+      : status.updateStatus === "downloading"
+        ? `Updating ${Math.round(status.updatePercent ?? 0)}%`
+        : status.updateStatus === "available"
+          ? "Downloading update"
+          : isCheckingUpdate || status.updateStatus === "checking"
+            ? "Checking..."
+            : "Check update";
+  const updateButtonDisabled =
+    isCheckingUpdate ||
+    status.updateStatus === "checking" ||
+    status.updateStatus === "downloading" ||
+    status.updateStatus === "available";
+
   return (
     <main className="k-app" data-tone={timerTone} data-theme={theme}>
       <header className="k-titlebar">
@@ -760,6 +800,15 @@ function App() {
             Dashboard
           </button>
         )}
+        <button
+          type="button"
+          className="k-theme-button"
+          onClick={() => void handleUpdateButton()}
+          disabled={updateButtonDisabled}
+          title="Check for Khaliduo updates now"
+        >
+          {updateButtonLabel}
+        </button>
         <button
           type="button"
           className="k-theme-button"

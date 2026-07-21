@@ -2004,6 +2004,19 @@ ipcMain.on("agent:set-update-attention", (_, active: boolean) => {
   setUpdateAttention(Boolean(active));
 });
 
+ipcMain.handle("agent:check-for-updates", async () => {
+  try {
+    await checkForUpdates(true);
+    return { success: true };
+  } catch (error) {
+    log.error("Manual update check failed", error);
+    return {
+      success: false,
+      message: getUserFacingError(error, "Could not check for updates."),
+    };
+  }
+});
+
 ipcMain.handle("agent:install-update", async () => {
   try {
     await installDownloadedUpdate();

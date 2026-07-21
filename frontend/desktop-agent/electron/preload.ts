@@ -8,7 +8,8 @@ contextBridge.exposeInMainWorld("khaliduo", {
     ipcRenderer.invoke("agent:enroll-device", enrollmentCode),
   enrollWithCredentials: (email: string, password: string) =>
     ipcRenderer.invoke("agent:enroll-with-credentials", email, password),
-  pauseTracking: () => ipcRenderer.invoke("agent:pause-tracking"),
+  pauseTracking: (options?: { requestedMinutes?: number; reason?: string }) =>
+    ipcRenderer.invoke("agent:pause-tracking", options),
   resumeTracking: () => ipcRenderer.invoke("agent:resume-tracking"),
   logout: () => ipcRenderer.invoke("agent:logout"),
   openEmployeeDashboard: (section?: "screenshots") =>
@@ -40,6 +41,7 @@ contextBridge.exposeInMainWorld("khaliduo", {
   minimizeWindow: () => ipcRenderer.invoke("window:minimize"),
   toggleMaximizeWindow: () => ipcRenderer.invoke("window:toggle-maximize"),
   closeWindow: () => ipcRenderer.invoke("window:close"),
+  checkForUpdates: () => ipcRenderer.invoke("agent:check-for-updates"),
   installUpdate: () => ipcRenderer.invoke("agent:install-update"),
   onRequiredUpdate: (callback: (update: { version: string | null }) => void) => {
     const listener = (
