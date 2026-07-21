@@ -83,6 +83,7 @@ ROLE_CAPABILITIES: dict[str, frozenset[str]] = {
             "screenshots.view",
             "timesheets.view",
             "time_requests.view",
+            "time_requests.manage",
             "devices.view",
             "projects.view",
             "projects.manage",

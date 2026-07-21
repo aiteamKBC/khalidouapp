@@ -274,7 +274,10 @@ export interface TimeAdjustmentRequest {
   employeeName: string;
   deviceId?: string;
   workSessionId?: string;
+  requestType?: string;
   requestedDate: string;
+  sourceStartAt?: string;
+  sourceEndAt?: string;
   requestedMinutes: number;
   approvedMinutes?: number;
   reason: string;

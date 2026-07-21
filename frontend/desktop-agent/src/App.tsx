@@ -49,6 +49,18 @@ const TRACKABLE_TASK_STAGES = new Set(["backlog", "assigned", "in_progress"]);
 const THEME_STORAGE_KEY = "khaliduo-theme";
 const LIGHT_DEFAULT_RESET_KEY = "khaliduo-desktop-light-default-applied";
 
+type TimelineInterval = WorkdayTimeline["intervals"][number];
+type IdleRequestOption = {
+  key: string;
+  sessionId: string;
+  startedAt: string;
+  endedAt: string;
+  durationSeconds: number;
+  availableSeconds: number;
+  projectName: string | null;
+  taskName: string | null;
+};
+
 function initialTheme(): "light" | "dark" {
   if (window.localStorage.getItem(LIGHT_DEFAULT_RESET_KEY) !== "1") {
     window.localStorage.removeItem(THEME_STORAGE_KEY);
@@ -64,6 +76,10 @@ function formatDuration(totalSeconds: number) {
   const minutes = Math.floor((safeSeconds % 3600) / 60).toString().padStart(2, "0");
   const seconds = Math.floor(safeSeconds % 60).toString().padStart(2, "0");
   return `${hours}:${minutes}:${seconds}`;
+}
+
+function idleRequestKey(input: { session_id?: string; work_session_id?: string | null; started_at?: string; ended_at?: string | null; source_start_at?: string | null; source_end_at?: string | null }) {
+  return `${input.session_id ?? input.work_session_id ?? ""}|${input.started_at ?? input.source_start_at ?? ""}|${input.ended_at ?? input.source_end_at ?? ""}`;
 }
 
 type KIconName =
@@ -196,6 +212,9 @@ function App() {
   const [sessionNote, setSessionNote] = useState("");
   const [timeRequestMinutes, setTimeRequestMinutes] = useState(15);
   const [timeRequestReason, setTimeRequestReason] = useState("");
+  const [selectedIdleRequestKey, setSelectedIdleRequestKey] = useState("");
+  const [earlyLeaveMinutes, setEarlyLeaveMinutes] = useState(30);
+  const [earlyLeaveReason, setEarlyLeaveReason] = useState("");
   const [timeRequestError, setTimeRequestError] = useState<string | null>(null);
   const [timeRequestSuccess, setTimeRequestSuccess] = useState<string | null>(null);
   const [leaveStartDate, setLeaveStartDate] = useState("");
@@ -364,6 +383,61 @@ function App() {
     };
   }, [status.idleSeconds, status.timeSummary, status.workedTodaySeconds]);
 
+  const idleRequestOptions = useMemo<IdleRequestOption[]>(() => {
+    const timeline = status.todayTimeline;
+    if (!timeline) return [];
+    const requestedByIdle = new Map<string, number>();
+    for (const request of status.timeAdjustmentRequests) {
+      if (request.request_type !== "idle_time" || request.status === "rejected") continue;
+      const key = idleRequestKey(request);
+      requestedByIdle.set(key, (requestedByIdle.get(key) ?? 0) + request.requested_minutes * 60);
+    }
+    return timeline.intervals
+      .filter(
+        (interval): interval is TimelineInterval & { ended_at: string } =>
+          interval.type === "idle" &&
+          Boolean(interval.ended_at) &&
+          !interval.is_current &&
+          interval.duration_seconds >= 60,
+      )
+      .map((interval) => {
+        const key = idleRequestKey(interval);
+        return {
+          key,
+          sessionId: interval.session_id,
+          startedAt: interval.started_at,
+          endedAt: interval.ended_at,
+          durationSeconds: interval.duration_seconds,
+          availableSeconds: Math.max(0, interval.duration_seconds - (requestedByIdle.get(key) ?? 0)),
+          projectName: interval.project_name,
+          taskName: interval.task_name,
+        };
+      })
+      .filter((option) => option.availableSeconds >= 60)
+      .reverse();
+  }, [status.timeAdjustmentRequests, status.todayTimeline]);
+
+  const selectedIdleRequest =
+    idleRequestOptions.find((option) => option.key === selectedIdleRequestKey) ??
+    idleRequestOptions[0] ??
+    null;
+
+  useEffect(() => {
+    if (!idleRequestOptions.length) {
+      setSelectedIdleRequestKey("");
+      return;
+    }
+    if (!selectedIdleRequestKey || !idleRequestOptions.some((option) => option.key === selectedIdleRequestKey)) {
+      setSelectedIdleRequestKey(idleRequestOptions[0].key);
+    }
+  }, [idleRequestOptions, selectedIdleRequestKey]);
+
+  useEffect(() => {
+    if (!selectedIdleRequest) return;
+    const maxMinutes = Math.max(1, Math.floor(selectedIdleRequest.availableSeconds / 60));
+    setTimeRequestMinutes((minutes) => Math.min(Math.max(1, minutes), maxMinutes));
+  }, [selectedIdleRequest]);
+
   const countedTodaySeconds = timeBreakdown.segments
     .filter((segment) => segment.counted)
     .reduce((total, segment) => total + segment.seconds, 0);
@@ -413,7 +487,7 @@ function App() {
     }
   }
 
-  async function handleTimeRequest(event: FormEvent<HTMLFormElement>) {
+  async function handleIdleTimeRequest(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setTimeRequestError(null);
     setTimeRequestSuccess(null);
@@ -421,26 +495,74 @@ function App() {
       setTimeRequestError("Device must be enrolled before sending a request.");
       return;
     }
-    if (!Number.isFinite(timeRequestMinutes) || timeRequestMinutes < 1 || timeRequestMinutes > 120) {
-      setTimeRequestError("Early leave requests can be up to 2 hours.");
+    if (!selectedIdleRequest) {
+      setTimeRequestError("No completed idle period is available to request.");
+      return;
+    }
+    const maxMinutes = Math.max(1, Math.floor(selectedIdleRequest.availableSeconds / 60));
+    if (!Number.isFinite(timeRequestMinutes) || timeRequestMinutes < 1 || timeRequestMinutes > maxMinutes) {
+      setTimeRequestError(`You can request up to ${maxMinutes} minute(s) from this idle period.`);
       return;
     }
     if (timeRequestReason.trim().length < 3) {
+      setTimeRequestError("Explain what you were doing during this idle time.");
+      return;
+    }
+
+    setIsSubmittingTimeRequest(true);
+    try {
+      const result = await window.khaliduo.createTimeAdjustmentRequest({
+        requestedMinutes: timeRequestMinutes,
+        reason: timeRequestReason,
+        requestType: "idle_time",
+        requestedDate: status.todayTimeline?.date ?? localDateKey(),
+        workSessionId: selectedIdleRequest.sessionId,
+        sourceStartAt: selectedIdleRequest.startedAt,
+        sourceEndAt: selectedIdleRequest.endedAt,
+      });
+      if (!result.success) {
+        setTimeRequestError(result.message ?? "Request failed.");
+        return;
+      }
+      setTimeRequestReason("");
+      setTimeRequestSuccess("Idle time request sent for review.");
+      setSelectedIdleRequestKey("");
+      if (result.status) setStatus(result.status);
+    } finally {
+      setIsSubmittingTimeRequest(false);
+    }
+  }
+
+  async function handleEarlyLeaveRequest(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setTimeRequestError(null);
+    setTimeRequestSuccess(null);
+    if (!window.khaliduo || !status.enrolled) {
+      setTimeRequestError("Device must be enrolled before sending a request.");
+      return;
+    }
+    if (!Number.isFinite(earlyLeaveMinutes) || earlyLeaveMinutes < 1 || earlyLeaveMinutes > 120) {
+      setTimeRequestError("Early leave permission can be up to 2 hours.");
+      return;
+    }
+    if (earlyLeaveReason.trim().length < 3) {
       setTimeRequestError("Write a reason of at least 3 characters before sending.");
       return;
     }
 
     setIsSubmittingTimeRequest(true);
     try {
-      const result = await window.khaliduo.createTimeAdjustmentRequest(
-        timeRequestMinutes,
-        timeRequestReason,
-      );
+      const result = await window.khaliduo.createTimeAdjustmentRequest({
+        requestedMinutes: earlyLeaveMinutes,
+        reason: earlyLeaveReason,
+        requestType: "early_leave",
+        requestedDate: localDateKey(),
+      });
       if (!result.success) {
         setTimeRequestError(result.message ?? "Request failed.");
         return;
       }
-      setTimeRequestReason("");
+      setEarlyLeaveReason("");
       setTimeRequestSuccess("Early leave request sent to HR/admin.");
       if (result.status) setStatus(result.status);
     } finally {
@@ -1007,9 +1129,11 @@ function App() {
               onTrackingToggle={() => void handleTrackingToggle()}
               onLoadScreenshots={() => void handleLoadRecentScreenshots()}
               onOpenScreenshots={() => void handleOpenDashboard("screenshots")}
-              onRequestManualTime={() => {
-                if (!timeRequestReason.trim()) {
-                  setTimeRequestReason("Please review idle/manual time for today.");
+              idleRequestOptions={idleRequestOptions}
+              onRequestManualTime={(option) => {
+                if (option) {
+                  setSelectedIdleRequestKey(option.key);
+                  setTimeRequestMinutes(Math.max(1, Math.floor(option.availableSeconds / 60)));
                 }
                 setActiveView("more");
               }}
@@ -1070,7 +1194,15 @@ function App() {
               onSubmitLeaveRequest={handleLeaveRequest}
               onTimeRequestMinutesChange={setTimeRequestMinutes}
               onTimeRequestReasonChange={setTimeRequestReason}
-              onSubmitTimeRequest={handleTimeRequest}
+              selectedIdleRequestKey={selectedIdleRequestKey}
+              idleRequestOptions={idleRequestOptions}
+              earlyLeaveMinutes={earlyLeaveMinutes}
+              earlyLeaveReason={earlyLeaveReason}
+              onSelectedIdleRequestChange={setSelectedIdleRequestKey}
+              onEarlyLeaveMinutesChange={setEarlyLeaveMinutes}
+              onEarlyLeaveReasonChange={setEarlyLeaveReason}
+              onSubmitIdleTimeRequest={handleIdleTimeRequest}
+              onSubmitEarlyLeaveRequest={handleEarlyLeaveRequest}
               onLogout={() => void handleLogout()}
               isLoggingOut={isLoggingOut}
             />
@@ -1238,6 +1370,7 @@ function HomeView({
   onTrackingToggle,
   onLoadScreenshots,
   onOpenScreenshots,
+  idleRequestOptions,
   onRequestManualTime,
 }: {
   status: AgentStatus;
@@ -1267,7 +1400,8 @@ function HomeView({
   onTrackingToggle: () => void;
   onLoadScreenshots: () => void;
   onOpenScreenshots: () => void;
-  onRequestManualTime: () => void;
+  idleRequestOptions: IdleRequestOption[];
+  onRequestManualTime: (option?: IdleRequestOption) => void;
 }) {
   const isPaused = status.trackingPaused || status.trackingStatus === "paused";
   const shouldResume =
@@ -1390,8 +1524,13 @@ function HomeView({
             <div>
               <span>Idle</span>
               <strong>{formatDuration(status.idleSeconds)}</strong>
-              <button type="button" className="k-meta-action" onClick={onRequestManualTime}>
-                Request manual time
+              <button
+                type="button"
+                className="k-meta-action"
+                onClick={() => onRequestManualTime(idleRequestOptions[0])}
+                disabled={!idleRequestOptions.length}
+              >
+                Request idle time
               </button>
             </div>
           </div>
@@ -1458,7 +1597,13 @@ function HomeView({
           {screenshotError && <p className="k-error">{screenshotError}</p>}
           {dashboardError && <p className="k-error">{dashboardError}</p>}
         </section>
-        {status.todayTimeline && <Timeline timeline={status.todayTimeline} />}
+        {status.todayTimeline && (
+          <Timeline
+            timeline={status.todayTimeline}
+            idleRequestOptions={idleRequestOptions}
+            onRequestIdleTime={onRequestManualTime}
+          />
+        )}
         {status.recentTasks.length > 0 && (
           <section className="k-side-section">
             <strong>Recent tasks</strong>
@@ -1487,36 +1632,57 @@ function Stat({ label, value, tone }: { label: string; value: string; tone?: "go
   );
 }
 
-function Timeline({ timeline }: { timeline: WorkdayTimeline }) {
+function Timeline({
+  timeline,
+  idleRequestOptions,
+  onRequestIdleTime,
+}: {
+  timeline: WorkdayTimeline;
+  idleRequestOptions: IdleRequestOption[];
+  onRequestIdleTime: (option: IdleRequestOption) => void;
+}) {
   const labels = {
     worked: "Worked",
     idle: "Idle",
     locked: "Locked",
     sleeping: "Sleeping",
   } as const;
+  const idleOptionsByKey = new Map(idleRequestOptions.map((option) => [option.key, option]));
   return (
     <section className="k-side-section">
       <strong>Today's timeline</strong>
       <div className="k-timeline">
-        {timeline.intervals.slice(-6).map((interval, index) => (
-          <div key={`${interval.session_id}-${interval.started_at}-${index}`} className={`k-line-${interval.type}`}>
-            <i className="k-timeline-icon">
-              <KIcon name={interval.type} />
-            </i>
-            <span>
-              {formatClock(interval.started_at, timeline.timezone)} -{" "}
-              {interval.is_current ? "Now" : formatClock(interval.ended_at, timeline.timezone)}
-            </span>
-            <b>{labels[interval.type]}</b>
-            <small>
-              {formatDuration(
-                interval.is_current
-                  ? Math.max(0, Math.floor((Date.now() - new Date(interval.started_at).getTime()) / 1000))
-                  : interval.duration_seconds,
-              )}
-            </small>
-          </div>
-        ))}
+        {timeline.intervals.slice(-6).map((interval, index) => {
+          const idleOption = interval.type === "idle" ? idleOptionsByKey.get(idleRequestKey(interval)) : undefined;
+          return (
+            <div key={`${interval.session_id}-${interval.started_at}-${index}`} className={`k-line-${interval.type}`}>
+              <i className="k-timeline-icon">
+                <KIcon name={interval.type} />
+              </i>
+              <span>
+                {formatClock(interval.started_at, timeline.timezone)} -{" "}
+                {interval.is_current ? "Now" : formatClock(interval.ended_at, timeline.timezone)}
+              </span>
+              <b>{labels[interval.type]}</b>
+              <small>
+                {formatDuration(
+                  interval.is_current
+                    ? Math.max(0, Math.floor((Date.now() - new Date(interval.started_at).getTime()) / 1000))
+                    : interval.duration_seconds,
+                )}
+              </small>
+              {idleOption ? (
+                <button
+                  type="button"
+                  className="k-timeline-request"
+                  onClick={() => onRequestIdleTime(idleOption)}
+                >
+                  Request
+                </button>
+              ) : null}
+            </div>
+          );
+        })}
       </div>
     </section>
   );
@@ -1781,6 +1947,10 @@ function MoreView({
   timeRequestReason,
   timeRequestError,
   timeRequestSuccess,
+  selectedIdleRequestKey,
+  idleRequestOptions,
+  earlyLeaveMinutes,
+  earlyLeaveReason,
   leaveStartDate,
   leaveEndDate,
   leaveReason,
@@ -1794,7 +1964,11 @@ function MoreView({
   onSubmitLeaveRequest,
   onTimeRequestMinutesChange,
   onTimeRequestReasonChange,
-  onSubmitTimeRequest,
+  onSelectedIdleRequestChange,
+  onEarlyLeaveMinutesChange,
+  onEarlyLeaveReasonChange,
+  onSubmitIdleTimeRequest,
+  onSubmitEarlyLeaveRequest,
   onLogout,
   isLoggingOut,
 }: {
@@ -1803,6 +1977,10 @@ function MoreView({
   timeRequestReason: string;
   timeRequestError: string | null;
   timeRequestSuccess: string | null;
+  selectedIdleRequestKey: string;
+  idleRequestOptions: IdleRequestOption[];
+  earlyLeaveMinutes: number;
+  earlyLeaveReason: string;
   leaveStartDate: string;
   leaveEndDate: string;
   leaveReason: string;
@@ -1816,13 +1994,23 @@ function MoreView({
   onSubmitLeaveRequest: (event: FormEvent<HTMLFormElement>) => void;
   onTimeRequestMinutesChange: (value: number) => void;
   onTimeRequestReasonChange: (value: string) => void;
-  onSubmitTimeRequest: (event: FormEvent<HTMLFormElement>) => void;
+  onSelectedIdleRequestChange: (value: string) => void;
+  onEarlyLeaveMinutesChange: (value: number) => void;
+  onEarlyLeaveReasonChange: (value: string) => void;
+  onSubmitIdleTimeRequest: (event: FormEvent<HTMLFormElement>) => void;
+  onSubmitEarlyLeaveRequest: (event: FormEvent<HTMLFormElement>) => void;
   onLogout: () => void;
   isLoggingOut: boolean;
 }) {
+  const selectedIdle =
+    idleRequestOptions.find((option) => option.key === selectedIdleRequestKey) ??
+    idleRequestOptions[0] ??
+    null;
+  const maxIdleMinutes = selectedIdle ? Math.max(1, Math.floor(selectedIdle.availableSeconds / 60)) : 0;
+  const recentRequests = status.timeAdjustmentRequests.slice(0, 5);
   return (
     <section className="k-page">
-      <details className="k-panel" open>
+      <details className="k-panel k-system-panel">
         <summary>System details</summary>
         <dl className="k-details">
           <div><dt>Current session</dt><dd>{formatTimestamp(status.sessionStartedAt)}</dd></div>
@@ -1833,7 +2021,7 @@ function MoreView({
         </dl>
       </details>
 
-      <div className="k-panel">
+      <div className="k-panel k-request-card">
         <h2>Request holiday</h2>
         <p className="k-muted">
           Annual credit: {status.leaveRequests?.balance.remaining_days ?? "-"} of{" "}
@@ -1887,57 +2075,132 @@ function MoreView({
         ) : null}
       </div>
 
-      <div className="k-panel">
-        <h2>Manual time / permission request</h2>
+      <div className="k-panel k-request-card k-request-card-highlight">
+        <h2>Idle time request</h2>
         <p className="k-muted">
-          Use this for approved manual time, idle review, offline work, or up to 2 hours weekly early leave permission.
+          Request to count a completed idle period. You must explain what you were doing during that idle time.
         </p>
-        <form className="k-form" onSubmit={onSubmitTimeRequest}>
+        <form className="k-form" onSubmit={onSubmitIdleTimeRequest}>
           <label>
-            Date
-            <input type="date" value={localDateKey()} disabled />
+            Idle period
+            <select
+              value={selectedIdle?.key ?? ""}
+              onChange={(event) => onSelectedIdleRequestChange(event.target.value)}
+              disabled={!idleRequestOptions.length}
+            >
+              {idleRequestOptions.length ? (
+                idleRequestOptions.map((option) => (
+                  <option key={option.key} value={option.key}>
+                    {formatClock(option.startedAt, status.todayTimeline?.timezone ?? "UTC")} - {formatClock(option.endedAt, status.todayTimeline?.timezone ?? "UTC")}
+                    {" · "}
+                    {formatDuration(option.availableSeconds)} available
+                  </option>
+                ))
+              ) : (
+                <option value="">No idle time available</option>
+              )}
+            </select>
           </label>
-          <div className="k-form-grid">
-            <label>
-              Hours
-              <input
-                type="number"
-                min={0}
-                max={2}
-                value={Math.floor(timeRequestMinutes / 60)}
-                onChange={(event) => onTimeRequestMinutesChange(Number(event.target.value) * 60 + (timeRequestMinutes % 60))}
-              />
-            </label>
-            <label>
-              Minutes
-              <input
-                id="time-request-minutes"
-                type="number"
-                min={0}
-                max={59}
-                value={timeRequestMinutes % 60}
-                onChange={(event) => onTimeRequestMinutesChange(Math.floor(timeRequestMinutes / 60) * 60 + Number(event.target.value))}
-              />
-            </label>
+          <div className="k-request-meter">
+            <span>Available to request</span>
+            <strong>{selectedIdle ? formatDuration(selectedIdle.availableSeconds) : "00:00:00"}</strong>
           </div>
           <label>
-            Reason
+            Minutes to count
+            <input
+              id="time-request-minutes"
+              type="number"
+              min={1}
+              max={maxIdleMinutes || 1}
+              value={timeRequestMinutes}
+              disabled={!selectedIdle}
+              onChange={(event) =>
+                onTimeRequestMinutesChange(
+                  Math.min(Math.max(1, Number(event.target.value)), maxIdleMinutes || 1),
+                )
+              }
+            />
+          </label>
+          <label>
+            What were you doing?
             <textarea
               id="time-request-reason"
               value={timeRequestReason}
               onChange={(event) => onTimeRequestReasonChange(event.target.value)}
               minLength={3}
               maxLength={1000}
-              placeholder="Idle should be counted, offline meeting, client visit, workshop..."
+              placeholder="Client call, offline task, meeting, system issue..."
               required
+              disabled={!selectedIdle}
             />
           </label>
-          <button className="k-primary" disabled={isSubmittingTimeRequest || timeRequestMinutes < 1}>
-            {isSubmittingTimeRequest ? "Submitting..." : "Submit request"}
+          <button className="k-primary" disabled={isSubmittingTimeRequest || !selectedIdle || timeRequestMinutes < 1}>
+            {isSubmittingTimeRequest ? "Submitting..." : "Request idle time"}
           </button>
           {timeRequestError && <p className="k-error">{timeRequestError}</p>}
           {timeRequestSuccess && <p className="k-success">{timeRequestSuccess}</p>}
         </form>
+      </div>
+
+      <div className="k-panel k-request-card">
+        <h2>Early leave permission</h2>
+        <p className="k-muted">Request up to 2 hours permission for today. HR/admin will review it.</p>
+        <form className="k-form" onSubmit={onSubmitEarlyLeaveRequest}>
+          <label>
+            Date
+            <input type="date" value={localDateKey()} disabled />
+          </label>
+          <label>
+            Permission minutes
+            <input
+              type="number"
+              min={1}
+              max={120}
+              value={earlyLeaveMinutes}
+              onChange={(event) =>
+                onEarlyLeaveMinutesChange(Math.min(120, Math.max(1, Number(event.target.value))))
+              }
+            />
+          </label>
+          <label>
+            Reason
+            <textarea
+              value={earlyLeaveReason}
+              onChange={(event) => onEarlyLeaveReasonChange(event.target.value)}
+              minLength={3}
+              maxLength={1000}
+              placeholder="Doctor appointment, family emergency..."
+              required
+            />
+          </label>
+          <button className="k-secondary-action" disabled={isSubmittingTimeRequest || earlyLeaveMinutes < 1}>
+            {isSubmittingTimeRequest ? "Submitting..." : "Request permission"}
+          </button>
+        </form>
+      </div>
+
+      <div className="k-panel">
+        <h2>Recent time requests</h2>
+        <div className="k-mini-list">
+          {recentRequests.length ? (
+            recentRequests.map((request) => (
+              <div key={request.id}>
+                <span>
+                  {(request.request_type === "idle_time" && "Idle time") ||
+                    (request.request_type === "early_leave" && "Early leave") ||
+                    "Manual time"}{" "}
+                  · {formatDuration(request.requested_minutes * 60)}
+                </span>
+                <strong>{request.status}</strong>
+              </div>
+            ))
+          ) : (
+            <div>
+              <span>No time requests yet</span>
+              <strong>-</strong>
+            </div>
+          )}
+        </div>
       </div>
 
       <div className="k-panel">

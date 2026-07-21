@@ -138,7 +138,11 @@ export type TrackingConfig = {
 
 export type TimeAdjustmentRequest = {
   id: string;
+  request_type: "idle_time" | "early_leave" | "manual_time";
   requested_date: string;
+  source_start_at: string | null;
+  source_end_at: string | null;
+  work_session_id: string | null;
   requested_minutes: number;
   approved_minutes: number | null;
   reason: string;
@@ -698,12 +702,22 @@ export async function createEmployeePortalHandoff() {
 export async function createTimeAdjustmentRequest(options: {
   requestedMinutes: number;
   reason: string;
+  requestType?: "idle_time" | "early_leave" | "manual_time";
+  requestedDate?: string;
+  workSessionId?: string;
+  sourceStartAt?: string;
+  sourceEndAt?: string;
 }) {
   const response = await axios.post<ApiSuccess<TimeAdjustmentRequest>>(
     `${getApiBaseUrl()}/agent/time-adjustment-requests`,
     {
       requested_minutes: options.requestedMinutes,
       reason: options.reason,
+      request_type: options.requestType,
+      requested_date: options.requestedDate,
+      work_session_id: options.workSessionId,
+      source_start_at: options.sourceStartAt,
+      source_end_at: options.sourceEndAt,
     },
     { headers: getAuthHeaders() },
   );

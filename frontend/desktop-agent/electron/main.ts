@@ -2378,12 +2378,20 @@ ipcMain.handle(
 
 ipcMain.handle(
   "agent:create-time-adjustment-request",
-  async (_, requestedMinutes: number, reason: string) => {
+  async (
+    _,
+    input: {
+      requestedMinutes: number;
+      reason: string;
+      requestType?: "idle_time" | "early_leave" | "manual_time";
+      requestedDate?: string;
+      workSessionId?: string;
+      sourceStartAt?: string;
+      sourceEndAt?: string;
+    },
+  ) => {
     try {
-      const request = await createTimeAdjustmentRequest({
-        requestedMinutes,
-        reason,
-      });
+      const request = await createTimeAdjustmentRequest(input);
       await refreshTimeAdjustmentRequests();
       runtimeStatus.connectionStatus = "online";
       runtimeStatus.lastSuccessfulSyncAt = new Date().toISOString();

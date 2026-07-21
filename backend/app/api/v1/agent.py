@@ -723,6 +723,10 @@ def create_time_adjustment_request(
         requested_date=payload.requested_date or date.today(),
         requested_minutes=payload.requested_minutes,
         reason=payload.reason,
+        request_type=payload.request_type,
+        work_session_id=payload.work_session_id,
+        source_start_at=payload.source_start_at,
+        source_end_at=payload.source_end_at,
     )
     return success_response(data=serialize_time_adjustment_request(row))
 

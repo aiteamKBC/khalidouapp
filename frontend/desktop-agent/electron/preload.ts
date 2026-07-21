@@ -32,12 +32,15 @@ contextBridge.exposeInMainWorld("khaliduo", {
     ipcRenderer.invoke("agent:create-task-checklist-item", taskId, title),
   updateTaskChecklistItem: (taskId: string, itemId: string, completed: boolean) =>
     ipcRenderer.invoke("agent:update-task-checklist-item", taskId, itemId, completed),
-  createTimeAdjustmentRequest: (requestedMinutes: number, reason: string) =>
-    ipcRenderer.invoke(
-      "agent:create-time-adjustment-request",
-      requestedMinutes,
-      reason,
-    ),
+  createTimeAdjustmentRequest: (input: {
+    requestedMinutes: number;
+    reason: string;
+    requestType?: "idle_time" | "early_leave" | "manual_time";
+    requestedDate?: string;
+    workSessionId?: string;
+    sourceStartAt?: string;
+    sourceEndAt?: string;
+  }) => ipcRenderer.invoke("agent:create-time-adjustment-request", input),
   createLeaveRequest: (input: {
     startDate: string;
     endDate: string;

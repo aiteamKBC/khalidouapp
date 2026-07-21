@@ -7,7 +7,10 @@ type BackendTimeAdjustmentRequest = {
   employee_name: string;
   device_id?: string | null;
   work_session_id?: string | null;
+  request_type?: string | null;
   requested_date: string;
+  source_start_at?: string | null;
+  source_end_at?: string | null;
   requested_minutes: number;
   approved_minutes?: number | null;
   reason: string;
@@ -25,7 +28,10 @@ function mapRequest(row: BackendTimeAdjustmentRequest): TimeAdjustmentRequest {
     employeeName: row.employee_name,
     deviceId: row.device_id ?? undefined,
     workSessionId: row.work_session_id ?? undefined,
+    requestType: row.request_type ?? "manual_time",
     requestedDate: row.requested_date,
+    sourceStartAt: row.source_start_at ?? undefined,
+    sourceEndAt: row.source_end_at ?? undefined,
     requestedMinutes: row.requested_minutes,
     approvedMinutes: row.approved_minutes ?? undefined,
     reason: row.reason,

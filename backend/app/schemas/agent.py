@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from datetime import date
+from datetime import date, datetime
 from uuid import UUID
 
 
@@ -26,6 +26,10 @@ class RefreshDeviceTokenRequest(BaseModel):
 
 class AgentTimeAdjustmentRequestCreate(BaseModel):
     requested_date: date | None = None
+    request_type: str = Field(default="manual_time", pattern="^(idle_time|early_leave|manual_time)$")
+    work_session_id: UUID | None = None
+    source_start_at: datetime | None = None
+    source_end_at: datetime | None = None
     requested_minutes: int = Field(ge=1, le=720)
     reason: str = Field(min_length=3, max_length=1000)
 

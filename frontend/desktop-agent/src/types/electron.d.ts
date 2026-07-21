@@ -135,7 +135,11 @@ export type AgentProject = {
 
 export type TimeAdjustmentRequest = {
   id: string;
+  request_type: "idle_time" | "early_leave" | "manual_time";
   requested_date: string;
+  source_start_at: string | null;
+  source_end_at: string | null;
+  work_session_id: string | null;
   requested_minutes: number;
   approved_minutes: number | null;
   reason: string;
@@ -241,10 +245,15 @@ declare global {
         callback: (update: { version: string | null }) => void,
       ) => () => void;
       installUpdate: () => Promise<{ success: boolean; message?: string }>;
-      createTimeAdjustmentRequest: (
-        requestedMinutes: number,
-        reason: string,
-      ) => Promise<{
+      createTimeAdjustmentRequest: (input: {
+        requestedMinutes: number;
+        reason: string;
+        requestType?: "idle_time" | "early_leave" | "manual_time";
+        requestedDate?: string;
+        workSessionId?: string;
+        sourceStartAt?: string;
+        sourceEndAt?: string;
+      }) => Promise<{
         success: boolean;
         message?: string;
         request?: TimeAdjustmentRequest;

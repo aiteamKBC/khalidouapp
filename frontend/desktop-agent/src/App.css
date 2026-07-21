@@ -938,12 +938,22 @@ textarea:focus {
 
 .k-timeline div {
   display: grid;
-  grid-template-columns: 30px 112px minmax(0, 1fr) auto;
+  grid-template-columns: 30px 112px minmax(0, 1fr) auto auto;
   gap: 8px;
   align-items: center;
   min-height: 30px;
   color: var(--text-2);
   font-size: 11px;
+}
+
+.k-timeline-request {
+  padding: 4px 7px;
+  border: 1px solid rgba(212, 135, 0, 0.28);
+  border-radius: 999px;
+  color: var(--amber);
+  background: var(--amber-weak);
+  font-size: 10px;
+  font-weight: 900;
 }
 
 .k-timeline-icon {
@@ -1168,9 +1178,92 @@ textarea:focus {
   gap: 12px;
 }
 
+@media (min-width: 1060px) {
+  .k-page {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .k-page > .k-system-panel,
+  .k-page > .k-panel:not(.k-request-card) {
+    grid-column: 1 / -1;
+  }
+}
+
 .k-panel,
 .k-enroll-card {
   padding: 16px;
+}
+
+.k-system-panel {
+  opacity: 0.9;
+}
+
+.k-request-card {
+  position: relative;
+  overflow: hidden;
+  border-color: rgba(47, 34, 103, 0.12);
+  background:
+    radial-gradient(circle at 92% 8%, rgba(234, 23, 96, 0.08), transparent 28%),
+    var(--surface);
+}
+
+.k-request-card::before {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 4px;
+  height: 100%;
+  background: linear-gradient(180deg, var(--brand), #8b5cf6);
+  content: "";
+}
+
+.k-request-card-highlight {
+  border-color: rgba(212, 135, 0, 0.26);
+  background:
+    radial-gradient(circle at 92% 6%, rgba(212, 135, 0, 0.12), transparent 30%),
+    var(--surface);
+}
+
+.k-request-card h2 {
+  margin: 0 0 4px;
+  font-size: 16px;
+}
+
+.k-request-meter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-2);
+}
+
+.k-request-meter span {
+  color: var(--text-3);
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.k-request-meter strong {
+  color: var(--amber);
+  font-family: var(--mono);
+  font-size: 15px;
+}
+
+.k-secondary-action {
+  display: inline-flex;
+  min-height: 42px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text);
+  background: var(--surface-2);
+  font-weight: 900;
 }
 
 .k-panel p,

@@ -34,6 +34,12 @@ export const Route = createFileRoute("/_app/time-adjustments")({
   component: TimeAdjustmentsPage,
 });
 
+const requestTypeLabel: Record<string, string> = {
+  idle_time: "Idle time",
+  early_leave: "Early leave",
+  manual_time: "Manual time",
+};
+
 function TimeAdjustmentsPage() {
   const { can, scopedTeamIds } = useAuth();
   const scope = scopedTeamIds();
@@ -151,6 +157,7 @@ function TimeAdjustmentsPage() {
           <TableHeader>
             <TableRow>
               <TableHead>Employee</TableHead>
+              <TableHead>Type</TableHead>
               <TableHead>Date</TableHead>
               <TableHead>Requested</TableHead>
               <TableHead>Reason</TableHead>
@@ -163,6 +170,16 @@ function TimeAdjustmentsPage() {
             {(requests.data ?? []).map((request) => (
               <TableRow key={request.id}>
                 <TableCell className="font-medium">{request.employeeName}</TableCell>
+                <TableCell>
+                  <div className="font-medium">
+                    {requestTypeLabel[request.requestType ?? "manual_time"] ?? "Manual time"}
+                  </div>
+                  {request.sourceStartAt && request.sourceEndAt ? (
+                    <div className="text-xs text-muted-foreground">
+                      {formatDateTime(request.sourceStartAt)} → {formatDateTime(request.sourceEndAt)}
+                    </div>
+                  ) : null}
+                </TableCell>
                 <TableCell>{formatDate(request.requestedDate)}</TableCell>
                 <TableCell>{formatMinutes(request.requestedMinutes)}</TableCell>
                 <TableCell className="max-w-md text-sm text-muted-foreground">
