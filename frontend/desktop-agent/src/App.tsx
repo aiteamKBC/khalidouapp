@@ -1276,6 +1276,8 @@ function HomeView({
       : status.extraTimeStatus === "pending_overtime"
         ? "HR/Admin must approve this time before payroll."
         : "Recorded for review. It will not be paid unless HR/Admin approves it.";
+  const arcDegrees = Math.round((targetProgress / 100) * 270);
+  const needleDegrees = -135 + arcDegrees;
   return (
     <section className="k-home">
       <div className="k-center">
@@ -1314,15 +1316,32 @@ function HomeView({
           placeholder="Add a note for this session (optional)..."
         />
 
-        <div className="k-hero" style={{ "--progress": targetProgress } as CSSProperties}>
+        <div
+          className="k-hero"
+          style={
+            {
+              "--progress": targetProgress,
+              "--arc-degrees": `${arcDegrees}deg`,
+              "--needle-degrees": `${needleDegrees}deg`,
+            } as CSSProperties
+          }
+        >
           <span className="k-hero-icon">
             <KIcon name="briefcase" />
           </span>
           <span className="k-hero-pill">{isPaused ? "Paused" : statusLabel}</span>
           {overtimeLabel && <span className="k-overtime-pill">{overtimeLabel}</span>}
-          <div className="k-ring">
-            <strong>{formatDuration(countedTodaySeconds)}</strong>
-            <small>{targetProgress}% of {formatDuration(status.dailyTargetSeconds)}</small>
+          <div className="k-ring" aria-label={`Worked ${formatDuration(countedTodaySeconds)} of ${formatDuration(status.dailyTargetSeconds)}`}>
+            <span className="k-gauge-mark mark-0">0h</span>
+            <span className="k-gauge-mark mark-2">2h</span>
+            <span className="k-gauge-mark mark-4">4h</span>
+            <span className="k-gauge-mark mark-6">6h</span>
+            <span className="k-gauge-mark mark-8">8h</span>
+            <i className="k-gauge-needle" />
+            <div className="k-gauge-readout">
+              <strong>{formatDuration(countedTodaySeconds)}</strong>
+              <small>{targetProgress}% of {formatDuration(status.dailyTargetSeconds)}</small>
+            </div>
           </div>
           {overtimeHelp && <p className="k-overtime-note">{overtimeHelp}</p>}
           <p>
