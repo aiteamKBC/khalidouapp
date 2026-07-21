@@ -31,6 +31,10 @@ const fallbackStatus: AgentStatus = {
   dailyTargetSeconds: 8 * 60 * 60,
   dailyTargetProgressPercent: 0,
   activityPercent: 0,
+  normalSeconds: 0,
+  extraSeconds: 0,
+  overtimeEnabled: false,
+  extraTimeStatus: "none",
   recentTasks: [],
   todayTimeline: null,
   lastIdleAlert: null,
@@ -356,15 +360,21 @@ function App() {
   const countedTodaySeconds = timeBreakdown.segments
     .filter((segment) => segment.counted)
     .reduce((total, segment) => total + segment.seconds, 0);
-  const targetProgress = Math.max(0, Math.min(100, status.dailyTargetProgressPercent));
+  const normalSeconds = status.normalSeconds || Math.min(countedTodaySeconds, status.dailyTargetSeconds);
+  const extraSeconds = status.extraSeconds || Math.max(0, countedTodaySeconds - status.dailyTargetSeconds);
+  const targetProgress = Math.max(
+    0,
+    Math.min(100, Math.round((normalSeconds / Math.max(1, status.dailyTargetSeconds)) * 100)),
+  );
   const isPaused = status.trackingPaused || status.trackingStatus === "paused";
   const isTracking =
     status.enrolled &&
     !isPaused &&
     ["active", "idle", "locked", "sleeping", "starting"].includes(status.trackingStatus);
   const isRunning = isTracking && ["active", "starting"].includes(status.trackingStatus);
-  const timerTone = isPaused ? "paused" : isRunning ? "running" : "stopped";
-  const statusText = isPaused ? "Paused" : isTracking ? "Running" : "No timer running";
+  const isExtraTime = extraSeconds > 0;
+  const timerTone = isPaused ? "paused" : isRunning ? (isExtraTime ? "overtime" : "running") : "stopped";
+  const statusText = isPaused ? "Paused" : isTracking ? (isExtraTime ? "Overtime" : "Running") : "No timer running";
 
   async function refreshStatusAfterEnrollment() {
     const nextStatus = await window.khaliduo?.getAgentStatus();
@@ -938,6 +948,8 @@ function App() {
               timeBreakdown={timeBreakdown}
               targetProgress={targetProgress}
               countedTodaySeconds={countedTodaySeconds}
+              normalSeconds={normalSeconds}
+              extraSeconds={extraSeconds}
               isChangingTracking={isChangingTracking}
               isSubmittingTask={isSubmittingTask}
               isOpeningDashboard={isOpeningDashboard}
@@ -1155,6 +1167,8 @@ function HomeView({
   timeBreakdown,
   targetProgress,
   countedTodaySeconds,
+  normalSeconds,
+  extraSeconds,
   isChangingTracking,
   isSubmittingTask,
   isOpeningDashboard,
@@ -1181,6 +1195,8 @@ function HomeView({
   };
   targetProgress: number;
   countedTodaySeconds: number;
+  normalSeconds: number;
+  extraSeconds: number;
   isChangingTracking: boolean;
   isSubmittingTask: boolean;
   isOpeningDashboard: boolean;
@@ -1195,6 +1211,18 @@ function HomeView({
   const isPaused = status.trackingPaused || status.trackingStatus === "paused";
   const shouldResume =
     isPaused || status.trackingStatus === "offline" || status.trackingStatus === "error";
+  const overtimeLabel =
+    extraSeconds <= 0
+      ? null
+      : status.extraTimeStatus === "pending_overtime"
+        ? "Overtime pending approval"
+        : "Extra time recorded only";
+  const overtimeHelp =
+    extraSeconds <= 0
+      ? null
+      : status.extraTimeStatus === "pending_overtime"
+        ? "HR/Admin must approve this time before payroll."
+        : "Recorded for review. It will not be paid unless HR/Admin approves it.";
   return (
     <section className="k-home">
       <div className="k-center">
@@ -1238,10 +1266,12 @@ function HomeView({
             <KIcon name="briefcase" />
           </span>
           <span className="k-hero-pill">{isPaused ? "Paused" : statusLabel}</span>
+          {overtimeLabel && <span className="k-overtime-pill">{overtimeLabel}</span>}
           <div className="k-ring">
             <strong>{formatDuration(countedTodaySeconds)}</strong>
             <small>{targetProgress}% of {formatDuration(status.dailyTargetSeconds)}</small>
           </div>
+          {overtimeHelp && <p className="k-overtime-note">{overtimeHelp}</p>}
           <p>
             {selectedProject?.name ?? status.selectedTask?.projectName ?? "No project"} -{" "}
             {status.selectedTask?.name ?? "No task selected"}
@@ -1264,6 +1294,14 @@ function HomeView({
             <div>
               <span>Session</span>
               <strong>{formatDuration(status.activeSeconds)}</strong>
+            </div>
+            <div>
+              <span>Normal</span>
+              <strong>{formatDuration(normalSeconds)}</strong>
+            </div>
+            <div>
+              <span>Extra</span>
+              <strong>{formatDuration(extraSeconds)}</strong>
             </div>
             <div>
               <span>Idle</span>

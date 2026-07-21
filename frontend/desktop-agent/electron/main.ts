@@ -38,6 +38,7 @@ import {
   type AgentProject,
   type AgentSummary,
   type PauseState,
+  type WorkdayState,
   type LeaveRequestsPayload,
   type TimeAdjustmentRequest,
   uploadScreenshot,
@@ -114,6 +115,10 @@ type AgentRuntimeStatus = {
   dailyTargetSeconds: number;
   dailyTargetProgressPercent: number;
   activityPercent: number;
+  normalSeconds: number;
+  extraSeconds: number;
+  overtimeEnabled: boolean;
+  extraTimeStatus: "none" | "pending_overtime" | "recorded_not_counted";
   paidPauseEndsAt: string | null;
   paidPauseRemainingSeconds: number;
   paidPauseBalanceRemainingSeconds: number | null;
@@ -227,6 +232,10 @@ const runtimeStatus: AgentRuntimeStatus = {
   dailyTargetSeconds: 8 * 60 * 60,
   dailyTargetProgressPercent: 0,
   activityPercent: 0,
+  normalSeconds: 0,
+  extraSeconds: 0,
+  overtimeEnabled: false,
+  extraTimeStatus: "none",
   paidPauseEndsAt: null,
   paidPauseRemainingSeconds: 0,
   paidPauseBalanceRemainingSeconds: null,
@@ -541,6 +550,25 @@ function syncRuntimeFromSession(session: WorkSession) {
   selectRuntimeTask(session.task_id);
 }
 
+function applyWorkdayState(workday?: WorkdayState | null) {
+  if (workday) {
+    runtimeStatus.dailyTargetSeconds = workday.required_normal_seconds;
+    runtimeStatus.normalSeconds = workday.normal_seconds;
+    runtimeStatus.extraSeconds = workday.extra_seconds;
+    runtimeStatus.overtimeEnabled = workday.overtime_enabled;
+    runtimeStatus.extraTimeStatus = workday.extra_time_status;
+    runtimeStatus.dailyTargetProgressPercent = Math.min(
+      100,
+      Math.round((workday.normal_seconds / Math.max(1, workday.required_normal_seconds)) * 100),
+    );
+    return;
+  }
+  const normalSeconds = Math.min(runtimeStatus.workedTodaySeconds, runtimeStatus.dailyTargetSeconds);
+  runtimeStatus.normalSeconds = normalSeconds;
+  runtimeStatus.extraSeconds = Math.max(0, runtimeStatus.workedTodaySeconds - runtimeStatus.dailyTargetSeconds);
+  runtimeStatus.extraTimeStatus = runtimeStatus.extraSeconds > 0 ? "recorded_not_counted" : "none";
+}
+
 function recalculateWorkedTime() {
   if (
     !currentSessionId ||
@@ -584,6 +612,7 @@ function recalculateWorkedTime() {
   }
   runtimeStatus.workedTodaySeconds =
     workedTodayBaseSeconds + runtimeStatus.activeSeconds;
+  applyWorkdayState();
   rebuildTrayMenu();
 }
 
@@ -718,6 +747,7 @@ async function sendStateEvent(
     });
     const latestLocalStatus = runtimeStatus.trackingStatus;
     syncRuntimeFromSession(result.session);
+    applyWorkdayState(result.workday);
     if (latestLocalStatus !== status) {
       runtimeStatus.trackingStatus = latestLocalStatus;
     }
@@ -815,6 +845,7 @@ async function heartbeatTick() {
     });
     const latestLocalStatus = runtimeStatus.trackingStatus;
     syncRuntimeFromSession(result.session);
+    applyWorkdayState(result.workday);
     if (latestLocalStatus !== status) {
       runtimeStatus.trackingStatus = latestLocalStatus;
     }
@@ -1211,16 +1242,17 @@ async function startTrackingAutomatically() {
     trackingConfig = normalizeTrackingConfig(await getAgentConfig());
     await refreshTasks();
     const current = await getCurrentSession();
-    if (current) {
+    if (current.session) {
       await endSession({
-        sessionId: current.id,
-        activeSeconds: current.active_seconds,
-        idleSeconds: current.idle_seconds,
+        sessionId: current.session.id,
+        activeSeconds: current.session.active_seconds,
+        idleSeconds: current.session.idle_seconds,
         reason: "Previous Khaliduo run closed before automatic restart",
       });
     }
-    const session = (await startSession()).session;
-    syncRuntimeFromSession(session);
+    const started = await startSession();
+    syncRuntimeFromSession(started.session);
+    applyWorkdayState(started.workday);
     await refreshWorkedTodayTotal();
     runtimeStatus.connectionStatus = "online";
     runtimeStatus.lastSuccessfulSyncAt = new Date().toISOString();
@@ -1371,6 +1403,8 @@ async function pauseTracking(options?: string | { requestedMinutes?: number; rea
       requestedMinutes,
       reason,
     });
+    syncRuntimeFromSession(result.session);
+    applyWorkdayState(result.workday);
     applyPauseState(result.pause);
     runtimeStatus.connectionStatus = "online";
     runtimeStatus.lastSuccessfulSyncAt = new Date().toISOString();
@@ -2194,6 +2228,7 @@ ipcMain.handle("agent:set-current-task", async (_, taskId: string | null) => {
     const result = await updateSessionTask(currentSessionId, taskId);
     await refreshTasks();
     syncRuntimeFromSession(result.session);
+    applyWorkdayState(result.workday);
     runtimeStatus.connectionStatus = "online";
     runtimeStatus.lastSuccessfulSyncAt = new Date().toISOString();
     rebuildTrayMenu();

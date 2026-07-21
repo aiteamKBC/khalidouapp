@@ -71,6 +71,21 @@ export type PauseState = {
   } | null;
 };
 
+export type WorkdayState = {
+  required_normal_seconds: number;
+  normal_seconds: number;
+  normal_remaining_seconds: number;
+  extra_seconds: number;
+  overtime_enabled: boolean;
+  extra_time_status: "none" | "pending_overtime" | "recorded_not_counted";
+};
+
+export type SessionPayload = {
+  session: WorkSession;
+  workday?: WorkdayState | null;
+  pause?: PauseState | null;
+};
+
 export type AgentTask = {
   id: string;
   name: string;
@@ -289,11 +304,13 @@ export async function enrollDeviceWithCredentials(
 }
 
 export async function getCurrentSession() {
-  const response = await axios.get<ApiSuccess<{ session: WorkSession | null }>>(
+  const response = await axios.get<
+    ApiSuccess<{ session: WorkSession | null; workday?: WorkdayState | null; pause?: PauseState | null }>
+  >(
     `${getApiBaseUrl()}/agent/sessions/current`,
     { headers: getAuthHeaders() },
   );
-  return response.data.data.session;
+  return response.data.data;
 }
 
 export async function getAgentTodaySummary() {
@@ -425,7 +442,7 @@ export async function updateAgentTaskStage(
 
 export async function startSession() {
   const response = await axios.post<
-    ApiSuccess<{ session: WorkSession; created: boolean }>
+    ApiSuccess<SessionPayload & { created: boolean }>
   >(
     `${getApiBaseUrl()}/agent/sessions/start`,
     { started_at: new Date().toISOString() },
@@ -442,7 +459,7 @@ export async function endSession(options: {
   endedAt?: string;
   eventId?: string;
 }) {
-  const response = await axios.post<ApiSuccess<{ session: WorkSession }>>(
+  const response = await axios.post<ApiSuccess<SessionPayload>>(
     `${getApiBaseUrl()}/agent/sessions/${options.sessionId}/end`,
     {
       event_id: options.eventId ?? randomUUID(),
@@ -463,10 +480,7 @@ export async function startPaidPause(options: {
   idempotencyKey?: string;
 }) {
   const response = await axios.post<
-    ApiSuccess<{
-      session: WorkSession;
-      pause: PauseState;
-    }>
+    ApiSuccess<SessionPayload & { pause: PauseState }>
   >(
     `${getApiBaseUrl()}/agent/sessions/${options.sessionId}/pause`,
     {
@@ -483,7 +497,7 @@ export async function updateSessionTask(
   sessionId: string,
   taskId: string | null,
 ) {
-  const response = await axios.post<ApiSuccess<{ session: WorkSession }>>(
+  const response = await axios.post<ApiSuccess<SessionPayload>>(
     `${getApiBaseUrl()}/agent/sessions/${sessionId}/task`,
     { task_id: taskId },
     { headers: getAuthHeaders() },
@@ -500,7 +514,7 @@ export async function sendHeartbeat(options: {
   agentVersion: string;
 }) {
   const response = await axios.post<
-    ApiSuccess<{ session: WorkSession; duplicate: boolean; pause?: PauseState }>
+    ApiSuccess<SessionPayload & { duplicate: boolean }>
   >(
     `${getApiBaseUrl()}/agent/sessions/${options.sessionId}/heartbeat`,
     {
@@ -523,7 +537,7 @@ export async function sendActivityEvent(options: {
   payload?: Record<string, unknown>;
 }) {
   const response = await axios.post<
-    ApiSuccess<{ duplicate: boolean; session: WorkSession }>
+    ApiSuccess<SessionPayload & { duplicate: boolean }>
   >(
     `${getApiBaseUrl()}/agent/sessions/${options.sessionId}/events`,
     {

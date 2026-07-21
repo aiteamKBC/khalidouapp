@@ -35,6 +35,10 @@ export type AgentStatus = {
   dailyTargetSeconds: number;
   dailyTargetProgressPercent: number;
   activityPercent: number;
+  normalSeconds: number;
+  extraSeconds: number;
+  overtimeEnabled: boolean;
+  extraTimeStatus: "none" | "pending_overtime" | "recorded_not_counted";
   paidPauseEndsAt: string | null;
   paidPauseRemainingSeconds: number;
   paidPauseBalanceRemainingSeconds: number | null;

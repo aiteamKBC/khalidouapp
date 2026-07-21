@@ -154,6 +154,11 @@ textarea:disabled {
   background: var(--amber-weak);
 }
 
+.k-app[data-tone="overtime"] .k-chip {
+  color: #c47d0e;
+  background: #fff4d6;
+}
+
 .k-chip::before,
 .k-sync::before {
   content: "";
@@ -461,6 +466,11 @@ textarea:focus {
   border-color: var(--border);
 }
 
+.k-app[data-tone="overtime"] .k-hero {
+  border-color: var(--amber);
+  box-shadow: 0 16px 40px -32px var(--amber);
+}
+
 .k-hero-pill {
   display: inline-flex;
   align-items: center;
@@ -479,6 +489,23 @@ textarea:focus {
 .k-app[data-tone="stopped"] .k-hero-pill {
   color: var(--amber);
   background: var(--amber-weak);
+}
+
+.k-app[data-tone="overtime"] .k-hero-pill,
+.k-overtime-pill {
+  color: #c47d0e;
+  background: #fff4d6;
+}
+
+.k-overtime-pill {
+  display: inline-flex;
+  margin-top: 8px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 .k-hero-icon {
@@ -527,6 +554,12 @@ textarea:focus {
     conic-gradient(var(--amber) calc(var(--progress, 0) * 1%), var(--surface-3) 0);
 }
 
+.k-app[data-tone="overtime"] .k-ring {
+  background:
+    radial-gradient(circle, rgb(196 125 14 / 18%), transparent 58%),
+    conic-gradient(var(--amber) 100%, var(--surface-3) 0);
+}
+
 .k-ring::before {
   content: "";
   position: absolute;
@@ -551,6 +584,10 @@ textarea:focus {
 }
 
 .k-app[data-tone="paused"] .k-ring strong {
+  color: var(--amber);
+}
+
+.k-app[data-tone="overtime"] .k-ring strong {
   color: var(--amber);
 }
 
@@ -607,6 +644,7 @@ textarea:focus {
 
 .k-hero-meta {
   display: flex;
+  flex-wrap: wrap;
   gap: 22px;
   justify-content: center;
   width: min(360px, 100%);
@@ -618,6 +656,14 @@ textarea:focus {
 .k-hero-meta div {
   min-width: 82px;
   text-align: center;
+}
+
+.k-hero .k-overtime-note {
+  max-width: 420px;
+  margin-top: -4px;
+  color: var(--amber);
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .k-hero-meta span,
