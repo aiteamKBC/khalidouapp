@@ -15,7 +15,9 @@ class LocalScreenshotStorage:
         try:
             path.relative_to(self.root)
         except ValueError as exc:
-            raise ValueError("Storage path must remain inside the screenshot storage root.") from exc
+            raise ValueError(
+                "Storage path must remain inside the screenshot storage root."
+            ) from exc
         if path == self.root:
             raise ValueError("Storage path must identify a file below the screenshot storage root.")
         return path

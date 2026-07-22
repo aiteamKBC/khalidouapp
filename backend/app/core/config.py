@@ -18,8 +18,13 @@ class Settings(BaseSettings):
     app_env: str = Field(default="development", alias="APP_ENV")
     app_name: str = Field(default="Khaliduo", alias="APP_NAME")
     database_url: str = Field(default="", alias="DATABASE_URL")
+    database_pool_size: int = Field(default=10, alias="DATABASE_POOL_SIZE")
+    database_max_overflow: int = Field(default=20, alias="DATABASE_MAX_OVERFLOW")
+    database_pool_timeout_seconds: int = Field(default=30, alias="DATABASE_POOL_TIMEOUT_SECONDS")
     jwt_secret_key: str = Field(default=INSECURE_DEFAULT_SECRET, alias="JWT_SECRET_KEY")
-    jwt_access_token_expire_minutes: int = Field(default=30, alias="JWT_ACCESS_TOKEN_EXPIRE_MINUTES")
+    jwt_access_token_expire_minutes: int = Field(
+        default=30, alias="JWT_ACCESS_TOKEN_EXPIRE_MINUTES"
+    )
     jwt_refresh_token_expire_days: int = Field(default=7, alias="JWT_REFRESH_TOKEN_EXPIRE_DAYS")
     device_token_secret: str = Field(default=INSECURE_DEFAULT_SECRET, alias="DEVICE_TOKEN_SECRET")
     cors_origins: list[str] = Field(
@@ -32,7 +37,9 @@ class Settings(BaseSettings):
         alias="CORS_ORIGINS",
     )
     screenshot_storage_type: str = Field(default="local", alias="SCREENSHOT_STORAGE_TYPE")
-    screenshot_storage_path: Path = Field(default=Path("./storage/screenshots"), alias="SCREENSHOT_STORAGE_PATH")
+    screenshot_storage_path: Path = Field(
+        default=Path("./storage/screenshots"), alias="SCREENSHOT_STORAGE_PATH"
+    )
     desktop_installer_path: Path = Field(
         default=Path("../frontend/desktop-agent/release-khaliduo/KhaliduoSetup.exe"),
         alias="DESKTOP_INSTALLER_PATH",
@@ -42,14 +49,26 @@ class Settings(BaseSettings):
         alias="DESKTOP_UPDATE_DIRECTORY",
     )
     screenshot_max_file_size_mb: int = Field(default=10, alias="SCREENSHOT_MAX_FILE_SIZE_MB")
-    default_screenshot_interval_minutes: int = Field(default=10, alias="DEFAULT_SCREENSHOT_INTERVAL_MINUTES")
-    default_screenshots_per_interval: int = Field(default=1, alias="DEFAULT_SCREENSHOTS_PER_INTERVAL")
+    default_screenshot_interval_minutes: int = Field(
+        default=10, alias="DEFAULT_SCREENSHOT_INTERVAL_MINUTES"
+    )
+    default_screenshots_per_interval: int = Field(
+        default=1, alias="DEFAULT_SCREENSHOTS_PER_INTERVAL"
+    )
     default_idle_threshold_minutes: int = Field(default=10, alias="DEFAULT_IDLE_THRESHOLD_MINUTES")
-    default_offline_threshold_minutes: int = Field(default=3, alias="DEFAULT_OFFLINE_THRESHOLD_MINUTES")
-    default_screenshot_retention_days: int = Field(default=30, alias="DEFAULT_SCREENSHOT_RETENTION_DAYS")
+    default_offline_threshold_minutes: int = Field(
+        default=3, alias="DEFAULT_OFFLINE_THRESHOLD_MINUTES"
+    )
+    default_screenshot_retention_days: int = Field(
+        default=30, alias="DEFAULT_SCREENSHOT_RETENTION_DAYS"
+    )
     screenshot_thumbnail_width: int = Field(default=480, alias="SCREENSHOT_THUMBNAIL_WIDTH")
-    screenshot_storage_warning_percent: int = Field(default=75, alias="SCREENSHOT_STORAGE_WARNING_PERCENT")
-    screenshot_cleanup_interval_hours: int = Field(default=6, alias="SCREENSHOT_CLEANUP_INTERVAL_HOURS")
+    screenshot_storage_warning_percent: int = Field(
+        default=75, alias="SCREENSHOT_STORAGE_WARNING_PERCENT"
+    )
+    screenshot_cleanup_interval_hours: int = Field(
+        default=6, alias="SCREENSHOT_CLEANUP_INTERVAL_HOURS"
+    )
 
     # Outbound email. Preferred transport: Microsoft Graph (client-credentials
     # app; Exchange Online retired basic SMTP AUTH). Falls back to SMTP if only
@@ -71,6 +90,7 @@ class Settings(BaseSettings):
     )
     email_allowed_recipients: str = Field(default="", alias="EMAIL_ALLOWED_RECIPIENTS")
     app_public_url: str = Field(default="http://localhost:5174", alias="APP_PUBLIC_URL")
+    trusted_proxy_ips: list[str] = Field(default=["127.0.0.1", "::1"], alias="TRUSTED_PROXY_IPS")
 
     @field_validator("cors_origins", mode="before")
     @classmethod
@@ -80,6 +100,15 @@ class Settings(BaseSettings):
         if not value:
             return []
         return [origin.strip() for origin in value.split(",") if origin.strip()]
+
+    @field_validator("trusted_proxy_ips", mode="before")
+    @classmethod
+    def parse_trusted_proxy_ips(cls, value: str | list[str]) -> list[str]:
+        if isinstance(value, list):
+            return value
+        if not value:
+            return []
+        return [address.strip() for address in value.split(",") if address.strip()]
 
     @model_validator(mode="after")
     def reject_insecure_production_secrets(self) -> "Settings":

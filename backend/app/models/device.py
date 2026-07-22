@@ -15,7 +15,9 @@ class Device(UUIDPrimaryKeyMixin, Base):
     )
 
     company_id: Mapped[UUID] = mapped_column(ForeignKey("companies.id"), nullable=False, index=True)
-    employee_id: Mapped[UUID] = mapped_column(ForeignKey("employees.id"), nullable=False, index=True)
+    employee_id: Mapped[UUID] = mapped_column(
+        ForeignKey("employees.id"), nullable=False, index=True
+    )
     device_name: Mapped[str] = mapped_column(String(255), nullable=False)
     installation_id: Mapped[str] = mapped_column(String(255), nullable=False)
     operating_system: Mapped[str] = mapped_column(String(255), nullable=False)

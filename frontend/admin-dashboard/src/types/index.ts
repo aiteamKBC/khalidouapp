@@ -7,7 +7,6 @@ export type EmployeeAccountStatus = "invited" | "active" | "inactive";
 export type DeviceStatus = "online" | "offline" | "revoked";
 export type TeamStatus = "active" | "archived";
 export type UserStatus = "active" | "inactive";
-export type EnrollmentCodeStatus = "active" | "used" | "expired" | "revoked";
 export type TeamMemberRole = "team_manager" | "team_lead" | "senior" | "member" | "trainee";
 
 export interface User {
@@ -125,17 +124,6 @@ export interface Employee {
   portalLastLoginIp?: string;
   portalLastUserAgent?: string;
   weeklyCapacityMinutes: number;
-}
-
-export interface EnrollmentCode {
-  id: string;
-  employeeId: string;
-  codeHint: string;
-  status: EnrollmentCodeStatus;
-  expiresAt: string;
-  usedAt?: string;
-  createdAt: string;
-  code?: string;
 }
 
 export interface Device {

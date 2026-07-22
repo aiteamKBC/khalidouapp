@@ -7,7 +7,13 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_admin
-from app.api.v1.admin_utils import apply_pagination, count_for, day_bounds, pagination_meta, serialize_work_session
+from app.api.v1.admin_utils import (
+    apply_pagination,
+    count_for,
+    day_bounds,
+    pagination_meta,
+    serialize_work_session,
+)
 from app.api.v1.team_auth import (
     accessible_team_ids_statement,
     apply_employee_scope,
@@ -25,9 +31,14 @@ router = APIRouter(prefix="/sessions", tags=["sessions"])
 
 def serialize_session_with_counts(db: Session, session: WorkSession) -> dict:
     data = serialize_work_session(session)
-    data["screenshot_count"] = db.scalar(
-        select(func.count()).where(Screenshot.session_id == session.id, Screenshot.deleted_at.is_(None))
-    ) or 0
+    data["screenshot_count"] = (
+        db.scalar(
+            select(func.count()).where(
+                Screenshot.session_id == session.id, Screenshot.deleted_at.is_(None)
+            )
+        )
+        or 0
+    )
     return data
 
 
@@ -48,7 +59,9 @@ def list_sessions(
     statement = apply_employee_scope(statement, db, current_admin, WorkSession.employee_id, team_id)
     if team_id:
         ensure_team_access(db, current_admin, team_id)
-        statement = statement.where(or_(WorkSession.team_id.is_(None), WorkSession.team_id == team_id))
+        statement = statement.where(
+            or_(WorkSession.team_id.is_(None), WorkSession.team_id == team_id)
+        )
     elif not is_general_admin(current_admin):
         statement = statement.where(
             or_(

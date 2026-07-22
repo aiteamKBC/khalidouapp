@@ -189,7 +189,11 @@ def invite_person(
         if payload.start_date is None:
             raise ApiError("START_DATE_REQUIRED", "Employee start date is required.", 400)
         if payload.work_profile is None:
-            raise ApiError("WORK_PROFILE_REQUIRED", "Complete the employee schedule and salary before invitation.", 400)
+            raise ApiError(
+                "WORK_PROFILE_REQUIRED",
+                "Complete the employee schedule and salary before invitation.",
+                400,
+            )
         work_profile_changes = payload.work_profile.model_dump(exclude_unset=True, mode="json")
         for time_field in ("shift_start", "shift_end"):
             if time_field in work_profile_changes:
@@ -242,9 +246,7 @@ def invite_person(
             "team_ids": [str(team.id) for team in teams],
             "track_as_employee": bool(employee is not None),
             "invitation": (
-                serialize_employee_invitation(employee_invitation)
-                if employee_invitation
-                else None
+                serialize_employee_invitation(employee_invitation) if employee_invitation else None
             ),
             "email_queued": email_queued,
         }
@@ -328,9 +330,7 @@ def resend_employee_invitation(
         raise ApiError("EMPLOYEE_INVITATION_NOT_FOUND", "Invitation was not found.", 404)
     # Check the persistent cooldown before revoking the link the employee still has.
     ensure_email_allowed(db, to=employee.email, category="employee_invitation")
-    new_invitation, raw_token = issue_employee_invitation(
-        db, employee, revoke_existing=False
-    )
+    new_invitation, raw_token = issue_employee_invitation(db, employee, revoke_existing=False)
     db.commit()
     email_queued = enqueue_employee_invitation_email(
         db,
@@ -342,9 +342,7 @@ def resend_employee_invitation(
         expires_in_hours=settings.employee_invitation_expire_hours,
     )
     if email_queued:
-        revoke_other_pending_invitations(
-            db, employee.id, keep_invitation_id=new_invitation.id
-        )
+        revoke_other_pending_invitations(db, employee.id, keep_invitation_id=new_invitation.id)
         response_invitation = new_invitation
         action = "resent"
     else:
@@ -615,7 +613,9 @@ def update_person_role(
     db.commit()
     return success_response(
         data={
-            **person_state(next_admin, employee, "admin" if payload.role != "employee" else "employee"),
+            **person_state(
+                next_admin, employee, "admin" if payload.role != "employee" else "employee"
+            ),
             "role": payload.role,
         }
     )

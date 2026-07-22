@@ -9,7 +9,9 @@ from app.models.mixins import TimestampMixin, UUIDPrimaryKeyMixin
 
 class Project(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "projects"
-    __table_args__ = (UniqueConstraint("company_id", "team_id", "name", name="uq_projects_team_name"),)
+    __table_args__ = (
+        UniqueConstraint("company_id", "team_id", "name", name="uq_projects_team_name"),
+    )
 
     company_id: Mapped[UUID] = mapped_column(ForeignKey("companies.id"), nullable=False, index=True)
     team_id: Mapped[UUID] = mapped_column(ForeignKey("teams.id"), nullable=False, index=True)

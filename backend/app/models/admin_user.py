@@ -19,9 +19,7 @@ def default_admin_data_scope(context) -> str:
 
 class AdminUser(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "admin_users"
-    __table_args__ = (
-        UniqueConstraint("company_id", "email", name="uq_admin_users_company_email"),
-    )
+    __table_args__ = (UniqueConstraint("company_id", "email", name="uq_admin_users_company_email"),)
 
     company_id: Mapped[UUID] = mapped_column(ForeignKey("companies.id"), nullable=False, index=True)
     employee_id: Mapped[UUID | None] = mapped_column(

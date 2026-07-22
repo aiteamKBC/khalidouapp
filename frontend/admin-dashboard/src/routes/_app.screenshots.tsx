@@ -1,7 +1,15 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
-import { ArrowLeft, ChevronLeft, ChevronRight, Download, Folder, ImageOff, Trash2 } from "lucide-react";
+import {
+  ArrowLeft,
+  ChevronLeft,
+  ChevronRight,
+  Download,
+  Folder,
+  ImageOff,
+  Trash2,
+} from "lucide-react";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card } from "@/components/ui/card";
 import {
@@ -95,7 +103,12 @@ function ScreenshotsPage() {
 
   const filtered = shots.data?.items ?? [];
 
-  const current = openIdx != null ? filtered.filter((shot) => !selectedFolderId || shot.employeeId === selectedFolderId)[openIdx] : null;
+  const current =
+    openIdx != null
+      ? filtered.filter((shot) => !selectedFolderId || shot.employeeId === selectedFolderId)[
+          openIdx
+        ]
+      : null;
   const empOf = (id: string) =>
     (emps.data ?? []).find((employee) => employee.id === id)?.name ?? "-";
   const teamOf = (id: string) => (teams.data ?? []).find((team) => team.id === id)?.name ?? "-";
@@ -229,7 +242,8 @@ function ScreenshotsPage() {
                     <div className="min-w-0">
                       <h3 className="truncate text-base font-extrabold">{group.employeeName}</h3>
                       <p className="text-xs text-muted-foreground">
-                        {group.items.length} screenshots · latest {formatDateTime(group.items[0].capturedAt)}
+                        {group.items.length} screenshots · latest{" "}
+                        {formatDateTime(group.items[0].capturedAt)}
                       </p>
                     </div>
                   </div>
@@ -296,40 +310,40 @@ function ScreenshotsPage() {
           )}
 
           <div className="hidden grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-          {filtered.map((shot, index) => (
-            <button
-              key={shot.id}
-              onClick={() => setOpenIdx(index)}
-              className="studio-card group overflow-hidden rounded-2xl border bg-card p-2 text-left transition duration-200 hover:-translate-y-1 hover:border-[#e5185d]/25 hover:shadow-lg"
-            >
-              <div className="aspect-video overflow-hidden rounded-xl bg-muted ring-1 ring-border">
-                {failedIds.has(shot.id) ? (
-                  <div className="grid h-full w-full place-items-center text-xs text-muted-foreground">
-                    <ImageOff className="h-6 w-6" />
-                  </div>
-                ) : (
-                  <ProtectedImage
-                    src={shot.thumbnailUrl}
-                    alt=""
-                    onLoadError={() => setFailedIds((previous) => new Set(previous).add(shot.id))}
-                    className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.04]"
-                  />
-                )}
-              </div>
-              <div className="flex items-center justify-between gap-2 px-1 pb-1 pt-3 text-xs">
-                <div className="truncate">
-                  <div className="font-medium text-foreground truncate">
-                    {empOf(shot.employeeId)}
-                  </div>
-                  <div className="text-muted-foreground truncate">
-                    {shot.displayName ? `${shot.displayName} · ` : ""}
-                    {formatDateTime(shot.capturedAt)}
-                  </div>
+            {filtered.map((shot, index) => (
+              <button
+                key={shot.id}
+                onClick={() => setOpenIdx(index)}
+                className="studio-card group overflow-hidden rounded-2xl border bg-card p-2 text-left transition duration-200 hover:-translate-y-1 hover:border-[#e5185d]/25 hover:shadow-lg"
+              >
+                <div className="aspect-video overflow-hidden rounded-xl bg-muted ring-1 ring-border">
+                  {failedIds.has(shot.id) ? (
+                    <div className="grid h-full w-full place-items-center text-xs text-muted-foreground">
+                      <ImageOff className="h-6 w-6" />
+                    </div>
+                  ) : (
+                    <ProtectedImage
+                      src={shot.thumbnailUrl}
+                      alt=""
+                      onLoadError={() => setFailedIds((previous) => new Set(previous).add(shot.id))}
+                      className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.04]"
+                    />
+                  )}
                 </div>
-                {shot.isIdle && <StatusBadge status="idle" />}
-              </div>
-            </button>
-          ))}
+                <div className="flex items-center justify-between gap-2 px-1 pb-1 pt-3 text-xs">
+                  <div className="truncate">
+                    <div className="font-medium text-foreground truncate">
+                      {empOf(shot.employeeId)}
+                    </div>
+                    <div className="text-muted-foreground truncate">
+                      {shot.displayName ? `${shot.displayName} · ` : ""}
+                      {formatDateTime(shot.capturedAt)}
+                    </div>
+                  </div>
+                  {shot.isIdle && <StatusBadge status="idle" />}
+                </div>
+              </button>
+            ))}
           </div>
         </>
       )}

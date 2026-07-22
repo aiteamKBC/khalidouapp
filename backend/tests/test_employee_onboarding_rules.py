@@ -41,7 +41,15 @@ def test_break_must_be_inside_same_day_shift():
     profile = EmployeeWorkProfile(
         shift_start=time(9, 0),
         shift_end=time(17, 0),
-        break_rules=[{"name": "Lunch", "start_time": "08:30", "end_time": "09:00", "minutes": 30, "paid": False}],
+        break_rules=[
+            {
+                "name": "Lunch",
+                "start_time": "08:30",
+                "end_time": "09:00",
+                "minutes": 30,
+                "paid": False,
+            }
+        ],
     )
     with pytest.raises(ApiError) as error:
         validate_work_profile(profile)
@@ -61,8 +69,20 @@ def test_all_scheduled_breaks_stay_inside_salary_shift_hours():
         shift_start=time(9, 0),
         shift_end=time(17, 0),
         break_rules=[
-            {"name": "Paid", "start_time": "11:00", "end_time": "11:15", "minutes": 15, "paid": True},
-            {"name": "Lunch", "start_time": "13:00", "end_time": "13:30", "minutes": 30, "paid": False},
+            {
+                "name": "Paid",
+                "start_time": "11:00",
+                "end_time": "11:15",
+                "minutes": 15,
+                "paid": True,
+            },
+            {
+                "name": "Lunch",
+                "start_time": "13:00",
+                "end_time": "13:30",
+                "minutes": 30,
+                "paid": False,
+            },
         ],
     )
     minutes = schedule_minutes(profile)

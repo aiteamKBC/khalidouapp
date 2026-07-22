@@ -93,7 +93,9 @@ def profile_completeness(profile: EmployeeWorkProfile) -> dict:
     return {
         "complete": len(missing) == 0,
         "missing_fields": missing,
-        "completed_at": profile.profile_completed_at.isoformat() if profile.profile_completed_at else None,
+        "completed_at": profile.profile_completed_at.isoformat()
+        if profile.profile_completed_at
+        else None,
     }
 
 
@@ -103,13 +105,17 @@ def validate_work_profile(profile: EmployeeWorkProfile) -> None:
         if values is not None:
             invalid = [item for item in values if not isinstance(item, int) or item < 0 or item > 6]
             if invalid:
-                raise ApiError("INVALID_WORK_DAYS", f"{values_name} must contain weekday numbers 0-6.", 400)
+                raise ApiError(
+                    "INVALID_WORK_DAYS", f"{values_name} must contain weekday numbers 0-6.", 400
+                )
     if profile.working_days and profile.weekly_off_days:
         overlap = set(profile.working_days) & set(profile.weekly_off_days)
         if overlap:
             raise ApiError("INVALID_WORK_DAYS", "Working days and off days cannot overlap.", 400)
     if profile.shift_start and profile.shift_end and profile.shift_end <= profile.shift_start:
-        raise ApiError("INVALID_SHIFT", "Shift end must be later than shift start on the same day.", 400)
+        raise ApiError(
+            "INVALID_SHIFT", "Shift end must be later than shift start on the same day.", 400
+        )
     for rule in profile.break_rules or []:
         start = rule.get("start_time")
         end = rule.get("end_time")
@@ -123,11 +129,17 @@ def validate_work_profile(profile: EmployeeWorkProfile) -> None:
             end_time.hour * 60 + end_time.minute - start_time.hour * 60 - start_time.minute
         )
         if int(rule.get("minutes", 0)) != actual_minutes:
-            raise ApiError("INVALID_BREAK_DURATION", "Break duration must match its start and end time.", 400)
-        if profile.shift_start and profile.shift_end and not (
-            profile.shift_start <= start_time < end_time <= profile.shift_end
+            raise ApiError(
+                "INVALID_BREAK_DURATION", "Break duration must match its start and end time.", 400
+            )
+        if (
+            profile.shift_start
+            and profile.shift_end
+            and not (profile.shift_start <= start_time < end_time <= profile.shift_end)
         ):
-            raise ApiError("BREAK_OUTSIDE_SHIFT", "Every break must be fully inside the employee shift.", 400)
+            raise ApiError(
+                "BREAK_OUTSIDE_SHIFT", "Every break must be fully inside the employee shift.", 400
+            )
 
 
 def schedule_minutes(profile: EmployeeWorkProfile) -> dict[str, int]:
@@ -140,8 +152,12 @@ def schedule_minutes(profile: EmployeeWorkProfile) -> dict[str, int]:
         - profile.shift_start.hour * 60
         - profile.shift_start.minute
     )
-    paid_break = sum(int(rule.get("minutes", 0)) for rule in profile.break_rules or [] if rule.get("paid"))
-    unpaid_break = sum(int(rule.get("minutes", 0)) for rule in profile.break_rules or [] if not rule.get("paid"))
+    paid_break = sum(
+        int(rule.get("minutes", 0)) for rule in profile.break_rules or [] if rule.get("paid")
+    )
+    unpaid_break = sum(
+        int(rule.get("minutes", 0)) for rule in profile.break_rules or [] if not rule.get("paid")
+    )
     return {
         "shift": shift,
         "paid_break": paid_break,
@@ -165,7 +181,9 @@ def serialize_work_profile(profile: EmployeeWorkProfile) -> dict:
     return {
         "id": str(profile.id),
         "employee_id": str(profile.employee_id),
-        "shift_start": profile.shift_start.isoformat(timespec="minutes") if profile.shift_start else None,
+        "shift_start": profile.shift_start.isoformat(timespec="minutes")
+        if profile.shift_start
+        else None,
         "shift_end": profile.shift_end.isoformat(timespec="minutes") if profile.shift_end else None,
         "working_days": profile.working_days,
         "weekly_off_days": profile.weekly_off_days,
@@ -178,8 +196,12 @@ def serialize_work_profile(profile: EmployeeWorkProfile) -> dict:
         "deduction_policy": profile.deduction_policy,
         "overtime_enabled": profile.overtime_enabled,
         "overtime_basis": profile.overtime_basis,
-        "overtime_rate_multiplier": float(profile.overtime_rate_multiplier) if profile.overtime_rate_multiplier is not None else None,
-        "salary_amount": float(profile.salary_amount) if profile.salary_amount is not None else None,
+        "overtime_rate_multiplier": float(profile.overtime_rate_multiplier)
+        if profile.overtime_rate_multiplier is not None
+        else None,
+        "salary_amount": float(profile.salary_amount)
+        if profile.salary_amount is not None
+        else None,
         "salary_currency": profile.salary_currency,
         "salary_type": profile.salary_type,
         "completeness": profile_completeness(profile),
@@ -205,7 +227,9 @@ def payroll_preview(
             WorkSession.started_at <= datetime.combine(end_date, datetime.max.time(), tzinfo=UTC),
         )
     ).all()
-    active_seconds = sum(max(0, session.active_seconds - session.deducted_seconds) for session in sessions)
+    active_seconds = sum(
+        max(0, session.active_seconds - session.deducted_seconds) for session in sessions
+    )
     idle_seconds = sum(session.idle_seconds for session in sessions)
     required_daily = profile.required_daily_minutes or 480
     break_minutes = schedule_minutes(profile)
@@ -213,7 +237,11 @@ def payroll_preview(
         required_daily = break_minutes["payable"]
     working_days = profile.working_days or [0, 1, 2, 3, 4]
     days = (end_date - start_date).days + 1
-    required_days = sum(1 for offset in range(days) if (start_date + timedelta(days=offset)).weekday() in working_days)
+    required_days = sum(
+        1
+        for offset in range(days)
+        if (start_date + timedelta(days=offset)).weekday() in working_days
+    )
     required_seconds = required_days * required_daily * 60
     paid_break_seconds = required_days * break_minutes["paid_break"] * 60
     unpaid_break_seconds = required_days * break_minutes["unpaid_break"] * 60
@@ -228,12 +256,12 @@ def payroll_preview(
         else Decimal(0)
     )
     base_salary = (
-        configured_salary
-        if profile.salary_type == "monthly"
-        else hourly_rate * monthly_paid_hours
+        configured_salary if profile.salary_type == "monthly" else hourly_rate * monthly_paid_hours
     )
     overtime_multiplier = Decimal(profile.overtime_rate_multiplier or 1)
-    overtime_amount = (Decimal(overtime_seconds) / Decimal(3600)) * hourly_rate * overtime_multiplier
+    overtime_amount = (
+        (Decimal(overtime_seconds) / Decimal(3600)) * hourly_rate * overtime_multiplier
+    )
     return {
         "employee_id": str(employee.id),
         "currency": profile.salary_currency or "EGP",

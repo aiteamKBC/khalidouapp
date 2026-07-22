@@ -44,15 +44,17 @@ def serialize_employee(employee: Employee, invitation=None) -> dict[str, Any]:
         "name": employee.name,
         "email": employee.email,
         "employee_code": employee.employee_code,
-          "job_title": employee.job_title,
+        "job_title": employee.job_title,
         "timezone": employee.timezone,
         "status": employee.status,
         "weekly_capacity_minutes": employee.weekly_capacity_minutes,
-          "avatar_url": employee.avatar_url,
-          "start_date": employee.start_date.isoformat() if employee.start_date else None,
-          "annual_leave_days": employee.annual_leave_days,
+        "avatar_url": employee.avatar_url,
+        "start_date": employee.start_date.isoformat() if employee.start_date else None,
+        "annual_leave_days": employee.annual_leave_days,
         "portal_access_enabled": bool(employee.portal_password_hash),
-        "portal_last_login_at": employee.portal_last_login_at.isoformat() if employee.portal_last_login_at else None,
+        "portal_last_login_at": employee.portal_last_login_at.isoformat()
+        if employee.portal_last_login_at
+        else None,
         "portal_last_login_ip": employee.portal_last_login_ip,
         "portal_last_user_agent": employee.portal_last_user_agent,
         "created_at": employee.created_at.isoformat(),
@@ -123,7 +125,9 @@ def serialize_activity_event(event: ActivityEvent) -> dict[str, Any]:
 
 
 def get_company_settings(db: Session, company_id: UUID) -> TrackingSettings:
-    settings_row = db.scalar(select(TrackingSettings).where(TrackingSettings.company_id == company_id))
+    settings_row = db.scalar(
+        select(TrackingSettings).where(TrackingSettings.company_id == company_id)
+    )
     if settings_row:
         return settings_row
     settings_row = TrackingSettings(

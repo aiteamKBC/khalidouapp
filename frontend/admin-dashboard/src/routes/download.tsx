@@ -51,7 +51,9 @@ function DownloadPage() {
               </div>
               <div className="flex gap-2 rounded-lg border p-3">
                 <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-primary" />
-                <span>Your work email can connect more than one computer to your staff account.</span>
+                <span>
+                  Your work email can connect more than one computer to your staff account.
+                </span>
               </div>
             </div>
           </CardContent>

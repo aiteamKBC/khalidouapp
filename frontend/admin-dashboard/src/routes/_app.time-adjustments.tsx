@@ -176,7 +176,8 @@ function TimeAdjustmentsPage() {
                   </div>
                   {request.sourceStartAt && request.sourceEndAt ? (
                     <div className="text-xs text-muted-foreground">
-                      {formatDateTime(request.sourceStartAt)} → {formatDateTime(request.sourceEndAt)}
+                      {formatDateTime(request.sourceStartAt)} →{" "}
+                      {formatDateTime(request.sourceEndAt)}
                     </div>
                   ) : null}
                 </TableCell>

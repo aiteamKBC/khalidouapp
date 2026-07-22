@@ -129,9 +129,7 @@ def identity_client():
         Base.metadata.drop_all(engine)
 
 
-def test_password_reset_uses_one_time_link_and_revokes_old_sessions(
-    identity_client, monkeypatch
-):
+def test_password_reset_uses_one_time_link_and_revokes_old_sessions(identity_client, monkeypatch):
     client, data = identity_client
     raw_reset_token = "fixed-password-reset-token-with-enough-length-123456"
     monkeypatch.setattr(
@@ -281,9 +279,7 @@ def test_invited_user_can_change_temporary_password_and_sessions_are_revoked(
     assert new_login.status_code == 200
 
 
-def test_inviting_team_manager_is_atomic_and_permissions_are_scoped(
-    identity_client, monkeypatch
-):
+def test_inviting_team_manager_is_atomic_and_permissions_are_scoped(identity_client, monkeypatch):
     client, data = identity_client
     monkeypatch.setattr(
         "app.api.v1.people.generate_temporary_password",
@@ -309,9 +305,7 @@ def test_inviting_team_manager_is_atomic_and_permissions_are_scoped(
         manager = db.scalar(
             select(AdminUser).where(AdminUser.email == "manager@kentconsultancy.co")
         )
-        employee = db.scalar(
-            select(Employee).where(Employee.email == "manager@kentconsultancy.co")
-        )
+        employee = db.scalar(select(Employee).where(Employee.email == "manager@kentconsultancy.co"))
         membership = db.scalar(
             select(TeamMember).where(
                 TeamMember.team_id == data["team_a"].id,
@@ -367,9 +361,7 @@ def test_inviting_team_manager_is_atomic_and_permissions_are_scoped(
     assert invite_attempt.status_code == 403
 
 
-def test_general_admin_can_invite_employee_and_other_general_admin(
-    identity_client, monkeypatch
-):
+def test_general_admin_can_invite_employee_and_other_general_admin(identity_client, monkeypatch):
     client, data = identity_client
     monkeypatch.setattr(
         "app.api.v1.people.generate_temporary_password",
@@ -520,25 +512,28 @@ def test_invalid_team_invitation_creates_nothing(identity_client):
     )
     db: Session = data["session_factory"]()
     try:
-        assert db.scalar(
-            select(AdminUser.id).where(AdminUser.email == "nothing@kentconsultancy.co")
-        ) is None
-        assert db.scalar(
-            select(Employee.id).where(Employee.email == "nothing@kentconsultancy.co")
-        ) is None
-        assert db.scalar(
-            select(EmailDelivery.id).where(
-                EmailDelivery.recipient == "nothing@kentconsultancy.co"
+        assert (
+            db.scalar(select(AdminUser.id).where(AdminUser.email == "nothing@kentconsultancy.co"))
+            is None
+        )
+        assert (
+            db.scalar(select(Employee.id).where(Employee.email == "nothing@kentconsultancy.co"))
+            is None
+        )
+        assert (
+            db.scalar(
+                select(EmailDelivery.id).where(
+                    EmailDelivery.recipient == "nothing@kentconsultancy.co"
+                )
             )
-        ) is None
+            is None
+        )
     finally:
         db.close()
     assert response.status_code == 400
 
 
-def test_employee_invitation_is_hashed_one_time_and_accepts_password(
-    identity_client, monkeypatch
-):
+def test_employee_invitation_is_hashed_one_time_and_accepts_password(identity_client, monkeypatch):
     client, data = identity_client
     raw_token = "employee-invitation-token-with-enough-random-looking-bytes-123"
     monkeypatch.setattr(
@@ -565,14 +560,10 @@ def test_employee_invitation_is_hashed_one_time_and_accepts_password(
     db: Session = data["session_factory"]()
     try:
         employee = db.scalar(
-            select(Employee).where(
-                Employee.email == "invited.employee@kentconsultancy.co"
-            )
+            select(Employee).where(Employee.email == "invited.employee@kentconsultancy.co")
         )
         invitation = db.scalar(
-            select(EmployeeInvitation).where(
-                EmployeeInvitation.employee_id == employee.id
-            )
+            select(EmployeeInvitation).where(EmployeeInvitation.employee_id == employee.id)
         )
         assert employee.status == "invited"
         assert employee.portal_password_hash is None
@@ -618,14 +609,10 @@ def test_employee_invitation_is_hashed_one_time_and_accepts_password(
     db = data["session_factory"]()
     try:
         employee = db.scalar(
-            select(Employee).where(
-                Employee.email == "invited.employee@kentconsultancy.co"
-            )
+            select(Employee).where(Employee.email == "invited.employee@kentconsultancy.co")
         )
         invitation = db.scalar(
-            select(EmployeeInvitation).where(
-                EmployeeInvitation.employee_id == employee.id
-            )
+            select(EmployeeInvitation).where(EmployeeInvitation.employee_id == employee.id)
         )
         assert employee.status == "active"
         assert employee.portal_password_hash != "ChosenPassword123!"
@@ -670,9 +657,11 @@ def test_direct_employee_creation_is_invited_and_overview_exposes_invitation(
     assert overview.status_code == 200
     assert premature_activation.status_code == 409
     assert overview.json()["data"][0]["employee"]["status"] == "invited"
-    assert overview.json()["data"][0]["employee"]["invitation"]["id"] == (
-        created.json()["data"]["invitation"]["id"]
+    assert (
+        overview.json()["data"][0]["employee"]["invitation"]["id"]
+        == (created.json()["data"]["invitation"]["id"])
     )
+
 
 def test_employee_invitation_resend_revokes_old_token(identity_client, monkeypatch):
     client, data = identity_client
@@ -775,9 +764,7 @@ def test_employee_invitation_resend_revokes_old_token(identity_client, monkeypat
         db.close()
 
 
-def test_accepted_employee_can_enroll_desktop_with_employee_token(
-    identity_client, monkeypatch
-):
+def test_accepted_employee_can_enroll_desktop_with_employee_token(identity_client, monkeypatch):
     client, data = identity_client
     raw_token = "desktop-invitation-token-with-enough-length-123456789"
     monkeypatch.setattr(
@@ -858,16 +845,22 @@ def test_inviting_an_existing_active_employee_is_a_conflict(identity_client):
     assert response.json()["error"]["code"] == "EMPLOYEE_EMAIL_EXISTS"
     db = data["session_factory"]()
     try:
-        assert db.scalar(
-            select(EmployeeInvitation.id).where(
-                EmployeeInvitation.employee_id == active_employee.id
+        assert (
+            db.scalar(
+                select(EmployeeInvitation.id).where(
+                    EmployeeInvitation.employee_id == active_employee.id
+                )
             )
-        ) is None
-        assert db.scalar(
-            select(EmailDelivery.id).where(
-                EmailDelivery.recipient == "existing.employee@kentconsultancy.co"
+            is None
+        )
+        assert (
+            db.scalar(
+                select(EmailDelivery.id).where(
+                    EmailDelivery.recipient == "existing.employee@kentconsultancy.co"
+                )
             )
-        ) is None
+            is None
+        )
     finally:
         db.close()
 
@@ -932,9 +925,7 @@ def test_archived_person_can_be_deleted_and_email_reused(identity_client):
         db.close()
 
 
-def test_failed_invitation_queue_is_reported_and_can_be_resent(
-    identity_client, monkeypatch
-):
+def test_failed_invitation_queue_is_reported_and_can_be_resent(identity_client, monkeypatch):
     client, data = identity_client
     tokens = iter(
         [

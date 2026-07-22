@@ -12,10 +12,25 @@ export type PersonInvitationInput = {
   startDate?: string;
   annualLeaveDays?: number;
   workProfile?: {
-    shiftStart: string; shiftEnd: string; workingDays: number[]; weeklyOffDays: number[];
-    requiredDailyMinutes: number; breakRules: Array<{ name: string; minutes: number; paid: boolean; start_time: string; end_time: string }>;
-    lateGraceMinutes: number; overtimeEnabled: boolean; overtimeBasis: "outside_shift";
-    overtimeRateMultiplier: number; salaryAmount: number; salaryCurrency: string; salaryType: "monthly" | "hourly";
+    shiftStart: string;
+    shiftEnd: string;
+    workingDays: number[];
+    weeklyOffDays: number[];
+    requiredDailyMinutes: number;
+    breakRules: Array<{
+      name: string;
+      minutes: number;
+      paid: boolean;
+      start_time: string;
+      end_time: string;
+    }>;
+    lateGraceMinutes: number;
+    overtimeEnabled: boolean;
+    overtimeBasis: "outside_shift";
+    overtimeRateMultiplier: number;
+    salaryAmount: number;
+    salaryCurrency: string;
+    salaryType: "monthly" | "hourly";
   };
 };
 
@@ -84,22 +99,24 @@ export async function invitePerson(input: PersonInvitationInput): Promise<Person
       track_as_employee: input.trackAsEmployee ?? false,
       start_date: input.startDate,
       annual_leave_days: input.annualLeaveDays,
-      work_profile: input.workProfile ? {
-        shift_start: input.workProfile.shiftStart,
-        shift_end: input.workProfile.shiftEnd,
-        working_days: input.workProfile.workingDays,
-        weekly_off_days: input.workProfile.weeklyOffDays,
-        required_daily_minutes: input.workProfile.requiredDailyMinutes,
-        break_rules: input.workProfile.breakRules,
-        late_grace_minutes: input.workProfile.lateGraceMinutes,
-        deduction_policy: { mode: "review", require_admin_review: true, brackets: [] },
-        overtime_enabled: input.workProfile.overtimeEnabled,
-        overtime_basis: input.workProfile.overtimeBasis,
-        overtime_rate_multiplier: input.workProfile.overtimeRateMultiplier,
-        salary_amount: input.workProfile.salaryAmount,
-        salary_currency: input.workProfile.salaryCurrency,
-        salary_type: input.workProfile.salaryType,
-      } : undefined,
+      work_profile: input.workProfile
+        ? {
+            shift_start: input.workProfile.shiftStart,
+            shift_end: input.workProfile.shiftEnd,
+            working_days: input.workProfile.workingDays,
+            weekly_off_days: input.workProfile.weeklyOffDays,
+            required_daily_minutes: input.workProfile.requiredDailyMinutes,
+            break_rules: input.workProfile.breakRules,
+            late_grace_minutes: input.workProfile.lateGraceMinutes,
+            deduction_policy: { mode: "review", require_admin_review: true, brackets: [] },
+            overtime_enabled: input.workProfile.overtimeEnabled,
+            overtime_basis: input.workProfile.overtimeBasis,
+            overtime_rate_multiplier: input.workProfile.overtimeRateMultiplier,
+            salary_amount: input.workProfile.salaryAmount,
+            salary_currency: input.workProfile.salaryCurrency,
+            salary_type: input.workProfile.salaryType,
+          }
+        : undefined,
     }),
   });
   return {

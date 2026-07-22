@@ -1,5 +1,6 @@
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from uuid import UUID
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -8,6 +9,7 @@ from app.core.exceptions import ApiError
 from app.models import Device, Employee, TimeAdjustmentRequest
 from app.services.activity_timeline import build_workday_timeline
 from app.services.session_tracking import get_current_session
+from app.services.work_profiles import get_or_create_work_profile
 
 
 IDLE_TIME_REQUEST = "idle_time"
@@ -40,7 +42,9 @@ def serialize_time_adjustment_request(row: TimeAdjustmentRequest) -> dict:
         "approved_minutes": round(row.approved_seconds / 60) if row.approved_seconds else None,
         "reason": row.reason,
         "status": row.status,
-        "reviewed_by_admin_user_id": str(row.reviewed_by_admin_user_id) if row.reviewed_by_admin_user_id else None,
+        "reviewed_by_admin_user_id": str(row.reviewed_by_admin_user_id)
+        if row.reviewed_by_admin_user_id
+        else None,
         "reviewed_by_name": row.reviewed_by.name if row.reviewed_by else None,
         "reviewed_at": row.reviewed_at.isoformat() if row.reviewed_at else None,
         "admin_note": row.admin_note,
@@ -60,6 +64,7 @@ def create_employee_time_adjustment_request(
     work_session_id: UUID | None = None,
     source_start_at: datetime | None = None,
     source_end_at: datetime | None = None,
+    requested_leave_time: time | None = None,
 ) -> TimeAdjustmentRequest:
     requested_seconds = requested_minutes * 60
     employee = db.get(Employee, device.employee_id)
@@ -67,23 +72,64 @@ def create_employee_time_adjustment_request(
         raise ApiError("EMPLOYEE_NOT_FOUND", "Employee profile was not found.", 404)
 
     if request_type == EARLY_LEAVE_REQUEST:
+        profile = get_or_create_work_profile(db, employee)
+        weekly_allowance_seconds = max(0, int(profile.weekly_early_leave_minutes or 0)) * 60
         week_start = requested_date - timedelta(days=requested_date.weekday())
         week_end = week_start + timedelta(days=6)
-        already_requested_seconds = db.scalar(
-            select(func.coalesce(func.sum(TimeAdjustmentRequest.requested_seconds), 0)).where(
-                TimeAdjustmentRequest.company_id == device.company_id,
-                TimeAdjustmentRequest.employee_id == device.employee_id,
-                TimeAdjustmentRequest.request_type == EARLY_LEAVE_REQUEST,
-                TimeAdjustmentRequest.requested_date >= week_start,
-                TimeAdjustmentRequest.requested_date <= week_end,
-                TimeAdjustmentRequest.status.in_(REVIEWABLE_STATUSES),
+        already_requested_seconds = (
+            db.scalar(
+                select(func.coalesce(func.sum(TimeAdjustmentRequest.requested_seconds), 0)).where(
+                    TimeAdjustmentRequest.company_id == device.company_id,
+                    TimeAdjustmentRequest.employee_id == device.employee_id,
+                    TimeAdjustmentRequest.request_type == EARLY_LEAVE_REQUEST,
+                    TimeAdjustmentRequest.requested_date >= week_start,
+                    TimeAdjustmentRequest.requested_date <= week_end,
+                    TimeAdjustmentRequest.status.in_(REVIEWABLE_STATUSES),
+                )
             )
-        ) or 0
-        remaining_weekly_seconds = max(0, 120 * 60 - already_requested_seconds)
+            or 0
+        )
+        remaining_weekly_seconds = max(0, weekly_allowance_seconds - already_requested_seconds)
+        if requested_leave_time is not None:
+            working_days = profile.working_days or [0, 1, 2, 3, 4]
+            if requested_date.weekday() not in working_days:
+                raise ApiError(
+                    "EARLY_LEAVE_NON_WORKDAY",
+                    "Early leave can only be requested for a scheduled working day.",
+                    422,
+                )
+            if not profile.shift_start or not profile.shift_end:
+                raise ApiError(
+                    "SHIFT_NOT_CONFIGURED",
+                    "Your scheduled shift must be configured before requesting early leave.",
+                    422,
+                )
+            if not (profile.shift_start <= requested_leave_time < profile.shift_end):
+                raise ApiError(
+                    "INVALID_LEAVING_TIME",
+                    "Requested leaving time must be inside your scheduled shift.",
+                    422,
+                )
+            requested_seconds = (
+                profile.shift_end.hour * 3600
+                + profile.shift_end.minute * 60
+                - requested_leave_time.hour * 3600
+                - requested_leave_time.minute * 60
+            )
+            try:
+                timezone = ZoneInfo(employee.timezone)
+            except ZoneInfoNotFoundError:
+                timezone = UTC
+            source_start_at = datetime.combine(
+                requested_date, requested_leave_time, tzinfo=timezone
+            ).astimezone(UTC)
+            source_end_at = datetime.combine(
+                requested_date, profile.shift_end, tzinfo=timezone
+            ).astimezone(UTC)
         if requested_seconds > remaining_weekly_seconds:
             raise ApiError(
                 "EARLY_LEAVE_LIMIT_EXCEEDED",
-                "Early leave permission is limited to 2 hours per week.",
+                "The requested time is more than your remaining weekly early-leave balance.",
                 422,
             )
 
@@ -97,7 +143,9 @@ def create_employee_time_adjustment_request(
         source_start_at = _as_utc(source_start_at)
         source_end_at = _as_utc(source_end_at)
         if source_end_at <= source_start_at:
-            raise ApiError("INVALID_IDLE_PERIOD", "Idle end time must be after the start time.", 422)
+            raise ApiError(
+                "INVALID_IDLE_PERIOD", "Idle end time must be after the start time.", 422
+            )
 
         timeline = build_workday_timeline(
             db,
@@ -114,9 +162,10 @@ def create_employee_time_adjustment_request(
                 continue
             interval_start = _as_utc(datetime.fromisoformat(interval["started_at"]))
             interval_end = _as_utc(datetime.fromisoformat(interval["ended_at"]))
-            if abs((interval_start - source_start_at).total_seconds()) <= 2 and abs(
-                (interval_end - source_end_at).total_seconds()
-            ) <= 2:
+            if (
+                abs((interval_start - source_start_at).total_seconds()) <= 2
+                and abs((interval_end - source_end_at).total_seconds()) <= 2
+            ):
                 matched_interval = interval
                 break
 
@@ -127,17 +176,43 @@ def create_employee_time_adjustment_request(
                 422,
             )
 
-        already_requested_seconds = db.scalar(
-            select(func.coalesce(func.sum(TimeAdjustmentRequest.requested_seconds), 0)).where(
-                TimeAdjustmentRequest.company_id == device.company_id,
-                TimeAdjustmentRequest.employee_id == device.employee_id,
-                TimeAdjustmentRequest.request_type == IDLE_TIME_REQUEST,
-                TimeAdjustmentRequest.work_session_id == work_session_id,
-                TimeAdjustmentRequest.source_start_at == source_start_at,
-                TimeAdjustmentRequest.source_end_at == source_end_at,
-                TimeAdjustmentRequest.status.in_(REVIEWABLE_STATUSES),
+        profile = get_or_create_work_profile(db, employee)
+        working_days = profile.working_days or [0, 1, 2, 3, 4]
+        try:
+            timezone = ZoneInfo(employee.timezone)
+        except ZoneInfoNotFoundError:
+            timezone = UTC
+        local_start = source_start_at.astimezone(timezone)
+        local_end = source_end_at.astimezone(timezone)
+        if (
+            requested_date.weekday() not in working_days
+            or local_start.date() != requested_date
+            or local_end.date() != requested_date
+            or not profile.shift_start
+            or not profile.shift_end
+            or local_start.time().replace(tzinfo=None) < profile.shift_start
+            or local_end.time().replace(tzinfo=None) > profile.shift_end
+        ):
+            raise ApiError(
+                "IDLE_OUTSIDE_SCHEDULED_SHIFT",
+                "Only idle periods fully inside your scheduled shift can be explained.",
+                422,
             )
-        ) or 0
+
+        already_requested_seconds = (
+            db.scalar(
+                select(func.coalesce(func.sum(TimeAdjustmentRequest.requested_seconds), 0)).where(
+                    TimeAdjustmentRequest.company_id == device.company_id,
+                    TimeAdjustmentRequest.employee_id == device.employee_id,
+                    TimeAdjustmentRequest.request_type == IDLE_TIME_REQUEST,
+                    TimeAdjustmentRequest.work_session_id == work_session_id,
+                    TimeAdjustmentRequest.source_start_at == source_start_at,
+                    TimeAdjustmentRequest.source_end_at == source_end_at,
+                    TimeAdjustmentRequest.status.in_(REVIEWABLE_STATUSES),
+                )
+            )
+            or 0
+        )
         available_seconds = max(0, matched_interval["duration_seconds"] - already_requested_seconds)
         if requested_seconds > available_seconds:
             raise ApiError(

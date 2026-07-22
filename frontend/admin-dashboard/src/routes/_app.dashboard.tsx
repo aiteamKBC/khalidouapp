@@ -458,7 +458,9 @@ function DashboardPage() {
                     onClick={() => setAttentionOpen(false)}
                     className="group flex items-center gap-3 rounded-2xl border bg-card p-3.5 transition hover:-translate-y-0.5 hover:border-[#e5185d]/25 hover:shadow-sm"
                   >
-                    <span className={`grid h-11 w-11 place-items-center rounded-[14px] ${item.tone}`}>
+                    <span
+                      className={`grid h-11 w-11 place-items-center rounded-[14px] ${item.tone}`}
+                    >
                       <Icon className="h-5 w-5" />
                     </span>
                     <span className="min-w-0 flex-1">
@@ -665,9 +667,7 @@ function DashboardPage() {
                   color="var(--primary)"
                   gradientId="spark-worked"
                   series={series.map((s) => s.hours)}
-                  trend={
-                    <Trend delta={week.total - prev.total} formatter={formatSignedMinutes} />
-                  }
+                  trend={<Trend delta={week.total - prev.total} formatter={formatSignedMinutes} />}
                 />
                 <HeroCard
                   to="/employees"
@@ -927,7 +927,9 @@ function DashboardPage() {
                       to={item.to}
                       className="group flex items-center gap-3 rounded-[16px] border border-border/80 bg-card p-3 transition hover:-translate-y-0.5 hover:border-[#e5185d]/25 hover:shadow-sm"
                     >
-                      <span className={`grid h-10 w-10 place-items-center rounded-[13px] ${item.tone}`}>
+                      <span
+                        className={`grid h-10 w-10 place-items-center rounded-[13px] ${item.tone}`}
+                      >
                         <Icon className="h-5 w-5" />
                       </span>
                       <span className="min-w-0 flex-1">
@@ -1034,7 +1036,7 @@ function HeroCard({
 
           <div className="min-w-0 pr-14">
             <p className="truncate text-[12px] font-extrabold uppercase leading-[1.15] tracking-[0.08em] text-muted-foreground">
-                {label}
+              {label}
             </p>
             <p className="mt-2 truncate text-[11px] font-bold leading-[1.2] text-muted-foreground/80">
               {sublabel}

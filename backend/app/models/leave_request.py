@@ -12,7 +12,9 @@ class LeaveRequest(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "leave_requests"
 
     company_id: Mapped[UUID] = mapped_column(ForeignKey("companies.id"), nullable=False, index=True)
-    employee_id: Mapped[UUID] = mapped_column(ForeignKey("employees.id"), nullable=False, index=True)
+    employee_id: Mapped[UUID] = mapped_column(
+        ForeignKey("employees.id"), nullable=False, index=True
+    )
     start_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
     end_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
     requested_days: Mapped[int] = mapped_column(Integer, nullable=False)

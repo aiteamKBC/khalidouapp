@@ -46,6 +46,19 @@ function persistUser(user: User, accessToken: string, refreshToken: string) {
   storage.setItem(STORAGE_KEY, JSON.stringify({ user, accessToken, refreshToken }));
 }
 
+function readPersisted(): Persisted | null {
+  const raw = localStorage.getItem(STORAGE_KEY) ?? sessionStorage.getItem(STORAGE_KEY);
+  if (!raw) return null;
+  try {
+    const value = JSON.parse(raw) as Persisted;
+    return value.accessToken && value.refreshToken ? value : null;
+  } catch {
+    localStorage.removeItem(STORAGE_KEY);
+    sessionStorage.removeItem(STORAGE_KEY);
+    return null;
+  }
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<{
     user: User | null;
@@ -62,16 +75,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
     async function restore() {
       try {
-        const raw =
-          typeof window !== "undefined"
-            ? (localStorage.getItem(STORAGE_KEY) ?? sessionStorage.getItem(STORAGE_KEY))
-            : null;
-        if (raw) {
-          const parsed = JSON.parse(raw) as Persisted;
+        const parsed = typeof window !== "undefined" ? readPersisted() : null;
+        if (parsed) {
           const user = await apiMe();
           if (!cancelled) {
-            persistUser(user, parsed.accessToken, parsed.refreshToken);
-            setState({ user, accessToken: parsed.accessToken, refreshToken: parsed.refreshToken });
+            // apiMe may have refreshed an expired access token. Re-read the
+            // stored pair so the restore flow never overwrites fresh tokens
+            // with the stale values captured before that request.
+            const current = readPersisted() ?? parsed;
+            persistUser(user, current.accessToken, current.refreshToken);
+            setState({
+              user,
+              accessToken: current.accessToken,
+              refreshToken: current.refreshToken,
+            });
           }
         }
       } catch {

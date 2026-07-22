@@ -7,7 +7,12 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_admin
-from app.api.v1.admin_utils import apply_pagination, count_for, pagination_meta, serialize_activity_event
+from app.api.v1.admin_utils import (
+    apply_pagination,
+    count_for,
+    pagination_meta,
+    serialize_activity_event,
+)
 from app.api.v1.team_auth import apply_employee_scope, ensure_employee_access
 from app.core.responses import success_response
 from app.database.session import get_db
@@ -47,7 +52,9 @@ def list_activity(
     page_size: int = Query(default=50, ge=1, le=200),
 ):
     statement = select(ActivityEvent).where(ActivityEvent.company_id == current_admin.company_id)
-    statement = apply_employee_scope(statement, db, current_admin, ActivityEvent.employee_id, team_id)
+    statement = apply_employee_scope(
+        statement, db, current_admin, ActivityEvent.employee_id, team_id
+    )
     if employee_id:
         ensure_employee_access(db, current_admin, employee_id, team_id)
         statement = statement.where(ActivityEvent.employee_id == employee_id)

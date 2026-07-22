@@ -19,7 +19,12 @@ from app.models import (
     PauseSession,
     WorkSession,
 )
-from app.schemas.session import HeartbeatRequest, PauseStartRequest, SessionEndRequest, SessionStartRequest
+from app.schemas.session import (
+    HeartbeatRequest,
+    PauseStartRequest,
+    SessionEndRequest,
+    SessionStartRequest,
+)
 from app.services.session_tracking import (
     end_session,
     get_current_session,
@@ -125,12 +130,17 @@ def test_duplicate_session_end_keeps_original_end_state(tracking_context):
     assert retried["active_seconds"] == original["active_seconds"] == 321
     assert retried["idle_seconds"] == original["idle_seconds"] == 45
     assert retried["updated_at"] == original["updated_at"]
-    assert db.scalar(
-        select(func.count()).select_from(ActivityEvent).where(
-            ActivityEvent.session_id == session.id,
-            ActivityEvent.event_type == "session_ended",
+    assert (
+        db.scalar(
+            select(func.count())
+            .select_from(ActivityEvent)
+            .where(
+                ActivityEvent.session_id == session.id,
+                ActivityEvent.event_type == "session_ended",
+            )
         )
-    ) == 1
+        == 1
+    )
     end_event = db.scalar(
         select(ActivityEvent).where(
             ActivityEvent.session_id == session.id,
@@ -294,12 +304,17 @@ def test_paid_pause_auto_resumes_and_consumes_daily_balance(tracking_context):
     assert heartbeat["pause"]["active_pause"] is None
     assert heartbeat["pause"]["used_seconds"] == 3 * 60
     assert heartbeat["session"]["paid_pause_seconds"] == 3 * 60
-    assert db.scalar(
-        select(func.count()).select_from(ActivityEvent).where(
-            ActivityEvent.session_id == UUID(session_id),
-            ActivityEvent.event_type == "paid_pause_auto_resumed",
+    assert (
+        db.scalar(
+            select(func.count())
+            .select_from(ActivityEvent)
+            .where(
+                ActivityEvent.session_id == UUID(session_id),
+                ActivityEvent.event_type == "paid_pause_auto_resumed",
+            )
         )
-    ) == 1
+        == 1
+    )
 
 
 def test_paid_pause_rejects_requests_after_daily_balance_is_used(tracking_context):
@@ -360,7 +375,11 @@ def test_heartbeat_splits_normal_and_overtime_when_employee_is_eligible(tracking
         ),
     )
 
-    overtime = db.scalar(select(OvertimeRecord).where(OvertimeRecord.work_session_id == UUID(started["session"]["id"])))
+    overtime = db.scalar(
+        select(OvertimeRecord).where(
+            OvertimeRecord.work_session_id == UUID(started["session"]["id"])
+        )
+    )
     assert heartbeat["workday"]["normal_seconds"] == 8 * 60 * 60
     assert heartbeat["workday"]["extra_seconds"] == 60 * 60
     assert heartbeat["workday"]["extra_time_status"] == "pending_overtime"

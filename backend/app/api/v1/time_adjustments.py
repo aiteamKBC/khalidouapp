@@ -15,7 +15,10 @@ from app.models import AdminUser, Employee, TimeAdjustmentRequest
 from app.schemas.admin import TimeAdjustmentReview
 from app.services.audit import record_audit_log
 from app.services.permissions import require_capability
-from app.services.time_adjustments import get_time_adjustment_or_404, serialize_time_adjustment_request
+from app.services.time_adjustments import (
+    get_time_adjustment_or_404,
+    serialize_time_adjustment_request,
+)
 
 router = APIRouter(prefix="/time-adjustment-requests", tags=["time-adjustment-requests"])
 
@@ -36,7 +39,9 @@ def list_time_adjustment_requests(
         .where(TimeAdjustmentRequest.company_id == current_admin.company_id)
         .order_by(TimeAdjustmentRequest.created_at.desc())
     )
-    statement = apply_employee_scope(statement, db, current_admin, TimeAdjustmentRequest.employee_id, team_id)
+    statement = apply_employee_scope(
+        statement, db, current_admin, TimeAdjustmentRequest.employee_id, team_id
+    )
     if employee_id:
         ensure_employee_access(db, current_admin, employee_id, team_id)
         statement = statement.where(TimeAdjustmentRequest.employee_id == employee_id)

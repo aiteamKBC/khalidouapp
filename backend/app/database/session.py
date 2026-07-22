@@ -19,10 +19,20 @@ def get_engine() -> Engine:
     if not settings.database_url:
         raise RuntimeError("DATABASE_URL is required for database operations.")
 
+    database_url = normalize_database_url(settings.database_url)
+    pool_options = {}
+    if not database_url.startswith("sqlite"):
+        pool_options = {
+            "pool_size": max(1, settings.database_pool_size),
+            "max_overflow": max(0, settings.database_max_overflow),
+            "pool_timeout": max(1, settings.database_pool_timeout_seconds),
+            "pool_recycle": 1800,
+        }
     return create_engine(
-        normalize_database_url(settings.database_url),
+        database_url,
         pool_pre_ping=True,
         future=True,
+        **pool_options,
     )
 
 

@@ -2,7 +2,17 @@ from datetime import datetime, time
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, JSON, Numeric, String, Time, UniqueConstraint
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Integer,
+    JSON,
+    Numeric,
+    String,
+    Time,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database.base import Base
@@ -11,9 +21,7 @@ from app.models.mixins import TimestampMixin, UUIDPrimaryKeyMixin
 
 class EmployeeWorkProfile(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "employee_work_profiles"
-    __table_args__ = (
-        UniqueConstraint("employee_id", name="uq_employee_work_profiles_employee"),
-    )
+    __table_args__ = (UniqueConstraint("employee_id", name="uq_employee_work_profiles_employee"),)
 
     company_id: Mapped[UUID] = mapped_column(ForeignKey("companies.id"), nullable=False, index=True)
     employee_id: Mapped[UUID] = mapped_column(
@@ -36,6 +44,8 @@ class EmployeeWorkProfile(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     salary_amount: Mapped[Decimal | None] = mapped_column(Numeric(14, 2), nullable=True)
     salary_currency: Mapped[str | None] = mapped_column(String(3), nullable=True)
     salary_type: Mapped[str] = mapped_column(String(20), nullable=False, default="monthly")
-    profile_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    profile_completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     employee = relationship("Employee", back_populates="work_profile")

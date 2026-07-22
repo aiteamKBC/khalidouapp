@@ -13,7 +13,11 @@ from app.models import AdminRefreshToken, AdminUser
 
 def authenticate_admin(db: Session, email: str, password: str) -> AdminUser:
     admin = db.scalar(select(AdminUser).where(AdminUser.email == email.lower()))
-    if admin is None or admin.status != "active" or not verify_password(password, admin.password_hash):
+    if (
+        admin is None
+        or admin.status != "active"
+        or not verify_password(password, admin.password_hash)
+    ):
         raise ApiError("INVALID_CREDENTIALS", "Invalid email or password.", 401)
     return admin
 

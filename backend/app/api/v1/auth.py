@@ -31,6 +31,7 @@ from app.services.admin_auth import (
 )
 from app.services.audit import record_audit_log
 from app.services.permissions import capabilities_for_admin, is_super_admin
+from app.services.rate_limit import enforce_rate_limit
 
 router = APIRouter(prefix="/auth", tags=["admin-auth"])
 
@@ -38,13 +39,16 @@ router = APIRouter(prefix="/auth", tags=["admin-auth"])
 def validate_avatar(value: str | None) -> str | None:
     if value is None or value == "":
         return None
-    if not value.startswith(("data:image/jpeg;base64,", "data:image/png;base64,", "data:image/webp;base64,")):
+    if not value.startswith(
+        ("data:image/jpeg;base64,", "data:image/png;base64,", "data:image/webp;base64,")
+    ):
         raise ApiError("INVALID_AVATAR", "Profile photo must be a JPEG, PNG, or WebP image.", 400)
     return value
 
 
 @router.post("/login")
 def login(payload: LoginRequest, request: Request, db: Annotated[Session, Depends(get_db)]):
+    enforce_rate_limit(request, action="admin-login", limit=10, window_seconds=60)
     admin = authenticate_admin(db, payload.email, payload.password)
     tokens = create_admin_token_pair(db, admin)
     record_audit_log(
@@ -72,7 +76,10 @@ def logout(payload: LogoutRequest, db: Annotated[Session, Depends(get_db)]):
 
 
 @router.get("/me")
-def me(current_admin: Annotated[AdminUser, Depends(get_current_admin)], db: Annotated[Session, Depends(get_db)]):
+def me(
+    current_admin: Annotated[AdminUser, Depends(get_current_admin)],
+    db: Annotated[Session, Depends(get_db)],
+):
     assigned_team_ids = db.scalars(
         select(TeamOwner.team_id).where(TeamOwner.admin_user_id == current_admin.id)
     ).all()
@@ -139,11 +146,15 @@ def change_password(
 @router.post("/forgot-password")
 def forgot_password(
     payload: ForgotPasswordRequest,
+    request: Request,
     background_tasks: BackgroundTasks,
     db: Annotated[Session, Depends(get_db)],
 ):
+    enforce_rate_limit(request, action="admin-forgot-password", limit=5, window_seconds=900)
     admin = db.scalar(
-        select(AdminUser).where(func.lower(AdminUser.email) == payload.email.lower(), AdminUser.status == "active")
+        select(AdminUser).where(
+            func.lower(AdminUser.email) == payload.email.lower(), AdminUser.status == "active"
+        )
     )
     if admin is not None:
         ensure_email_allowed(db, to=admin.email, category="admin_password_reset")
@@ -175,11 +186,18 @@ def forgot_password(
             token=raw_token,
             expires_in_minutes=settings.password_reset_expire_minutes,
         )
-    return success_response(data={"message": "If the account exists, reset instructions were sent."})
+    return success_response(
+        data={"message": "If the account exists, reset instructions were sent."}
+    )
 
 
 @router.post("/reset-password")
-def reset_password(payload: PasswordResetConfirm, db: Annotated[Session, Depends(get_db)]):
+def reset_password(
+    payload: PasswordResetConfirm,
+    request: Request,
+    db: Annotated[Session, Depends(get_db)],
+):
+    enforce_rate_limit(request, action="admin-reset-password", limit=10, window_seconds=900)
     now = datetime.now(UTC)
     token = db.scalar(
         select(AdminPasswordResetToken).where(

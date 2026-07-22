@@ -39,7 +39,9 @@ router = APIRouter(prefix="/users", tags=["admin-users"])
 
 
 def assigned_team_ids(db: Session, admin_user_id: UUID) -> list[str]:
-    rows = db.scalars(select(TeamOwner.team_id).where(TeamOwner.admin_user_id == admin_user_id)).all()
+    rows = db.scalars(
+        select(TeamOwner.team_id).where(TeamOwner.admin_user_id == admin_user_id)
+    ).all()
     return [str(team_id) for team_id in rows]
 
 
@@ -56,7 +58,9 @@ def serialize_admin_user(db: Session, admin: AdminUser) -> dict:
         "status": admin.status,
         "permission_mode": admin.permission_mode,
         "data_scope": admin.data_scope,
-        "track_as_employee": bool(admin.employee_id and admin.employee and admin.employee.status == "active"),
+        "track_as_employee": bool(
+            admin.employee_id and admin.employee and admin.employee.status == "active"
+        ),
         "assigned_team_ids": assigned_team_ids(db, admin.id),
         "created_at": admin.created_at.isoformat(),
         "updated_at": admin.updated_at.isoformat(),
@@ -113,7 +117,9 @@ def serialize_admin_access(db: Session, admin: AdminUser) -> dict:
     }
 
 
-def active_full_admins(db: Session, company_id: UUID, exclude_id: UUID | None = None) -> list[AdminUser]:
+def active_full_admins(
+    db: Session, company_id: UUID, exclude_id: UUID | None = None
+) -> list[AdminUser]:
     statement = select(AdminUser).where(
         AdminUser.company_id == company_id,
         AdminUser.status == "active",
@@ -215,8 +221,10 @@ def update_user_access(
 
     db.add(admin)
     db.flush()
-    if was_full_admin and not is_full_admin(admin) and not active_full_admins(
-        db, admin.company_id, exclude_id=admin.id
+    if (
+        was_full_admin
+        and not is_full_admin(admin)
+        and not active_full_admins(db, admin.company_id, exclude_id=admin.id)
     ):
         raise ApiError(
             "LAST_FULL_ADMIN_REQUIRED",
@@ -232,7 +240,11 @@ def update_user_access(
         entity_id=admin.id,
         entity_name=admin.email,
         details={
-            key: ([str(item) for item in value] if key == "team_lead_team_ids" and value is not None else value)
+            key: (
+                [str(item) for item in value]
+                if key == "team_lead_team_ids" and value is not None
+                else value
+            )
             for key, value in changes.items()
         },
         request=request,
@@ -242,7 +254,9 @@ def update_user_access(
     return success_response(data=serialize_admin_access(db, admin))
 
 
-def get_general_admin_or_404(db: Session, current_admin: AdminUser, admin_user_id: UUID) -> AdminUser:
+def get_general_admin_or_404(
+    db: Session, current_admin: AdminUser, admin_user_id: UUID
+) -> AdminUser:
     admin = db.scalar(
         select(AdminUser).where(
             AdminUser.id == admin_user_id,
@@ -282,7 +296,11 @@ def create_user(
     require_capability(current_admin, "access.manage")
     require_can_assign_role(current_admin, payload.role)
     email = payload.email.lower()
-    if db.scalar(select(AdminUser.id).where(AdminUser.company_id == current_admin.company_id, AdminUser.email == email)):
+    if db.scalar(
+        select(AdminUser.id).where(
+            AdminUser.company_id == current_admin.company_id, AdminUser.email == email
+        )
+    ):
         raise ApiError("ADMIN_EMAIL_EXISTS", "An admin user with this email already exists.", 409)
 
     admin = AdminUser(
@@ -366,8 +384,12 @@ def update_user(
             )
         )
         if existing:
-            raise ApiError("ADMIN_EMAIL_EXISTS", "An admin user with this email already exists.", 409)
-    audit_updates = {key: value for key, value in updates.items() if key != "password" and value is not None}
+            raise ApiError(
+                "ADMIN_EMAIL_EXISTS", "An admin user with this email already exists.", 409
+            )
+    audit_updates = {
+        key: value for key, value in updates.items() if key != "password" and value is not None
+    }
     job_title_update = updates.pop("job_title", None)
     new_password = None
     if "password" in updates and updates["password"] is not None:

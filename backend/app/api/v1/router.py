@@ -14,6 +14,7 @@ from app.api.v1 import (
     health,
     leave_requests,
     people,
+    payroll,
     projects,
     reports,
     screenshots,
@@ -34,6 +35,7 @@ api_router.include_router(employee_auth.router)
 api_router.include_router(employee_portal.router)
 api_router.include_router(auth.router)
 api_router.include_router(people.router)
+api_router.include_router(payroll.router)
 api_router.include_router(teams.router)
 api_router.include_router(dashboard.router)
 api_router.include_router(users.router)

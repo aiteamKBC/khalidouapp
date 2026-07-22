@@ -6,8 +6,8 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.exceptions import ApiError
-from app.core.security import create_device_token, hash_token, verify_password
-from app.models import Device, DeviceToken, Employee, EnrollmentCode, TrackingSettings
+from app.core.security import create_device_token, hash_token
+from app.models import Device, DeviceToken, Employee, TrackingSettings
 from app.schemas.agent import AgentDeviceInfo
 
 
@@ -43,22 +43,6 @@ def get_or_create_tracking_settings(db: Session, company_id) -> TrackingSettings
     return settings_row
 
 
-def find_valid_enrollment_code(db: Session, enrollment_code: str) -> EnrollmentCode:
-    now = datetime.now(UTC)
-    active_codes = db.scalars(
-        select(EnrollmentCode).where(
-            EnrollmentCode.status == "active",
-            EnrollmentCode.expires_at > now,
-        )
-    ).all()
-
-    for code in active_codes:
-        if verify_password(enrollment_code, code.code_hash):
-            return code
-
-    raise ApiError("INVALID_ENROLLMENT_CODE", "Enrollment code is invalid or expired.", 400)
-
-
 def issue_device_token(db: Session, device: Device) -> str:
     token = create_device_token(
         device_id=device.id,
@@ -75,37 +59,11 @@ def issue_device_token(db: Session, device: Device) -> str:
     return token
 
 
-def enroll_device(
-    db: Session,
-    enrollment_code: str,
-    device_info: AgentDeviceInfo,
-    ip_address: str | None = None,
-) -> dict[str, Any]:
-    code = find_valid_enrollment_code(db, enrollment_code)
-    employee = db.scalar(
-        select(Employee).where(
-            Employee.id == code.employee_id,
-            Employee.company_id == code.company_id,
-            Employee.status == "active",
-        )
-    )
-    if employee is None:
-        raise ApiError("EMPLOYEE_NOT_ACTIVE", "Employee is not active.", 400)
-
-    code.status = "used"
-    code.used_at = datetime.now(UTC)
-    return enroll_employee_device(
-        db, employee, device_info, ip_address, allow_employee_relink=True
-    )
-
-
 def enroll_employee_device(
     db: Session,
     employee: Employee,
     device_info: AgentDeviceInfo,
     ip_address: str | None = None,
-    *,
-    allow_employee_relink: bool = False,
 ) -> dict[str, Any]:
     """Register or relink a device and issue the standard device bearer token."""
     if employee.status != "active":
@@ -134,7 +92,7 @@ def enroll_employee_device(
         db.flush()
     elif device.revoked_at is not None or device.status == "revoked":
         raise ApiError("DEVICE_REVOKED", "This device has been revoked.", 403)
-    elif device.employee_id != employee.id and not allow_employee_relink:
+    elif device.employee_id != employee.id:
         raise ApiError(
             "DEVICE_ALREADY_ENROLLED",
             "This installation is already linked to another employee.",

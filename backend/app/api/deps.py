@@ -38,8 +38,11 @@ def get_current_admin(
     if payload.get("type") != "access":
         raise ApiError("UNAUTHORIZED", "Invalid token type.", 401)
 
-    admin_id = UUID(str(payload["sub"]))
-    company_id = UUID(str(payload["company_id"]))
+    try:
+        admin_id = UUID(str(payload["sub"]))
+        company_id = UUID(str(payload["company_id"]))
+    except (KeyError, TypeError, ValueError):
+        raise ApiError("UNAUTHORIZED", "Invalid access token claims.", 401) from None
     admin = db.scalar(
         select(AdminUser).where(
             AdminUser.id == admin_id,
@@ -64,13 +67,18 @@ def get_current_device(
     if payload.get("type") != "device":
         raise ApiError("UNAUTHORIZED", "Invalid token type.", 401)
 
-    device_id = UUID(str(payload["sub"]))
-    company_id = UUID(str(payload["company_id"]))
+    try:
+        device_id = UUID(str(payload["sub"]))
+        company_id = UUID(str(payload["company_id"]))
+        token_employee_id = UUID(str(payload["employee_id"]))
+    except (KeyError, TypeError, ValueError):
+        raise ApiError("UNAUTHORIZED", "Invalid device token claims.", 401) from None
 
     token_record = db.scalar(
         select(DeviceToken).where(
             DeviceToken.token_hash == hash_token(token),
             DeviceToken.company_id == company_id,
+            DeviceToken.device_id == device_id,
             DeviceToken.revoked_at.is_(None),
         )
     )
@@ -89,6 +97,8 @@ def get_current_device(
     )
     if device is None:
         raise ApiError("UNAUTHORIZED", "Device is not active.", 401)
+    if device.employee_id != token_employee_id:
+        raise ApiError("UNAUTHORIZED", "Device token identity does not match this device.", 401)
 
     employee = db.scalar(
         select(Employee).where(
@@ -115,10 +125,16 @@ def get_current_employee(
     if payload.get("type") != "employee_access":
         raise ApiError("UNAUTHORIZED", "Invalid employee token type.", 401)
 
+    try:
+        employee_id = UUID(str(payload["sub"]))
+        company_id = UUID(str(payload["company_id"]))
+    except (KeyError, TypeError, ValueError):
+        raise ApiError("UNAUTHORIZED", "Invalid employee token claims.", 401) from None
+
     employee = db.scalar(
         select(Employee).where(
-            Employee.id == UUID(str(payload["sub"])),
-            Employee.company_id == UUID(str(payload["company_id"])),
+            Employee.id == employee_id,
+            Employee.company_id == company_id,
             Employee.status == "active",
         )
     )

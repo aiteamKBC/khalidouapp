@@ -81,9 +81,14 @@ export type PortalTimeRequest = {
 export type PortalLeaveData = {
   balance: { year: number; credit_days: number; used_days: number; remaining_days: number };
   requests: Array<{
-    id: string; start_date: string; end_date: string; requested_days: number;
-    leave_type: "annual" | "sick" | "unpaid"; reason?: string | null;
-    status: "pending" | "approved" | "rejected"; review_note?: string | null;
+    id: string;
+    start_date: string;
+    end_date: string;
+    requested_days: number;
+    leave_type: "annual" | "sick" | "unpaid";
+    reason?: string | null;
+    status: "pending" | "approved" | "rejected";
+    review_note?: string | null;
   }>;
 };
 
@@ -319,21 +324,25 @@ export const employeeLeaveRequests = (token: string) =>
 export const createEmployeeLeaveRequest = (
   token: string,
   input: { startDate: string; endDate: string; leaveType: string; reason?: string },
-) => apiFetch(
-  "/employee-portal/leave-requests",
-  {
-    method: "POST",
-    body: JSON.stringify({
-      start_date: input.startDate,
-      end_date: input.endDate,
-      leave_type: input.leaveType,
-      reason: input.reason,
-    }),
-  },
-  token,
-);
+) =>
+  apiFetch(
+    "/employee-portal/leave-requests",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        start_date: input.startDate,
+        end_date: input.endDate,
+        leave_type: input.leaveType,
+        reason: input.reason,
+      }),
+    },
+    token,
+  );
 
-export async function employeeScreenshots(token: string, day?: string): Promise<PortalScreenshot[]> {
+export async function employeeScreenshots(
+  token: string,
+  day?: string,
+): Promise<PortalScreenshot[]> {
   const rows = await apiFetch<
     Array<{ id: string; captured_at: string; temporary_url: string; tracked_seconds: number }>
   >(withQuery("/employee-portal/screenshots", { day }), {}, token);

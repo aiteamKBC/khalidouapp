@@ -39,7 +39,13 @@ from app.models import (
     TimeAdjustmentRequest,
     WorkSession,
 )
-from app.schemas.admin import TeamCreate, TeamMemberCreate, TeamMemberUpdate, TeamOwnerCreate, TeamUpdate
+from app.schemas.admin import (
+    TeamCreate,
+    TeamMemberCreate,
+    TeamMemberUpdate,
+    TeamOwnerCreate,
+    TeamUpdate,
+)
 from app.services.audit import record_audit_log
 from app.services.projects import ensure_general_work_project
 from app.services.screenshots import serialize_screenshot
@@ -137,7 +143,11 @@ def create_team(
 
 
 @router.get("/{team_id}")
-def get_team(team_id: UUID, current_admin: Annotated[AdminUser, Depends(get_current_admin)], db: Annotated[Session, Depends(get_db)]):
+def get_team(
+    team_id: UUID,
+    current_admin: Annotated[AdminUser, Depends(get_current_admin)],
+    db: Annotated[Session, Depends(get_db)],
+):
     return success_response(data=serialize_team(ensure_team_access(db, current_admin, team_id)))
 
 
@@ -171,7 +181,12 @@ def update_team(
 
 
 @router.delete("/{team_id}")
-def delete_team(team_id: UUID, request: Request, current_admin: Annotated[AdminUser, Depends(get_current_admin)], db: Annotated[Session, Depends(get_db)]):
+def delete_team(
+    team_id: UUID,
+    request: Request,
+    current_admin: Annotated[AdminUser, Depends(get_current_admin)],
+    db: Annotated[Session, Depends(get_db)],
+):
     require_general_admin(current_admin)
     team = ensure_team_access(db, current_admin, team_id)
     team.status = "deleted"
@@ -191,7 +206,11 @@ def delete_team(team_id: UUID, request: Request, current_admin: Annotated[AdminU
 
 
 @router.get("/{team_id}/members")
-def list_team_members(team_id: UUID, current_admin: Annotated[AdminUser, Depends(get_current_admin)], db: Annotated[Session, Depends(get_db)]):
+def list_team_members(
+    team_id: UUID,
+    current_admin: Annotated[AdminUser, Depends(get_current_admin)],
+    db: Annotated[Session, Depends(get_db)],
+):
     ensure_team_access(db, current_admin, team_id)
     rows = db.execute(
         select(Employee, TeamMember.role)
@@ -218,7 +237,11 @@ def add_team_member(
     require_general_admin(current_admin)
     team = ensure_team_access(db, current_admin, team_id)
     employee = ensure_employee_access(db, current_admin, payload.employee_id)
-    existing = db.scalar(select(TeamMember).where(TeamMember.team_id == team_id, TeamMember.employee_id == employee.id))
+    existing = db.scalar(
+        select(TeamMember).where(
+            TeamMember.team_id == team_id, TeamMember.employee_id == employee.id
+        )
+    )
     if existing:
         existing.status = payload.status
         existing.role = payload.role
@@ -236,7 +259,11 @@ def add_team_member(
         )
         db.commit()
         return success_response(data={"added": True, "employee_id": str(employee.id)})
-    db.add(TeamMember(team_id=team_id, employee_id=employee.id, status=payload.status, role=payload.role))
+    db.add(
+        TeamMember(
+            team_id=team_id, employee_id=employee.id, status=payload.status, role=payload.role
+        )
+    )
     db.commit()
     record_audit_log(
         db,
@@ -300,7 +327,11 @@ def remove_team_member(
 ):
     require_general_admin(current_admin)
     team = ensure_team_access(db, current_admin, team_id)
-    member = db.scalar(select(TeamMember).where(TeamMember.team_id == team_id, TeamMember.employee_id == employee_id))
+    member = db.scalar(
+        select(TeamMember).where(
+            TeamMember.team_id == team_id, TeamMember.employee_id == employee_id
+        )
+    )
     if member:
         member.status = "removed"
         db.add(member)
@@ -320,7 +351,11 @@ def remove_team_member(
 
 
 @router.get("/{team_id}/owners")
-def list_team_owners(team_id: UUID, current_admin: Annotated[AdminUser, Depends(get_current_admin)], db: Annotated[Session, Depends(get_db)]):
+def list_team_owners(
+    team_id: UUID,
+    current_admin: Annotated[AdminUser, Depends(get_current_admin)],
+    db: Annotated[Session, Depends(get_db)],
+):
     ensure_team_access(db, current_admin, team_id)
     owners = db.scalars(
         select(AdminUser)
@@ -355,10 +390,21 @@ def add_team_owner(
 ):
     require_general_admin(current_admin)
     team = ensure_team_access(db, current_admin, team_id)
-    owner = db.scalar(select(AdminUser).where(AdminUser.id == payload.admin_user_id, AdminUser.company_id == current_admin.company_id))
+    owner = db.scalar(
+        select(AdminUser).where(
+            AdminUser.id == payload.admin_user_id, AdminUser.company_id == current_admin.company_id
+        )
+    )
     if owner is None:
         raise ApiError("ADMIN_NOT_FOUND", "Admin user was not found.", 404)
-    if db.scalar(select(TeamOwner).where(TeamOwner.team_id == team_id, TeamOwner.admin_user_id == owner.id)) is None:
+    if (
+        db.scalar(
+            select(TeamOwner).where(
+                TeamOwner.team_id == team_id, TeamOwner.admin_user_id == owner.id
+            )
+        )
+        is None
+    ):
         db.add(TeamOwner(team_id=team_id, admin_user_id=owner.id))
         ensure_team_owner_employee_membership(db, team_id, owner)
         db.commit()
@@ -389,7 +435,11 @@ def remove_team_owner(
 ):
     require_general_admin(current_admin)
     team = ensure_team_access(db, current_admin, team_id)
-    owner = db.scalar(select(TeamOwner).where(TeamOwner.team_id == team_id, TeamOwner.admin_user_id == admin_user_id))
+    owner = db.scalar(
+        select(TeamOwner).where(
+            TeamOwner.team_id == team_id, TeamOwner.admin_user_id == admin_user_id
+        )
+    )
     if owner:
         db.delete(owner)
         db.commit()
@@ -408,9 +458,15 @@ def remove_team_owner(
 
 
 @router.get("/{team_id}/summary")
-def team_summary(team_id: UUID, current_admin: Annotated[AdminUser, Depends(get_current_admin)], db: Annotated[Session, Depends(get_db)]):
+def team_summary(
+    team_id: UUID,
+    current_admin: Annotated[AdminUser, Depends(get_current_admin)],
+    db: Annotated[Session, Depends(get_db)],
+):
     ensure_team_access(db, current_admin, team_id)
-    employee_ids = select(TeamMember.employee_id).where(TeamMember.team_id == team_id, TeamMember.status == "active")
+    employee_ids = select(TeamMember.employee_id).where(
+        TeamMember.team_id == team_id, TeamMember.status == "active"
+    )
     start, end = day_bounds(date.today())
     settings = get_company_settings(db, current_admin.company_id)
     offline_cutoff = datetime.now(UTC) - timedelta(minutes=settings.offline_threshold_minutes)
@@ -498,21 +554,36 @@ def team_summary(team_id: UUID, current_admin: Annotated[AdminUser, Depends(get_
 
 
 @router.get("/{team_id}/screenshots")
-def team_screenshots(team_id: UUID, current_admin: Annotated[AdminUser, Depends(get_current_admin)], db: Annotated[Session, Depends(get_db)]):
+def team_screenshots(
+    team_id: UUID,
+    current_admin: Annotated[AdminUser, Depends(get_current_admin)],
+    db: Annotated[Session, Depends(get_db)],
+):
     ensure_team_access(db, current_admin, team_id)
     statement = apply_employee_scope(
-        select(Screenshot).where(Screenshot.company_id == current_admin.company_id, Screenshot.deleted_at.is_(None)),
+        select(Screenshot).where(
+            Screenshot.company_id == current_admin.company_id, Screenshot.deleted_at.is_(None)
+        ),
         db,
         current_admin,
         Screenshot.employee_id,
         team_id,
     ).order_by(Screenshot.captured_at.desc())
     screenshots = db.scalars(statement).all()
-    return success_response(data=[{**serialize_screenshot(item), "temporary_url": temporary_screenshot_url(item)} for item in screenshots])
+    return success_response(
+        data=[
+            {**serialize_screenshot(item), "temporary_url": temporary_screenshot_url(item)}
+            for item in screenshots
+        ]
+    )
 
 
 @router.get("/{team_id}/sessions")
-def team_sessions(team_id: UUID, current_admin: Annotated[AdminUser, Depends(get_current_admin)], db: Annotated[Session, Depends(get_db)]):
+def team_sessions(
+    team_id: UUID,
+    current_admin: Annotated[AdminUser, Depends(get_current_admin)],
+    db: Annotated[Session, Depends(get_db)],
+):
     ensure_team_access(db, current_admin, team_id)
     statement = apply_employee_scope(
         select(WorkSession).where(WorkSession.company_id == current_admin.company_id),
@@ -526,35 +597,70 @@ def team_sessions(team_id: UUID, current_admin: Annotated[AdminUser, Depends(get
 
 
 @router.get("/{team_id}/timesheets")
-def team_timesheets(team_id: UUID, current_admin: Annotated[AdminUser, Depends(get_current_admin)], db: Annotated[Session, Depends(get_db)]):
+def team_timesheets(
+    team_id: UUID,
+    current_admin: Annotated[AdminUser, Depends(get_current_admin)],
+    db: Annotated[Session, Depends(get_db)],
+):
     from app.api.v1.timesheets import timesheet_rows
 
     ensure_team_access(db, current_admin, team_id)
-    return success_response(data=timesheet_rows(db, current_admin.company_id, date.today(), date.today(), team_id=team_id, current_admin=current_admin))
+    return success_response(
+        data=timesheet_rows(
+            db,
+            current_admin.company_id,
+            date.today(),
+            date.today(),
+            team_id=team_id,
+            current_admin=current_admin,
+        )
+    )
 
 
 @router.get("/{team_id}/reports")
-def team_reports(team_id: UUID, current_admin: Annotated[AdminUser, Depends(get_current_admin)], db: Annotated[Session, Depends(get_db)]):
+def team_reports(
+    team_id: UUID,
+    current_admin: Annotated[AdminUser, Depends(get_current_admin)],
+    db: Annotated[Session, Depends(get_db)],
+):
     ensure_team_access(db, current_admin, team_id)
-    employee_ids = select(TeamMember.employee_id).where(TeamMember.team_id == team_id, TeamMember.status == "active")
-    tracked_seconds = db.scalar(
-        select(func.coalesce(func.sum(WorkSession.active_seconds + WorkSession.idle_seconds), 0)).where(
-            WorkSession.company_id == current_admin.company_id,
-            WorkSession.employee_id.in_(employee_ids),
+    employee_ids = select(TeamMember.employee_id).where(
+        TeamMember.team_id == team_id, TeamMember.status == "active"
+    )
+    tracked_seconds = (
+        db.scalar(
+            select(
+                func.coalesce(func.sum(WorkSession.active_seconds + WorkSession.idle_seconds), 0)
+            ).where(
+                WorkSession.company_id == current_admin.company_id,
+                WorkSession.employee_id.in_(employee_ids),
+            )
         )
-    ) or 0
-    adjustment_seconds = db.scalar(
-        select(func.coalesce(func.sum(TimeAdjustmentRequest.approved_seconds), 0)).where(
-            TimeAdjustmentRequest.company_id == current_admin.company_id,
-            TimeAdjustmentRequest.employee_id.in_(employee_ids),
-            TimeAdjustmentRequest.status == "approved",
+        or 0
+    )
+    adjustment_seconds = (
+        db.scalar(
+            select(func.coalesce(func.sum(TimeAdjustmentRequest.approved_seconds), 0)).where(
+                TimeAdjustmentRequest.company_id == current_admin.company_id,
+                TimeAdjustmentRequest.employee_id.in_(employee_ids),
+                TimeAdjustmentRequest.status == "approved",
+            )
         )
-    ) or 0
-    screenshots = db.scalar(
-        select(func.count()).where(
-            Screenshot.company_id == current_admin.company_id,
-            Screenshot.employee_id.in_(employee_ids),
-            Screenshot.deleted_at.is_(None),
+        or 0
+    )
+    screenshots = (
+        db.scalar(
+            select(func.count()).where(
+                Screenshot.company_id == current_admin.company_id,
+                Screenshot.employee_id.in_(employee_ids),
+                Screenshot.deleted_at.is_(None),
+            )
         )
-    ) or 0
-    return success_response(data={"total_tracked_seconds": int(tracked_seconds) + int(adjustment_seconds), "screenshots": int(screenshots)})
+        or 0
+    )
+    return success_response(
+        data={
+            "total_tracked_seconds": int(tracked_seconds) + int(adjustment_seconds),
+            "screenshots": int(screenshots),
+        }
+    )

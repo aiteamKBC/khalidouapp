@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.core.exceptions import ApiError
 from app.models import AdminUser, Employee, Team, TeamMember, TeamOwner
-from app.services.permissions import has_capability, has_company_data_scope, require_capability
+from app.services.permissions import has_company_data_scope, require_capability
 
 
 def is_general_admin(admin: AdminUser) -> bool:
@@ -147,7 +147,9 @@ def ensure_employee_access(
         raise ApiError("EMPLOYEE_NOT_FOUND", "Employee was not found.", 404)
 
     scoped = apply_employee_scope(
-        select(Employee.id).where(Employee.id == employee_id, Employee.company_id == admin.company_id),
+        select(Employee.id).where(
+            Employee.id == employee_id, Employee.company_id == admin.company_id
+        ),
         db,
         admin,
         Employee.id,

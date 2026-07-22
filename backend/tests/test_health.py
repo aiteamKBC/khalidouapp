@@ -12,3 +12,7 @@ def test_health_check() -> None:
     body = response.json()
     assert body["success"] is True
     assert body["data"]["status"] == "ok"
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert response.headers["x-frame-options"] == "DENY"
+    assert response.headers["referrer-policy"] == "no-referrer"
+    assert response.headers["x-request-id"]

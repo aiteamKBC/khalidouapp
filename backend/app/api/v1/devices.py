@@ -20,7 +20,9 @@ router = APIRouter(prefix="/devices", tags=["devices"])
 
 
 def get_device_or_404(db: Session, company_id: UUID, device_id: UUID) -> Device:
-    device = db.scalar(select(Device).where(Device.id == device_id, Device.company_id == company_id))
+    device = db.scalar(
+        select(Device).where(Device.id == device_id, Device.company_id == company_id)
+    )
     if device is None:
         raise ApiError("DEVICE_NOT_FOUND", "Device was not found.", 404)
     return device
@@ -52,12 +54,21 @@ def list_devices(
     statement = statement.order_by(Device.registered_at.desc())
     total = count_for(db, statement)
     devices = db.scalars(apply_pagination(statement, page, page_size)).all()
-    return success_response(data=[serialize_device(device) for device in devices], meta=pagination_meta(total, page, page_size))
+    return success_response(
+        data=[serialize_device(device) for device in devices],
+        meta=pagination_meta(total, page, page_size),
+    )
 
 
 @router.get("/{device_id}")
-def get_device(device_id: UUID, current_admin: Annotated[AdminUser, Depends(get_current_admin)], db: Annotated[Session, Depends(get_db)]):
-    return success_response(data=serialize_device(get_accessible_device_or_404(db, current_admin, device_id)))
+def get_device(
+    device_id: UUID,
+    current_admin: Annotated[AdminUser, Depends(get_current_admin)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    return success_response(
+        data=serialize_device(get_accessible_device_or_404(db, current_admin, device_id))
+    )
 
 
 @router.patch("/{device_id}")
@@ -92,7 +103,12 @@ def update_device(
 
 
 @router.post("/{device_id}/revoke")
-def revoke_device(device_id: UUID, request: Request, current_admin: Annotated[AdminUser, Depends(get_current_admin)], db: Annotated[Session, Depends(get_db)]):
+def revoke_device(
+    device_id: UUID,
+    request: Request,
+    current_admin: Annotated[AdminUser, Depends(get_current_admin)],
+    db: Annotated[Session, Depends(get_db)],
+):
     from app.api.v1.team_auth import require_general_admin
 
     require_general_admin(current_admin)

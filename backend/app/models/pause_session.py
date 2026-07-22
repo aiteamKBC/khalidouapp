@@ -11,15 +11,27 @@ from app.models.mixins import TimestampMixin, UUIDPrimaryKeyMixin
 class PauseSession(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "pause_sessions"
     __table_args__ = (
-        UniqueConstraint("work_session_id", "idempotency_key", name="uq_pause_sessions_idempotency"),
+        UniqueConstraint(
+            "work_session_id", "idempotency_key", name="uq_pause_sessions_idempotency"
+        ),
     )
 
     company_id: Mapped[UUID] = mapped_column(ForeignKey("companies.id"), nullable=False, index=True)
-    employee_id: Mapped[UUID] = mapped_column(ForeignKey("employees.id"), nullable=False, index=True)
-    work_session_id: Mapped[UUID] = mapped_column(ForeignKey("work_sessions.id"), nullable=False, index=True)
-    pause_balance_id: Mapped[UUID] = mapped_column(ForeignKey("pause_balances.id"), nullable=False, index=True)
-    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
-    scheduled_end_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    employee_id: Mapped[UUID] = mapped_column(
+        ForeignKey("employees.id"), nullable=False, index=True
+    )
+    work_session_id: Mapped[UUID] = mapped_column(
+        ForeignKey("work_sessions.id"), nullable=False, index=True
+    )
+    pause_balance_id: Mapped[UUID] = mapped_column(
+        ForeignKey("pause_balances.id"), nullable=False, index=True
+    )
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
+    scheduled_end_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     requested_seconds: Mapped[int] = mapped_column(Integer, nullable=False)
     used_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

@@ -17,7 +17,6 @@ from app.core.responses import success_response
 from app.database.session import get_db
 from app.models import (
     AdminUser,
-    AuditLog,
     Employee,
     Project,
     Task,
@@ -61,7 +60,6 @@ from app.services.task_workflow import (
     ensure_workflow_decision_allowed,
     mark_task_blocked,
     notify_employee,
-    notify_project_admins,
     notify_task_participants,
     record_task_activity,
     resolve_task_block,
@@ -94,7 +92,9 @@ def validate_assignee(db: Session, project: Project, employee_id: UUID | None) -
     if membership is None or employee is None:
         from app.core.exceptions import ApiError
 
-        raise ApiError("INVALID_TASK_ASSIGNEE", "Employee must be an active member of the project's team.", 400)
+        raise ApiError(
+            "INVALID_TASK_ASSIGNEE", "Employee must be an active member of the project's team.", 400
+        )
 
 
 def task_team_employees(db: Session, project: Project, employee_ids: list[UUID]) -> list[Employee]:
@@ -119,7 +119,9 @@ def list_projects(
         ensure_team_access(db, current_admin, team_id)
         statement = statement.where(Project.team_id == team_id)
     else:
-        statement = statement.where(Project.team_id.in_(accessible_team_ids_statement(current_admin)))
+        statement = statement.where(
+            Project.team_id.in_(accessible_team_ids_statement(current_admin))
+        )
     if status:
         statement = statement.where(Project.status == status)
     else:
@@ -171,7 +173,9 @@ def get_project(
     current_admin: Annotated[AdminUser, Depends(get_current_admin)],
     db: Annotated[Session, Depends(get_db)],
 ):
-    return success_response(data=serialize_project(get_project_or_404(db, current_admin, project_id)))
+    return success_response(
+        data=serialize_project(get_project_or_404(db, current_admin, project_id))
+    )
 
 
 @router.post("/projects/{project_id}/duplicate")
@@ -322,7 +326,11 @@ def list_tasks(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=100, ge=1, le=200),
 ):
-    statement = select(Task, Project, Team).join(Project, Project.id == Task.project_id).join(Team, Team.id == Project.team_id)
+    statement = (
+        select(Task, Project, Team)
+        .join(Project, Project.id == Task.project_id)
+        .join(Team, Team.id == Project.team_id)
+    )
     statement = statement.where(Task.company_id == current_admin.company_id)
     if project_id:
         project = get_project_or_404(db, current_admin, project_id)
@@ -331,7 +339,9 @@ def list_tasks(
         ensure_team_access(db, current_admin, team_id)
         statement = statement.where(Project.team_id == team_id)
     else:
-        statement = statement.where(Project.team_id.in_(accessible_team_ids_statement(current_admin)))
+        statement = statement.where(
+            Project.team_id.in_(accessible_team_ids_statement(current_admin))
+        )
     if status:
         statement = statement.where(Task.status == status)
     else:
@@ -367,9 +377,16 @@ def task_metrics(
         ensure_team_access(db, current_admin, team_id)
         statement = statement.where(Project.team_id == team_id)
     else:
-        statement = statement.where(Project.team_id.in_(accessible_team_ids_statement(current_admin)))
+        statement = statement.where(
+            Project.team_id.in_(accessible_team_ids_statement(current_admin))
+        )
     rows = db.execute(statement.group_by(WorkSession.task_id)).all()
-    return success_response(data=[{"task_id": str(task_id), "active_seconds": active, "idle_seconds": idle} for task_id, active, idle in rows])
+    return success_response(
+        data=[
+            {"task_id": str(task_id), "active_seconds": active, "idle_seconds": idle}
+            for task_id, active, idle in rows
+        ]
+    )
 
 
 @router.get("/projects/{project_id}/tasks")
@@ -381,7 +398,11 @@ def list_project_tasks(
     project = get_project_or_404(db, current_admin, project_id)
     tasks = db.scalars(
         select(Task)
-        .where(Task.company_id == current_admin.company_id, Task.project_id == project.id, Task.status != "deleted")
+        .where(
+            Task.company_id == current_admin.company_id,
+            Task.project_id == project.id,
+            Task.status != "deleted",
+        )
         .order_by(Task.name)
     ).all()
     team = db.scalar(select(Team).where(Team.id == project.team_id))
@@ -688,7 +709,13 @@ def update_task(
     if payload.project_id is not None:
         project = get_project_or_404(db, current_admin, payload.project_id)
     if "assignee_employee_id" in changes or payload.project_id is not None:
-        validate_assignee(db, project, payload.assignee_employee_id if "assignee_employee_id" in changes else task.assignee_employee_id)
+        validate_assignee(
+            db,
+            project,
+            payload.assignee_employee_id
+            if "assignee_employee_id" in changes
+            else task.assignee_employee_id,
+        )
     if collaborator_ids is not None:
         task.collaborators = task_team_employees(db, project, collaborator_ids)
     elif payload.project_id is not None:
@@ -874,7 +901,11 @@ def task_workspace(
             "work_logs": [
                 {
                     "employee_id": str(employee_id),
-                    "employee_name": (db.get(Employee, employee_id).name if db.get(Employee, employee_id) else "Employee"),
+                    "employee_name": (
+                        db.get(Employee, employee_id).name
+                        if db.get(Employee, employee_id)
+                        else "Employee"
+                    ),
                     "active_seconds": active_seconds,
                     "idle_seconds": idle_seconds,
                     "started_at": started_at.isoformat() if started_at else None,
@@ -1097,7 +1128,11 @@ def update_checklist_item(
     db: Annotated[Session, Depends(get_db)],
 ):
     task, project = get_task_or_404(db, current_admin, task_id)
-    item = db.scalar(select(TaskChecklistItem).where(TaskChecklistItem.id == item_id, TaskChecklistItem.task_id == task.id))
+    item = db.scalar(
+        select(TaskChecklistItem).where(
+            TaskChecklistItem.id == item_id, TaskChecklistItem.task_id == task.id
+        )
+    )
     if item is None:
         from app.core.exceptions import ApiError
 
@@ -1111,7 +1146,9 @@ def update_checklist_item(
     record_task_activity(
         db,
         task,
-        "checklist_item_completed" if changes.get("completed") is True else "checklist_item_updated",
+        "checklist_item_completed"
+        if changes.get("completed") is True
+        else "checklist_item_updated",
         admin=current_admin,
         details={"item": item.title, **changes},
     )
@@ -1129,12 +1166,19 @@ def delete_checklist_item(
     db: Annotated[Session, Depends(get_db)],
 ):
     task, _ = get_task_or_404(db, current_admin, task_id)
-    item = db.scalar(select(TaskChecklistItem).where(TaskChecklistItem.id == item_id, TaskChecklistItem.task_id == task.id))
+    item = db.scalar(
+        select(TaskChecklistItem).where(
+            TaskChecklistItem.id == item_id, TaskChecklistItem.task_id == task.id
+        )
+    )
     if item is not None:
         item_title = item.title
         db.delete(item)
         record_task_activity(
-            db, task, "checklist_item_deleted", admin=current_admin,
+            db,
+            task,
+            "checklist_item_deleted",
+            admin=current_admin,
             details={"item": item_title},
         )
         db.commit()

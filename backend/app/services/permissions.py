@@ -16,35 +16,180 @@ ROLE_RANKS: dict[str, int] = {
 }
 
 PERMISSION_CATALOG: tuple[dict[str, str], ...] = (
-    {"key": "dashboard.view", "label": "View dashboard", "group": "General", "description": "Open the administration dashboard."},
-    {"key": "access.manage", "label": "Manage access", "group": "Administration", "description": "Create admin accounts and change individual access."},
-    {"key": "audit.view", "label": "View audit log", "group": "Administration", "description": "Review security and administration activity."},
-    {"key": "settings.view", "label": "View settings", "group": "Administration", "description": "View company tracking settings."},
-    {"key": "settings.manage", "label": "Manage settings", "group": "Administration", "description": "Change company tracking settings."},
-    {"key": "teams.view", "label": "View teams", "group": "People", "description": "View teams inside the assigned data scope."},
-    {"key": "teams.manage", "label": "Manage teams", "group": "People", "description": "Create teams and manage members and team leads."},
-    {"key": "people.view", "label": "View people", "group": "People", "description": "View people inside the assigned data scope."},
-    {"key": "people.manage", "label": "Manage people", "group": "People", "description": "Invite and edit people."},
-    {"key": "people.archive", "label": "Archive people", "group": "People", "description": "Archive and restore people and their access."},
-    {"key": "payroll.manage", "label": "Manage payroll", "group": "Payroll", "description": "Manage employee work profiles, salary, overtime and deduction rules."},
-    {"key": "payroll.view", "label": "View payroll", "group": "Payroll", "description": "View payroll previews and employee pay rules."},
-    {"key": "live_activity.view", "label": "View live activity", "group": "Tracking", "description": "View live status and work sessions."},
-    {"key": "screenshots.view", "label": "View screenshots", "group": "Tracking", "description": "View screenshots inside the assigned data scope."},
-    {"key": "screenshots.manage", "label": "Manage screenshots", "group": "Tracking", "description": "Delete screenshots and manage screenshot storage."},
-    {"key": "timesheets.view", "label": "View timesheets", "group": "Tracking", "description": "View timesheets inside the assigned data scope."},
-    {"key": "timesheets.manage", "label": "Manage timesheets", "group": "Tracking", "description": "Manage recorded time."},
-    {"key": "time_requests.view", "label": "View time requests", "group": "Tracking", "description": "View time adjustment requests."},
-    {"key": "time_requests.manage", "label": "Manage time requests", "group": "Tracking", "description": "Approve or reject time adjustment requests."},
-    {"key": "breaks.view", "label": "View breaks", "group": "Tracking", "description": "View employee break rules and usage."},
-    {"key": "leave_requests.view", "label": "View holiday requests", "group": "Leave", "description": "View holiday requests inside the assigned data scope."},
-    {"key": "leave_requests.manage", "label": "Approve holiday requests", "group": "Leave", "description": "Manage holiday credits and approve or reject requests."},
-    {"key": "devices.view", "label": "View devices", "group": "Tracking", "description": "View enrolled devices."},
-    {"key": "devices.manage", "label": "Manage devices", "group": "Tracking", "description": "Enroll, update, or revoke devices and backup codes."},
-    {"key": "projects.view", "label": "View projects and tasks", "group": "Work", "description": "View projects and tasks inside the assigned data scope."},
-    {"key": "projects.manage", "label": "Manage projects and tasks", "group": "Work", "description": "Create and update projects and tasks inside the assigned data scope."},
-    {"key": "notifications.view", "label": "View notifications", "group": "Work", "description": "View task and workflow notifications."},
-    {"key": "reports.view", "label": "View reports", "group": "Reports", "description": "View reports inside the assigned data scope."},
-    {"key": "reports.export", "label": "Export reports", "group": "Reports", "description": "Export report data."},
+    {
+        "key": "dashboard.view",
+        "label": "View dashboard",
+        "group": "General",
+        "description": "Open the administration dashboard.",
+    },
+    {
+        "key": "access.manage",
+        "label": "Manage access",
+        "group": "Administration",
+        "description": "Create admin accounts and change individual access.",
+    },
+    {
+        "key": "audit.view",
+        "label": "View audit log",
+        "group": "Administration",
+        "description": "Review security and administration activity.",
+    },
+    {
+        "key": "settings.view",
+        "label": "View settings",
+        "group": "Administration",
+        "description": "View company tracking settings.",
+    },
+    {
+        "key": "settings.manage",
+        "label": "Manage settings",
+        "group": "Administration",
+        "description": "Change company tracking settings.",
+    },
+    {
+        "key": "teams.view",
+        "label": "View teams",
+        "group": "People",
+        "description": "View teams inside the assigned data scope.",
+    },
+    {
+        "key": "teams.manage",
+        "label": "Manage teams",
+        "group": "People",
+        "description": "Create teams and manage members and team leads.",
+    },
+    {
+        "key": "people.view",
+        "label": "View people",
+        "group": "People",
+        "description": "View people inside the assigned data scope.",
+    },
+    {
+        "key": "people.manage",
+        "label": "Manage people",
+        "group": "People",
+        "description": "Invite and edit people.",
+    },
+    {
+        "key": "people.archive",
+        "label": "Archive people",
+        "group": "People",
+        "description": "Archive and restore people and their access.",
+    },
+    {
+        "key": "payroll.manage",
+        "label": "Manage payroll",
+        "group": "Payroll",
+        "description": "Manage employee work profiles, salary, overtime and deduction rules.",
+    },
+    {
+        "key": "payroll.view",
+        "label": "View payroll",
+        "group": "Payroll",
+        "description": "View payroll previews and employee pay rules.",
+    },
+    {
+        "key": "live_activity.view",
+        "label": "View live activity",
+        "group": "Tracking",
+        "description": "View live status and work sessions.",
+    },
+    {
+        "key": "screenshots.view",
+        "label": "View screenshots",
+        "group": "Tracking",
+        "description": "View screenshots inside the assigned data scope.",
+    },
+    {
+        "key": "screenshots.manage",
+        "label": "Manage screenshots",
+        "group": "Tracking",
+        "description": "Delete screenshots and manage screenshot storage.",
+    },
+    {
+        "key": "timesheets.view",
+        "label": "View timesheets",
+        "group": "Tracking",
+        "description": "View timesheets inside the assigned data scope.",
+    },
+    {
+        "key": "timesheets.manage",
+        "label": "Manage timesheets",
+        "group": "Tracking",
+        "description": "Manage recorded time.",
+    },
+    {
+        "key": "time_requests.view",
+        "label": "View time requests",
+        "group": "Tracking",
+        "description": "View time adjustment requests.",
+    },
+    {
+        "key": "time_requests.manage",
+        "label": "Manage time requests",
+        "group": "Tracking",
+        "description": "Approve or reject time adjustment requests.",
+    },
+    {
+        "key": "breaks.view",
+        "label": "View breaks",
+        "group": "Tracking",
+        "description": "View employee break rules and usage.",
+    },
+    {
+        "key": "leave_requests.view",
+        "label": "View holiday requests",
+        "group": "Leave",
+        "description": "View holiday requests inside the assigned data scope.",
+    },
+    {
+        "key": "leave_requests.manage",
+        "label": "Approve holiday requests",
+        "group": "Leave",
+        "description": "Manage holiday credits and approve or reject requests.",
+    },
+    {
+        "key": "devices.view",
+        "label": "View devices",
+        "group": "Tracking",
+        "description": "View enrolled devices.",
+    },
+    {
+        "key": "devices.manage",
+        "label": "Manage devices",
+        "group": "Tracking",
+        "description": "Enroll, update, or revoke devices and backup codes.",
+    },
+    {
+        "key": "projects.view",
+        "label": "View projects and tasks",
+        "group": "Work",
+        "description": "View projects and tasks inside the assigned data scope.",
+    },
+    {
+        "key": "projects.manage",
+        "label": "Manage projects and tasks",
+        "group": "Work",
+        "description": "Create and update projects and tasks inside the assigned data scope.",
+    },
+    {
+        "key": "notifications.view",
+        "label": "View notifications",
+        "group": "Work",
+        "description": "View task and workflow notifications.",
+    },
+    {
+        "key": "reports.view",
+        "label": "View reports",
+        "group": "Reports",
+        "description": "View reports inside the assigned data scope.",
+    },
+    {
+        "key": "reports.export",
+        "label": "Export reports",
+        "group": "Reports",
+        "description": "Export report data.",
+    },
 )
 
 MANAGED_PERMISSION_KEYS = frozenset(item["key"] for item in PERMISSION_CATALOG)
@@ -122,13 +267,10 @@ def permission_overrides_for_admin(admin: AdminUser) -> dict[str, bool]:
     session = object_session(admin)
     if session is None or admin.id is None:
         return {
-            row.permission_key: row.allowed
-            for row in getattr(admin, "permission_overrides", [])
+            row.permission_key: row.allowed for row in getattr(admin, "permission_overrides", [])
         }
     rows = session.scalars(
-        select(AdminPermissionOverride).where(
-            AdminPermissionOverride.admin_user_id == admin.id
-        )
+        select(AdminPermissionOverride).where(AdminPermissionOverride.admin_user_id == admin.id)
     ).all()
     return {row.permission_key: row.allowed for row in rows}
 
@@ -221,9 +363,7 @@ def replace_permission_overrides(
             400,
         )
     db.execute(
-        delete(AdminPermissionOverride).where(
-            AdminPermissionOverride.admin_user_id == admin.id
-        )
+        delete(AdminPermissionOverride).where(AdminPermissionOverride.admin_user_id == admin.id)
     )
     for key, allowed in overrides.items():
         db.add(
@@ -240,8 +380,7 @@ def permission_catalog_payload() -> dict:
     return {
         "permissions": list(PERMISSION_CATALOG),
         "role_presets": {
-            role: sorted(keys & MANAGED_PERMISSION_KEYS)
-            for role, keys in ROLE_CAPABILITIES.items()
+            role: sorted(keys & MANAGED_PERMISSION_KEYS) for role, keys in ROLE_CAPABILITIES.items()
         },
         "permission_modes": ["role", "custom"],
         "data_scopes": ["company", "assigned_teams"],

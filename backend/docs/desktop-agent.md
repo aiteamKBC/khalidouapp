@@ -7,12 +7,11 @@ It is transparent to employees, displays a system tray icon, and shows a privacy
 Enrollment flow:
 
 1. A General Admin creates the employee in the admin dashboard.
-2. The General Admin opens the employee details page and generates a device enrollment code.
-3. The code is shared with that employee and shown only once in the dashboard.
-4. The employee installs Khaliduo on the laptop and enters the enrollment code.
-5. The backend links that device to the employee, marks the code as used, and issues a saved device token.
+2. The employee accepts the email invitation and chooses a password.
+3. The employee installs Khaliduo and signs in with the same email and password.
+4. The backend authenticates the employee, links the installation to that account, and issues an encrypted device token.
 
-Generate a new code for every new laptop or reinstall. Codes are single-use and expire.
+Each installation has a stable identifier. A device cannot be silently reassigned to another employee, and revoked devices cannot enroll again without administrator action.
 
 Daily operation after enrollment:
 

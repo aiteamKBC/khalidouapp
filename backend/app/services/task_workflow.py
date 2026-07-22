@@ -484,7 +484,9 @@ def sync_due_notifications_for_employee(db: Session, employee: Employee) -> None
             employee.id,
             "task_overdue" if overdue else "deadline_soon",
             "Task overdue" if overdue else "Deadline approaching",
-            f"{task.name} was due {task.deadline}" if overdue else f"{task.name} is due {task.deadline}",
+            f"{task.name} was due {task.deadline}"
+            if overdue
+            else f"{task.name} is due {task.deadline}",
             f"deadline:{task.deadline}:{'overdue' if overdue else 'soon'}",
         )
     db.commit()
@@ -519,5 +521,7 @@ def stop_task_tracking(db: Session, task: Task, *, reason: str) -> int:
         session.ended_at = now
         session.status = "ended"
     if sessions:
-        record_task_activity(db, task, "tracking_stopped", details={"reason": reason, "sessions": len(sessions)})
+        record_task_activity(
+            db, task, "tracking_stopped", details={"reason": reason, "sessions": len(sessions)}
+        )
     return len(sessions)

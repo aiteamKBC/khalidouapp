@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 
 from fastapi import APIRouter, Body, Depends, Query, Request, UploadFile
 from fastapi.responses import FileResponse
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import DeviceAuthContext, get_current_device, get_current_employee
@@ -17,7 +17,17 @@ from app.core.config import settings
 from app.core.exceptions import ApiError
 from app.core.security import create_employee_handoff_token
 from app.database.session import get_db
-from app.models import Employee, LeaveRequest, Project, Screenshot, Task, TaskChecklistItem, Team, TeamMember, TimeAdjustmentRequest
+from app.models import (
+    Employee,
+    LeaveRequest,
+    Project,
+    Screenshot,
+    Task,
+    TaskChecklistItem,
+    Team,
+    TeamMember,
+    TimeAdjustmentRequest,
+)
 from app.schemas.agent import (
     AgentChecklistItemCreate,
     AgentChecklistItemUpdate,
@@ -26,7 +36,6 @@ from app.schemas.agent import (
     AgentTaskUpdate,
     AgentTimeAdjustmentRequestCreate,
     AuthenticatedEnrollmentRequest,
-    EnrollmentRequest,
     RefreshDeviceTokenRequest,
 )
 from app.schemas.session import (
@@ -39,7 +48,6 @@ from app.schemas.session import (
 )
 from app.schemas.screenshot import ScreenshotCompleteRequest, ScreenshotInitiateRequest
 from app.services.device_enrollment import (
-    enroll_device,
     enroll_employee_device,
     get_or_create_tracking_settings,
     refresh_device_token,
@@ -54,7 +62,11 @@ from app.services.session_tracking import (
     start_or_get_session,
     update_session_task,
 )
-from app.services.screenshots import complete_screenshot, initiate_screenshot, upload_screenshot_content
+from app.services.screenshots import (
+    complete_screenshot,
+    initiate_screenshot,
+    upload_screenshot_content,
+)
 from app.services.projects import (
     ensure_general_work_project,
     list_employee_tasks,
@@ -70,23 +82,22 @@ from app.services.task_workflow import (
     validate_employee_stage_change,
     stop_task_tracking,
 )
-from app.services.activity_timeline import build_workday_timeline
-from app.services.leave_management import requested_workdays, serialize_balance, serialize_leave_request
+from app.services.activity_timeline import build_workday_timeline, local_today
+from app.services.leave_management import (
+    requested_workdays,
+    serialize_balance,
+    serialize_leave_request,
+)
 from app.services.time_adjustments import (
     create_employee_time_adjustment_request,
     serialize_time_adjustment_request,
 )
 from app.services.work_profiles import get_or_create_work_profile
+from app.services.rate_limit import enforce_rate_limit
 
 router = APIRouter(prefix="/agent", tags=["desktop-agent"])
 
 DEFAULT_DAILY_TARGET_SECONDS = 8 * 60 * 60
-
-
-@router.post("/enroll")
-def enroll(payload: EnrollmentRequest, request: Request, db: Annotated[Session, Depends(get_db)]):
-    ip_address = request.client.host if request.client else None
-    return success_response(data=enroll_device(db, payload.enrollment_code, payload.device, ip_address))
 
 
 @router.post("/enroll-authenticated")
@@ -97,6 +108,7 @@ def enroll_authenticated(
     db: Annotated[Session, Depends(get_db)],
 ):
     """Link the desktop after employee email/password authentication."""
+    enforce_rate_limit(request, action="device-enroll-authenticated", limit=15, window_seconds=300)
     ip_address = request.client.host if request.client else None
     return success_response(
         data=enroll_employee_device(db, current_employee, payload.device, ip_address)
@@ -109,8 +121,48 @@ def config(
     db: Annotated[Session, Depends(get_db)],
 ):
     settings_row = get_or_create_tracking_settings(db, context.device.company_id)
+    employee = db.get(Employee, context.device.employee_id)
+    if employee is None:
+        raise ApiError("EMPLOYEE_NOT_FOUND", "Employee profile was not found.", 404)
+    profile = get_or_create_work_profile(db, employee)
+    today = local_today(employee.timezone)
+    week_start = today - timedelta(days=today.weekday())
+    week_end = week_start + timedelta(days=6)
+    early_leave_seconds = (
+        db.scalar(
+            select(func.coalesce(func.sum(TimeAdjustmentRequest.requested_seconds), 0)).where(
+                TimeAdjustmentRequest.company_id == context.device.company_id,
+                TimeAdjustmentRequest.employee_id == context.device.employee_id,
+                TimeAdjustmentRequest.request_type == "early_leave",
+                TimeAdjustmentRequest.requested_date >= week_start,
+                TimeAdjustmentRequest.requested_date <= week_end,
+                TimeAdjustmentRequest.status.in_(["pending", "approved"]),
+            )
+        )
+        or 0
+    )
+    weekly_allowance = max(0, int(profile.weekly_early_leave_minutes or 0))
     db.commit()
-    return success_response(data=serialize_tracking_settings(settings_row))
+    return success_response(
+        data={
+            **serialize_tracking_settings(settings_row),
+            "request_policy": {
+                "timezone": employee.timezone,
+                "shift_start": profile.shift_start.isoformat(timespec="minutes")
+                if profile.shift_start
+                else None,
+                "shift_end": profile.shift_end.isoformat(timespec="minutes")
+                if profile.shift_end
+                else None,
+                "working_days": profile.working_days or [0, 1, 2, 3, 4],
+                "weekly_early_leave_minutes": weekly_allowance,
+                "weekly_early_leave_used_minutes": round(early_leave_seconds / 60),
+                "weekly_early_leave_remaining_minutes": max(
+                    0, weekly_allowance - round(early_leave_seconds / 60)
+                ),
+            },
+        }
+    )
 
 
 @router.get("/tasks")
@@ -154,7 +206,7 @@ def projects(
 
 def agent_period_summary(context: DeviceAuthContext, db: Session) -> dict:
     employee = db.get(Employee, context.device.employee_id)
-    today = date.today()
+    today = local_today(employee.timezone if employee else None)
     week_start = today - timedelta(days=today.weekday())
     month_start = today.replace(day=1)
     month_end = today.replace(day=monthrange(today.year, today.month)[1])
@@ -320,7 +372,11 @@ def create_own_task(
             details={"workflow_request_id": str(workflow_request.id)},
         )
         notify_project_admins(
-            db, existing, project, "task_approval_requested", "New task needs approval",
+            db,
+            existing,
+            project,
+            "task_approval_requested",
+            "New task needs approval",
             f"{employee.name if employee else 'An employee'} requested: {existing.name}",
             "employee-task-requested",
             workflow_request_id=workflow_request.id,
@@ -328,7 +384,9 @@ def create_own_task(
     elif existing.assignee_employee_id != context.device.employee_id:
         from app.core.exceptions import ApiError
 
-        raise ApiError("TASK_NAME_IN_USE", "A task with this name already exists in the project.", 409)
+        raise ApiError(
+            "TASK_NAME_IN_USE", "A task with this name already exists in the project.", 409
+        )
     team = db.scalar(select(Team).where(Team.id == project.team_id))
     db.commit()
     db.refresh(existing)
@@ -360,7 +418,13 @@ def update_own_task(
         changes["name"] = " ".join(changes["name"].split())
     previous_stage = task.stage
     if task.created_by_employee_id == context.device.employee_id and task.stage == "new_requests":
-        forbidden = set(changes) - {"name", "description", "start_date", "deadline", "estimated_minutes"}
+        forbidden = set(changes) - {
+            "name",
+            "description",
+            "start_date",
+            "deadline",
+            "estimated_minutes",
+        }
         if forbidden:
             raise ApiError("TASK_AWAITING_APPROVAL", "An admin must approve this task first.", 409)
     else:
@@ -417,7 +481,11 @@ def update_own_task(
         if task.stage == "ready_for_review":
             stop_task_tracking(db, task, reason="submitted_for_review")
             notify_project_admins(
-                db, task, project, "task_review_requested", "Task ready for review",
+                db,
+                task,
+                project,
+                "task_review_requested",
+                "Task ready for review",
                 f"{employee.name if employee else 'An employee'} submitted {task.name} for review.",
                 f"review-requested:{datetime.now(UTC).isoformat()}",
                 workflow_request_id=workflow_request.id,
@@ -488,7 +556,11 @@ def update_own_task_checklist_item(
         raise ApiError("TASK_NOT_FOUND", "You can only update your own task.", 404)
     if task.stage in {"completed", "rejected", "cancelled", "ready_for_review"}:
         raise ApiError("TASK_STAGE_LOCKED", "Closed or submitted tasks cannot be changed.", 409)
-    item = db.scalar(select(TaskChecklistItem).where(TaskChecklistItem.id == item_id, TaskChecklistItem.task_id == task.id))
+    item = db.scalar(
+        select(TaskChecklistItem).where(
+            TaskChecklistItem.id == item_id, TaskChecklistItem.task_id == task.id
+        )
+    )
     if item is None:
         raise ApiError("CHECKLIST_ITEM_NOT_FOUND", "Checklist item was not found.", 404)
     changes = payload.model_dump(exclude_unset=True)
@@ -500,7 +572,9 @@ def update_own_task_checklist_item(
     record_task_activity(
         db,
         task,
-        "checklist_item_completed" if changes.get("completed") is True else "checklist_item_updated",
+        "checklist_item_completed"
+        if changes.get("completed") is True
+        else "checklist_item_updated",
         employee=employee,
         details={"item": item.title, **changes},
     )
@@ -558,8 +632,12 @@ def heartbeat(
     context: Annotated[DeviceAuthContext, Depends(get_current_device)],
     db: Annotated[Session, Depends(get_db)],
 ):
-    context.device.last_ip_address = request.client.host if request.client else context.device.last_ip_address
-    return success_response(data=record_heartbeat(db, device=context.device, session_id=session_id, payload=payload))
+    context.device.last_ip_address = (
+        request.client.host if request.client else context.device.last_ip_address
+    )
+    return success_response(
+        data=record_heartbeat(db, device=context.device, session_id=session_id, payload=payload)
+    )
 
 
 @router.post("/sessions/{session_id}/pause")
@@ -569,7 +647,9 @@ def paid_pause(
     context: Annotated[DeviceAuthContext, Depends(get_current_device)],
     db: Annotated[Session, Depends(get_db)],
 ):
-    return success_response(data=start_paid_pause(db, device=context.device, session_id=session_id, payload=payload))
+    return success_response(
+        data=start_paid_pause(db, device=context.device, session_id=session_id, payload=payload)
+    )
 
 
 @router.post("/sessions/{session_id}/events")
@@ -579,7 +659,9 @@ def event(
     context: Annotated[DeviceAuthContext, Depends(get_current_device)],
     db: Annotated[Session, Depends(get_db)],
 ):
-    return success_response(data=record_agent_event(db, device=context.device, session_id=session_id, payload=payload))
+    return success_response(
+        data=record_agent_event(db, device=context.device, session_id=session_id, payload=payload)
+    )
 
 
 @router.post("/sessions/{session_id}/task")
@@ -589,7 +671,9 @@ def session_task(
     context: Annotated[DeviceAuthContext, Depends(get_current_device)],
     db: Annotated[Session, Depends(get_db)],
 ):
-    return success_response(data=update_session_task(db, device=context.device, session_id=session_id, payload=payload))
+    return success_response(
+        data=update_session_task(db, device=context.device, session_id=session_id, payload=payload)
+    )
 
 
 @router.post("/sessions/{session_id}/end")
@@ -599,7 +683,9 @@ def end(
     context: Annotated[DeviceAuthContext, Depends(get_current_device)],
     db: Annotated[Session, Depends(get_db)],
 ):
-    return success_response(data=end_session(db, device=context.device, session_id=session_id, payload=payload))
+    return success_response(
+        data=end_session(db, device=context.device, session_id=session_id, payload=payload)
+    )
 
 
 @router.post("/screenshots/initiate")
@@ -691,7 +777,11 @@ def screenshot_complete(
     context: Annotated[DeviceAuthContext, Depends(get_current_device)],
     db: Annotated[Session, Depends(get_db)],
 ):
-    return success_response(data=complete_screenshot(db, device=context.device, screenshot_id=screenshot_id, payload=payload))
+    return success_response(
+        data=complete_screenshot(
+            db, device=context.device, screenshot_id=screenshot_id, payload=payload
+        )
+    )
 
 
 @router.get("/time-adjustment-requests")
@@ -717,16 +807,20 @@ def create_time_adjustment_request(
     context: Annotated[DeviceAuthContext, Depends(get_current_device)],
     db: Annotated[Session, Depends(get_db)],
 ):
+    employee = db.get(Employee, context.device.employee_id)
+    if employee is None:
+        raise ApiError("EMPLOYEE_NOT_FOUND", "Employee profile was not found.", 404)
     row = create_employee_time_adjustment_request(
         db,
         device=context.device,
-        requested_date=payload.requested_date or date.today(),
+        requested_date=payload.requested_date or local_today(employee.timezone),
         requested_minutes=payload.requested_minutes,
         reason=payload.reason,
         request_type=payload.request_type,
         work_session_id=payload.work_session_id,
         source_start_at=payload.source_start_at,
         source_end_at=payload.source_end_at,
+        requested_leave_time=payload.requested_leave_time,
     )
     return success_response(data=serialize_time_adjustment_request(row))
 
@@ -750,7 +844,7 @@ def list_leave_requests(
     ).all()
     return success_response(
         data={
-            "balance": serialize_balance(db, employee, date.today().year),
+            "balance": serialize_balance(db, employee, local_today(employee.timezone).year),
             "requests": [serialize_leave_request(row) for row in rows],
         }
     )
@@ -768,7 +862,9 @@ def create_leave_request(
     if payload.end_date < payload.start_date:
         raise ApiError("INVALID_LEAVE_DATES", "End date must be on or after start date.", 400)
     if payload.start_date.year != payload.end_date.year:
-        raise ApiError("LEAVE_YEAR_BOUNDARY", "A holiday request must stay within one calendar year.", 400)
+        raise ApiError(
+            "LEAVE_YEAR_BOUNDARY", "A holiday request must stay within one calendar year.", 400
+        )
     profile = get_or_create_work_profile(db, employee)
     days = requested_workdays(payload.start_date, payload.end_date, profile.working_days)
     if days < 1:
@@ -785,7 +881,9 @@ def create_leave_request(
         )
     )
     if overlap:
-        raise ApiError("OVERLAPPING_LEAVE_REQUEST", "You already have a holiday request in this period.", 409)
+        raise ApiError(
+            "OVERLAPPING_LEAVE_REQUEST", "You already have a holiday request in this period.", 409
+        )
     row = LeaveRequest(
         company_id=employee.company_id,
         employee_id=employee.id,

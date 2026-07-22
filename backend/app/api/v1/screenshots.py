@@ -9,7 +9,13 @@ from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_admin
-from app.api.v1.admin_utils import apply_pagination, count_for, day_bounds, pagination_meta, temporary_screenshot_url
+from app.api.v1.admin_utils import (
+    apply_pagination,
+    count_for,
+    day_bounds,
+    pagination_meta,
+    temporary_screenshot_url,
+)
 from app.api.v1.team_auth import (
     accessible_team_ids_statement,
     apply_employee_scope,
@@ -82,11 +88,15 @@ def list_screenshots(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=25, ge=1, le=100),
 ):
-    statement = select(Screenshot).where(Screenshot.company_id == current_admin.company_id, Screenshot.deleted_at.is_(None))
+    statement = select(Screenshot).where(
+        Screenshot.company_id == current_admin.company_id, Screenshot.deleted_at.is_(None)
+    )
     statement = apply_employee_scope(statement, db, current_admin, Screenshot.employee_id, team_id)
     if team_id:
         ensure_team_access(db, current_admin, team_id)
-        statement = statement.where(or_(Screenshot.team_id.is_(None), Screenshot.team_id == team_id))
+        statement = statement.where(
+            or_(Screenshot.team_id.is_(None), Screenshot.team_id == team_id)
+        )
     elif not is_general_admin(current_admin):
         statement = statement.where(
             or_(
@@ -115,7 +125,10 @@ def list_screenshots(
     statement = statement.order_by(Screenshot.captured_at.desc())
     total = count_for(db, statement)
     screenshots = db.scalars(apply_pagination(statement, page, page_size)).all()
-    return success_response(data=[serialize_with_url(item) for item in screenshots], meta=pagination_meta(total, page, page_size))
+    return success_response(
+        data=[serialize_with_url(item) for item in screenshots],
+        meta=pagination_meta(total, page, page_size),
+    )
 
 
 @router.get("/storage-status")
@@ -141,16 +154,28 @@ def screenshot_storage_status(
 
 
 @router.get("/{screenshot_id}")
-def get_screenshot(screenshot_id: UUID, current_admin: Annotated[AdminUser, Depends(get_current_admin)], db: Annotated[Session, Depends(get_db)]):
-    return success_response(data=serialize_with_url(get_accessible_screenshot_or_404(db, current_admin, screenshot_id)))
+def get_screenshot(
+    screenshot_id: UUID,
+    current_admin: Annotated[AdminUser, Depends(get_current_admin)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    return success_response(
+        data=serialize_with_url(get_accessible_screenshot_or_404(db, current_admin, screenshot_id))
+    )
 
 
 @router.get("/{screenshot_id}/file")
-def get_screenshot_file(screenshot_id: UUID, current_admin: Annotated[AdminUser, Depends(get_current_admin)], db: Annotated[Session, Depends(get_db)]):
+def get_screenshot_file(
+    screenshot_id: UUID,
+    current_admin: Annotated[AdminUser, Depends(get_current_admin)],
+    db: Annotated[Session, Depends(get_db)],
+):
     screenshot = get_accessible_screenshot_or_404(db, current_admin, screenshot_id)
     path = (settings.screenshot_storage_path / screenshot.storage_path).resolve()
     if not path.exists():
-        raise ApiError("SCREENSHOT_FILE_NOT_FOUND", "Screenshot file was not found in private storage.", 404)
+        raise ApiError(
+            "SCREENSHOT_FILE_NOT_FOUND", "Screenshot file was not found in private storage.", 404
+        )
     return FileResponse(path, media_type=screenshot.mime_type)
 
 
@@ -170,7 +195,12 @@ def get_screenshot_thumbnail(
 
 
 @router.delete("/{screenshot_id}")
-def delete_screenshot(screenshot_id: UUID, request: Request, current_admin: Annotated[AdminUser, Depends(get_current_admin)], db: Annotated[Session, Depends(get_db)]):
+def delete_screenshot(
+    screenshot_id: UUID,
+    request: Request,
+    current_admin: Annotated[AdminUser, Depends(get_current_admin)],
+    db: Annotated[Session, Depends(get_db)],
+):
     require_capability(current_admin, "screenshots.manage")
     screenshot = get_accessible_screenshot_or_404(db, current_admin, screenshot_id)
     from datetime import UTC, datetime

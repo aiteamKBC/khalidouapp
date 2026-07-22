@@ -38,6 +38,12 @@ def _timezone(name: str) -> ZoneInfo:
         return ZoneInfo("UTC")
 
 
+def local_today(timezone_name: str | None, now: datetime | None = None) -> date:
+    """Return today's calendar date in the employee's configured timezone."""
+    current = now or datetime.now(UTC)
+    return current.astimezone(_timezone(timezone_name or "UTC")).date()
+
+
 def _day_bounds(value: date, timezone_name: str) -> tuple[datetime, datetime, ZoneInfo]:
     zone = _timezone(timezone_name)
     local_start = datetime.combine(value, time.min, tzinfo=zone)
@@ -92,11 +98,14 @@ def build_workday_timeline(
         for event in events:
             events_by_session[event.session_id].append(event)
 
-    offline_threshold_minutes = db.scalar(
-        select(TrackingSettings.offline_threshold_minutes).where(
-            TrackingSettings.company_id == company_id
+    offline_threshold_minutes = (
+        db.scalar(
+            select(TrackingSettings.offline_threshold_minutes).where(
+                TrackingSettings.company_id == company_id
+            )
         )
-    ) or 3
+        or 3
+    )
     freshness_limit = timedelta(minutes=max(1, int(offline_threshold_minutes)))
 
     intervals: list[dict] = []
@@ -193,7 +202,9 @@ def build_workday_timeline(
             int((interval["ended_at"] - interval["started_at"]).total_seconds()),
         )
         totals[interval["type"]] += duration_seconds
-        is_current = has_open_session and index == len(merged) - 1 and interval["ended_at"] == now_utc
+        is_current = (
+            has_open_session and index == len(merged) - 1 and interval["ended_at"] == now_utc
+        )
         serialized_intervals.append(
             {
                 "type": interval["type"],
@@ -212,8 +223,14 @@ def build_workday_timeline(
     return {
         "date": selected_date.isoformat(),
         "timezone": zone.key,
-        "first_started_at": max(first_started_at, day_start).isoformat() if first_started_at else None,
-        "last_ended_at": None if has_open_session else last_visible_end.isoformat() if last_visible_end else None,
+        "first_started_at": max(first_started_at, day_start).isoformat()
+        if first_started_at
+        else None,
+        "last_ended_at": None
+        if has_open_session
+        else last_visible_end.isoformat()
+        if last_visible_end
+        else None,
         "is_running": has_open_session,
         "worked_seconds": totals["worked"],
         "idle_seconds": totals["idle"],

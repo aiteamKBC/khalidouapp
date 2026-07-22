@@ -20,6 +20,7 @@ from app.schemas.employee_portal import (
     EmployeeProfileUpdate,
 )
 from app.services.person_access import ensure_tracked_employee
+from app.services.rate_limit import enforce_rate_limit
 
 router = APIRouter(prefix="/employee-auth", tags=["employee-auth"])
 
@@ -27,7 +28,9 @@ router = APIRouter(prefix="/employee-auth", tags=["employee-auth"])
 def validate_avatar(value: str | None) -> str | None:
     if value is None or value == "":
         return None
-    if not value.startswith(("data:image/jpeg;base64,", "data:image/png;base64,", "data:image/webp;base64,")):
+    if not value.startswith(
+        ("data:image/jpeg;base64,", "data:image/png;base64,", "data:image/webp;base64,")
+    ):
         raise ApiError("INVALID_AVATAR", "Profile photo must be a JPEG, PNG, or WebP image.", 400)
     return value
 
@@ -54,6 +57,7 @@ def record_employee_portal_login(employee: Employee, request: Request, db: Sessi
 
 @router.post("/login")
 def login(payload: EmployeePortalLogin, request: Request, db: Annotated[Session, Depends(get_db)]):
+    enforce_rate_limit(request, action="employee-login", limit=10, window_seconds=60)
     candidates = db.scalars(
         select(Employee).where(
             func.lower(Employee.email) == payload.email.lower(),
@@ -102,7 +106,9 @@ def device_handoff(
     try:
         token_payload = decode_jwt_token(payload.handoff_token)
     except jwt.PyJWTError:
-        raise ApiError("INVALID_EMPLOYEE_HANDOFF", "The dashboard link is invalid or expired.", 401) from None
+        raise ApiError(
+            "INVALID_EMPLOYEE_HANDOFF", "The dashboard link is invalid or expired.", 401
+        ) from None
 
     if token_payload.get("type") != "employee_handoff":
         raise ApiError("INVALID_EMPLOYEE_HANDOFF", "The dashboard link is invalid or expired.", 401)
@@ -110,8 +116,10 @@ def device_handoff(
     try:
         employee_id = UUID(str(token_payload.get("sub")))
         company_id = UUID(str(token_payload.get("company_id")))
-    except ValueError:
-        raise ApiError("INVALID_EMPLOYEE_HANDOFF", "The dashboard link is invalid or expired.", 401) from None
+    except (TypeError, ValueError):
+        raise ApiError(
+            "INVALID_EMPLOYEE_HANDOFF", "The dashboard link is invalid or expired.", 401
+        ) from None
 
     employee = db.scalar(
         select(Employee).where(

@@ -43,9 +43,9 @@ def utc(value: datetime | None = None) -> datetime:
 
 
 def employee_zone(db: Session, device: Device) -> ZoneInfo:
-    timezone_name = db.scalar(
-        select(Employee.timezone).where(Employee.id == device.employee_id)
-    ) or "UTC"
+    timezone_name = (
+        db.scalar(select(Employee.timezone).where(Employee.id == device.employee_id)) or "UTC"
+    )
     try:
         return ZoneInfo(timezone_name)
     except (ZoneInfoNotFoundError, ValueError):
@@ -164,7 +164,9 @@ def sync_session_time_buckets(db: Session, session: WorkSession) -> None:
                 status=status,
             )
         else:
-            record.recorded_extra_seconds = max(record.recorded_extra_seconds, session.extra_seconds)
+            record.recorded_extra_seconds = max(
+                record.recorded_extra_seconds, session.extra_seconds
+            )
             if record.approved_seconds <= 0:
                 record.status = status
         db.add(record)
@@ -235,7 +237,9 @@ def finalize_due_pause(db: Session, session: WorkSession, *, at: datetime | None
     db.add_all([pause, session])
 
 
-def pause_state_payload(db: Session, session: WorkSession, *, at: datetime | None = None) -> dict[str, Any]:
+def pause_state_payload(
+    db: Session, session: WorkSession, *, at: datetime | None = None
+) -> dict[str, Any]:
     now = utc(at)
     finalize_due_pause(db, session, at=now)
     balance = get_or_create_pause_balance(
@@ -262,7 +266,9 @@ def pause_state_payload(db: Session, session: WorkSession, *, at: datetime | Non
             "started_at": utc(active_pause.started_at).isoformat(),
             "scheduled_end_at": utc(active_pause.scheduled_end_at).isoformat(),
             "requested_seconds": active_pause.requested_seconds,
-            "remaining_seconds": max(0, int((utc(active_pause.scheduled_end_at) - now).total_seconds())),
+            "remaining_seconds": max(
+                0, int((utc(active_pause.scheduled_end_at) - now).total_seconds())
+            ),
             "status": active_pause.status,
         },
     }
@@ -350,7 +356,9 @@ def create_activity_event(
     return event, False
 
 
-def apply_session_task(db: Session, device: Device, session: WorkSession, task_id: UUID | None) -> dict[str, Any] | None:
+def apply_session_task(
+    db: Session, device: Device, session: WorkSession, task_id: UUID | None
+) -> dict[str, Any] | None:
     if task_id is None:
         session.team_id = None
         session.project_id = None
@@ -371,7 +379,9 @@ def apply_session_task(db: Session, device: Device, session: WorkSession, task_i
     }
 
 
-def start_or_get_session(db: Session, device: Device, payload: SessionStartRequest) -> dict[str, Any]:
+def start_or_get_session(
+    db: Session, device: Device, payload: SessionStartRequest
+) -> dict[str, Any]:
     now = utc(payload.started_at)
     device.last_seen_at = now
     zone = employee_zone(db, device)
@@ -398,7 +408,9 @@ def start_or_get_session(db: Session, device: Device, payload: SessionStartReque
 
     if current is not None:
         if payload.task_id is not None and current.task_id != payload.task_id:
-            result = switch_session_task(db, device=device, session=current, task_id=payload.task_id)
+            result = switch_session_task(
+                db, device=device, session=current, task_id=payload.task_id
+            )
             current = get_owned_session(db, device, UUID(result["session"]["id"]))
             response = session_response(db, current, created=False)
             db.commit()
@@ -437,7 +449,9 @@ def start_or_get_session(db: Session, device: Device, payload: SessionStartReque
     initial_task_id = payload.task_id
     if initial_task_id is None:
         available_tasks = list_employee_tasks(db, device)
-        trackable_tasks = [task for task in available_tasks if task.get("stage") in TRACKABLE_STAGES]
+        trackable_tasks = [
+            task for task in available_tasks if task.get("stage") in TRACKABLE_STAGES
+        ]
         if trackable_tasks:
             initial_task_id = UUID(trackable_tasks[0]["id"])
     task_context = apply_session_task(db, device, session, initial_task_id)
@@ -468,7 +482,9 @@ def current_session_response(db: Session, device: Device) -> dict[str, Any]:
     return response
 
 
-def session_response(db: Session, session: WorkSession, *, created: bool | None = None) -> dict[str, Any]:
+def session_response(
+    db: Session, session: WorkSession, *, created: bool | None = None
+) -> dict[str, Any]:
     workday = workday_state_payload(db, session)
     pause = pause_state_payload(db, session)
     payload: dict[str, Any] = {
@@ -561,7 +577,9 @@ def record_heartbeat(
 ) -> dict[str, Any]:
     session = get_owned_session(db, device, session_id)
     if session.ended_at is not None:
-        restarted = start_or_get_session(db, device, SessionStartRequest(started_at=payload.timestamp))
+        restarted = start_or_get_session(
+            db, device, SessionStartRequest(started_at=payload.timestamp)
+        )
         device.last_seen_at = utc(payload.timestamp)
         db.commit()
         return {
@@ -611,7 +629,9 @@ def record_heartbeat(
         session.status = payload.status
         session.idle_seconds = max(session.idle_seconds, payload.idle_seconds)
         next_active_seconds = (
-            payload.active_seconds if payload.active_seconds is not None else max(0, elapsed_seconds - session.idle_seconds)
+            payload.active_seconds
+            if payload.active_seconds is not None
+            else max(0, elapsed_seconds - session.idle_seconds)
         )
         session.active_seconds = max(session.active_seconds, next_active_seconds)
         finalize_due_pause(db, session, at=heartbeat_at)
@@ -687,7 +707,10 @@ def switch_session_task(
         event_type="task_selected" if task_id else "task_cleared",
         event_timestamp=switched_at,
         idempotency_key=str(event_id),
-        payload={**(task_context or {}), "previous_task_id": str(previous_task_id) if previous_task_id else None},
+        payload={
+            **(task_context or {}),
+            "previous_task_id": str(previous_task_id) if previous_task_id else None,
+        },
     )
     db.commit()
     db.refresh(next_session)

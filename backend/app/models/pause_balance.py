@@ -15,7 +15,9 @@ class PauseBalance(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
 
     company_id: Mapped[UUID] = mapped_column(ForeignKey("companies.id"), nullable=False, index=True)
-    employee_id: Mapped[UUID] = mapped_column(ForeignKey("employees.id"), nullable=False, index=True)
+    employee_id: Mapped[UUID] = mapped_column(
+        ForeignKey("employees.id"), nullable=False, index=True
+    )
     work_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
     base_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=600)
     extra_approved_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

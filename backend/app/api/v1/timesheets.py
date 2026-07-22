@@ -12,7 +12,14 @@ from app.api.v1.admin_utils import day_bounds
 from app.api.v1.team_auth import apply_employee_scope, ensure_employee_access
 from app.core.responses import success_response
 from app.database.session import get_db
-from app.models import AdminUser, Employee, Screenshot, TeamMember, TimeAdjustmentRequest, WorkSession
+from app.models import (
+    AdminUser,
+    Employee,
+    Screenshot,
+    TeamMember,
+    TimeAdjustmentRequest,
+    WorkSession,
+)
 
 router = APIRouter(prefix="/timesheets", tags=["timesheets"])
 
@@ -45,7 +52,9 @@ def timesheet_rows(
         .order_by(func.date(WorkSession.started_at).desc(), Employee.name)
     )
     if current_admin is not None:
-        session_statement = apply_employee_scope(session_statement, db, current_admin, Employee.id, team_id)
+        session_statement = apply_employee_scope(
+            session_statement, db, current_admin, Employee.id, team_id
+        )
     if employee_id:
         if current_admin is not None:
             ensure_employee_access(db, current_admin, employee_id, team_id)
@@ -85,7 +94,9 @@ def timesheet_rows(
         .order_by(TimeAdjustmentRequest.requested_date.desc(), Employee.name)
     )
     if current_admin is not None:
-        adjustment_statement = apply_employee_scope(adjustment_statement, db, current_admin, Employee.id, team_id)
+        adjustment_statement = apply_employee_scope(
+            adjustment_statement, db, current_admin, Employee.id, team_id
+        )
     if employee_id:
         adjustment_statement = adjustment_statement.where(Employee.id == employee_id)
 
@@ -179,7 +190,16 @@ def daily(
     team_id: UUID | None = None,
 ):
     target = day or date.today()
-    return success_response(data=timesheet_rows(db, current_admin.company_id, target, target, team_id=team_id, current_admin=current_admin))
+    return success_response(
+        data=timesheet_rows(
+            db,
+            current_admin.company_id,
+            target,
+            target,
+            team_id=team_id,
+            current_admin=current_admin,
+        )
+    )
 
 
 @router.get("/weekly")
@@ -190,7 +210,16 @@ def weekly(
     team_id: UUID | None = None,
 ):
     start = week_start or (date.today() - timedelta(days=date.today().weekday()))
-    return success_response(data=timesheet_rows(db, current_admin.company_id, start, start + timedelta(days=6), team_id=team_id, current_admin=current_admin))
+    return success_response(
+        data=timesheet_rows(
+            db,
+            current_admin.company_id,
+            start,
+            start + timedelta(days=6),
+            team_id=team_id,
+            current_admin=current_admin,
+        )
+    )
 
 
 @router.get("/monthly")
@@ -226,4 +255,14 @@ def employee_timesheet(
 ):
     start = start_date or date.today()
     end = end_date or start
-    return success_response(data=timesheet_rows(db, current_admin.company_id, start, end, employee_id, team_id=team_id, current_admin=current_admin))
+    return success_response(
+        data=timesheet_rows(
+            db,
+            current_admin.company_id,
+            start,
+            end,
+            employee_id,
+            team_id=team_id,
+            current_admin=current_admin,
+        )
+    )

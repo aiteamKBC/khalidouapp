@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from datetime import date, datetime
+from datetime import date, datetime, time
 from uuid import UUID
 
 
@@ -9,11 +9,6 @@ class AgentDeviceInfo(BaseModel):
     operating_system: str = Field(min_length=1, max_length=255)
     agent_version: str = Field(min_length=1, max_length=50)
     windows_username: str | None = Field(default=None, max_length=255)
-
-
-class EnrollmentRequest(BaseModel):
-    enrollment_code: str = Field(min_length=6, max_length=80)
-    device: AgentDeviceInfo
 
 
 class AuthenticatedEnrollmentRequest(BaseModel):
@@ -26,10 +21,13 @@ class RefreshDeviceTokenRequest(BaseModel):
 
 class AgentTimeAdjustmentRequestCreate(BaseModel):
     requested_date: date | None = None
-    request_type: str = Field(default="manual_time", pattern="^(idle_time|early_leave|manual_time)$")
+    request_type: str = Field(
+        default="manual_time", pattern="^(idle_time|early_leave|manual_time)$"
+    )
     work_session_id: UUID | None = None
     source_start_at: datetime | None = None
     source_end_at: datetime | None = None
+    requested_leave_time: time | None = None
     requested_minutes: int = Field(ge=1, le=720)
     reason: str = Field(min_length=3, max_length=1000)
 

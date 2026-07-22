@@ -12,10 +12,18 @@ class TimeAdjustmentRequest(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "time_adjustment_requests"
 
     company_id: Mapped[UUID] = mapped_column(ForeignKey("companies.id"), nullable=False, index=True)
-    employee_id: Mapped[UUID] = mapped_column(ForeignKey("employees.id"), nullable=False, index=True)
-    device_id: Mapped[UUID | None] = mapped_column(ForeignKey("devices.id"), nullable=True, index=True)
-    work_session_id: Mapped[UUID | None] = mapped_column(ForeignKey("work_sessions.id"), nullable=True, index=True)
-    request_type: Mapped[str] = mapped_column(String(40), nullable=False, default="manual_time", index=True)
+    employee_id: Mapped[UUID] = mapped_column(
+        ForeignKey("employees.id"), nullable=False, index=True
+    )
+    device_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("devices.id"), nullable=True, index=True
+    )
+    work_session_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("work_sessions.id"), nullable=True, index=True
+    )
+    request_type: Mapped[str] = mapped_column(
+        String(40), nullable=False, default="manual_time", index=True
+    )
     requested_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
     source_start_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     source_end_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

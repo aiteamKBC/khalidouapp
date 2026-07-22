@@ -9,9 +9,7 @@ from app.models.mixins import TimestampMixin, UUIDPrimaryKeyMixin
 
 class TrackingSettings(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "tracking_settings"
-    __table_args__ = (
-        UniqueConstraint("company_id", name="uq_tracking_settings_company"),
-    )
+    __table_args__ = (UniqueConstraint("company_id", name="uq_tracking_settings_company"),)
 
     company_id: Mapped[UUID] = mapped_column(ForeignKey("companies.id"), nullable=False, index=True)
     screenshot_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)

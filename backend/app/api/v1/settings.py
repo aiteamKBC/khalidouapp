@@ -17,8 +17,13 @@ router = APIRouter(prefix="/settings", tags=["settings"])
 
 
 @router.get("/tracking")
-def get_tracking_settings(current_admin: Annotated[AdminUser, Depends(get_current_admin)], db: Annotated[Session, Depends(get_db)]):
-    return success_response(data=serialize_tracking_settings(get_company_settings(db, current_admin.company_id)))
+def get_tracking_settings(
+    current_admin: Annotated[AdminUser, Depends(get_current_admin)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    return success_response(
+        data=serialize_tracking_settings(get_company_settings(db, current_admin.company_id))
+    )
 
 
 @router.patch("/tracking")

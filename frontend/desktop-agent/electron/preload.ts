@@ -4,8 +4,6 @@ const { contextBridge, ipcRenderer } = electronRenderer;
 
 contextBridge.exposeInMainWorld("khaliduo", {
   getAgentStatus: () => ipcRenderer.invoke("agent:get-status"),
-  enrollDevice: (enrollmentCode: string) =>
-    ipcRenderer.invoke("agent:enroll-device", enrollmentCode),
   enrollWithCredentials: (email: string, password: string) =>
     ipcRenderer.invoke("agent:enroll-with-credentials", email, password),
   pauseTracking: (options?: { requestedMinutes?: number; reason?: string }) =>
@@ -14,7 +12,8 @@ contextBridge.exposeInMainWorld("khaliduo", {
   logout: () => ipcRenderer.invoke("agent:logout"),
   openEmployeeDashboard: (section?: "screenshots") =>
     ipcRenderer.invoke("agent:open-employee-dashboard", section),
-  getRecentScreenshots: () => ipcRenderer.invoke("agent:get-recent-screenshots"),
+  getRecentScreenshots: () =>
+    ipcRenderer.invoke("agent:get-recent-screenshots"),
   setCurrentTask: (taskId: string | null) =>
     ipcRenderer.invoke("agent:set-current-task", taskId),
   createTask: (options: {
@@ -30,8 +29,17 @@ contextBridge.exposeInMainWorld("khaliduo", {
     ipcRenderer.invoke("agent:update-task-stage", taskId, stage, note),
   createTaskChecklistItem: (taskId: string, title: string) =>
     ipcRenderer.invoke("agent:create-task-checklist-item", taskId, title),
-  updateTaskChecklistItem: (taskId: string, itemId: string, completed: boolean) =>
-    ipcRenderer.invoke("agent:update-task-checklist-item", taskId, itemId, completed),
+  updateTaskChecklistItem: (
+    taskId: string,
+    itemId: string,
+    completed: boolean,
+  ) =>
+    ipcRenderer.invoke(
+      "agent:update-task-checklist-item",
+      taskId,
+      itemId,
+      completed,
+    ),
   createTimeAdjustmentRequest: (input: {
     requestedMinutes: number;
     reason: string;
@@ -40,6 +48,7 @@ contextBridge.exposeInMainWorld("khaliduo", {
     workSessionId?: string;
     sourceStartAt?: string;
     sourceEndAt?: string;
+    requestedLeaveTime?: string;
   }) => ipcRenderer.invoke("agent:create-time-adjustment-request", input),
   createLeaveRequest: (input: {
     startDate: string;
@@ -56,7 +65,9 @@ contextBridge.exposeInMainWorld("khaliduo", {
   closeWindow: () => ipcRenderer.invoke("window:close"),
   checkForUpdates: () => ipcRenderer.invoke("agent:check-for-updates"),
   installUpdate: () => ipcRenderer.invoke("agent:install-update"),
-  onRequiredUpdate: (callback: (update: { version: string | null }) => void) => {
+  onRequiredUpdate: (
+    callback: (update: { version: string | null }) => void,
+  ) => {
     const listener = (
       _event: Electron.IpcRendererEvent,
       update: { version: string | null },

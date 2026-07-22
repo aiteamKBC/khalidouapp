@@ -18,14 +18,14 @@ flowchart LR
 
 ## Employee Onboarding
 
-The admin dashboard owns device enrollment:
+Employee onboarding uses the invitation and password flow:
 
 1. General Admin creates the employee.
-2. General Admin generates a single-use enrollment code on the employee details page.
-3. Employee installs Khaliduo on the laptop and enters that code.
-4. The desktop app receives a device token and starts sending sessions, activity, and screenshots.
+2. Employee accepts the email invitation and chooses a password.
+3. Employee installs Khaliduo and signs in with the same email and password.
+4. The backend links the installation, returns a device token, and the desktop app starts sending sessions, activity, and screenshots.
 
-Team Owners can view data for their assigned teams, but device enrollment codes are managed by General Admins.
+Team Owners can view data for their assigned teams. General Admins manage employee access and devices from the admin dashboard.
 
 ## Project Structure
 

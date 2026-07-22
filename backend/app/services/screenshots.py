@@ -1,4 +1,3 @@
-from datetime import UTC
 from hashlib import sha256
 from io import BytesIO
 from pathlib import PurePosixPath
@@ -110,7 +109,9 @@ def get_owned_screenshot(db: Session, device: Device, screenshot_id: UUID) -> Sc
     return screenshot
 
 
-def initiate_screenshot(db: Session, device: Device, payload: ScreenshotInitiateRequest) -> dict[str, Any]:
+def initiate_screenshot(
+    db: Session, device: Device, payload: ScreenshotInitiateRequest
+) -> dict[str, Any]:
     validate_screenshot_size(payload.file_size)
     session = get_owned_session(db, device, payload.session_id)
     existing = db.scalar(
@@ -182,7 +183,10 @@ def upload_screenshot_content(
     screenshot = get_owned_screenshot(db, device, screenshot_id)
     if screenshot.status not in {"initiated", "uploaded", "completed"}:
         raise ApiError("INVALID_SCREENSHOT_STATUS", "Screenshot is not ready for upload.", 400)
-    if screenshot.mime_type not in ALLOWED_SCREENSHOT_MIME_TYPES or content_type not in ALLOWED_SCREENSHOT_MIME_TYPES:
+    if (
+        screenshot.mime_type not in ALLOWED_SCREENSHOT_MIME_TYPES
+        or content_type not in ALLOWED_SCREENSHOT_MIME_TYPES
+    ):
         raise ApiError("INVALID_SCREENSHOT_TYPE", "Unsupported screenshot MIME type.", 400)
 
     validate_screenshot_size(len(content))

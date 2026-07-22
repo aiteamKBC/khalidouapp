@@ -1,4 +1,4 @@
-import axios from "axios";
+import axiosLibrary from "axios";
 import FormData from "form-data";
 import { randomUUID } from "node:crypto";
 import os from "node:os";
@@ -8,6 +8,9 @@ import {
   loadIdentity,
   saveEnrollmentIdentity,
 } from "./identityStore.js";
+
+// Never let an offline API call freeze quit, sync, or update flows forever.
+const axios = axiosLibrary.create({ timeout: 15_000 });
 
 type ApiSuccess<T> = {
   success: true;
@@ -134,6 +137,17 @@ export type TrackingConfig = {
   capture_during_idle: boolean;
   offline_threshold_minutes: number;
   screenshot_retention_days: number;
+  request_policy?: RequestPolicy;
+};
+
+export type RequestPolicy = {
+  timezone: string;
+  shift_start: string | null;
+  shift_end: string | null;
+  working_days: number[];
+  weekly_early_leave_minutes: number;
+  weekly_early_leave_used_minutes: number;
+  weekly_early_leave_remaining_minutes: number;
 };
 
 export type TimeAdjustmentRequest = {
@@ -250,37 +264,14 @@ function getAuthHeaders() {
   };
 }
 
-export async function enrollDevice(
-  enrollmentCode: string,
-  agentVersion: string,
-) {
-  const response = await axios.post<ApiSuccess<EnrollmentResponse>>(
-    `${getApiBaseUrl()}/agent/enroll`,
-    {
-      enrollment_code: enrollmentCode.trim(),
-      device: getDeviceInfo(agentVersion),
-    },
-  );
-
-  const data = response.data.data;
-  return saveEnrollmentIdentity({
-    companyId: data.company_id,
-    employeeId: data.employee.id,
-    employeeName: data.employee.name,
-    deviceId: data.device.id,
-    deviceName: data.device.name,
-    deviceToken: data.device_token,
-  });
-}
-
 /**
  * Authenticates the employee, immediately exchanges that short-lived portal
  * session for a device token, and persists only the encrypted device token.
  * The password and employee access token never leave the Electron main process
  * after this function returns.
  *
- * The backend still needs to implement POST /agent/enroll-authenticated. It
- * must authenticate the employee bearer token and return EnrollmentResponse.
+ * POST /agent/enroll-authenticated validates the employee bearer token and
+ * returns a device-scoped token for subsequent tracking requests.
  */
 export async function enrollDeviceWithCredentials(
   email: string,
@@ -319,11 +310,12 @@ export async function enrollDeviceWithCredentials(
 
 export async function getCurrentSession() {
   const response = await axios.get<
-    ApiSuccess<{ session: WorkSession | null; workday?: WorkdayState | null; pause?: PauseState | null }>
-  >(
-    `${getApiBaseUrl()}/agent/sessions/current`,
-    { headers: getAuthHeaders() },
-  );
+    ApiSuccess<{
+      session: WorkSession | null;
+      workday?: WorkdayState | null;
+      pause?: PauseState | null;
+    }>
+  >(`${getApiBaseUrl()}/agent/sessions/current`, { headers: getAuthHeaders() });
   return response.data.data;
 }
 
@@ -454,7 +446,10 @@ export async function updateAgentTaskStage(
   return response.data.data;
 }
 
-export async function createAgentTaskChecklistItem(taskId: string, title: string) {
+export async function createAgentTaskChecklistItem(
+  taskId: string,
+  title: string,
+) {
   const response = await axios.post<ApiSuccess<AgentTask>>(
     `${getApiBaseUrl()}/agent/tasks/${taskId}/checklist`,
     { title },
@@ -707,6 +702,7 @@ export async function createTimeAdjustmentRequest(options: {
   workSessionId?: string;
   sourceStartAt?: string;
   sourceEndAt?: string;
+  requestedLeaveTime?: string;
 }) {
   const response = await axios.post<ApiSuccess<TimeAdjustmentRequest>>(
     `${getApiBaseUrl()}/agent/time-adjustment-requests`,
@@ -718,6 +714,7 @@ export async function createTimeAdjustmentRequest(options: {
       work_session_id: options.workSessionId,
       source_start_at: options.sourceStartAt,
       source_end_at: options.sourceEndAt,
+      requested_leave_time: options.requestedLeaveTime,
     },
     { headers: getAuthHeaders() },
   );

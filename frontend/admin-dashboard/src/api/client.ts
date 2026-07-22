@@ -52,6 +52,40 @@ const AUTH_EXPIRED_EVENT = "khaliduo:auth-expired";
 
 let refreshInFlight: Promise<RefreshedTokens> | null = null;
 
+async function fetchWithTimeout(
+  input: RequestInfo | URL,
+  init: RequestInit = {},
+  timeoutMs = 30_000,
+) {
+  const controller = new AbortController();
+  const abortFromCaller = () => controller.abort(init.signal?.reason);
+  if (init.signal?.aborted) abortFromCaller();
+  else init.signal?.addEventListener("abort", abortFromCaller, { once: true });
+  const timeout = globalThis.setTimeout(() => controller.abort("timeout"), timeoutMs);
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } catch (error) {
+    if (controller.signal.reason === "timeout") {
+      throw new ApiClientError(
+        "The server took too long to respond. Please try again.",
+        "NETWORK_TIMEOUT",
+        0,
+      );
+    }
+    if (error instanceof TypeError) {
+      throw new ApiClientError(
+        "The server could not be reached. Check your connection and try again.",
+        "NETWORK_ERROR",
+        0,
+      );
+    }
+    throw error;
+  } finally {
+    globalThis.clearTimeout(timeout);
+    init.signal?.removeEventListener("abort", abortFromCaller);
+  }
+}
+
 function readAuth(): PersistedAuthLocation | null {
   if (typeof window === "undefined") return null;
 
@@ -79,7 +113,14 @@ function clearAuth() {
 
 async function parseBody<T>(res: Response): Promise<ApiEnvelope<T> | null> {
   const text = await res.text();
-  return text ? (JSON.parse(text) as ApiEnvelope<T>) : null;
+  if (!text) return null;
+  try {
+    return JSON.parse(text) as ApiEnvelope<T>;
+  } catch {
+    // Proxies and platform errors sometimes return HTML. Preserve the real
+    // HTTP status instead of replacing it with a confusing JSON parse error.
+    return null;
+  }
 }
 
 function apiErrorMessage<T>(res: Response, body: ApiEnvelope<T> | null): string {
@@ -101,7 +142,7 @@ async function refreshAuthTokens(authLocation: PersistedAuthLocation): Promise<R
   if (refreshInFlight) return refreshInFlight;
 
   refreshInFlight = (async () => {
-    const res = await fetch(apiUrl("/auth/refresh"), {
+    const res = await fetchWithTimeout(apiUrl("/auth/refresh"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ refresh_token: authLocation.auth.refreshToken }),
@@ -114,7 +155,14 @@ async function refreshAuthTokens(authLocation: PersistedAuthLocation): Promise<R
     }
 
     const raw = authLocation.storage.getItem(AUTH_STORAGE_KEY);
-    const persisted = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+    let persisted: Record<string, unknown> = {};
+    if (raw) {
+      try {
+        persisted = JSON.parse(raw) as Record<string, unknown>;
+      } catch {
+        // A corrupt auth record should be replaced by the valid refreshed pair.
+      }
+    }
     authLocation.storage.setItem(
       AUTH_STORAGE_KEY,
       JSON.stringify({
@@ -152,7 +200,7 @@ async function request<T>(
     headers.set("Authorization", `Bearer ${token}`);
   }
 
-  const res = await fetch(apiUrl(path), { ...init, headers });
+  const res = await fetchWithTimeout(apiUrl(path), { ...init, headers });
   return { res, body: await parseBody<T>(res) };
 }
 
@@ -217,7 +265,7 @@ export async function apiFetchWithMeta<T>(
 export async function apiFile(path: string): Promise<Blob> {
   const authLocation = readAuth();
   const fetchFile = (token?: string) =>
-    fetch(apiUrl(path), {
+    fetchWithTimeout(apiUrl(path), {
       headers: token ? { Authorization: `Bearer ${token}` } : undefined,
     });
 

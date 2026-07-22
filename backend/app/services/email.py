@@ -128,7 +128,9 @@ def send_email(to: str, subject: str, body: str) -> bool:
             _send_via_smtp(to, subject, body)
             logger.info("[email] sent via SMTP to %s | subject=%r", to, subject)
         else:
-            logger.info("[email:dev] no transport configured — would send to %s | subject=%r", to, subject)
+            logger.info(
+                "[email:dev] no transport configured — would send to %s | subject=%r", to, subject
+            )
         return True
     except Exception:  # noqa: BLE001
         logger.exception("[email] failed to send to %s | subject=%r", to, subject)
@@ -159,9 +161,7 @@ def ensure_email_allowed(db: Session, *, to: str, category: str) -> None:
             "This email was already sent recently. Wait before sending it again.",
             429,
             details={
-                "retry_after_seconds": max(
-                    1, int((retry_at - datetime.now(UTC)).total_seconds())
-                ),
+                "retry_after_seconds": max(1, int((retry_at - datetime.now(UTC)).total_seconds())),
                 "category": category,
             },
         )
@@ -214,7 +214,9 @@ def enqueue_email_once(
         return False
     db.refresh(delivery)
     if delivery.status == "suppressed":
-        logger.info("[email:test] queued message suppressed for %s | category=%s", recipient, category)
+        logger.info(
+            "[email:test] queued message suppressed for %s | category=%s", recipient, category
+        )
         return True
     background_tasks.add_task(_deliver_reserved_email, delivery.id, recipient, subject, body)
     return True
@@ -319,56 +321,3 @@ def enqueue_employee_invitation_email(
         subject=subject,
         body=body,
     )
-
-
-def _enrollment_message(*, name: str, code: str, expires_at: str) -> tuple[str, str]:
-    body = (
-        f"Hi {name},\n\nUse this one-time code to install and link the Khaliduo desktop app:\n\n"
-        f"    {code}\n\nThe code expires on {expires_at}.\n\n— {settings.app_name}"
-    )
-    return f"{settings.app_name}: your device enrollment code", body
-
-
-def enqueue_enrollment_code_email(
-    db: Session,
-    background_tasks: BackgroundTasks,
-    *,
-    company_id: UUID,
-    to: str,
-    name: str,
-    code: str,
-    expires_at: str,
-) -> bool:
-    subject, body = _enrollment_message(name=name, code=code, expires_at=expires_at)
-    return enqueue_email_once(
-        db,
-        background_tasks,
-        company_id=company_id,
-        to=to,
-        category="employee_enrollment_code",
-        subject=subject,
-        body=body,
-    )
-
-
-def _deprecated_portal_message(*, to: str, name: str, password: str) -> tuple[str, str]:
-    body = (
-        f"Hi {name},\n\nYou can sign in to your Khaliduo employee portal here:\n"
-        f"{settings.app_public_url.rstrip('/')}/employee\n\nEmail: {to}\nPassword: {password}\n\n"
-        f"Keep this password private. If you lose it, ask an administrator to reset it.\n\n"
-        f"— {settings.app_name}"
-    )
-    return f"{settings.app_name}: your employee portal password", body
-
-
-# Backwards-compatible direct send helpers for scripts outside the API.
-def send_admin_credentials_email(*, to: str, name: str, password: str, is_reset: bool) -> None:
-    subject, body = _admin_message(to=to, name=name, password=password, is_reset=is_reset)
-    send_email(to, subject, body)
-
-
-def send_enrollment_code_email(*, to: str, name: str, code: str, expires_at: str) -> None:
-    logger.warning("[email] device enrollment emails are disabled by policy for %s", to.lower())
-    return
-    subject, body = _enrollment_message(name=name, code=code, expires_at=expires_at)
-    send_email(to, subject, body)

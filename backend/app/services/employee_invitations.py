@@ -29,9 +29,7 @@ def serialize_employee_invitation(invitation: EmployeeInvitation) -> dict:
         "id": str(invitation.id),
         "status": status,
         "expires_at": invitation.expires_at.isoformat(),
-        "accepted_at": (
-            invitation.accepted_at.isoformat() if invitation.accepted_at else None
-        ),
+        "accepted_at": (invitation.accepted_at.isoformat() if invitation.accepted_at else None),
         "revoked_at": invitation.revoked_at.isoformat() if invitation.revoked_at else None,
         "created_at": invitation.created_at.isoformat(),
     }
@@ -67,9 +65,7 @@ def issue_employee_invitation(
     return invitation, raw_token
 
 
-def revoke_other_pending_invitations(
-    db: Session, employee_id, *, keep_invitation_id
-) -> None:
+def revoke_other_pending_invitations(db: Session, employee_id, *, keep_invitation_id) -> None:
     db.execute(
         update(EmployeeInvitation)
         .where(
@@ -94,7 +90,8 @@ def find_employee_invitation(
 
 
 def latest_employee_invitations(
-    db: Session, employee_ids: list,
+    db: Session,
+    employee_ids: list,
 ) -> dict:
     if not employee_ids:
         return {}

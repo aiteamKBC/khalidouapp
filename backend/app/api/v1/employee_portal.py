@@ -33,7 +33,12 @@ from app.models import (
     TimeAdjustmentRequest,
     LeaveRequest,
 )
-from app.schemas.employee_portal import EmployeePortalLeaveRequestCreate, EmployeePortalTaskCreate, EmployeePortalTaskUpdate, EmployeePortalTimeRequestCreate
+from app.schemas.employee_portal import (
+    EmployeePortalLeaveRequestCreate,
+    EmployeePortalTaskCreate,
+    EmployeePortalTaskUpdate,
+    EmployeePortalTimeRequestCreate,
+)
 from app.schemas.admin import ChecklistItemCreate, ChecklistItemUpdate, TaskCommentCreate
 from app.services.projects import (
     employee_task_time_totals,
@@ -54,10 +59,18 @@ from app.services.task_workflow import (
     stop_task_tracking,
 )
 from app.services.screenshots import serialize_screenshot
-from app.services.activity_timeline import build_workday_timeline
+from app.services.activity_timeline import build_workday_timeline, local_today
 from app.services.time_adjustments import serialize_time_adjustment_request
-from app.services.work_profiles import get_or_create_work_profile, payroll_preview, serialize_work_profile
-from app.services.leave_management import requested_workdays, serialize_balance, serialize_leave_request
+from app.services.work_profiles import (
+    get_or_create_work_profile,
+    payroll_preview,
+    serialize_work_profile,
+)
+from app.services.leave_management import (
+    requested_workdays,
+    serialize_balance,
+    serialize_leave_request,
+)
 
 router = APIRouter(prefix="/employee-portal", tags=["employee-portal"])
 
@@ -82,7 +95,10 @@ def participant_task(db: Session, employee: Employee, task_id: UUID) -> tuple[Ta
             Task.id == task_id,
             Task.company_id == employee.company_id,
             Task.stage.not_in(["rejected", "cancelled"]),
-            ((Task.assignee_employee_id == employee.id) | (TaskCollaborator.employee_id == employee.id)),
+            (
+                (Task.assignee_employee_id == employee.id)
+                | (TaskCollaborator.employee_id == employee.id)
+            ),
         )
         .distinct()
     ).one_or_none()
@@ -116,7 +132,9 @@ def apply_work_profile_idle_rules(rows: list[dict], profile) -> list[dict]:
             continue
         active_seconds = int(adjusted.get("active_seconds", 0))
         idle_seconds = int(adjusted.get("idle_seconds", 0))
-        adjusted["idle_seconds"] = min(idle_seconds, _idle_limit_for_day(profile, row_day, active_seconds))
+        adjusted["idle_seconds"] = min(
+            idle_seconds, _idle_limit_for_day(profile, row_day, active_seconds)
+        )
         adjusted_rows.append(adjusted)
     return adjusted_rows
 
@@ -167,7 +185,7 @@ def summary(
     current_employee: Annotated[Employee, Depends(get_current_employee)],
     db: Annotated[Session, Depends(get_db)],
 ):
-    today = date.today()
+    today = local_today(current_employee.timezone)
     week_start = today - timedelta(days=today.weekday())
     month_start = today.replace(day=1)
     month_end = today.replace(day=monthrange(today.year, today.month)[1])
@@ -217,6 +235,7 @@ def summary(
                 company_id=current_employee.company_id,
                 employee_id=current_employee.id,
                 timezone_name=current_employee.timezone,
+                target_date=today,
             ),
             "points_rule": "1 hour of approved active work = 1 point",
         }
@@ -239,7 +258,7 @@ def own_payroll_preview(
     start_date: date | None = None,
     end_date: date | None = None,
 ):
-    today = date.today()
+    today = local_today(current_employee.timezone)
     return success_response(
         data=payroll_preview(
             db,
@@ -299,33 +318,49 @@ def tasks(
 
 
 @router.get("/projects")
-def projects(current_employee: Annotated[Employee, Depends(get_current_employee)], db: Annotated[Session, Depends(get_db)]):
+def projects(
+    current_employee: Annotated[Employee, Depends(get_current_employee)],
+    db: Annotated[Session, Depends(get_db)],
+):
     rows = db.scalars(
-        select(Project).join(TeamMember, TeamMember.team_id == Project.team_id).where(
+        select(Project)
+        .join(TeamMember, TeamMember.team_id == Project.team_id)
+        .where(
             Project.company_id == current_employee.company_id,
             Project.status == "active",
             TeamMember.employee_id == current_employee.id,
             TeamMember.status == "active",
-        ).order_by(Project.name)
+        )
+        .order_by(Project.name)
     ).all()
     return success_response(data=[serialize_project(project) for project in rows])
 
 
 @router.post("/tasks")
-def create_own_task(payload: EmployeePortalTaskCreate, current_employee: Annotated[Employee, Depends(get_current_employee)], db: Annotated[Session, Depends(get_db)]):
-    project = db.scalar(select(Project).join(TeamMember, TeamMember.team_id == Project.team_id).where(
-        Project.id == payload.project_id,
-        Project.company_id == current_employee.company_id,
-        Project.status == "active",
-        TeamMember.employee_id == current_employee.id,
-        TeamMember.status == "active",
-    ))
+def create_own_task(
+    payload: EmployeePortalTaskCreate,
+    current_employee: Annotated[Employee, Depends(get_current_employee)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    project = db.scalar(
+        select(Project)
+        .join(TeamMember, TeamMember.team_id == Project.team_id)
+        .where(
+            Project.id == payload.project_id,
+            Project.company_id == current_employee.company_id,
+            Project.status == "active",
+            TeamMember.employee_id == current_employee.id,
+            TeamMember.status == "active",
+        )
+    )
     if project is None:
         raise ApiError("INVALID_PROJECT", "Project is not available to your teams.", 400)
     clean_name = " ".join(payload.name.split())
     validate_task_dates(payload.start_date, payload.deadline)
     if db.scalar(select(Task.id).where(Task.project_id == project.id, Task.name == clean_name)):
-        raise ApiError("TASK_NAME_IN_USE", "A task with this name already exists in the project.", 409)
+        raise ApiError(
+            "TASK_NAME_IN_USE", "A task with this name already exists in the project.", 409
+        )
     task = Task(
         company_id=current_employee.company_id,
         project_id=project.id,
@@ -375,7 +410,12 @@ def create_own_task(payload: EmployeePortalTaskCreate, current_employee: Annotat
 
 
 @router.patch("/tasks/{task_id}")
-def update_own_task(task_id: UUID, payload: EmployeePortalTaskUpdate, current_employee: Annotated[Employee, Depends(get_current_employee)], db: Annotated[Session, Depends(get_db)]):
+def update_own_task(
+    task_id: UUID,
+    payload: EmployeePortalTaskUpdate,
+    current_employee: Annotated[Employee, Depends(get_current_employee)],
+    db: Annotated[Session, Depends(get_db)],
+):
     task, project, team = participant_task(db, current_employee, task_id)
     is_assignee = task.assignee_employee_id == current_employee.id
     is_collaborator = any(employee.id == current_employee.id for employee in task.collaborators)
@@ -384,7 +424,13 @@ def update_own_task(task_id: UUID, payload: EmployeePortalTaskUpdate, current_em
     changes = payload.model_dump(exclude_unset=True)
     note = changes.pop("note", None)
     if task.created_by_employee_id == current_employee.id and task.stage == "new_requests":
-        forbidden = set(changes) - {"name", "description", "start_date", "deadline", "estimated_minutes"}
+        forbidden = set(changes) - {
+            "name",
+            "description",
+            "start_date",
+            "deadline",
+            "estimated_minutes",
+        }
         if forbidden:
             raise ApiError("TASK_AWAITING_APPROVAL", "An admin must approve this task first.", 409)
     else:
@@ -393,7 +439,9 @@ def update_own_task(task_id: UUID, payload: EmployeePortalTaskUpdate, current_em
             raise ApiError("TASK_FIELDS_FORBIDDEN", "Only managers can change task details.", 403)
     if "stage" in changes:
         if not is_assignee:
-            raise ApiError("TASK_STAGE_FORBIDDEN", "Only the primary assignee can change stage.", 403)
+            raise ApiError(
+                "TASK_STAGE_FORBIDDEN", "Only the primary assignee can change stage.", 403
+            )
         validate_employee_stage_change(task, changes["stage"], note)
         if changes["stage"] == "ready_for_review":
             workflow_request = create_workflow_request(
@@ -407,7 +455,11 @@ def update_own_task(task_id: UUID, payload: EmployeePortalTaskUpdate, current_em
             )
             task.review_note = note
             notify_project_admins(
-                db, task, project, "task_review_requested", "Task ready for review",
+                db,
+                task,
+                project,
+                "task_review_requested",
+                "Task ready for review",
                 f"{current_employee.name} submitted {task.name} for review.",
                 f"review-requested:{datetime.now(UTC).isoformat()}",
                 workflow_request_id=workflow_request.id,
@@ -458,11 +510,13 @@ def create_own_checklist_item(
     if task.stage in {"completed", "rejected", "cancelled"}:
         raise ApiError("TASK_STAGE_LOCKED", "Closed tasks cannot be changed.", 409)
     if payload.assignee_employee_id:
-        valid = db.scalar(select(TeamMember.id).where(
-            TeamMember.team_id == project.team_id,
-            TeamMember.employee_id == payload.assignee_employee_id,
-            TeamMember.status == "active",
-        ))
+        valid = db.scalar(
+            select(TeamMember.id).where(
+                TeamMember.team_id == project.team_id,
+                TeamMember.employee_id == payload.assignee_employee_id,
+                TeamMember.status == "active",
+            )
+        )
         if not valid:
             raise ApiError("INVALID_ASSIGNEE", "Checklist assignee must belong to the team.", 400)
     item = TaskChecklistItem(
@@ -473,7 +527,9 @@ def create_own_checklist_item(
     )
     db.add(item)
     db.flush()
-    record_task_activity(db, task, "checklist_item_added", employee=current_employee, details={"item": item.title})
+    record_task_activity(
+        db, task, "checklist_item_added", employee=current_employee, details={"item": item.title}
+    )
     db.commit()
     db.refresh(task)
     return success_response(data=serialize_task(task, project, team))
@@ -490,23 +546,32 @@ def update_own_checklist_item(
     task, project, team = participant_task(db, current_employee, task_id)
     if task.stage in {"completed", "rejected", "cancelled"}:
         raise ApiError("TASK_STAGE_LOCKED", "Closed tasks cannot be changed.", 409)
-    item = db.scalar(select(TaskChecklistItem).where(TaskChecklistItem.id == item_id, TaskChecklistItem.task_id == task.id))
+    item = db.scalar(
+        select(TaskChecklistItem).where(
+            TaskChecklistItem.id == item_id, TaskChecklistItem.task_id == task.id
+        )
+    )
     if item is None:
         raise ApiError("CHECKLIST_ITEM_NOT_FOUND", "Checklist item was not found.", 404)
     changes = payload.model_dump(exclude_unset=True)
     if "assignee_employee_id" in changes and changes["assignee_employee_id"]:
-        valid = db.scalar(select(TeamMember.id).where(
-            TeamMember.team_id == project.team_id,
-            TeamMember.employee_id == changes["assignee_employee_id"],
-            TeamMember.status == "active",
-        ))
+        valid = db.scalar(
+            select(TeamMember.id).where(
+                TeamMember.team_id == project.team_id,
+                TeamMember.employee_id == changes["assignee_employee_id"],
+                TeamMember.status == "active",
+            )
+        )
         if not valid:
             raise ApiError("INVALID_ASSIGNEE", "Checklist assignee must belong to the team.", 400)
     for key, value in changes.items():
         setattr(item, key, value.strip() if key == "title" else value)
     record_task_activity(
-        db, task,
-        "checklist_item_completed" if changes.get("completed") is True else "checklist_item_updated",
+        db,
+        task,
+        "checklist_item_completed"
+        if changes.get("completed") is True
+        else "checklist_item_updated",
         employee=current_employee,
         details={"item": item.title, **changes},
     )
@@ -523,12 +588,18 @@ def delete_own_checklist_item(
     db: Annotated[Session, Depends(get_db)],
 ):
     task, _project, _team = participant_task(db, current_employee, task_id)
-    item = db.scalar(select(TaskChecklistItem).where(TaskChecklistItem.id == item_id, TaskChecklistItem.task_id == task.id))
+    item = db.scalar(
+        select(TaskChecklistItem).where(
+            TaskChecklistItem.id == item_id, TaskChecklistItem.task_id == task.id
+        )
+    )
     if item is None:
         raise ApiError("CHECKLIST_ITEM_NOT_FOUND", "Checklist item was not found.", 404)
     title = item.title
     db.delete(item)
-    record_task_activity(db, task, "checklist_item_deleted", employee=current_employee, details={"item": title})
+    record_task_activity(
+        db, task, "checklist_item_deleted", employee=current_employee, details={"item": title}
+    )
     db.commit()
     return success_response(data={"deleted": True})
 
@@ -540,34 +611,44 @@ def own_task_workspace(
     db: Annotated[Session, Depends(get_db)],
 ):
     task, _project, _team = participant_task(db, current_employee, task_id)
-    comments = db.scalars(select(TaskComment).where(TaskComment.task_id == task.id).order_by(TaskComment.created_at.desc())).all()
-    attachments = db.scalars(select(TaskAttachment).where(TaskAttachment.task_id == task.id).order_by(TaskAttachment.created_at.desc())).all()
-    return success_response(data={
-        "comments": [
-            {
-                "id": str(comment.id),
-                "body": comment.body,
-                "author_name": (
-                    db.get(Employee, comment.employee_id).name
-                    if comment.employee_id and db.get(Employee, comment.employee_id)
-                    else db.get(AdminUser, comment.admin_user_id).name
-                    if comment.admin_user_id and db.get(AdminUser, comment.admin_user_id)
-                    else "System"
-                ),
-                "created_at": comment.created_at.isoformat(),
-            }
-            for comment in comments
-        ],
-        "attachments": [
-            {
-                "id": str(attachment.id),
-                "file_name": attachment.file_name,
-                "size_bytes": attachment.size_bytes,
-                "created_at": attachment.created_at.isoformat(),
-            }
-            for attachment in attachments
-        ],
-    })
+    comments = db.scalars(
+        select(TaskComment)
+        .where(TaskComment.task_id == task.id)
+        .order_by(TaskComment.created_at.desc())
+    ).all()
+    attachments = db.scalars(
+        select(TaskAttachment)
+        .where(TaskAttachment.task_id == task.id)
+        .order_by(TaskAttachment.created_at.desc())
+    ).all()
+    return success_response(
+        data={
+            "comments": [
+                {
+                    "id": str(comment.id),
+                    "body": comment.body,
+                    "author_name": (
+                        db.get(Employee, comment.employee_id).name
+                        if comment.employee_id and db.get(Employee, comment.employee_id)
+                        else db.get(AdminUser, comment.admin_user_id).name
+                        if comment.admin_user_id and db.get(AdminUser, comment.admin_user_id)
+                        else "System"
+                    ),
+                    "created_at": comment.created_at.isoformat(),
+                }
+                for comment in comments
+            ],
+            "attachments": [
+                {
+                    "id": str(attachment.id),
+                    "file_name": attachment.file_name,
+                    "size_bytes": attachment.size_bytes,
+                    "created_at": attachment.created_at.isoformat(),
+                }
+                for attachment in attachments
+            ],
+        }
+    )
 
 
 @router.post("/tasks/{task_id}/comments")
@@ -578,18 +659,35 @@ def create_own_task_comment(
     db: Annotated[Session, Depends(get_db)],
 ):
     task, project, _team = participant_task(db, current_employee, task_id)
-    comment = TaskComment(task_id=task.id, employee_id=current_employee.id, body=payload.body.strip())
+    comment = TaskComment(
+        task_id=task.id, employee_id=current_employee.id, body=payload.body.strip()
+    )
     db.add(comment)
     db.flush()
-    record_task_activity(db, task, "comment_added", employee=current_employee, details={"comment_id": str(comment.id)})
+    record_task_activity(
+        db,
+        task,
+        "comment_added",
+        employee=current_employee,
+        details={"comment_id": str(comment.id)},
+    )
     notify_task_participants(
-        db, task, "task_comment", "New task comment",
+        db,
+        task,
+        "task_comment",
+        "New task comment",
         f"{current_employee.name} commented on {task.name}.",
-        f"comment:{comment.id}", exclude_employee_id=current_employee.id,
+        f"comment:{comment.id}",
+        exclude_employee_id=current_employee.id,
     )
     notify_project_admins(
-        db, task, project, "task_comment", "New task comment",
-        f"{current_employee.name} commented on {task.name}.", f"comment:{comment.id}",
+        db,
+        task,
+        project,
+        "task_comment",
+        "New task comment",
+        f"{current_employee.name} commented on {task.name}.",
+        f"comment:{comment.id}",
     )
     db.commit()
     return success_response(data={"id": str(comment.id)}, status_code=201)
@@ -625,10 +723,17 @@ async def upload_own_task_attachment(
     )
     db.add(attachment)
     db.flush()
-    record_task_activity(db, task, "attachment_added", employee=current_employee, details={"file_name": safe_name})
+    record_task_activity(
+        db, task, "attachment_added", employee=current_employee, details={"file_name": safe_name}
+    )
     notify_project_admins(
-        db, task, project, "task_attachment", "Task attachment added",
-        f"{current_employee.name} attached {safe_name} to {task.name}.", f"attachment:{attachment.id}",
+        db,
+        task,
+        project,
+        "task_attachment",
+        "Task attachment added",
+        f"{current_employee.name} attached {safe_name} to {task.name}.",
+        f"attachment:{attachment.id}",
     )
     db.commit()
     return success_response(data={"id": str(attachment.id)}, status_code=201)
@@ -642,7 +747,11 @@ def download_own_task_attachment(
     db: Annotated[Session, Depends(get_db)],
 ):
     task, _project, _team = participant_task(db, current_employee, task_id)
-    attachment = db.scalar(select(TaskAttachment).where(TaskAttachment.id == attachment_id, TaskAttachment.task_id == task.id))
+    attachment = db.scalar(
+        select(TaskAttachment).where(
+            TaskAttachment.id == attachment_id, TaskAttachment.task_id == task.id
+        )
+    )
     if attachment is None:
         raise ApiError("ATTACHMENT_NOT_FOUND", "Attachment was not found.", 404)
     root = (settings.screenshot_storage_path.parent / "task-attachments").resolve()
@@ -711,7 +820,7 @@ def screenshots(
     day: date | None = None,
     page_size: int = Query(default=50, ge=1, le=100),
 ):
-    target_day = day or date.today()
+    target_day = day or local_today(current_employee.timezone)
     start_at, end_at = employee_day_bounds(target_day, current_employee.timezone)
     rows = db.scalars(
         select(Screenshot)
@@ -790,7 +899,7 @@ def create_time_request(
         company_id=current_employee.company_id,
         employee_id=current_employee.id,
         device_id=device.id if device else None,
-        requested_date=payload.requested_date or date.today(),
+        requested_date=payload.requested_date or local_today(current_employee.timezone),
         requested_seconds=payload.requested_minutes * 60,
         reason=payload.reason.strip(),
         status="pending",
@@ -817,7 +926,11 @@ def list_employee_leave_requests(
     ).all()
     return success_response(
         data={
-            "balance": serialize_balance(db, current_employee, date.today().year),
+            "balance": serialize_balance(
+                db,
+                current_employee,
+                local_today(current_employee.timezone).year,
+            ),
             "requests": [serialize_leave_request(row) for row in rows],
         }
     )
@@ -832,7 +945,9 @@ def create_employee_leave_request(
     if payload.end_date < payload.start_date:
         raise ApiError("INVALID_LEAVE_DATES", "End date must be on or after start date.", 400)
     if payload.start_date.year != payload.end_date.year:
-        raise ApiError("LEAVE_YEAR_BOUNDARY", "A holiday request must stay within one calendar year.", 400)
+        raise ApiError(
+            "LEAVE_YEAR_BOUNDARY", "A holiday request must stay within one calendar year.", 400
+        )
     profile = get_or_create_work_profile(db, current_employee)
     days = requested_workdays(payload.start_date, payload.end_date, profile.working_days)
     if days < 1:
@@ -849,7 +964,9 @@ def create_employee_leave_request(
         )
     )
     if overlap:
-        raise ApiError("OVERLAPPING_LEAVE_REQUEST", "You already have a holiday request in this period.", 409)
+        raise ApiError(
+            "OVERLAPPING_LEAVE_REQUEST", "You already have a holiday request in this period.", 409
+        )
     row = LeaveRequest(
         company_id=current_employee.company_id,
         employee_id=current_employee.id,

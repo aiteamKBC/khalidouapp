@@ -1,4 +1,4 @@
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 import pytest
@@ -14,6 +14,7 @@ from app.core.security import create_jwt_token, hash_password
 from app.database.base import Base
 from app.database.session import get_db
 from app.main import app
+from app.services.activity_timeline import local_today
 from app.models import (
     AdminUser,
     ActivityEvent,
@@ -42,7 +43,9 @@ def team_client():
         poolclass=StaticPool,
     )
     Base.metadata.create_all(engine)
-    TestingSessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
+    TestingSessionLocal = sessionmaker(
+        bind=engine, autoflush=False, autocommit=False, expire_on_commit=False
+    )
 
     def override_get_db():
         db = TestingSessionLocal()
@@ -96,7 +99,9 @@ def team_client():
 
     team_a = Team(company_id=company.id, name="Team A", description=None, status="active")
     team_b = Team(company_id=company.id, name="Team B", description=None, status="active")
-    other_team = Team(company_id=other_company.id, name="Other Team", description=None, status="active")
+    other_team = Team(
+        company_id=other_company.id, name="Other Team", description=None, status="active"
+    )
     db.add_all([team_a, team_b, other_team])
     db.flush()
 
@@ -218,7 +223,11 @@ def team_client():
         company_id=company.id,
         employee_id=employee_a.id,
     )
-    db.add(DeviceToken(company_id=company.id, device_id=device_a.id, token_hash=hash_token(device_token)))
+    db.add(
+        DeviceToken(
+            company_id=company.id, device_id=device_a.id, token_hash=hash_token(device_token)
+        )
+    )
 
     session_a = WorkSession(
         company_id=company.id,
@@ -365,7 +374,9 @@ def add_fixture_task(
         db.close()
 
 
-def admin_task_notifications(client: TestClient, headers: dict[str, str], task_id: str) -> list[dict]:
+def admin_task_notifications(
+    client: TestClient, headers: dict[str, str], task_id: str
+) -> list[dict]:
     response = client.get("/api/v1/notifications", headers=headers)
     assert response.status_code == 200
     return [row for row in response.json()["data"] if row["task_id"] == task_id]
@@ -391,9 +402,7 @@ def task_workflow_requests(data, task_id: str) -> list[dict]:
                 "decision_note": row.decision_note,
                 "return_stage": row.return_stage,
                 "reviewed_by_admin_user_id": (
-                    str(row.reviewed_by_admin_user_id)
-                    if row.reviewed_by_admin_user_id
-                    else None
+                    str(row.reviewed_by_admin_user_id) if row.reviewed_by_admin_user_id else None
                 ),
             }
             for row in rows
@@ -411,10 +420,7 @@ def admin_notification_request_ids(data, admin_id, task_id: str) -> set[str | No
                 TaskNotification.task_id == UUID(task_id),
             )
         ).all()
-        return {
-            str(row.workflow_request_id) if row.workflow_request_id else None
-            for row in rows
-        }
+        return {str(row.workflow_request_id) if row.workflow_request_id else None for row in rows}
     finally:
         db.close()
 
@@ -483,16 +489,18 @@ def test_team_owner_cannot_access_unassigned_team(team_client):
 def test_team_owner_cannot_retrieve_screenshots_from_another_team(team_client):
     client, data = team_client
 
-    detail = client.get(f"/api/v1/screenshots/{data['screenshot_b'].id}", headers=data["owner_headers"])
-    filtered = client.get(f"/api/v1/screenshots?team_id={data['team_b'].id}", headers=data["owner_headers"])
+    detail = client.get(
+        f"/api/v1/screenshots/{data['screenshot_b'].id}", headers=data["owner_headers"]
+    )
+    filtered = client.get(
+        f"/api/v1/screenshots?team_id={data['team_b'].id}", headers=data["owner_headers"]
+    )
 
     assert detail.status_code == 403
     assert filtered.status_code == 403
 
 
-def test_desktop_agent_can_only_load_its_own_recent_screenshots(
-    team_client, tmp_path, monkeypatch
-):
+def test_desktop_agent_can_only_load_its_own_recent_screenshots(team_client, tmp_path, monkeypatch):
     client, data = team_client
     monkeypatch.setattr(settings, "screenshot_storage_path", tmp_path)
     (tmp_path / "a.jpg").write_bytes(b"employee-a-image")
@@ -512,9 +520,7 @@ def test_desktop_agent_can_only_load_its_own_recent_screenshots(
     )
 
     assert recent.status_code == 200
-    assert [row["id"] for row in recent.json()["data"]] == [
-        str(data["screenshot_a"].id)
-    ]
+    assert [row["id"] for row in recent.json()["data"]] == [str(data["screenshot_a"].id)]
     assert own_file.status_code == 200
     assert own_file.content == b"employee-a-image"
     assert other_file.status_code == 404
@@ -562,7 +568,9 @@ def test_team_owner_cannot_retrieve_employees_from_another_team(team_client):
     client, data = team_client
 
     detail = client.get(f"/api/v1/employees/{data['employee_b'].id}", headers=data["owner_headers"])
-    filtered = client.get(f"/api/v1/employees?team_id={data['team_b'].id}", headers=data["owner_headers"])
+    filtered = client.get(
+        f"/api/v1/employees?team_id={data['team_b'].id}", headers=data["owner_headers"]
+    )
 
     assert detail.status_code == 403
     assert filtered.status_code == 403
@@ -571,7 +579,9 @@ def test_team_owner_cannot_retrieve_employees_from_another_team(team_client):
 def test_team_owner_cannot_retrieve_reports_from_another_team(team_client):
     client, data = team_client
 
-    response = client.get(f"/api/v1/reports/summary?team_id={data['team_b'].id}", headers=data["owner_headers"])
+    response = client.get(
+        f"/api/v1/reports/summary?team_id={data['team_b'].id}", headers=data["owner_headers"]
+    )
 
     assert response.status_code == 403
 
@@ -1033,7 +1043,7 @@ def test_desktop_summary_matches_employee_periods_and_profile(team_client):
 
 def test_workday_timeline_splits_work_idle_and_locked_periods(team_client):
     client, data = team_client
-    work_day = date.today()
+    work_day = local_today(data["employee_a"].timezone)
     started_at = datetime.combine(work_day, datetime.min.time(), tzinfo=UTC) + timedelta(hours=9)
     transitions = [
         ("idle_started", started_at + timedelta(hours=1)),
@@ -1140,8 +1150,12 @@ def test_workday_timeline_stops_stale_open_session_at_last_heartbeat(team_client
 def test_employee_may_belong_to_multiple_teams(team_client):
     client, data = team_client
 
-    team_a_members = client.get(f"/api/v1/teams/{data['team_a'].id}/members", headers=data["general_headers"])
-    team_b_members = client.get(f"/api/v1/teams/{data['team_b'].id}/members", headers=data["general_headers"])
+    team_a_members = client.get(
+        f"/api/v1/teams/{data['team_a'].id}/members", headers=data["general_headers"]
+    )
+    team_b_members = client.get(
+        f"/api/v1/teams/{data['team_b'].id}/members", headers=data["general_headers"]
+    )
 
     shared_id = str(data["shared_employee"].id)
     assert shared_id in {employee["id"] for employee in team_a_members.json()["data"]}
@@ -1151,7 +1165,9 @@ def test_employee_may_belong_to_multiple_teams(team_client):
 def test_team_may_have_multiple_owners(team_client):
     client, data = team_client
 
-    response = client.get(f"/api/v1/teams/{data['team_a'].id}/owners", headers=data["general_headers"])
+    response = client.get(
+        f"/api/v1/teams/{data['team_a'].id}/owners", headers=data["general_headers"]
+    )
 
     assert response.status_code == 200
     assert len(response.json()["data"]) == 2
@@ -1160,7 +1176,9 @@ def test_team_may_have_multiple_owners(team_client):
 def test_company_data_isolation_still_works(team_client):
     client, data = team_client
 
-    team_response = client.get(f"/api/v1/teams/{data['other_team'].id}", headers=data["general_headers"])
+    team_response = client.get(
+        f"/api/v1/teams/{data['other_team'].id}", headers=data["general_headers"]
+    )
     employees_response = client.get("/api/v1/employees", headers=data["general_headers"])
 
     assert team_response.status_code == 404
@@ -1168,7 +1186,7 @@ def test_company_data_isolation_still_works(team_client):
     assert "other.employee@example.com" not in emails
 
 
-def test_general_admin_can_create_and_revoke_employee_enrollment_code(team_client):
+def test_legacy_employee_enrollment_code_endpoints_are_removed(team_client):
     client, data = team_client
 
     create_response = client.post(
@@ -1176,36 +1194,13 @@ def test_general_admin_can_create_and_revoke_employee_enrollment_code(team_clien
         headers=data["general_headers"],
         json={"expires_in_days": 7},
     )
-    created = create_response.json()["data"]
     list_response = client.get(
         f"/api/v1/employees/{data['employee_a'].id}/enrollment-codes",
         headers=data["general_headers"],
     )
-    revoke_response = client.delete(
-        f"/api/v1/employees/{data['employee_a'].id}/enrollment-codes/{created['id']}",
-        headers=data["general_headers"],
-    )
 
-    assert create_response.status_code == 200
-    assert created["code"].startswith("KH-")
-    assert created["code_hint"].startswith("KH-")
-    assert created["email_queued"] is False
-    assert list_response.status_code == 200
-    assert created["id"] in {row["id"] for row in list_response.json()["data"]}
-    assert revoke_response.status_code == 200
-    assert revoke_response.json()["data"]["status"] == "revoked"
-
-
-def test_team_owner_cannot_create_employee_enrollment_code(team_client):
-    client, data = team_client
-
-    response = client.post(
-        f"/api/v1/employees/{data['employee_a'].id}/enrollment-codes",
-        headers=data["owner_headers"],
-        json={"expires_in_days": 7},
-    )
-
-    assert response.status_code == 403
+    assert create_response.status_code == 404
+    assert list_response.status_code == 404
 
 
 def test_general_admin_actions_are_written_to_audit_log(team_client):

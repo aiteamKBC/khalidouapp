@@ -51,10 +51,12 @@ def test_windows_update_feed_and_artifact(tmp_path: Path) -> None:
 
     assert metadata_response.status_code == 200
     assert metadata_response.text.strip() == "version: 1.1.0"
-    assert metadata_response.headers["cache-control"] == "no-store"
+    assert metadata_response.headers["cache-control"] == "no-store, max-age=0"
+    assert metadata_response.headers["pragma"] == "no-cache"
     assert blockmap_response.status_code == 200
     assert blockmap_response.content == b"blockmap-test"
-    assert blockmap_response.headers["cache-control"] == "public, max-age=86400, immutable"
+    assert blockmap_response.headers["cache-control"] == "no-store, max-age=0"
+    assert blockmap_response.headers["pragma"] == "no-cache"
 
 
 def test_windows_update_feed_rejects_unknown_files(tmp_path: Path) -> None:

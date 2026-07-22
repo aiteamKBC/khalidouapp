@@ -33,9 +33,8 @@ See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rule
 
 ## Credential-based first-run enrollment
 
-The desktop app keeps the one-time enrollment-code flow and also supports a
-primary email/password first-run flow. It currently authenticates through the
-existing employee portal endpoint:
+The desktop app uses the employee's email and password for first-run enrollment.
+It authenticates through the employee portal endpoint:
 
 ```http
 POST /api/v1/employee-auth/login
@@ -68,8 +67,7 @@ Content-Type: application/json
 
 That endpoint must authenticate an active employee from the bearer token,
 create or update the device for the stable `installation_id`, reject revoked
-devices, issue a device token, and return the same success envelope as
-`POST /api/v1/agent/enroll`:
+devices, issue a device token, and return the standard API success envelope:
 
 ```json
 {

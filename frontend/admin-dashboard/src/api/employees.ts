@@ -1,12 +1,6 @@
 import { apiFetch, toMinutes, withQuery } from "./client";
 import { normalizeAiAcronym } from "@/lib/text";
-import type {
-  Employee,
-  EmployeeAccountStatus,
-  EmployeeStatus,
-  EnrollmentCode,
-  TeamMemberRole,
-} from "@/types";
+import type { Employee, EmployeeAccountStatus, EmployeeStatus, TeamMemberRole } from "@/types";
 
 type BackendEmployee = {
   id: string;
@@ -53,17 +47,6 @@ type BackendEmployeeStatus = {
   team_role?: TeamMemberRole | null;
 };
 
-type BackendEnrollmentCode = {
-  id: string;
-  employee_id: string;
-  code_hint: string;
-  status: "active" | "used" | "expired" | "revoked";
-  expires_at: string;
-  used_at?: string | null;
-  created_at: string;
-  code?: string;
-};
-
 export type EmployeeCreateInput = {
   name: string;
   email: string;
@@ -85,9 +68,19 @@ export type WorkProfile = {
   workingDays?: number[] | null;
   weeklyOffDays?: number[] | null;
   requiredDailyMinutes?: number | null;
-  breakRules?: Array<{ name: string; minutes: number; paid: boolean; start_time?: string | null; end_time?: string | null }> | null;
+  breakRules?: Array<{
+    name: string;
+    minutes: number;
+    paid: boolean;
+    start_time?: string | null;
+    end_time?: string | null;
+  }> | null;
   lateGraceMinutes?: number | null;
-  deductionPolicy?: { mode: "review" | "per_minute" | "brackets"; require_admin_review: boolean; brackets: Array<{ after_minutes: number; deduct_minutes: number; note?: string | null }> } | null;
+  deductionPolicy?: {
+    mode: "review" | "per_minute" | "brackets";
+    require_admin_review: boolean;
+    brackets: Array<{ after_minutes: number; deduct_minutes: number; note?: string | null }>;
+  } | null;
   overtimeEnabled: boolean;
   overtimeBasis?: "beyond_daily_required" | "outside_shift" | "either" | null;
   overtimeRateMultiplier?: number | null;
@@ -112,6 +105,26 @@ export type WorkProfileInput = {
   salaryAmount?: number;
   salaryCurrency?: WorkProfile["salaryCurrency"];
   salaryType?: WorkProfile["salaryType"];
+};
+
+type BackendWorkProfile = {
+  id: string;
+  employee_id: string;
+  shift_start?: string | null;
+  shift_end?: string | null;
+  working_days?: number[] | null;
+  weekly_off_days?: number[] | null;
+  required_daily_minutes?: number | null;
+  break_rules?: WorkProfile["breakRules"];
+  late_grace_minutes?: number | null;
+  deduction_policy?: WorkProfile["deductionPolicy"];
+  overtime_enabled: boolean;
+  overtime_basis?: WorkProfile["overtimeBasis"];
+  overtime_rate_multiplier?: number | null;
+  salary_amount?: number | null;
+  salary_currency?: WorkProfile["salaryCurrency"];
+  salary_type?: WorkProfile["salaryType"];
+  completeness: WorkProfile["completeness"];
 };
 
 export type PayrollPreview = {
@@ -182,20 +195,7 @@ function mapEmployee(status: BackendEmployeeStatus, teamIds: string[]): Employee
   };
 }
 
-function mapEnrollmentCode(row: BackendEnrollmentCode): EnrollmentCode {
-  return {
-    id: row.id,
-    employeeId: row.employee_id,
-    codeHint: row.code_hint,
-    status: row.status,
-    expiresAt: row.expires_at,
-    usedAt: row.used_at ?? undefined,
-    createdAt: row.created_at,
-    code: row.code,
-  };
-}
-
-function mapWorkProfile(row: any): WorkProfile {
+function mapWorkProfile(row: BackendWorkProfile): WorkProfile {
   return {
     id: row.id,
     employeeId: row.employee_id,
@@ -278,33 +278,6 @@ export async function updateEmployeePassword(
   return (await getEmployee(employeeId))!;
 }
 
-export async function listEnrollmentCodes(employeeId: string): Promise<EnrollmentCode[]> {
-  const rows = await apiFetch<BackendEnrollmentCode[]>(`/employees/${employeeId}/enrollment-codes`);
-  return rows.map(mapEnrollmentCode);
-}
-
-export async function createEnrollmentCode(
-  employeeId: string,
-  expiresInDays = 14,
-): Promise<EnrollmentCode> {
-  const row = await apiFetch<BackendEnrollmentCode>(`/employees/${employeeId}/enrollment-codes`, {
-    method: "POST",
-    body: JSON.stringify({ expires_in_days: expiresInDays }),
-  });
-  return mapEnrollmentCode(row);
-}
-
-export async function revokeEnrollmentCode(
-  employeeId: string,
-  codeId: string,
-): Promise<EnrollmentCode> {
-  const row = await apiFetch<BackendEnrollmentCode>(
-    `/employees/${employeeId}/enrollment-codes/${codeId}`,
-    { method: "DELETE" },
-  );
-  return mapEnrollmentCode(row);
-}
-
 export async function getWorkProfile(employeeId: string): Promise<WorkProfile> {
   return mapWorkProfile(await apiFetch(`/employees/${employeeId}/work-profile`));
 }
@@ -336,7 +309,10 @@ export async function listEmployeeBreakRules(
   }));
 }
 
-export async function updateWorkProfile(employeeId: string, input: WorkProfileInput): Promise<WorkProfile> {
+export async function updateWorkProfile(
+  employeeId: string,
+  input: WorkProfileInput,
+): Promise<WorkProfile> {
   return mapWorkProfile(
     await apiFetch(`/employees/${employeeId}/work-profile`, {
       method: "PATCH",

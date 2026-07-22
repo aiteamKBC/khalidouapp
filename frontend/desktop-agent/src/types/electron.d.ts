@@ -27,6 +27,7 @@ export type AgentStatus = {
   selectedTask: AgentTask | null;
   timeAdjustmentRequests: TimeAdjustmentRequest[];
   leaveRequests: LeaveRequestsPayload | null;
+  requestPolicy: RequestPolicy | null;
   timeSummary: {
     today: AgentPeriodSummary;
     week: AgentPeriodSummary;
@@ -126,6 +127,16 @@ export type AgentTask = {
   trackedSeconds: number;
 };
 
+export type RequestPolicy = {
+  timezone: string;
+  shift_start: string | null;
+  shift_end: string | null;
+  working_days: number[];
+  weekly_early_leave_minutes: number;
+  weekly_early_leave_used_minutes: number;
+  weekly_early_leave_remaining_minutes: number;
+};
+
 export type AgentProject = {
   id: string;
   name: string;
@@ -192,9 +203,6 @@ declare global {
   interface Window {
     khaliduo?: {
       getAgentStatus: () => Promise<AgentStatus>;
-      enrollDevice: (
-        enrollmentCode: string,
-      ) => Promise<{ success: boolean; message?: string }>;
       enrollWithCredentials: (
         email: string,
         password: string,
@@ -216,7 +224,11 @@ declare global {
       }>;
       setCurrentTask: (
         taskId: string | null,
-      ) => Promise<{ success: boolean; message?: string; status?: AgentStatus }>;
+      ) => Promise<{
+        success: boolean;
+        message?: string;
+        status?: AgentStatus;
+      }>;
       createTask: (options: {
         name: string;
         projectId?: string;
@@ -225,21 +237,37 @@ declare global {
         startDate?: string;
         deadline?: string;
         estimatedMinutes?: number;
-      }) => Promise<{ success: boolean; message?: string; status?: AgentStatus }>;
+      }) => Promise<{
+        success: boolean;
+        message?: string;
+        status?: AgentStatus;
+      }>;
       updateTaskStage: (
         taskId: string,
         stage: "assigned" | "in_progress" | "ready_for_review" | "blocked",
         note?: string,
-      ) => Promise<{ success: boolean; message?: string; status?: AgentStatus }>;
+      ) => Promise<{
+        success: boolean;
+        message?: string;
+        status?: AgentStatus;
+      }>;
       createTaskChecklistItem: (
         taskId: string,
         title: string,
-      ) => Promise<{ success: boolean; message?: string; status?: AgentStatus }>;
+      ) => Promise<{
+        success: boolean;
+        message?: string;
+        status?: AgentStatus;
+      }>;
       updateTaskChecklistItem: (
         taskId: string,
         itemId: string,
         completed: boolean,
-      ) => Promise<{ success: boolean; message?: string; status?: AgentStatus }>;
+      ) => Promise<{
+        success: boolean;
+        message?: string;
+        status?: AgentStatus;
+      }>;
       onIdleAlert: (callback: (alert: IdleAlert) => void) => () => void;
       onRequiredUpdate: (
         callback: (update: { version: string | null }) => void,
@@ -253,6 +281,7 @@ declare global {
         workSessionId?: string;
         sourceStartAt?: string;
         sourceEndAt?: string;
+        requestedLeaveTime?: string;
       }) => Promise<{
         success: boolean;
         message?: string;

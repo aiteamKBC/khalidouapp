@@ -12,7 +12,9 @@ class EnrollmentCode(UUIDPrimaryKeyMixin, Base):
     __tablename__ = "enrollment_codes"
 
     company_id: Mapped[UUID] = mapped_column(ForeignKey("companies.id"), nullable=False, index=True)
-    employee_id: Mapped[UUID] = mapped_column(ForeignKey("employees.id"), nullable=False, index=True)
+    employee_id: Mapped[UUID] = mapped_column(
+        ForeignKey("employees.id"), nullable=False, index=True
+    )
     code_hash: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     code_hint: Mapped[str] = mapped_column(String(24), nullable=False)
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="active")

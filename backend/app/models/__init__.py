@@ -15,6 +15,7 @@ from app.models.leave_request import LeaveRequest
 from app.models.overtime_record import OvertimeRecord
 from app.models.pause_balance import PauseBalance
 from app.models.pause_session import PauseSession
+from app.models.payroll import PayrollAdjustment, PayrollEntry, PayrollRun, WorkScheduleOverride
 from app.models.email_delivery import EmailDelivery
 from app.models.enrollment_code import EnrollmentCode
 from app.models.project import Project
@@ -53,6 +54,9 @@ __all__ = [
     "OvertimeRecord",
     "PauseBalance",
     "PauseSession",
+    "PayrollAdjustment",
+    "PayrollEntry",
+    "PayrollRun",
     "EmailDelivery",
     "EnrollmentCode",
     "Project",
@@ -72,4 +76,5 @@ __all__ = [
     "TimeAdjustmentRequest",
     "TrackingSettings",
     "WorkSession",
+    "WorkScheduleOverride",
 ]

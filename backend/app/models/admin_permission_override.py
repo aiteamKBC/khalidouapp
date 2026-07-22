@@ -17,9 +17,7 @@ class AdminPermissionOverride(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         ),
     )
 
-    company_id: Mapped[UUID] = mapped_column(
-        ForeignKey("companies.id"), nullable=False, index=True
-    )
+    company_id: Mapped[UUID] = mapped_column(ForeignKey("companies.id"), nullable=False, index=True)
     admin_user_id: Mapped[UUID] = mapped_column(
         ForeignKey("admin_users.id", ondelete="CASCADE"), nullable=False, index=True
     )

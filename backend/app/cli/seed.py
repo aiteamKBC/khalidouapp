@@ -1,13 +1,10 @@
-from datetime import UTC, datetime, timedelta
 from os import environ
-from secrets import token_urlsafe
 
 from sqlalchemy import select
 
 from app.core.security import hash_password
 from app.database.session import get_sessionmaker
-from app.models import AdminUser, Company, Employee, EnrollmentCode, TrackingSettings
-from app.models.mixins import utc_now
+from app.models import AdminUser, Company, Employee, TrackingSettings
 
 
 def env(name: str, default: str | None = None) -> str:
@@ -17,10 +14,6 @@ def env(name: str, default: str | None = None) -> str:
     return value
 
 
-def generate_enrollment_code() -> str:
-    return "KH-" + token_urlsafe(9).replace("-", "").replace("_", "").upper()[:12]
-
-
 def main() -> None:
     company_name = env("SEED_COMPANY_NAME")
     admin_name = env("SEED_ADMIN_NAME")
@@ -28,6 +21,7 @@ def main() -> None:
     admin_password = env("SEED_ADMIN_PASSWORD")
     employee_name = env("SEED_EMPLOYEE_NAME")
     employee_email = env("SEED_EMPLOYEE_EMAIL").lower()
+    employee_password = env("SEED_EMPLOYEE_PASSWORD")
 
     session = get_sessionmaker()()
     try:
@@ -83,29 +77,19 @@ def main() -> None:
                 job_title="Developer",
                 timezone="Africa/Cairo",
                 status="active",
+                portal_password_hash=hash_password(employee_password),
             )
             session.add(employee)
             session.flush()
-
-        enrollment_code = generate_enrollment_code()
-        session.add(
-            EnrollmentCode(
-                company_id=company.id,
-                employee_id=employee.id,
-                code_hash=hash_password(enrollment_code),
-                code_hint=f"{enrollment_code[:5]}...",
-                status="active",
-                expires_at=datetime.now(UTC) + timedelta(days=14),
-                created_at=utc_now(),
-            )
-        )
+        elif not employee.portal_password_hash:
+            employee.portal_password_hash = hash_password(employee_password)
+            session.add(employee)
 
         session.commit()
         print("Seed complete.")
         print(f"Company ID: {company.id}")
         print(f"Admin email: {admin_email}")
         print(f"Employee email: {employee_email}")
-        print(f"Development enrollment code: {enrollment_code}")
     finally:
         session.close()
 

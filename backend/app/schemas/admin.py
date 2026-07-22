@@ -68,10 +68,6 @@ class EmployeeWorkProfileUpdate(BaseModel):
     salary_type: Literal["monthly", "hourly"] | None = None
 
 
-class EnrollmentCodeCreate(BaseModel):
-    expires_in_days: int = Field(default=14, ge=1, le=90)
-
-
 class DeviceUpdate(BaseModel):
     status: str | None = Field(default=None, max_length=50)
 
@@ -150,16 +146,19 @@ class TaskUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=255)
     description: str | None = Field(default=None, max_length=1000)
     status: str | None = Field(default=None, max_length=50)
-    stage: Literal[
-        "backlog",
-        "assigned",
-        "in_progress",
-        "ready_for_review",
-        "completed",
-        "blocked",
-        "rejected",
-        "cancelled",
-    ] | None = None
+    stage: (
+        Literal[
+            "backlog",
+            "assigned",
+            "in_progress",
+            "ready_for_review",
+            "completed",
+            "blocked",
+            "rejected",
+            "cancelled",
+        ]
+        | None
+    ) = None
     position: int | None = Field(default=None, ge=0)
     start_date: date | None = None
     deadline: date | None = None

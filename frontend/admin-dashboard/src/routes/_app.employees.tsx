@@ -77,9 +77,7 @@ export function EmployeesList({ embedded = false }: { embedded?: boolean }) {
         const needle = q.trim().toLowerCase();
         if (
           needle &&
-          !`${employee.name} ${employee.email} ${employee.code}`
-            .toLowerCase()
-            .includes(needle)
+          !`${employee.name} ${employee.email} ${employee.code}`.toLowerCase().includes(needle)
         )
           return false;
         if (teamId !== "all" && !employee.teamIds.includes(teamId)) return false;
@@ -183,32 +181,32 @@ export function EmployeesList({ embedded = false }: { embedded?: boolean }) {
           <TableBody>
             {rows.map((employee) => (
               <TableRow key={employee.id}>
-                  <TableCell>
-                    <div className="font-medium">{employee.name}</div>
-                    <div className="text-xs text-muted-foreground">{employee.email}</div>
-                  </TableCell>
-                  <TableCell className="font-mono text-xs">{employee.code}</TableCell>
-                  <TableCell>{employee.jobTitle || "-"}</TableCell>
-                  <TableCell>
-                    <StatusBadge
-                      status={employee.accountStatus === "invited" ? "invited" : employee.status}
-                    />
-                  </TableCell>
-                  <TableCell>{formatMinutes(employee.workedTodayMinutes)}</TableCell>
-                  <TableCell>{formatMinutes(employee.activeMinutes)}</TableCell>
-                  <TableCell>{formatMinutes(employee.idleMinutes)}</TableCell>
-                  <TableCell className="text-sm text-muted-foreground">
-                    {formatRelative(employee.lastHeartbeat)}
-                  </TableCell>
-                  <TableCell className="text-sm">{employee.currentDeviceName ?? "-"}</TableCell>
-                  <TableCell className="text-right">
-                    <Button asChild variant="ghost" size="sm">
-                      <Link to="/employees/$employeeId" params={{ employeeId: employee.id }}>
-                        View
-                      </Link>
-                    </Button>
-                  </TableCell>
-                </TableRow>
+                <TableCell>
+                  <div className="font-medium">{employee.name}</div>
+                  <div className="text-xs text-muted-foreground">{employee.email}</div>
+                </TableCell>
+                <TableCell className="font-mono text-xs">{employee.code}</TableCell>
+                <TableCell>{employee.jobTitle || "-"}</TableCell>
+                <TableCell>
+                  <StatusBadge
+                    status={employee.accountStatus === "invited" ? "invited" : employee.status}
+                  />
+                </TableCell>
+                <TableCell>{formatMinutes(employee.workedTodayMinutes)}</TableCell>
+                <TableCell>{formatMinutes(employee.activeMinutes)}</TableCell>
+                <TableCell>{formatMinutes(employee.idleMinutes)}</TableCell>
+                <TableCell className="text-sm text-muted-foreground">
+                  {formatRelative(employee.lastHeartbeat)}
+                </TableCell>
+                <TableCell className="text-sm">{employee.currentDeviceName ?? "-"}</TableCell>
+                <TableCell className="text-right">
+                  <Button asChild variant="ghost" size="sm">
+                    <Link to="/employees/$employeeId" params={{ employeeId: employee.id }}>
+                      View
+                    </Link>
+                  </Button>
+                </TableCell>
+              </TableRow>
             ))}
             {rows.length === 0 && (
               <TableRow>

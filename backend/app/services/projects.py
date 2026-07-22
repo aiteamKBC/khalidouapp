@@ -8,7 +8,16 @@ from sqlalchemy.orm import Session
 
 from app.api.v1.team_auth import ensure_team_access
 from app.core.exceptions import ApiError
-from app.models import AdminUser, Device, Project, Task, TaskChecklistItem, Team, TeamMember, WorkSession
+from app.models import (
+    AdminUser,
+    Device,
+    Project,
+    Task,
+    TaskChecklistItem,
+    Team,
+    TeamMember,
+    WorkSession,
+)
 from app.services.task_workflow import TRACKABLE_STAGES
 
 
@@ -94,7 +103,8 @@ def serialize_project(project: Project) -> dict[str, Any]:
 
 def ensure_general_work_project(db: Session, *, company_id: UUID, team_id: UUID) -> Project:
     project = db.scalar(
-        select(Project).where(
+        select(Project)
+        .where(
             Project.company_id == company_id,
             Project.team_id == team_id,
             Project.name.startswith("General Work"),
@@ -142,7 +152,9 @@ def ensure_general_work_project(db: Session, *, company_id: UUID, team_id: UUID)
     return project
 
 
-def serialize_task(task: Task, project: Project | None = None, team: Team | None = None) -> dict[str, Any]:
+def serialize_task(
+    task: Task, project: Project | None = None, team: Team | None = None
+) -> dict[str, Any]:
     is_system_default = (
         task.name == "General Work"
         and task.assignee_employee_id is None
@@ -154,8 +166,12 @@ def serialize_task(task: Task, project: Project | None = None, team: Team | None
         "id": str(task.id),
         "company_id": str(task.company_id),
         "project_id": str(task.project_id),
-        "assignee_employee_id": str(task.assignee_employee_id) if task.assignee_employee_id else None,
-        "created_by_employee_id": str(task.created_by_employee_id) if task.created_by_employee_id else None,
+        "assignee_employee_id": str(task.assignee_employee_id)
+        if task.assignee_employee_id
+        else None,
+        "created_by_employee_id": str(task.created_by_employee_id)
+        if task.created_by_employee_id
+        else None,
         "collaborator_employee_ids": [str(employee.id) for employee in task.collaborators],
         "team_id": str(project.team_id) if project else None,
         "name": task.name,
@@ -172,13 +188,19 @@ def serialize_task(task: Task, project: Project | None = None, team: Team | None
         "priority": task.priority,
         "blocked_reason": task.blocked_reason,
         "blocked_at": task.blocked_at.isoformat() if task.blocked_at else None,
-        "blocked_by_employee_id": str(task.blocked_by_employee_id) if task.blocked_by_employee_id else None,
-        "blocked_by_admin_user_id": str(task.blocked_by_admin_user_id) if task.blocked_by_admin_user_id else None,
+        "blocked_by_employee_id": str(task.blocked_by_employee_id)
+        if task.blocked_by_employee_id
+        else None,
+        "blocked_by_admin_user_id": str(task.blocked_by_admin_user_id)
+        if task.blocked_by_admin_user_id
+        else None,
         "block_resolution_note": task.block_resolution_note,
         "review_note": task.review_note,
         "completion_note": task.completion_note,
         "is_system_default": is_system_default,
-        "reviewed_by_admin_user_id": str(task.reviewed_by_admin_user_id) if task.reviewed_by_admin_user_id else None,
+        "reviewed_by_admin_user_id": str(task.reviewed_by_admin_user_id)
+        if task.reviewed_by_admin_user_id
+        else None,
         "reviewed_at": task.reviewed_at.isoformat() if task.reviewed_at else None,
         "checklist": [
             {
@@ -186,7 +208,9 @@ def serialize_task(task: Task, project: Project | None = None, team: Team | None
                 "title": item.title,
                 "completed": item.completed,
                 "position": item.position,
-                "assignee_employee_id": str(item.assignee_employee_id) if item.assignee_employee_id else None,
+                "assignee_employee_id": str(item.assignee_employee_id)
+                if item.assignee_employee_id
+                else None,
             }
             for item in task.checklist_items
         ],

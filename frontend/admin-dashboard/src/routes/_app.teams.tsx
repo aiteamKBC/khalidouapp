@@ -215,7 +215,12 @@ function TeamsList() {
                 <SelectItem value="none">No owner</SelectItem>
                 {(owners.data ?? []).map((user) => (
                   <SelectItem key={user.id} value={user.id}>
-                    {user.name} · {user.role === "general_admin" ? "General admin" : user.role === "hr" ? "HR" : "Team manager"}
+                    {user.name} ·{" "}
+                    {user.role === "general_admin"
+                      ? "General admin"
+                      : user.role === "hr"
+                        ? "HR"
+                        : "Team manager"}
                   </SelectItem>
                 ))}
               </SelectContent>

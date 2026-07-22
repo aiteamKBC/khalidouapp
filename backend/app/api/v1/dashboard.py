@@ -29,12 +29,16 @@ def summary(
     employee_scope = accessible_employee_ids_statement(db, current_admin, team_id)
 
     def scoped(statement, employee_column):
-        return statement.where(employee_column.in_(employee_scope)) if employee_scope is not None else statement
+        return (
+            statement.where(employee_column.in_(employee_scope))
+            if employee_scope is not None
+            else statement
+        )
 
     total_employees_query = scoped(
-        select(func.count()).select_from(Employee).where(
-            Employee.company_id == current_admin.company_id
-        ),
+        select(func.count())
+        .select_from(Employee)
+        .where(Employee.company_id == current_admin.company_id),
         Employee.id,
     )
     online_employees_query = scoped(

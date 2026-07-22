@@ -14,7 +14,11 @@ from app.core.responses import success_response
 from app.database.session import get_db
 from app.models import AdminUser, Employee, LeaveBalance, LeaveRequest
 from app.schemas.admin import LeaveBalanceUpdate, LeaveRequestReview, ManualLeaveCreate
-from app.services.leave_management import requested_workdays, serialize_balance, serialize_leave_request
+from app.services.leave_management import (
+    requested_workdays,
+    serialize_balance,
+    serialize_leave_request,
+)
 from app.services.work_profiles import get_or_create_work_profile
 from app.services.permissions import require_capability
 
@@ -32,7 +36,9 @@ def record_manual_leave(
     if payload.end_date < payload.start_date:
         raise ApiError("INVALID_LEAVE_DATES", "End date must be on or after start date.", 400)
     if payload.start_date.year != payload.end_date.year:
-        raise ApiError("LEAVE_YEAR_BOUNDARY", "A holiday entry must stay within one calendar year.", 400)
+        raise ApiError(
+            "LEAVE_YEAR_BOUNDARY", "A holiday entry must stay within one calendar year.", 400
+        )
     profile = get_or_create_work_profile(db, employee)
     days = requested_workdays(payload.start_date, payload.end_date, profile.working_days)
     if days < 1:
@@ -46,11 +52,17 @@ def record_manual_leave(
         )
     )
     if overlap:
-        raise ApiError("OVERLAPPING_LEAVE_REQUEST", "This employee already has leave in this period.", 409)
+        raise ApiError(
+            "OVERLAPPING_LEAVE_REQUEST", "This employee already has leave in this period.", 409
+        )
     if payload.leave_type == "annual":
         balance = serialize_balance(db, employee, payload.start_date.year)
         if balance["remaining_days"] < days:
-            raise ApiError("INSUFFICIENT_LEAVE_CREDIT", "The employee does not have enough holiday credit.", 409)
+            raise ApiError(
+                "INSUFFICIENT_LEAVE_CREDIT",
+                "The employee does not have enough holiday credit.",
+                409,
+            )
     row = LeaveRequest(
         company_id=current_admin.company_id,
         employee_id=employee.id,
@@ -122,7 +134,11 @@ def review_leave_request(
     if payload.status == "approved" and row.leave_type == "annual":
         balance = serialize_balance(db, row.employee, row.start_date.year)
         if balance["remaining_days"] < row.requested_days:
-            raise ApiError("INSUFFICIENT_LEAVE_CREDIT", "The employee does not have enough holiday credit.", 409)
+            raise ApiError(
+                "INSUFFICIENT_LEAVE_CREDIT",
+                "The employee does not have enough holiday credit.",
+                409,
+            )
     row.status = payload.status
     row.review_note = payload.review_note
     row.reviewed_by_admin_user_id = current_admin.id
@@ -156,7 +172,11 @@ def update_leave_balance(
     require_capability(current_admin, "leave_requests.manage")
     employee = ensure_employee_access(db, current_admin, employee_id)
     serialize_balance(db, employee, year)
-    balance = db.scalar(select(LeaveBalance).where(LeaveBalance.employee_id == employee_id, LeaveBalance.year == year))
+    balance = db.scalar(
+        select(LeaveBalance).where(
+            LeaveBalance.employee_id == employee_id, LeaveBalance.year == year
+        )
+    )
     balance.credit_days = payload.credit_days
     balance.manually_adjusted = True
     db.add(balance)

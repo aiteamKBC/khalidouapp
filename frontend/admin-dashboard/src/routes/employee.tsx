@@ -329,7 +329,8 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
             completed: input.completed,
           })
         : createEmployeeChecklistItem(token, input.taskId, input.title ?? ""),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: [...employeePortalQueryKey, "tasks"] }),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: [...employeePortalQueryKey, "tasks"] }),
   });
   const taskCollaborationMutation = useMutation({
     mutationFn: async (input: { taskId: string; comment?: string; file?: File }) =>
@@ -353,12 +354,20 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
     },
   });
   const createLeave = useMutation({
-    mutationFn: () => createEmployeeLeaveRequest(token, {
-      startDate: leaveStart, endDate: leaveEnd, leaveType: "annual", reason: leaveReason || undefined,
-    }),
+    mutationFn: () =>
+      createEmployeeLeaveRequest(token, {
+        startDate: leaveStart,
+        endDate: leaveEnd,
+        leaveType: "annual",
+        reason: leaveReason || undefined,
+      }),
     onSuccess: async () => {
-      setLeaveStart(""); setLeaveEnd(""); setLeaveReason("");
-      await queryClient.invalidateQueries({ queryKey: [...employeePortalQueryKey, "leave-requests"] });
+      setLeaveStart("");
+      setLeaveEnd("");
+      setLeaveReason("");
+      await queryClient.invalidateQueries({
+        queryKey: [...employeePortalQueryKey, "leave-requests"],
+      });
     },
   });
 
@@ -856,17 +865,68 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
           <CardHeader>
             <CardTitle>Request holiday</CardTitle>
             <p className="text-sm text-muted-foreground">
-              Annual credit: {leaveRequests.data?.balance.remaining_days ?? "-"} of {leaveRequests.data?.balance.credit_days ?? "-"} days remaining.
+              Annual credit: {leaveRequests.data?.balance.remaining_days ?? "-"} of{" "}
+              {leaveRequests.data?.balance.credit_days ?? "-"} days remaining.
             </p>
           </CardHeader>
           <CardContent className="space-y-4">
-            <form className="space-y-3" onSubmit={(event) => { event.preventDefault(); createLeave.mutate(); }}>
-              <div className="grid grid-cols-2 gap-3"><div><Label>From</Label><Input type="date" value={leaveStart} onChange={(event) => setLeaveStart(event.target.value)} required /></div><div><Label>To</Label><Input type="date" value={leaveEnd} onChange={(event) => setLeaveEnd(event.target.value)} required /></div></div>
-              <div><Label>Reason (optional)</Label><Textarea value={leaveReason} onChange={(event) => setLeaveReason(event.target.value)} /></div>
-              <Button disabled={createLeave.isPending}>{createLeave.isPending ? "Sending..." : "Request holiday"}</Button>
-              {createLeave.error && <p className="text-sm text-destructive">{createLeave.error.message}</p>}
+            <form
+              className="space-y-3"
+              onSubmit={(event) => {
+                event.preventDefault();
+                createLeave.mutate();
+              }}
+            >
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label>From</Label>
+                  <Input
+                    type="date"
+                    value={leaveStart}
+                    onChange={(event) => setLeaveStart(event.target.value)}
+                    required
+                  />
+                </div>
+                <div>
+                  <Label>To</Label>
+                  <Input
+                    type="date"
+                    value={leaveEnd}
+                    onChange={(event) => setLeaveEnd(event.target.value)}
+                    required
+                  />
+                </div>
+              </div>
+              <div>
+                <Label>Reason (optional)</Label>
+                <Textarea
+                  value={leaveReason}
+                  onChange={(event) => setLeaveReason(event.target.value)}
+                />
+              </div>
+              <Button disabled={createLeave.isPending}>
+                {createLeave.isPending ? "Sending..." : "Request holiday"}
+              </Button>
+              {createLeave.error && (
+                <p className="text-sm text-destructive">{createLeave.error.message}</p>
+              )}
             </form>
-            <div className="space-y-2">{(leaveRequests.data?.requests ?? []).map((request) => <div key={request.id} className="flex items-center justify-between rounded-lg border p-3"><div><strong>{request.requested_days} days</strong><p className="text-xs text-muted-foreground">{request.start_date} – {request.end_date}</p></div><StatusBadge status={request.status} /></div>)}</div>
+            <div className="space-y-2">
+              {(leaveRequests.data?.requests ?? []).map((request) => (
+                <div
+                  key={request.id}
+                  className="flex items-center justify-between rounded-lg border p-3"
+                >
+                  <div>
+                    <strong>{request.requested_days} days</strong>
+                    <p className="text-xs text-muted-foreground">
+                      {request.start_date} – {request.end_date}
+                    </p>
+                  </div>
+                  <StatusBadge status={request.status} />
+                </div>
+              ))}
+            </div>
           </CardContent>
         </Card>
         <Card>

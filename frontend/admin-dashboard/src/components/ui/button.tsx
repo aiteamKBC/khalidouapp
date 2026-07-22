@@ -57,11 +57,7 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
     const isLoading = Boolean(loading ?? (disabled && hasLoadingText(children)));
     if (asChild) {
       return (
-        <Comp
-          className={cn(buttonVariants({ variant, size, className }))}
-          ref={ref}
-          {...props}
-        >
+        <Comp className={cn(buttonVariants({ variant, size, className }))} ref={ref} {...props}>
           {children}
         </Comp>
       );

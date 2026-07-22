@@ -11,9 +11,7 @@ from app.models.mixins import UUIDPrimaryKeyMixin, utc_now
 class EmployeeInvitation(UUIDPrimaryKeyMixin, Base):
     __tablename__ = "employee_invitations"
 
-    company_id: Mapped[UUID] = mapped_column(
-        ForeignKey("companies.id"), nullable=False, index=True
-    )
+    company_id: Mapped[UUID] = mapped_column(ForeignKey("companies.id"), nullable=False, index=True)
     employee_id: Mapped[UUID] = mapped_column(
         ForeignKey("employees.id", ondelete="CASCADE"), nullable=False, index=True
     )

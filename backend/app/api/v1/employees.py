@@ -1,5 +1,4 @@
 from datetime import UTC, date, datetime, timedelta
-import secrets
 from typing import Annotated
 from uuid import UUID, uuid4
 
@@ -31,12 +30,15 @@ from app.models import (
     Device,
     Employee,
     EmployeeWorkProfile,
-    EnrollmentCode,
     Screenshot,
     TeamMember,
     WorkSession,
 )
-from app.schemas.admin import EmployeeCreate, EmployeePasswordUpdate, EmployeeUpdate, EnrollmentCodeCreate
+from app.schemas.admin import (
+    EmployeeCreate,
+    EmployeePasswordUpdate,
+    EmployeeUpdate,
+)
 from app.services.audit import record_audit_log
 from app.services.email import (
     enqueue_employee_invitation_email,
@@ -79,7 +81,13 @@ def list_employees(
     statement = apply_employee_scope(statement, db, current_admin, Employee.id, team_id)
     if search:
         pattern = f"%{search}%"
-        statement = statement.where(or_(Employee.name.ilike(pattern), Employee.email.ilike(pattern), Employee.employee_code.ilike(pattern)))
+        statement = statement.where(
+            or_(
+                Employee.name.ilike(pattern),
+                Employee.email.ilike(pattern),
+                Employee.employee_code.ilike(pattern),
+            )
+        )
     if status:
         statement = statement.where(Employee.status == status)
     if job_title:
@@ -96,10 +104,7 @@ def list_employees(
     employees = db.scalars(apply_pagination(statement, page, page_size)).all()
     invitations = latest_employee_invitations(db, [employee.id for employee in employees])
     return success_response(
-        data=[
-            serialize_employee(employee, invitations.get(employee.id))
-            for employee in employees
-        ],
+        data=[serialize_employee(employee, invitations.get(employee.id)) for employee in employees],
         meta=pagination_meta(total, page, page_size),
     )
 
@@ -279,9 +284,7 @@ def list_employee_overviews(
         idle_seconds = int(idle_seconds or 0)
         data.append(
             {
-                "employee": serialize_employee(
-                    employee, invitations_by_employee.get(employee.id)
-                ),
+                "employee": serialize_employee(employee, invitations_by_employee.get(employee.id)),
                 "online_status": "online" if online else "offline",
                 "activity_status": session_status if session_id and online else "offline",
                 "current_session": (
@@ -294,16 +297,16 @@ def list_employee_overviews(
                     if session_id
                     else None
                 ),
-                "session_start_time": session_started_at.isoformat() if session_started_at else None,
+                "session_start_time": session_started_at.isoformat()
+                if session_started_at
+                else None,
                 "worked_today_seconds": active_seconds + idle_seconds,
                 "active_seconds": active_seconds,
                 "idle_seconds": idle_seconds,
                 "last_heartbeat": device_last_seen.isoformat() if device_last_seen else None,
                 "last_screenshot": screenshot_at.isoformat() if screenshot_at else None,
                 "device": (
-                    {"id": str(device_id), "device_name": device_name}
-                    if device_id
-                    else None
+                    {"id": str(device_id), "device_name": device_name} if device_id else None
                 ),
                 "team_ids": teams_by_employee.get(employee.id, []),
                 "team_role": team_role_by_employee.get(employee.id),
@@ -372,32 +375,12 @@ def get_employee_or_404(
     return ensure_employee_access(db, current_admin, employee_id, team_id)
 
 
-def generate_enrollment_code() -> str:
-    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-    return "KH-" + "".join(secrets.choice(alphabet) for _ in range(12))
-
-
-def serialize_enrollment_code(code: EnrollmentCode, include_plain_code: str | None = None) -> dict:
-    expires_at = code.expires_at
-    if expires_at.tzinfo is None:
-        expires_at = expires_at.replace(tzinfo=UTC)
-    status = "expired" if code.status == "active" and expires_at <= datetime.now(UTC) else code.status
-    data = {
-        "id": str(code.id),
-        "employee_id": str(code.employee_id),
-        "code_hint": code.code_hint,
-        "status": status,
-        "expires_at": code.expires_at.isoformat(),
-        "used_at": code.used_at.isoformat() if code.used_at else None,
-        "created_at": code.created_at.isoformat(),
-    }
-    if include_plain_code is not None:
-        data["code"] = include_plain_code
-    return data
-
-
 @router.get("/employees/{employee_id}")
-def get_employee(employee_id: UUID, current_admin: Annotated[AdminUser, Depends(get_current_admin)], db: Annotated[Session, Depends(get_db)]):
+def get_employee(
+    employee_id: UUID,
+    current_admin: Annotated[AdminUser, Depends(get_current_admin)],
+    db: Annotated[Session, Depends(get_db)],
+):
     employee = get_employee_or_404(db, current_admin, employee_id)
     invitation = latest_employee_invitations(db, [employee.id]).get(employee.id)
     profile = get_or_create_work_profile(db, employee)
@@ -430,6 +413,17 @@ def update_employee_work_profile(
     employee = get_employee_or_404(db, current_admin, employee_id)
     profile = get_or_create_work_profile(db, employee)
     audit_changes = payload.model_dump(exclude_unset=True, mode="json")
+    audit_before = {
+        key: (
+            getattr(profile, key).isoformat()
+            if hasattr(getattr(profile, key), "isoformat")
+            else float(getattr(profile, key))
+            if key in {"salary_amount", "overtime_rate_multiplier"}
+            and getattr(profile, key) is not None
+            else getattr(profile, key)
+        )
+        for key in audit_changes
+    }
     changes = dict(audit_changes)
     for time_field in ("shift_start", "shift_end"):
         if time_field in changes:
@@ -445,7 +439,7 @@ def update_employee_work_profile(
         "employee_work_profile",
         entity_id=employee.id,
         entity_name=employee.email,
-        details=audit_changes,
+        details={"old": audit_before, "new": audit_changes},
         request=request,
     )
     db.commit()
@@ -524,106 +518,6 @@ def get_employee_payroll_preview(
     )
 
 
-@router.get("/employees/{employee_id}/enrollment-codes")
-def list_employee_enrollment_codes(
-    employee_id: UUID,
-    current_admin: Annotated[AdminUser, Depends(get_current_admin)],
-    db: Annotated[Session, Depends(get_db)],
-):
-    require_capability(current_admin, "devices.manage")
-    employee = get_employee_or_404(db, current_admin, employee_id)
-    codes = db.scalars(
-        select(EnrollmentCode)
-        .where(
-            EnrollmentCode.company_id == current_admin.company_id,
-            EnrollmentCode.employee_id == employee.id,
-        )
-        .order_by(EnrollmentCode.created_at.desc())
-    ).all()
-    return success_response(data=[serialize_enrollment_code(code) for code in codes])
-
-
-@router.post("/employees/{employee_id}/enrollment-codes")
-def create_employee_enrollment_code(
-    employee_id: UUID,
-    payload: EnrollmentCodeCreate,
-    request: Request,
-    background_tasks: BackgroundTasks,
-    current_admin: Annotated[AdminUser, Depends(get_current_admin)],
-    db: Annotated[Session, Depends(get_db)],
-):
-    require_capability(current_admin, "devices.manage")
-    employee = get_employee_or_404(db, current_admin, employee_id)
-    plain_code = generate_enrollment_code()
-    expires_at = datetime.now(UTC) + timedelta(days=payload.expires_in_days)
-    enrollment_code = EnrollmentCode(
-        company_id=current_admin.company_id,
-        employee_id=employee.id,
-        code_hash=hash_password(plain_code),
-        code_hint=f"{plain_code[:6]}...",
-        status="active",
-        expires_at=expires_at,
-    )
-    db.add(enrollment_code)
-    db.commit()
-    db.refresh(enrollment_code)
-    record_audit_log(
-        db,
-        current_admin,
-        "created",
-        "enrollment_code",
-        entity_id=enrollment_code.id,
-        entity_name=employee.email,
-        details={
-            "employee_id": str(employee.id),
-            "expires_at": enrollment_code.expires_at.isoformat(),
-        },
-        request=request,
-    )
-    db.commit()
-    data = serialize_enrollment_code(enrollment_code, plain_code)
-    data["email_queued"] = False
-    return success_response(data=data)
-
-
-@router.delete("/employees/{employee_id}/enrollment-codes/{code_id}")
-def revoke_employee_enrollment_code(
-    employee_id: UUID,
-    code_id: UUID,
-    request: Request,
-    current_admin: Annotated[AdminUser, Depends(get_current_admin)],
-    db: Annotated[Session, Depends(get_db)],
-):
-    require_capability(current_admin, "devices.manage")
-    employee = get_employee_or_404(db, current_admin, employee_id)
-    enrollment_code = db.scalar(
-        select(EnrollmentCode).where(
-            EnrollmentCode.id == code_id,
-            EnrollmentCode.company_id == current_admin.company_id,
-            EnrollmentCode.employee_id == employee.id,
-        )
-    )
-    if enrollment_code is None:
-        raise ApiError("ENROLLMENT_CODE_NOT_FOUND", "Enrollment code was not found.", 404)
-    if enrollment_code.status == "active":
-        enrollment_code.status = "revoked"
-        db.add(enrollment_code)
-        db.commit()
-        db.refresh(enrollment_code)
-        record_audit_log(
-            db,
-            current_admin,
-            "revoked",
-            "enrollment_code",
-            entity_id=enrollment_code.id,
-            entity_name=employee.email,
-            details={"employee_id": str(employee.id)},
-            request=request,
-        )
-        db.commit()
-    return success_response(data=serialize_enrollment_code(enrollment_code))
-
-
 @router.patch("/employees/{employee_id}")
 def update_employee(
     employee_id: UUID,
@@ -649,7 +543,9 @@ def update_employee(
     for key, value in changes.items():
         if key == "status":
             continue
-        setattr(employee, key, value.lower() if key == "email" and isinstance(value, str) else value)
+        setattr(
+            employee, key, value.lower() if key == "email" and isinstance(value, str) else value
+        )
     if turning_inactive:
         disable_employee_tracking(db, employee)
     elif "status" in changes:
@@ -701,7 +597,12 @@ def update_employee_password(
 
 
 @router.delete("/employees/{employee_id}")
-def delete_employee(employee_id: UUID, request: Request, current_admin: Annotated[AdminUser, Depends(get_current_admin)], db: Annotated[Session, Depends(get_db)]):
+def delete_employee(
+    employee_id: UUID,
+    request: Request,
+    current_admin: Annotated[AdminUser, Depends(get_current_admin)],
+    db: Annotated[Session, Depends(get_db)],
+):
     require_capability(current_admin, "people.archive")
     employee = get_employee_or_404(db, current_admin, employee_id)
     disable_employee_tracking(db, employee)
@@ -721,7 +622,11 @@ def delete_employee(employee_id: UUID, request: Request, current_admin: Annotate
 
 
 @router.get("/employees/{employee_id}/status")
-def employee_status(employee_id: UUID, current_admin: Annotated[AdminUser, Depends(get_current_admin)], db: Annotated[Session, Depends(get_db)]):
+def employee_status(
+    employee_id: UUID,
+    current_admin: Annotated[AdminUser, Depends(get_current_admin)],
+    db: Annotated[Session, Depends(get_db)],
+):
     employee = get_employee_or_404(db, current_admin, employee_id)
     device = db.scalar(
         select(Device)
@@ -730,7 +635,11 @@ def employee_status(employee_id: UUID, current_admin: Annotated[AdminUser, Depen
     )
     current = db.scalar(
         select(WorkSession)
-        .where(WorkSession.company_id == current_admin.company_id, WorkSession.employee_id == employee.id, WorkSession.ended_at.is_(None))
+        .where(
+            WorkSession.company_id == current_admin.company_id,
+            WorkSession.employee_id == employee.id,
+            WorkSession.ended_at.is_(None),
+        )
         .order_by(WorkSession.started_at.desc())
     )
     today_start, today_end = day_bounds(date.today())
@@ -747,7 +656,11 @@ def employee_status(employee_id: UUID, current_admin: Annotated[AdminUser, Depen
     ).one_or_none()
     last_screenshot = db.scalar(
         select(Screenshot)
-        .where(Screenshot.company_id == current_admin.company_id, Screenshot.employee_id == employee.id, Screenshot.deleted_at.is_(None))
+        .where(
+            Screenshot.company_id == current_admin.company_id,
+            Screenshot.employee_id == employee.id,
+            Screenshot.deleted_at.is_(None),
+        )
         .order_by(Screenshot.captured_at.desc())
     )
     settings = get_company_settings(db, current_admin.company_id)
@@ -772,7 +685,9 @@ def employee_status(employee_id: UUID, current_admin: Annotated[AdminUser, Depen
             "active_seconds": active_seconds,
             "idle_seconds": idle_seconds,
             "points_today": round(active_seconds / 3600, 2),
-            "last_heartbeat": device.last_seen_at.isoformat() if device and device.last_seen_at else None,
+            "last_heartbeat": device.last_seen_at.isoformat()
+            if device and device.last_seen_at
+            else None,
             "last_screenshot": last_screenshot.captured_at.isoformat() if last_screenshot else None,
             "device": serialize_device(device) if device else None,
         }
@@ -790,7 +705,9 @@ def employee_sessions(
     page_size: int = Query(default=25, ge=1, le=100),
 ):
     get_employee_or_404(db, current_admin, employee_id)
-    statement = select(WorkSession).where(WorkSession.company_id == current_admin.company_id, WorkSession.employee_id == employee_id)
+    statement = select(WorkSession).where(
+        WorkSession.company_id == current_admin.company_id, WorkSession.employee_id == employee_id
+    )
     if start_date:
         statement = statement.where(WorkSession.started_at >= day_bounds(start_date)[0])
     if end_date:
@@ -798,12 +715,23 @@ def employee_sessions(
     statement = statement.order_by(WorkSession.started_at.desc())
     total = count_for(db, statement)
     sessions = db.scalars(apply_pagination(statement, page, page_size)).all()
-    return success_response(data=[serialize_work_session(session) for session in sessions], meta=pagination_meta(total, page, page_size))
+    return success_response(
+        data=[serialize_work_session(session) for session in sessions],
+        meta=pagination_meta(total, page, page_size),
+    )
 
 
 @router.get("/sessions/{session_id}")
-def session_detail(session_id: UUID, current_admin: Annotated[AdminUser, Depends(get_current_admin)], db: Annotated[Session, Depends(get_db)]):
-    session = db.scalar(select(WorkSession).where(WorkSession.id == session_id, WorkSession.company_id == current_admin.company_id))
+def session_detail(
+    session_id: UUID,
+    current_admin: Annotated[AdminUser, Depends(get_current_admin)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    session = db.scalar(
+        select(WorkSession).where(
+            WorkSession.id == session_id, WorkSession.company_id == current_admin.company_id
+        )
+    )
     if session is None:
         from app.core.exceptions import ApiError
 
@@ -820,7 +748,11 @@ def session_events(
     current_admin: Annotated[AdminUser, Depends(get_current_admin)],
     db: Annotated[Session, Depends(get_db)],
 ):
-    session = db.scalar(select(WorkSession).where(WorkSession.id == session_id, WorkSession.company_id == current_admin.company_id))
+    session = db.scalar(
+        select(WorkSession).where(
+            WorkSession.id == session_id, WorkSession.company_id == current_admin.company_id
+        )
+    )
     if session is None:
         from app.core.exceptions import ApiError
 
@@ -830,7 +762,10 @@ def session_events(
         ensure_team_access(db, current_admin, session.team_id)
     events = db.scalars(
         select(ActivityEvent)
-        .where(ActivityEvent.company_id == current_admin.company_id, ActivityEvent.session_id == session_id)
+        .where(
+            ActivityEvent.company_id == current_admin.company_id,
+            ActivityEvent.session_id == session_id,
+        )
         .order_by(ActivityEvent.event_timestamp)
     ).all()
     return success_response(data=[serialize_activity_event(event) for event in events])

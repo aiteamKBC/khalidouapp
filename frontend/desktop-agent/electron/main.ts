@@ -10,7 +10,6 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
-  enrollDevice,
   enrollDeviceWithCredentials,
   endSession,
   getAgentConfig,
@@ -47,6 +46,7 @@ import {
   updateAgentTaskStage,
   updateAgentTaskChecklistItem,
   type TrackingConfig,
+  type RequestPolicy,
   type WorkSession,
 } from "./services/agentApi.js";
 import {
@@ -113,6 +113,7 @@ type AgentRuntimeStatus = {
   selectedTask: RuntimeTask | null;
   timeAdjustmentRequests: TimeAdjustmentRequest[];
   leaveRequests: LeaveRequestsPayload | null;
+  requestPolicy: RequestPolicy | null;
   timeSummary: Pick<AgentSummary, "today" | "week" | "month"> | null;
   dailyTargetSeconds: number;
   dailyTargetProgressPercent: number;
@@ -240,6 +241,7 @@ const runtimeStatus: AgentRuntimeStatus = {
   selectedTask: null,
   timeAdjustmentRequests: [],
   leaveRequests: null,
+  requestPolicy: null,
   timeSummary: null,
   dailyTargetSeconds: 8 * 60 * 60,
   dailyTargetProgressPercent: 0,
@@ -539,7 +541,11 @@ function syncRuntimeFromSession(session: WorkSession) {
   if (trackingPausedByUser) {
     return;
   }
-  if (session.ended_at || session.status === "ended" || session.status === "offline") {
+  if (
+    session.ended_at ||
+    session.status === "ended" ||
+    session.status === "offline"
+  ) {
     if (currentSessionId === session.id) {
       currentSessionId = null;
     }
@@ -581,14 +587,25 @@ function applyWorkdayState(workday?: WorkdayState | null) {
     runtimeStatus.extraTimeStatus = workday.extra_time_status;
     runtimeStatus.dailyTargetProgressPercent = Math.min(
       100,
-      Math.round((workday.normal_seconds / Math.max(1, workday.required_normal_seconds)) * 100),
+      Math.round(
+        (workday.normal_seconds /
+          Math.max(1, workday.required_normal_seconds)) *
+          100,
+      ),
     );
     return;
   }
-  const normalSeconds = Math.min(runtimeStatus.workedTodaySeconds, runtimeStatus.dailyTargetSeconds);
+  const normalSeconds = Math.min(
+    runtimeStatus.workedTodaySeconds,
+    runtimeStatus.dailyTargetSeconds,
+  );
   runtimeStatus.normalSeconds = normalSeconds;
-  runtimeStatus.extraSeconds = Math.max(0, runtimeStatus.workedTodaySeconds - runtimeStatus.dailyTargetSeconds);
-  runtimeStatus.extraTimeStatus = runtimeStatus.extraSeconds > 0 ? "recorded_not_counted" : "none";
+  runtimeStatus.extraSeconds = Math.max(
+    0,
+    runtimeStatus.workedTodaySeconds - runtimeStatus.dailyTargetSeconds,
+  );
+  runtimeStatus.extraTimeStatus =
+    runtimeStatus.extraSeconds > 0 ? "recorded_not_counted" : "none";
 }
 
 function recalculateWorkedTime() {
@@ -620,7 +637,9 @@ function recalculateWorkedTime() {
   if (runtimeStatus.paidPauseEndsAt) {
     runtimeStatus.paidPauseRemainingSeconds = Math.max(
       0,
-      Math.ceil((new Date(runtimeStatus.paidPauseEndsAt).getTime() - now) / 1000),
+      Math.ceil(
+        (new Date(runtimeStatus.paidPauseEndsAt).getTime() - now) / 1000,
+      ),
     );
   }
 
@@ -653,7 +672,8 @@ async function refreshWorkedTodayTotal() {
       week: summary.week,
       month: summary.month,
     };
-    runtimeStatus.dailyTargetSeconds = summary.daily_target_seconds ?? 8 * 60 * 60;
+    runtimeStatus.dailyTargetSeconds =
+      summary.daily_target_seconds ?? 8 * 60 * 60;
     runtimeStatus.dailyTargetProgressPercent =
       summary.daily_target_progress_percent ?? 0;
     runtimeStatus.activityPercent = summary.activity_percent ?? 0;
@@ -978,7 +998,9 @@ async function refreshTrackingConfig() {
     return;
   }
   try {
-    const nextConfig = normalizeTrackingConfig(await getAgentConfig());
+    const rawConfig = await getAgentConfig();
+    const nextConfig = normalizeTrackingConfig(rawConfig);
+    runtimeStatus.requestPolicy = rawConfig.request_policy ?? null;
     const scheduleChanged =
       nextConfig.screenshot_enabled !== trackingConfig.screenshot_enabled ||
       nextConfig.screenshot_interval_minutes !==
@@ -1099,19 +1121,13 @@ async function captureAndUploadScreenshot() {
 
 function showScreenshotCapturedNotification() {
   const title = "Screenshot captured";
-  const body =
-    "Khaliduo took a screenshot to document your work and effort.";
+  const body = "Khaliduo took a screenshot to document your work and effort.";
 
   if (Notification.isSupported()) {
     const notification = new Notification({
       title,
       body,
-      icon: path.join(
-        __dirname,
-        "..",
-        "dist-khaliduo",
-        "khaliduo-icon.png",
-      ),
+      icon: path.join(__dirname, "..", "dist-khaliduo", "khaliduo-icon.png"),
       silent: true,
     });
     notification.on("click", () => showMainWindow());
@@ -1261,7 +1277,9 @@ async function startTrackingAutomatically() {
   }
   try {
     await syncPendingQueues(true);
-    trackingConfig = normalizeTrackingConfig(await getAgentConfig());
+    const rawConfig = await getAgentConfig();
+    trackingConfig = normalizeTrackingConfig(rawConfig);
+    runtimeStatus.requestPolicy = rawConfig.request_policy ?? null;
     await refreshTasks();
     const current = await getCurrentSession();
     if (current.session) {
@@ -1315,7 +1333,9 @@ function schedulePaidPauseAutoResume(endsAt: string) {
     runtimeStatus.trackingPaused = false;
     runtimeStatus.paidPauseEndsAt = null;
     runtimeStatus.paidPauseRemainingSeconds = 0;
-    runtimeStatus.trackingStatus = currentSessionId ? "active" : runtimeStatus.trackingStatus;
+    runtimeStatus.trackingStatus = currentSessionId
+      ? "active"
+      : runtimeStatus.trackingStatus;
     rebuildTrayMenu();
     void heartbeatTick();
   }, delayMs);
@@ -1405,7 +1425,9 @@ async function stopTrackingSession(reason = "Stopped by employee") {
   }
 }
 
-async function pauseTracking(options?: string | { requestedMinutes?: number; reason?: string }) {
+async function pauseTracking(
+  options?: string | { requestedMinutes?: number; reason?: string },
+) {
   if (!runtimeStatus.enrolled || !currentSessionId) {
     return {
       success: false,
@@ -1417,7 +1439,11 @@ async function pauseTracking(options?: string | { requestedMinutes?: number; rea
       ? options.requestedMinutes
       : 10;
   const reason =
-    typeof options === "string" ? options : typeof options === "object" ? options.reason : undefined;
+    typeof options === "string"
+      ? options
+      : typeof options === "object"
+        ? options.reason
+        : undefined;
 
   try {
     const result = await startPaidPause({
@@ -1541,11 +1567,20 @@ async function createMainWindow() {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
+      // The preload is an ESM bundle; Electron sandboxed preloads cannot load
+      // ESM imports. Context isolation and disabled Node integration still
+      // keep application APIs behind the narrow contextBridge surface.
       sandbox: false,
     },
   });
 
   mainWindow.setMenuBarVisibility(false);
+  mainWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  mainWindow.webContents.on("will-navigate", (event, url) => {
+    if (url !== mainWindow?.webContents.getURL()) {
+      event.preventDefault();
+    }
+  });
 
   mainWindow.on("minimize", () => {
     mainWindow?.hide();
@@ -1582,15 +1617,23 @@ async function createMainWindow() {
         message: trackingPausedByUser
           ? "Khaliduo is currently paused."
           : runtimeStatus.trackingPaused
-          ? "Khaliduo is currently in paid pause."
-          : "Tracking and screenshots are currently active.",
+            ? "Khaliduo is currently in paid pause."
+            : "Tracking and screenshots are currently active.",
         detail:
           "Choose whether Khaliduo should keep tracking, hide, or quit completely.",
         buttons: trackingPausedByUser
           ? ["Hide (Keep Paused)", "Resume Tracking & Hide", "Quit Khaliduo"]
           : runtimeStatus.trackingPaused
-          ? ["Hide (Keep Paid Pause)", "Resume Tracking & Hide", "Quit Khaliduo"]
-          : ["Hide & Keep Tracking", "Start 10m Paid Pause & Hide", "Quit Khaliduo"],
+            ? [
+                "Hide (Keep Paid Pause)",
+                "Resume Tracking & Hide",
+                "Quit Khaliduo",
+              ]
+            : [
+                "Hide & Keep Tracking",
+                "Start 10m Paid Pause & Hide",
+                "Quit Khaliduo",
+              ],
         defaultId: 0,
         cancelId: 0,
         noLink: true,
@@ -1653,12 +1696,16 @@ function showMainWindow(
     const bounds = window.getBounds();
     window.setPosition(
       Math.round(workArea.x + Math.max(0, (workArea.width - bounds.width) / 2)),
-      Math.round(workArea.y + Math.max(0, (workArea.height - bounds.height) / 2)),
+      Math.round(
+        workArea.y + Math.max(0, (workArea.height - bounds.height) / 2),
+      ),
     );
   }
 
   const useTransientForeground =
-    options.forceForeground && !idleAlertAttentionActive && !updateAttentionActive;
+    options.forceForeground &&
+    !idleAlertAttentionActive &&
+    !updateAttentionActive;
   if (useTransientForeground) {
     window.setAlwaysOnTop(true, "screen-saver");
   }
@@ -2064,7 +2111,6 @@ app.whenReady().then(async () => {
     await startTrackingAutomatically();
   }
   rebuildTrayMenu();
-
 });
 
 app.on("window-all-closed", () => undefined);
@@ -2106,23 +2152,6 @@ ipcMain.handle("agent:install-update", async () => {
   }
 });
 
-ipcMain.handle("agent:enroll-device", async (_, enrollmentCode: string) => {
-  try {
-    const identity = await enrollDevice(enrollmentCode, app.getVersion());
-    await activateEnrolledDevice(identity);
-    return { success: true };
-  } catch (error) {
-    runtimeStatus.trackingStatus = "error";
-    tray?.setImage(createTrayImage("#b42318"));
-    rebuildTrayMenu();
-    log.error("Device enrollment failed", error);
-    return {
-      success: false,
-      message: getUserFacingError(error, "Enrollment failed."),
-    };
-  }
-});
-
 ipcMain.handle(
   "agent:enroll-with-credentials",
   async (_, email: string, password: string) => {
@@ -2158,14 +2187,16 @@ ipcMain.handle(
       return {
         success: false,
         message: unavailable
-          ? "Automatic device linking is not enabled on the server yet. Use an enrollment code instead."
+          ? "Automatic device linking is not enabled on the server yet. Ask an administrator to activate this device, then try again."
           : getUserFacingError(error, "Sign-in and device setup failed."),
       };
     }
   },
 );
 
-ipcMain.handle("agent:pause-tracking", (_event, options) => pauseTracking(options));
+ipcMain.handle("agent:pause-tracking", (_event, options) =>
+  pauseTracking(options),
+);
 
 ipcMain.handle("agent:resume-tracking", () => resumeTracking());
 
@@ -2234,7 +2265,10 @@ ipcMain.handle("agent:get-recent-screenshots", async () => {
     log.error("Recent screenshots could not be loaded", error);
     return {
       success: false,
-      message: getUserFacingError(error, "Recent screenshots could not be loaded."),
+      message: getUserFacingError(
+        error,
+        "Recent screenshots could not be loaded.",
+      ),
       screenshots: [],
     };
   }
@@ -2388,11 +2422,13 @@ ipcMain.handle(
       workSessionId?: string;
       sourceStartAt?: string;
       sourceEndAt?: string;
+      requestedLeaveTime?: string;
     },
   ) => {
     try {
       const request = await createTimeAdjustmentRequest(input);
       await refreshTimeAdjustmentRequests();
+      await refreshTrackingConfig();
       runtimeStatus.connectionStatus = "online";
       runtimeStatus.lastSuccessfulSyncAt = new Date().toISOString();
       rebuildTrayMenu();

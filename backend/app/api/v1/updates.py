@@ -20,19 +20,24 @@ WINDOWS_UPDATE_ARTIFACTS = {
 def download_windows_update_artifact(artifact_name: str):
     media_type = WINDOWS_UPDATE_ARTIFACTS.get(artifact_name)
     if media_type is None:
-        raise ApiError("UPDATE_ARTIFACT_NOT_FOUND", "The requested update file does not exist.", 404)
+        raise ApiError(
+            "UPDATE_ARTIFACT_NOT_FOUND", "The requested update file does not exist.", 404
+        )
 
     update_directory = settings.desktop_update_directory.resolve()
     artifact_path: Path = update_directory / artifact_name
     if not artifact_path.is_file():
         raise ApiError("UPDATE_NOT_AVAILABLE", "A Khaliduo update is not available yet.", 404)
 
-    cache_control = "no-store" if artifact_name == "latest.yml" else "public, max-age=86400, immutable"
     return FileResponse(
         artifact_path,
         media_type=media_type,
         headers={
-            "Cache-Control": cache_control,
+            # Release files intentionally keep stable names. They must never be
+            # cached across releases or the updater can receive an old binary
+            # that does not match the checksum in the new latest.yml.
+            "Cache-Control": "no-store, max-age=0",
+            "Pragma": "no-cache",
             "X-Content-Type-Options": "nosniff",
         },
     )

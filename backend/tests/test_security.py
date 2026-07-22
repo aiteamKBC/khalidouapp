@@ -1,5 +1,7 @@
-from datetime import timedelta
+from datetime import UTC, date, datetime, timedelta
 from uuid import uuid4
+
+from starlette.requests import Request
 
 from app.core.security import (
     create_employee_access_token,
@@ -9,6 +11,8 @@ from app.core.security import (
     hash_password,
     verify_password,
 )
+from app.services.activity_timeline import local_today
+from app.services.rate_limit import request_client_ip
 
 
 def test_tokens_created_in_the_same_second_are_unique() -> None:
@@ -82,3 +86,30 @@ def test_employee_handoff_token_round_trip() -> None:
     assert payload["company_id"] == str(company_id)
     assert payload["type"] == "employee_handoff"
     assert payload["exp"] - payload["iat"] == 120
+
+
+def test_local_today_uses_employee_timezone() -> None:
+    now = datetime(2026, 7, 21, 22, 30, tzinfo=UTC)
+
+    assert local_today("Africa/Cairo", now) == date(2026, 7, 22)
+    assert local_today("invalid/timezone", now) == date(2026, 7, 21)
+
+
+def test_rate_limit_ip_trusts_forwarded_header_only_from_known_proxy() -> None:
+    proxied = Request(
+        {
+            "type": "http",
+            "client": ("127.0.0.1", 1234),
+            "headers": [(b"x-forwarded-for", b"203.0.113.10, 127.0.0.1")],
+        }
+    )
+    direct = Request(
+        {
+            "type": "http",
+            "client": ("203.0.113.20", 1234),
+            "headers": [(b"x-forwarded-for", b"198.51.100.5")],
+        }
+    )
+
+    assert request_client_ip(proxied) == "203.0.113.10"
+    assert request_client_ip(direct) == "203.0.113.20"

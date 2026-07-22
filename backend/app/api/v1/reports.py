@@ -28,7 +28,11 @@ def summary(
     employee_scope = accessible_employee_ids_statement(db, current_admin, team_id)
 
     def scoped(statement, employee_column):
-        return statement.where(employee_column.in_(employee_scope)) if employee_scope is not None else statement
+        return (
+            statement.where(employee_column.in_(employee_scope))
+            if employee_scope is not None
+            else statement
+        )
 
     tracked_query = scoped(
         select(
@@ -86,9 +90,7 @@ def employee_report(
         .order_by(Employee.name)
     )
     statement = apply_employee_scope(statement, db, current_admin, Employee.id, team_id)
-    rows = db.execute(
-        statement
-    ).all()
+    rows = db.execute(statement).all()
     adjustment_statement = (
         select(
             TimeAdjustmentRequest.employee_id,
@@ -132,7 +134,17 @@ def export_csv(
     require_capability(current_admin, "reports.export")
     rows = employee_report(current_admin, db, team_id)["data"]
     output = StringIO()
-    writer = csv.DictWriter(output, fieldnames=["employee_id", "name", "email", "active_seconds", "idle_seconds", "total_seconds"])
+    writer = csv.DictWriter(
+        output,
+        fieldnames=[
+            "employee_id",
+            "name",
+            "email",
+            "active_seconds",
+            "idle_seconds",
+            "total_seconds",
+        ],
+    )
     writer.writeheader()
     writer.writerows(rows)
     return Response(content=output.getvalue(), media_type="text/csv")

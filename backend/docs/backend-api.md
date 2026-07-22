@@ -15,13 +15,10 @@ Team-based authorization is enforced server-side:
 - Team Owners (`team_owner`) can access only employees and tracking data connected to their assigned teams.
 - Any `team_id` query parameter is validated against the authenticated admin before filtering data.
 
-Device enrollment is admin-controlled:
-
-- `GET /api/v1/employees/{employee_id}/enrollment-codes`
-- `POST /api/v1/employees/{employee_id}/enrollment-codes`
-- `DELETE /api/v1/employees/{employee_id}/enrollment-codes/{code_id}`
-
-Only General Admins can create or revoke enrollment codes. Codes are single-use; the raw code is returned only by the create endpoint and only at creation time.
+Device enrollment uses the employee's email and password. After employee authentication,
+`POST /api/v1/agent/enroll-authenticated` links the current installation and returns a
+device token. The desktop app encrypts that token using Windows DPAPI; passwords and
+employee access tokens are never persisted by the app.
 
 All JSON responses use:
 

@@ -46,11 +46,11 @@ export function MetricTile({
       </span>
       <div className="min-w-0">
         <p className="font-mono-numeric truncate text-3xl font-extrabold leading-none">{value}</p>
-        <p className="mt-2 truncate text-xs font-extrabold uppercase tracking-wide text-muted-foreground">{label}</p>
+        <p className="mt-2 truncate text-xs font-extrabold uppercase tracking-wide text-muted-foreground">
+          {label}
+        </p>
         {hint && (
-          <p className="mt-1 truncate text-[10.5px] font-semibold text-muted-foreground">
-            {hint}
-          </p>
+          <p className="mt-1 truncate text-[10.5px] font-semibold text-muted-foreground">{hint}</p>
         )}
       </div>
     </>

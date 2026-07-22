@@ -198,9 +198,17 @@ function EmployeeDetailPage() {
               <EmployeeMetricCard
                 title="This month"
                 icon={Star}
-                minutes={monthSummary.totalMinutes || weekSummary.totalMinutes || todaySummary.totalMinutes}
-                activeMinutes={monthSummary.activeMinutes || weekSummary.activeMinutes || todaySummary.activeMinutes}
-                idleMinutes={monthSummary.idleMinutes || weekSummary.idleMinutes || todaySummary.idleMinutes}
+                minutes={
+                  monthSummary.totalMinutes || weekSummary.totalMinutes || todaySummary.totalMinutes
+                }
+                activeMinutes={
+                  monthSummary.activeMinutes ||
+                  weekSummary.activeMinutes ||
+                  todaySummary.activeMinutes
+                }
+                idleMinutes={
+                  monthSummary.idleMinutes || weekSummary.idleMinutes || todaySummary.idleMinutes
+                }
                 points={monthSummary.points}
                 screenshots={monthSummary.screenshots}
               />
@@ -284,7 +292,11 @@ function EmployeeDetailPage() {
                     <div className="space-y-2">
                       <Row
                         k="Status"
-                        v={<StatusBadge status={e.accountStatus === "invited" ? "invited" : e.status} />}
+                        v={
+                          <StatusBadge
+                            status={e.accountStatus === "invited" ? "invited" : e.status}
+                          />
+                        }
                       />
                       <Row k="Session start" v={formatDateTime(e.sessionStart)} />
                       <Row k="Last heartbeat" v={formatRelative(e.lastHeartbeat)} />
@@ -294,7 +306,10 @@ function EmployeeDetailPage() {
                   <div className="rounded-xl border border-border p-3">
                     <div className="mb-2 font-semibold">Access & device</div>
                     <div className="space-y-2">
-                      <Row k="Password access" v={e.portalAccessEnabled ? "Enabled" : "Invitation pending"} />
+                      <Row
+                        k="Password access"
+                        v={e.portalAccessEnabled ? "Enabled" : "Invitation pending"}
+                      />
                       <Row k="Portal last login" v={formatDateTime(e.portalLastLoginAt)} />
                       <Row k="Device" v={device?.name || e.currentDeviceName || "-"} />
                       <Row
@@ -462,7 +477,6 @@ function EmployeeDetailPage() {
             </CardContent>
           </Card>
         </TabsContent>
-
       </Tabs>
       <Dialog
         open={Boolean(previewScreenshot)}
@@ -554,8 +568,16 @@ function EmployeeMetricCard({
           <div className="h-full bg-success" style={{ width: `${activePercent}%` }} />
         </div>
         <div className="space-y-1 text-sm text-muted-foreground">
-          <MetricLegend label="Worked (counted)" value={formatMinutes(activeMinutes)} color="bg-success" />
-          <MetricLegend label="Idle (not counted)" value={formatMinutes(idleMinutes)} color="bg-slate-400" />
+          <MetricLegend
+            label="Worked (counted)"
+            value={formatMinutes(activeMinutes)}
+            color="bg-success"
+          />
+          <MetricLegend
+            label="Idle (not counted)"
+            value={formatMinutes(idleMinutes)}
+            color="bg-slate-400"
+          />
           <MetricLegend label="Remaining idle share" value={`${idlePercent}%`} color="bg-warning" />
         </div>
       </CardContent>
