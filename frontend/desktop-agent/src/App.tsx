@@ -771,6 +771,7 @@ function App() {
         ? "Overtime"
         : "Running"
       : "No timer running";
+  const displayedTimerSeconds = isExtraTime ? extraSeconds : countedTodaySeconds;
 
   async function refreshStatusAfterEnrollment() {
     const nextStatus = await window.khaliduo?.getAgentStatus();
@@ -1341,7 +1342,7 @@ function App() {
         </div>
         <span className="k-chip">
           {statusText}{" "}
-          {status.enrolled ? formatDuration(countedTodaySeconds) : ""}
+          {status.enrolled ? formatDuration(displayedTimerSeconds) : ""}
         </span>
         <span className="k-spacer" />
         {status.screenshotMonitoringEnabled && (
@@ -1472,6 +1473,8 @@ function App() {
               timeBreakdown={timeBreakdown}
               targetProgress={targetProgress}
               countedTodaySeconds={countedTodaySeconds}
+              displayedTimerSeconds={displayedTimerSeconds}
+              isExtraTime={isExtraTime}
               normalSeconds={normalSeconds}
               extraSeconds={extraSeconds}
               isChangingTracking={isChangingTracking}
@@ -1757,6 +1760,8 @@ function HomeView({
   timeBreakdown,
   targetProgress,
   countedTodaySeconds,
+  displayedTimerSeconds,
+  isExtraTime,
   normalSeconds,
   extraSeconds,
   isChangingTracking,
@@ -1792,6 +1797,8 @@ function HomeView({
   };
   targetProgress: number;
   countedTodaySeconds: number;
+  displayedTimerSeconds: number;
+  isExtraTime: boolean;
   normalSeconds: number;
   extraSeconds: number;
   isChangingTracking: boolean;
@@ -1894,7 +1901,11 @@ function HomeView({
           )}
           <div
             className="k-ring"
-            aria-label={`Worked ${formatDuration(countedTodaySeconds)} of ${formatDuration(status.dailyTargetSeconds)}`}
+            aria-label={
+              isExtraTime
+                ? `Recorded overtime ${formatDuration(displayedTimerSeconds)}`
+                : `Worked ${formatDuration(countedTodaySeconds)} of ${formatDuration(status.dailyTargetSeconds)}`
+            }
           >
             <span className="k-gauge-mark mark-0">0h</span>
             <span className="k-gauge-mark mark-2">2h</span>
@@ -1902,9 +1913,11 @@ function HomeView({
             <span className="k-gauge-mark mark-6">6h</span>
             <span className="k-gauge-mark mark-8">8h</span>
             <div className="k-gauge-readout">
-              <strong>{formatDuration(countedTodaySeconds)}</strong>
+              <strong>{formatDuration(displayedTimerSeconds)}</strong>
               <small>
-                {targetProgress}% of {formatDuration(status.dailyTargetSeconds)}
+                {isExtraTime
+                  ? "Overtime recorded today"
+                  : `${targetProgress}% of ${formatDuration(status.dailyTargetSeconds)}`}
               </small>
             </div>
           </div>
