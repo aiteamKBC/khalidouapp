@@ -76,6 +76,9 @@ export type WorkProfile = {
     end_time?: string | null;
   }> | null;
   lateGraceMinutes?: number | null;
+  noShowThresholdMinutes?: number | null;
+  scheduleType?: "fixed" | "flexible" | null;
+  weeklyEarlyLeaveMinutes?: number | null;
   deductionPolicy?: {
     mode: "review" | "per_minute" | "brackets";
     require_admin_review: boolean;
@@ -98,6 +101,9 @@ export type WorkProfileInput = {
   requiredDailyMinutes?: number;
   breakRules?: WorkProfile["breakRules"];
   lateGraceMinutes?: number;
+  noShowThresholdMinutes?: number;
+  scheduleType?: WorkProfile["scheduleType"];
+  weeklyEarlyLeaveMinutes?: number;
   deductionPolicy?: WorkProfile["deductionPolicy"];
   overtimeEnabled?: boolean;
   overtimeBasis?: WorkProfile["overtimeBasis"];
@@ -117,6 +123,9 @@ type BackendWorkProfile = {
   required_daily_minutes?: number | null;
   break_rules?: WorkProfile["breakRules"];
   late_grace_minutes?: number | null;
+  no_show_threshold_minutes?: number | null;
+  schedule_type?: WorkProfile["scheduleType"];
+  weekly_early_leave_minutes?: number | null;
   deduction_policy?: WorkProfile["deductionPolicy"];
   overtime_enabled: boolean;
   overtime_basis?: WorkProfile["overtimeBasis"];
@@ -207,6 +216,9 @@ function mapWorkProfile(row: BackendWorkProfile): WorkProfile {
     requiredDailyMinutes: row.required_daily_minutes,
     breakRules: row.break_rules,
     lateGraceMinutes: row.late_grace_minutes,
+    noShowThresholdMinutes: row.no_show_threshold_minutes,
+    scheduleType: row.schedule_type,
+    weeklyEarlyLeaveMinutes: row.weekly_early_leave_minutes,
     deductionPolicy: row.deduction_policy,
     overtimeEnabled: row.overtime_enabled,
     overtimeBasis: row.overtime_basis,
@@ -287,10 +299,20 @@ export type EmployeeBreakRules = {
   employeeId: string;
   name: string;
   email: string;
+  jobTitle?: string | null;
+  timezone: string;
   shiftStart: string;
   shiftEnd: string;
   requiredDailyMinutes: number;
   breakRules: WorkProfile["breakRules"];
+  workingDays: number[];
+  weeklyOffDays: number[];
+  lateGraceMinutes: number;
+  overtimeEnabled: boolean;
+  overtimeRateMultiplier: number;
+  salaryAmount: number;
+  salaryCurrency: WorkProfile["salaryCurrency"];
+  salaryType: WorkProfile["salaryType"];
 };
 
 export async function listEmployeeBreakRules(
@@ -302,20 +324,40 @@ export async function listEmployeeBreakRules(
       employee_id: string;
       name: string;
       email: string;
+      job_title?: string | null;
+      timezone: string;
       shift_start: string;
       shift_end: string;
       required_daily_minutes: number;
       break_rules: WorkProfile["breakRules"];
+      working_days: number[];
+      weekly_off_days: number[];
+      late_grace_minutes: number;
+      overtime_enabled: boolean;
+      overtime_rate_multiplier: number;
+      salary_amount: number;
+      salary_currency: WorkProfile["salaryCurrency"];
+      salary_type: WorkProfile["salaryType"];
     }>
   >(withQuery("/employees/break-rules", { team_id: teamId }));
   return rows.map((row) => ({
     employeeId: row.employee_id,
     name: row.name,
     email: row.email,
+    jobTitle: row.job_title,
+    timezone: row.timezone,
     shiftStart: row.shift_start,
     shiftEnd: row.shift_end,
     requiredDailyMinutes: row.required_daily_minutes,
     breakRules: row.break_rules,
+    workingDays: row.working_days,
+    weeklyOffDays: row.weekly_off_days,
+    lateGraceMinutes: row.late_grace_minutes,
+    overtimeEnabled: row.overtime_enabled,
+    overtimeRateMultiplier: row.overtime_rate_multiplier,
+    salaryAmount: row.salary_amount,
+    salaryCurrency: row.salary_currency,
+    salaryType: row.salary_type,
   }));
 }
 
@@ -334,6 +376,9 @@ export async function updateWorkProfile(
         required_daily_minutes: input.requiredDailyMinutes,
         break_rules: input.breakRules,
         late_grace_minutes: input.lateGraceMinutes,
+        no_show_threshold_minutes: input.noShowThresholdMinutes,
+        schedule_type: input.scheduleType,
+        weekly_early_leave_minutes: input.weeklyEarlyLeaveMinutes,
         deduction_policy: input.deductionPolicy,
         overtime_enabled: input.overtimeEnabled,
         overtime_basis: input.overtimeBasis,

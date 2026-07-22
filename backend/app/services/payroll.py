@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.models import (
     DailyAttendance,
+    CompanyPayrollSettings,
     Employee,
     EmployeeWorkProfile,
     LeaveRequest,
@@ -44,6 +45,49 @@ def month_bounds(value: str | date) -> tuple[date, date]:
     return first, first.replace(day=calendar.monthrange(first.year, first.month)[1])
 
 
+def _valid_day(year: int, month: int, requested_day: int) -> int:
+    return min(requested_day, calendar.monthrange(year, month)[1])
+
+
+def payroll_period_bounds(
+    value: str | date, cycle_start_day: int = 26, cycle_end_day: int = 25
+) -> tuple[date, date]:
+    """Return the cycle represented by YYYY-MM (the month in which the cycle ends)."""
+    label, _ = month_bounds(value)
+    if not 1 <= cycle_start_day <= 31 or not 1 <= cycle_end_day <= 31:
+        raise ValueError("Payroll cycle days must be between 1 and 31.")
+    if cycle_start_day > cycle_end_day:
+        start_year = label.year if label.month > 1 else label.year - 1
+        start_month = label.month - 1 if label.month > 1 else 12
+    else:
+        start_year, start_month = label.year, label.month
+    first = date(
+        start_year,
+        start_month,
+        _valid_day(start_year, start_month, cycle_start_day),
+    )
+    last = date(label.year, label.month, _valid_day(label.year, label.month, cycle_end_day))
+    if first > last:
+        raise ValueError("Payroll cycle start must be before its end.")
+    return first, last
+
+
+def get_or_create_payroll_settings(db: Session, company_id: UUID) -> CompanyPayrollSettings:
+    settings = db.scalar(
+        select(CompanyPayrollSettings).where(CompanyPayrollSettings.company_id == company_id)
+    )
+    if settings is None:
+        settings = CompanyPayrollSettings(
+            company_id=company_id,
+            cycle_start_day=26,
+            cycle_end_day=25,
+            timezone="Africa/Cairo",
+        )
+        db.add(settings)
+        db.flush()
+    return settings
+
+
 def utc_bounds(first: date, last: date) -> tuple[datetime, datetime]:
     return (
         datetime.combine(first, time.min, tzinfo=UTC),
@@ -71,6 +115,9 @@ def get_or_create_run(
     company_id: UUID,
     month: date,
     admin_user_id: UUID,
+    period_start: date | None = None,
+    period_end: date | None = None,
+    cycle_timezone: str | None = None,
 ) -> PayrollRun:
     run = db.scalar(
         select(PayrollRun).where(PayrollRun.company_id == company_id, PayrollRun.month == month)
@@ -79,11 +126,18 @@ def get_or_create_run(
         run = PayrollRun(
             company_id=company_id,
             month=month,
+            period_start=period_start,
+            period_end=period_end,
+            cycle_timezone=cycle_timezone,
             status="draft",
             created_by_admin_user_id=admin_user_id,
         )
         db.add(run)
         db.flush()
+    elif run.status not in {"locked", "paid"}:
+        run.period_start = period_start or run.period_start
+        run.period_end = period_end or run.period_end
+        run.cycle_timezone = cycle_timezone or run.cycle_timezone
     return run
 
 
@@ -95,7 +149,10 @@ def _timezone(employee: Employee) -> ZoneInfo:
 
 
 def _daily_override(
-    overrides: list[WorkScheduleOverride], employee_id: UUID, work_date: date
+    overrides: list[WorkScheduleOverride],
+    employee_id: UUID,
+    work_date: date,
+    team_ids: set[UUID] | None = None,
 ) -> WorkScheduleOverride | None:
     exact = [
         item
@@ -104,8 +161,20 @@ def _daily_override(
     ]
     if exact:
         return max(exact, key=lambda item: item.created_at)
+    team = [
+        item
+        for item in overrides
+        if item.effective_date == work_date and item.team_id in (team_ids or set())
+    ]
+    if team:
+        return max(team, key=lambda item: item.created_at)
     company = [
-        item for item in overrides if item.effective_date == work_date and item.employee_id is None
+        item
+        for item in overrides
+        if item.effective_date == work_date
+        and item.employee_id is None
+        and item.team_id is None
+        and item.scope == "company"
     ]
     return max(company, key=lambda item: item.created_at) if company else None
 
@@ -159,6 +228,7 @@ def calculate_employee_metrics(
     adjustments: list[TimeAdjustmentRequest] | None = None,
     overtime_records: list[OvertimeRecord] | None = None,
     approved_leave: list[LeaveRequest] | None = None,
+    team_ids: set[UUID] | None = None,
 ) -> dict:
     zone = _timezone(employee)
     if sessions is None:
@@ -238,7 +308,7 @@ def calculate_employee_metrics(
             expected_days += 1
             if cursor in leave_days:
                 scheduled_leave_days += 1
-            override = _daily_override(overrides, employee.id, cursor)
+            override = _daily_override(overrides, employee.id, cursor, team_ids)
             shift_start, shift_end, rules = _day_schedule(profile, override)
             if shift_start and shift_end and shift_end > shift_start:
                 shift_seconds = (
@@ -545,7 +615,11 @@ def refresh_run_entries(db: Session, run: PayrollRun) -> list[PayrollEntry]:
     if run.status in {"locked", "paid"}:
         return list(existing.values())
 
-    first, last = month_bounds(run.month)
+    first, last = (
+        (run.period_start, run.period_end)
+        if run.period_start is not None and run.period_end is not None
+        else month_bounds(run.month)
+    )
     employees = db.scalars(
         select(Employee)
         .where(
@@ -615,6 +689,13 @@ def refresh_run_entries(db: Session, run: PayrollRun) -> list[PayrollEntry]:
     ).all():
         leave_by_employee[item.employee_id].append(item)
     teams = _team_names(db, run.company_id)
+    team_ids_by_employee: dict[UUID, set[UUID]] = defaultdict(set)
+    for member_employee_id, member_team_id in db.execute(
+        select(TeamMember.employee_id, TeamMember.team_id).where(
+            TeamMember.employee_id.in_(employee_ids), TeamMember.status == "active"
+        )
+    ).all():
+        team_ids_by_employee[member_employee_id].add(member_team_id)
     result: list[PayrollEntry] = []
     for employee in employees:
         profile = profiles.get(employee.id)
@@ -633,6 +714,7 @@ def refresh_run_entries(db: Session, run: PayrollRun) -> list[PayrollEntry]:
             adjustments=adjustments_by_employee[employee.id],
             overtime_records=overtime_by_employee[employee.id],
             approved_leave=leave_by_employee[employee.id],
+            team_ids=team_ids_by_employee[employee.id],
         )
         entry = existing.get(employee.id)
         if entry is None:
@@ -769,6 +851,9 @@ def serialize_run(run: PayrollRun) -> dict:
     return {
         "id": str(run.id),
         "month": run.month.strftime("%Y-%m"),
+        "period_start": run.period_start.isoformat() if run.period_start else None,
+        "period_end": run.period_end.isoformat() if run.period_end else None,
+        "cycle_timezone": run.cycle_timezone,
         "status": run.status,
         "approved_at": run.approved_at.isoformat() if run.approved_at else None,
         "locked_at": run.locked_at.isoformat() if run.locked_at else None,

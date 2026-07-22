@@ -399,6 +399,55 @@ def test_group_schedule_override_validates_every_employee_company(team_client):
     assert isolated.status_code in {403, 404}
 
 
+def test_team_day_override_applies_to_members_and_employee_override_wins(team_client):
+    client, data = team_client
+    day = local_today("UTC") + timedelta(days=1)
+    team_override = client.post(
+        "/api/v1/payroll/schedule-overrides",
+        json={
+            "scope": "team",
+            "team_id": str(data["team_a"].id),
+            "override_type": "shift",
+            "effective_date": day.isoformat(),
+            "permanent": False,
+            "shift_start": "10:00",
+            "shift_end": "18:00",
+            "reason": "Team coverage",
+        },
+        headers=data["general_headers"],
+    )
+    assert team_override.status_code == 200
+    assert team_override.json()["data"]["affected_employees"] == 2
+
+    team_schedule = client.get(
+        f"/api/v1/attendance/employee/{data['employee_a'].id}/{day.isoformat()}",
+        headers=data["general_headers"],
+    )
+    assert team_schedule.status_code == 200
+    assert team_schedule.json()["data"]["scheduled_start_at"].endswith("10:00:00+00:00")
+
+    employee_override = client.post(
+        "/api/v1/payroll/schedule-overrides",
+        json={
+            "scope": "employee",
+            "employee_id": str(data["employee_a"].id),
+            "override_type": "shift",
+            "effective_date": day.isoformat(),
+            "permanent": False,
+            "shift_start": "11:00",
+            "shift_end": "19:00",
+            "reason": "Employee exception wins",
+        },
+        headers=data["general_headers"],
+    )
+    assert employee_override.status_code == 200
+    employee_schedule = client.get(
+        f"/api/v1/attendance/employee/{data['employee_a'].id}/{day.isoformat()}",
+        headers=data["general_headers"],
+    )
+    assert employee_schedule.json()["data"]["scheduled_start_at"].endswith("11:00:00+00:00")
+
+
 def test_cancelling_today_override_restores_normal_schedule_immediately(team_client):
     client, data = team_client
     today = local_today("UTC")
@@ -1414,6 +1463,48 @@ def test_general_admin_actions_are_written_to_audit_log(team_client):
     assert rows[0]["entity_type"] == "team"
     assert rows[0]["entity_name"] == "Audit Team"
     assert rows[0]["user_name"] == "General Admin"
+
+
+def test_payroll_cycle_settings_custom_range_and_xlsx_export_are_consistent(team_client):
+    client, data = team_client
+
+    defaults = client.get("/api/v1/payroll/settings", headers=data["general_headers"])
+    updated = client.patch(
+        "/api/v1/payroll/settings",
+        headers=data["general_headers"],
+        json={"cycle_start_day": 27, "cycle_end_day": 26, "timezone": "Africa/Cairo"},
+    )
+    forbidden = client.patch(
+        "/api/v1/payroll/settings",
+        headers=data["owner_headers"],
+        json={"cycle_start_day": 26, "cycle_end_day": 25, "timezone": "UTC"},
+    )
+    sheet = client.get(
+        "/api/v1/payroll/sheet?month=2026-07&start_date=2026-07-01&end_date=2026-07-03",
+        headers=data["general_headers"],
+    )
+    exported = client.get(
+        "/api/v1/payroll/export?month=2026-07&start_date=2026-07-01&end_date=2026-07-03&format=excel",
+        headers=data["general_headers"],
+    )
+    audit = client.get("/api/v1/audit-log", headers=data["general_headers"])
+
+    assert defaults.status_code == 200
+    assert defaults.json()["data"]["cycle_start_day"] == 26
+    assert updated.status_code == 200
+    assert updated.json()["data"] == {
+        "cycle_start_day": 27,
+        "cycle_end_day": 26,
+        "timezone": "Africa/Cairo",
+    }
+    assert forbidden.status_code == 403
+    assert sheet.status_code == 200
+    assert sheet.json()["data"]["run"]["period_start"] == "2026-07-01"
+    assert sheet.json()["data"]["run"]["period_end"] == "2026-07-03"
+    assert exported.status_code == 200
+    assert exported.content.startswith(b"PK")
+    assert 'filename="payroll-2026-07.xlsx"' in exported.headers["content-disposition"]
+    assert any(row["entity_type"] == "payroll_cycle_settings" for row in audit.json()["data"])
 
 
 def test_employee_time_adjustment_request_can_be_approved_and_added_to_timesheet(team_client):

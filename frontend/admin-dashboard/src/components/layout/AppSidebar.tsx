@@ -85,7 +85,7 @@ const navGroups: { label: string; items: NavItem[] }[] = [
       },
       {
         to: "/breaks",
-        label: "Schedules & Breaks",
+        label: "Work schedules",
         icon: Coffee,
         permission: permissions.breaksView,
       },

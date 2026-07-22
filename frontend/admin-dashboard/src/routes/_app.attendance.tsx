@@ -170,7 +170,7 @@ function AttendancePage() {
             <TableRow>
               <TableHead>Employee</TableHead>
               <TableHead>Schedule</TableHead>
-              <TableHead>First / last</TableHead>
+              <TableHead>First / last / sign-out</TableHead>
               <TableHead>Normal</TableHead>
               <TableHead>Paid break</TableHead>
               <TableHead>Idle</TableHead>
@@ -210,6 +210,9 @@ function AttendancePage() {
                     <TableCell className="text-xs">
                       {clock(row.actualFirstActivityAt, row.timezone)} –{" "}
                       {clock(row.actualLastActivityAt, row.timezone)}
+                      <span className="block text-[10px] text-muted-foreground">
+                        Sign-out {clock(row.actualSignOutAt, row.timezone)}
+                      </span>
                     </TableCell>
                     <TableCell>{duration(row.normalWorkedSeconds)}</TableCell>
                     <TableCell>{duration(row.paidBreakSeconds)}</TableCell>
@@ -264,6 +267,18 @@ function AttendancePage() {
           {detail.data ? (
             <>
               <div className="grid gap-2 sm:grid-cols-3 lg:grid-cols-6">
+                <Small
+                  label="Started"
+                  value={clock(detail.data.actualFirstActivityAt, detail.data.timezone)}
+                />
+                <Small
+                  label="Last activity"
+                  value={clock(detail.data.actualLastActivityAt, detail.data.timezone)}
+                />
+                <Small
+                  label="Signed out"
+                  value={clock(detail.data.actualSignOutAt, detail.data.timezone)}
+                />
                 <Small label="Paid breaks" value={duration(detail.data.paidBreakSeconds)} />
                 <Small label="Unpaid breaks" value={duration(detail.data.unpaidBreakSeconds)} />
                 <Small

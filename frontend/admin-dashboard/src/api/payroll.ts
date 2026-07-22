@@ -77,7 +77,11 @@ export type PayrollSheet = {
     approved_at?: string | null;
     locked_at?: string | null;
     paid_at?: string | null;
+    period_start?: string | null;
+    period_end?: string | null;
+    cycle_timezone?: string | null;
   };
+  settings: PayrollSettings;
   summary: {
     employees: number;
     needs_review: number;
@@ -94,6 +98,8 @@ export type PayrollSheet = {
 
 export type PayrollFilters = {
   month: string;
+  start_date?: string;
+  end_date?: string;
   team?: string;
   employee_id?: string;
   status?: string;
@@ -169,15 +175,38 @@ export function updatePayrollRunStatus(
   });
 }
 
-export function getPayrollExceptions(month: string) {
-  return apiFetch<Record<string, PayrollEntry[]>>(withQuery("/payroll/exceptions", { month }));
+export function getPayrollExceptions(
+  month: string,
+  range?: { start_date?: string; end_date?: string },
+) {
+  return apiFetch<Record<string, PayrollEntry[]>>(
+    withQuery("/payroll/exceptions", { month, ...range }),
+  );
+}
+
+export type PayrollSettings = {
+  cycle_start_day: number;
+  cycle_end_day: number;
+  timezone: string;
+};
+
+export function getPayrollSettings() {
+  return apiFetch<PayrollSettings>("/payroll/settings");
+}
+
+export function updatePayrollSettings(input: PayrollSettings) {
+  return apiFetch<PayrollSettings>("/payroll/settings", {
+    method: "PATCH",
+    body: JSON.stringify(input),
+  });
 }
 
 export function createScheduleOverride(input: {
-  scope: "employee" | "employees" | "company";
+  scope: "employee" | "employees" | "team" | "company";
   override_type: "shift" | "breaks" | "both";
   employee_id?: string;
   employee_ids?: string[];
+  team_id?: string;
   effective_date?: string;
   permanent: boolean;
   shift_start?: string;
@@ -199,10 +228,12 @@ export function createScheduleOverride(input: {
 
 export type ScheduleOverride = {
   id: string;
-  scope: "employee" | "company";
+  scope: "employee" | "team" | "company";
   override_type: "shift" | "breaks" | "both";
   employee_id?: string | null;
   employee_name?: string | null;
+  team_id?: string | null;
+  team_name?: string | null;
   effective_date?: string | null;
   break_rules?: Array<{
     name: string;
@@ -229,13 +260,13 @@ export function deleteScheduleOverride(overrideId: string) {
   });
 }
 
-export async function downloadPayroll(month: string, format: "csv" | "excel" | "pdf") {
-  const blob = await apiFile(withQuery("/payroll/export", { month, format }));
-  const extension = format === "excel" ? "xls" : format;
+export async function downloadPayroll(filters: PayrollFilters, format: "csv" | "excel" | "pdf") {
+  const blob = await apiFile(withQuery("/payroll/export", { ...filters, format }));
+  const extension = format === "excel" ? "xlsx" : format;
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;
-  anchor.download = `payroll-${month}.${extension}`;
+  anchor.download = `payroll-${filters.month}.${extension}`;
   document.body.appendChild(anchor);
   anchor.click();
   anchor.remove();

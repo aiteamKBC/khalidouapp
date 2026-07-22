@@ -564,10 +564,16 @@ function App() {
     const period = status.timeSummary?.today;
     const segments = [
       {
-        label: "Worked",
-        seconds: status.workedTodaySeconds,
+        label: "Normal shift work",
+        seconds: status.normalSeconds,
         className: "worked",
         counted: true,
+      },
+      {
+        label: "Extra recorded",
+        seconds: status.extraSeconds,
+        className: "overtime",
+        counted: false,
       },
       {
         label: "Idle",
@@ -601,7 +607,12 @@ function App() {
         segments.reduce((total, segment) => total + segment.seconds, 0),
       ),
     };
-  }, [status.idleSeconds, status.timeSummary, status.workedTodaySeconds]);
+  }, [
+    status.extraSeconds,
+    status.idleSeconds,
+    status.normalSeconds,
+    status.timeSummary,
+  ]);
 
   const idleRequestOptions = useMemo<IdleRequestOption[]>(() => {
     const timeline = status.todayTimeline;
@@ -732,7 +743,7 @@ function App() {
     Math.min(
       100,
       Math.round(
-        (normalSeconds / Math.max(1, status.dailyTargetSeconds)) * 100,
+        (countedTodaySeconds / Math.max(1, status.dailyTargetSeconds)) * 100,
       ),
     ),
   );
@@ -1584,7 +1595,7 @@ function App() {
         >
           {status.connectionStatus === "online" ? "Synced" : "Offline"}
         </span>
-        <span>Today {formatDuration(status.workedTodaySeconds)}</span>
+        <span>Normal today {formatDuration(countedTodaySeconds)}</span>
         <span>Activity {status.activityPercent}%</span>
         <span>v{status.agentVersion}</span>
       </footer>
@@ -1992,7 +2003,7 @@ function HomeView({
         <div className="k-stat-grid">
           <Stat
             label="Today"
-            value={formatDuration(status.workedTodaySeconds)}
+            value={formatDuration(countedTodaySeconds)}
           />
           <Stat
             label="This week"
@@ -2017,7 +2028,7 @@ function HomeView({
           <div className="k-row">
             <strong>Daily target</strong>
             <span>
-              {formatDuration(status.workedTodaySeconds)} /{" "}
+              {formatDuration(countedTodaySeconds)} /{" "}
               {formatDuration(status.dailyTargetSeconds)} - {targetProgress}%
             </span>
           </div>

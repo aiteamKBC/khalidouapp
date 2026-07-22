@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import Employee, EmployeeWorkProfile, WorkScheduleOverride
+from app.models import Employee, EmployeeWorkProfile, TeamMember, WorkScheduleOverride
 
 
 def timezone_for(employee: Employee) -> ZoneInfo:
@@ -37,11 +37,28 @@ def _latest_day_override(
     )
     if employee_override is not None:
         return employee_override
+    team_ids = select(TeamMember.team_id).where(
+        TeamMember.employee_id == employee.id, TeamMember.status == "active"
+    )
+    team_override = db.scalar(
+        select(WorkScheduleOverride)
+        .where(
+            WorkScheduleOverride.company_id == employee.company_id,
+            WorkScheduleOverride.team_id.in_(team_ids),
+            WorkScheduleOverride.effective_date == work_date,
+            WorkScheduleOverride.permanent.is_(False),
+        )
+        .order_by(WorkScheduleOverride.created_at.desc())
+    )
+    if team_override is not None:
+        return team_override
     return db.scalar(
         select(WorkScheduleOverride)
         .where(
             WorkScheduleOverride.company_id == employee.company_id,
             WorkScheduleOverride.scope == "company",
+            WorkScheduleOverride.employee_id.is_(None),
+            WorkScheduleOverride.team_id.is_(None),
             WorkScheduleOverride.effective_date == work_date,
             WorkScheduleOverride.permanent.is_(False),
         )
@@ -115,6 +132,15 @@ def effective_schedule(
         "timezone": zone.key,
         "override_id": str(override.id) if override else None,
         "override_reason": override.reason if override else None,
+        "effective_source": (
+            "employee_exception"
+            if override and override.employee_id
+            else "team_exception"
+            if override and override.team_id
+            else "company_exception"
+            if override
+            else "employee_profile"
+        ),
     }
 
 

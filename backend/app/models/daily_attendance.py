@@ -28,6 +28,7 @@ class DailyAttendance(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     scheduled_end_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     actual_first_activity_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     actual_last_activity_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    actual_sign_out_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     normal_worked_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     paid_break_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     unpaid_break_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

@@ -903,6 +903,10 @@ textarea:focus {
   background: var(--green);
 }
 
+.segment-overtime {
+  background: #f97316;
+}
+
 .segment-idle {
   background: var(--amber);
 }

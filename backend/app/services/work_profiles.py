@@ -165,6 +165,7 @@ def validate_work_profile(profile: EmployeeWorkProfile) -> None:
         raise ApiError(
             "INVALID_SHIFT", "Shift end must be later than shift start on the same day.", 400
         )
+    parsed_breaks = []
     for rule in profile.break_rules or []:
         start = rule.get("start_time")
         end = rule.get("end_time")
@@ -189,6 +190,10 @@ def validate_work_profile(profile: EmployeeWorkProfile) -> None:
             raise ApiError(
                 "BREAK_OUTSIDE_SHIFT", "Every break must be fully inside the employee shift.", 400
             )
+        parsed_breaks.append((start_time, end_time))
+    parsed_breaks.sort(key=lambda item: item[0])
+    if any(previous[1] > current[0] for previous, current in zip(parsed_breaks, parsed_breaks[1:])):
+        raise ApiError("OVERLAPPING_BREAKS", "Break periods cannot overlap.", 400)
 
 
 def schedule_minutes(profile: EmployeeWorkProfile) -> dict[str, int]:

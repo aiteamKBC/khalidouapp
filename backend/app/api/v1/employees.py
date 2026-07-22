@@ -129,10 +129,20 @@ def list_employee_break_rules(
             Employee.id,
             Employee.name,
             Employee.email,
+            Employee.job_title,
+            Employee.timezone,
             EmployeeWorkProfile.shift_start,
             EmployeeWorkProfile.shift_end,
             EmployeeWorkProfile.required_daily_minutes,
             EmployeeWorkProfile.break_rules,
+            EmployeeWorkProfile.working_days,
+            EmployeeWorkProfile.weekly_off_days,
+            EmployeeWorkProfile.late_grace_minutes,
+            EmployeeWorkProfile.overtime_enabled,
+            EmployeeWorkProfile.overtime_rate_multiplier,
+            EmployeeWorkProfile.salary_amount,
+            EmployeeWorkProfile.salary_currency,
+            EmployeeWorkProfile.salary_type,
         )
         .select_from(Employee)
         .outerjoin(EmployeeWorkProfile, EmployeeWorkProfile.employee_id == Employee.id)
@@ -150,21 +160,41 @@ def list_employee_break_rules(
                 "employee_id": str(employee_id),
                 "name": name,
                 "email": email,
+                "job_title": job_title,
+                "timezone": timezone,
                 "break_rules": break_rules if break_rules is not None else DEFAULT_BREAK_RULES,
                 "shift_start": shift_start.isoformat(timespec="minutes")
                 if shift_start
                 else "09:00",
                 "shift_end": shift_end.isoformat(timespec="minutes") if shift_end else "17:00",
                 "required_daily_minutes": required_daily_minutes or 480,
+                "working_days": working_days or [0, 1, 2, 3, 4],
+                "weekly_off_days": weekly_off_days or [5, 6],
+                "late_grace_minutes": late_grace_minutes or 15,
+                "overtime_enabled": bool(overtime_enabled),
+                "overtime_rate_multiplier": float(overtime_rate_multiplier or 1.5),
+                "salary_amount": float(salary_amount or 0),
+                "salary_currency": salary_currency or "EGP",
+                "salary_type": salary_type or "monthly",
             }
             for (
                 employee_id,
                 name,
                 email,
+                job_title,
+                timezone,
                 shift_start,
                 shift_end,
                 required_daily_minutes,
                 break_rules,
+                working_days,
+                weekly_off_days,
+                late_grace_minutes,
+                overtime_enabled,
+                overtime_rate_multiplier,
+                salary_amount,
+                salary_currency,
+                salary_type,
             ) in rows
         ]
     )

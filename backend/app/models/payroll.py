@@ -29,6 +29,9 @@ class PayrollRun(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     company_id: Mapped[UUID] = mapped_column(ForeignKey("companies.id"), nullable=False, index=True)
     month: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    period_start: Mapped[date | None] = mapped_column(Date, nullable=True, index=True)
+    period_end: Mapped[date | None] = mapped_column(Date, nullable=True, index=True)
+    cycle_timezone: Mapped[str | None] = mapped_column(String(80), nullable=True)
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="draft", index=True)
     created_by_admin_user_id: Mapped[UUID] = mapped_column(
         ForeignKey("admin_users.id"), nullable=False
@@ -154,6 +157,7 @@ class WorkScheduleOverride(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     employee_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("employees.id"), nullable=True, index=True
     )
+    team_id: Mapped[UUID | None] = mapped_column(ForeignKey("teams.id"), nullable=True, index=True)
     scope: Mapped[str] = mapped_column(String(20), nullable=False)
     override_type: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
     effective_date: Mapped[date | None] = mapped_column(Date, nullable=True, index=True)
@@ -165,3 +169,17 @@ class WorkScheduleOverride(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     created_by_admin_user_id: Mapped[UUID] = mapped_column(
         ForeignKey("admin_users.id"), nullable=False
     )
+
+
+class CompanyPayrollSettings(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "company_payroll_settings"
+    __table_args__ = (
+        UniqueConstraint("company_id", name="uq_company_payroll_settings_company"),
+    )
+
+    company_id: Mapped[UUID] = mapped_column(
+        ForeignKey("companies.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    cycle_start_day: Mapped[int] = mapped_column(Integer, nullable=False, default=26)
+    cycle_end_day: Mapped[int] = mapped_column(Integer, nullable=False, default=25)
+    timezone: Mapped[str] = mapped_column(String(80), nullable=False, default="Africa/Cairo")

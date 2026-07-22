@@ -1,10 +1,12 @@
 import csv
 import html
 import io
-from datetime import UTC, date, datetime
+import zipfile
+from datetime import UTC, date, datetime, time
 from decimal import Decimal
 from typing import Annotated, Literal
 from uuid import UUID
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import Response, StreamingResponse
@@ -15,10 +17,15 @@ from sqlalchemy.orm import Session, selectinload
 from app.api.deps import get_current_admin
 from app.core.exceptions import ApiError
 from app.core.responses import success_response
-from app.api.v1.team_auth import accessible_employee_ids_statement, ensure_employee_access
+from app.api.v1.team_auth import (
+    accessible_employee_ids_statement,
+    ensure_employee_access,
+    ensure_team_access,
+)
 from app.database.session import get_db
 from app.models import (
     AdminUser,
+    CompanyPayrollSettings,
     Employee,
     EmployeeWorkProfile,
     LeaveRequest,
@@ -28,13 +35,17 @@ from app.models import (
     OvertimeRecord,
     WorkScheduleOverride,
     TimeAdjustmentRequest,
+    Team,
+    TeamMember,
 )
 from app.schemas.admin import BreakRule
 from app.services.audit import record_audit_log
 from app.services.activity_timeline import local_today
 from app.services.payroll import (
     get_or_create_run,
+    get_or_create_payroll_settings,
     month_bounds,
+    payroll_period_bounds,
     recalculate_entry,
     refresh_run_entries,
     serialize_entry,
@@ -90,10 +101,11 @@ class PayrollRunStatusUpdate(BaseModel):
 
 
 class ScheduleOverrideCreate(BaseModel):
-    scope: Literal["employee", "employees", "company"]
+    scope: Literal["employee", "employees", "team", "company"]
     override_type: Literal["shift", "breaks", "both"]
     employee_id: UUID | None = None
     employee_ids: list[UUID] = Field(default_factory=list, max_length=500)
+    team_id: UUID | None = None
     effective_date: date | None = None
     permanent: bool = False
     shift_start: str | None = None
@@ -107,6 +119,8 @@ class ScheduleOverrideCreate(BaseModel):
             raise ValueError("Choose an employee for an employee override.")
         if self.scope == "employees" and not self.employee_ids:
             raise ValueError("Choose at least one employee for a group override.")
+        if self.scope == "team" and self.team_id is None:
+            raise ValueError("Choose a team for a team override.")
         if not self.permanent and self.effective_date is None:
             raise ValueError("A one-day override requires an effective date.")
         if self.override_type in {"shift", "both"} and not (self.shift_start and self.shift_end):
@@ -114,6 +128,93 @@ class ScheduleOverrideCreate(BaseModel):
         if self.override_type in {"breaks", "both"} and self.break_rules is None:
             raise ValueError("Break overrides require break rules.")
         return self
+
+
+class PayrollSettingsUpdate(BaseModel):
+    cycle_start_day: int = Field(ge=1, le=31)
+    cycle_end_day: int = Field(ge=1, le=31)
+    timezone: str = Field(min_length=1, max_length=80)
+
+    @model_validator(mode="after")
+    def validate_cycle(self):
+        try:
+            ZoneInfo(self.timezone)
+            first, last = payroll_period_bounds(
+                "2028-03", self.cycle_start_day, self.cycle_end_day
+            )
+        except (ValueError, ZoneInfoNotFoundError) as exc:
+            raise ValueError("Choose a valid timezone and continuous monthly payroll cycle.") from exc
+        length = (last - first).days + 1
+        if not 27 <= length <= 32:
+            raise ValueError("Payroll cycle must be one continuous monthly period.")
+        return self
+
+
+def _settings_data(settings: CompanyPayrollSettings) -> dict:
+    return {
+        "cycle_start_day": settings.cycle_start_day,
+        "cycle_end_day": settings.cycle_end_day,
+        "timezone": settings.timezone,
+    }
+
+
+def _period_for_request(
+    settings: CompanyPayrollSettings,
+    month: str,
+    start_date: date | None,
+    end_date: date | None,
+) -> tuple[date, date]:
+    if (start_date is None) != (end_date is None):
+        raise ApiError(
+            "INVALID_PAYROLL_PERIOD", "Choose both custom start and end dates.", 400
+        )
+    if start_date is not None and end_date is not None:
+        if start_date > end_date or (end_date - start_date).days > 62:
+            raise ApiError("INVALID_PAYROLL_PERIOD", "Choose a valid payroll date range.", 400)
+        return start_date, end_date
+    try:
+        return payroll_period_bounds(month, settings.cycle_start_day, settings.cycle_end_day)
+    except ValueError as exc:
+        raise ApiError("INVALID_PAYROLL_PERIOD", str(exc), 400) from exc
+
+
+@router.get("/settings")
+def payroll_settings(
+    current_admin: Annotated[AdminUser, Depends(get_current_admin)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    require_capability(current_admin, "payroll.view")
+    settings = get_or_create_payroll_settings(db, current_admin.company_id)
+    db.commit()
+    return success_response(data=_settings_data(settings))
+
+
+@router.patch("/settings")
+def update_payroll_settings(
+    payload: PayrollSettingsUpdate,
+    request: Request,
+    current_admin: Annotated[AdminUser, Depends(get_current_admin)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    require_capability(current_admin, "payroll.manage")
+    if not has_company_data_scope(current_admin):
+        raise ApiError("COMPANY_SCOPE_REQUIRED", "Company-wide access is required.", 403)
+    settings = get_or_create_payroll_settings(db, current_admin.company_id)
+    before = _settings_data(settings)
+    settings.cycle_start_day = payload.cycle_start_day
+    settings.cycle_end_day = payload.cycle_end_day
+    settings.timezone = payload.timezone
+    record_audit_log(
+        db,
+        current_admin,
+        "updated",
+        "payroll_cycle_settings",
+        entity_id=settings.id,
+        details={"old": before, "new": _settings_data(settings)},
+        request=request,
+    )
+    db.commit()
+    return success_response(data=_settings_data(settings))
 
 
 def _entry_or_404(db: Session, company_id: UUID, entry_id: UUID) -> PayrollEntry:
@@ -179,6 +280,8 @@ def payroll_sheet(
     current_admin: Annotated[AdminUser, Depends(get_current_admin)],
     db: Annotated[Session, Depends(get_db)],
     month: str = Query(pattern=r"^\d{4}-\d{2}$"),
+    start_date: date | None = None,
+    end_date: date | None = None,
     team: str | None = None,
     employee_id: UUID | None = None,
     status: str | None = None,
@@ -189,6 +292,8 @@ def payroll_sheet(
     has_manual_adjustments: bool | None = None,
 ):
     require_capability(current_admin, "payroll.view")
+    settings = get_or_create_payroll_settings(db, current_admin.company_id)
+    period_start, period_end = _period_for_request(settings, month, start_date, end_date)
     try:
         first, _ = month_bounds(month)
     except ValueError as exc:
@@ -198,6 +303,9 @@ def payroll_sheet(
         company_id=current_admin.company_id,
         month=first,
         admin_user_id=current_admin.id,
+        period_start=period_start,
+        period_end=period_end,
+        cycle_timezone=settings.timezone,
     )
     entries = refresh_run_entries(db, run)
     db.commit()
@@ -233,6 +341,7 @@ def payroll_sheet(
     return success_response(
         data={
             "run": serialize_run(run),
+            "settings": _settings_data(settings),
             "summary": {
                 "employees": len(entries),
                 "needs_review": sum(item.status == "needs_review" for item in entries),
@@ -279,7 +388,11 @@ def update_payroll_entry(
         setattr(entry, key, value)
     entry.pay_overtime = entry.overtime_decision == "paid"
     if "overtime_decision" in changes:
-        first, last = month_bounds(run.month)
+        first, last = (
+            (run.period_start, run.period_end)
+            if run.period_start is not None and run.period_end is not None
+            else month_bounds(run.month)
+        )
         overtime_rows = db.scalars(
             select(OvertimeRecord).where(
                 OvertimeRecord.company_id == current_admin.company_id,
@@ -520,20 +633,24 @@ def payroll_exceptions(
     current_admin: Annotated[AdminUser, Depends(get_current_admin)],
     db: Annotated[Session, Depends(get_db)],
     month: str = Query(pattern=r"^\d{4}-\d{2}$"),
+    start_date: date | None = None,
+    end_date: date | None = None,
 ):
     require_capability(current_admin, "payroll.view")
+    settings = get_or_create_payroll_settings(db, current_admin.company_id)
+    period_start, period_end = _period_for_request(settings, month, start_date, end_date)
     first, _ = month_bounds(month)
-    run = db.scalar(
-        select(PayrollRun).where(
-            PayrollRun.company_id == current_admin.company_id, PayrollRun.month == first
-        )
+    run = get_or_create_run(
+        db,
+        company_id=current_admin.company_id,
+        month=first,
+        admin_user_id=current_admin.id,
+        period_start=period_start,
+        period_end=period_end,
+        cycle_timezone=settings.timezone,
     )
-    if run is None:
-        run = get_or_create_run(
-            db, company_id=current_admin.company_id, month=first, admin_user_id=current_admin.id
-        )
-        refresh_run_entries(db, run)
-        db.commit()
+    refresh_run_entries(db, run)
+    db.commit()
     entries = db.scalars(
         select(PayrollEntry)
         .options(selectinload(PayrollEntry.employee))
@@ -541,7 +658,7 @@ def payroll_exceptions(
     ).all()
     entries = _scope_entries(db, current_admin, entries)
     by_employee = {item.employee_id: item for item in entries}
-    first, last = month_bounds(month)
+    first, last = run.period_start or period_start, run.period_end or period_end
     pending_holiday_ids = set(
         db.scalars(
             select(LeaveRequest.employee_id).where(
@@ -594,6 +711,12 @@ def create_schedule_override(
         raise ApiError(
             "COMPANY_SCOPE_REQUIRED", "Only company-wide HR/Admin can override all employees.", 403
         )
+    if payload.permanent and payload.scope == "team":
+        raise ApiError(
+            "INVALID_PERMANENT_SCOPE",
+            "Team scope is available for one-day exceptions only.",
+            400,
+        )
     employee_ids: list[UUID]
     if payload.scope in {"employee", "employees"}:
         employee_ids = (
@@ -603,6 +726,18 @@ def create_schedule_override(
         )
         for employee_id in employee_ids:
             ensure_employee_access(db, current_admin, employee_id)
+    elif payload.scope == "team" and payload.team_id:
+        ensure_team_access(db, current_admin, payload.team_id)
+        employee_ids = list(
+            db.scalars(
+                select(TeamMember.employee_id).where(
+                    TeamMember.team_id == payload.team_id,
+                    TeamMember.status == "active",
+                )
+            ).all()
+        )
+        if not employee_ids:
+            raise ApiError("EMPTY_TEAM", "The selected team has no active employees.", 400)
     else:
         employee_ids = list(
             db.scalars(
@@ -634,7 +769,8 @@ def create_schedule_override(
                 select(EmployeeWorkProfile).where(EmployeeWorkProfile.employee_id.in_(employee_ids))
             ).all()
         }
-        for rule in payload.break_rules:
+        ordered_rules = sorted(payload.break_rules, key=lambda item: item.start_time or time.min)
+        for index, rule in enumerate(ordered_rules):
             if rule.start_time is None or rule.end_time is None or rule.end_time <= rule.start_time:
                 raise ApiError(
                     "INVALID_BREAK", "Every break needs a valid start and end time.", 400
@@ -663,12 +799,20 @@ def create_schedule_override(
                         "Every break must be fully inside the affected shift.",
                         400,
                     )
-    target_ids: list[UUID | None] = [None] if payload.scope == "company" else employee_ids
+            if index and ordered_rules[index - 1].end_time > rule.start_time:
+                raise ApiError("OVERLAPPING_BREAKS", "Break periods cannot overlap.", 400)
+    if payload.scope == "company":
+        targets: list[tuple[UUID | None, UUID | None, str]] = [(None, None, "company")]
+    elif payload.scope == "team":
+        targets = [(None, payload.team_id, "team")]
+    else:
+        targets = [(employee_id, None, "employee") for employee_id in employee_ids]
     items = [
         WorkScheduleOverride(
             company_id=current_admin.company_id,
             employee_id=employee_id,
-            scope="company" if employee_id is None else "employee",
+            team_id=team_id,
+            scope=scope,
             override_type=payload.override_type,
             effective_date=None if payload.permanent else payload.effective_date,
             permanent=payload.permanent,
@@ -678,7 +822,7 @@ def create_schedule_override(
             reason=payload.reason,
             created_by_admin_user_id=current_admin.id,
         )
-        for employee_id in target_ids
+        for employee_id, team_id, scope in targets
     ]
     db.add_all(items)
     db.flush()
@@ -771,6 +915,15 @@ def list_schedule_overrides(
             )
         ).all()
     }
+    team_names = {
+        team.id: team.name
+        for team in db.scalars(
+            select(Team).where(
+                Team.company_id == current_admin.company_id,
+                Team.id.in_([item.team_id for item in items if item.team_id]),
+            )
+        ).all()
+    }
     return success_response(
         data=[
             {
@@ -779,6 +932,8 @@ def list_schedule_overrides(
                 "override_type": item.override_type,
                 "employee_id": str(item.employee_id) if item.employee_id else None,
                 "employee_name": employee_names.get(item.employee_id),
+                "team_id": str(item.team_id) if item.team_id else None,
+                "team_name": team_names.get(item.team_id),
                 "effective_date": item.effective_date.isoformat() if item.effective_date else None,
                 "break_rules": item.break_rules,
                 "shift_start": item.shift_start.strftime("%H:%M") if item.shift_start else None,
@@ -815,6 +970,8 @@ def delete_schedule_override(
         )
     if item.employee_id:
         ensure_employee_access(db, current_admin, item.employee_id)
+    elif item.team_id:
+        ensure_team_access(db, current_admin, item.team_id)
     elif not has_company_data_scope(current_admin):
         raise ApiError(
             "COMPANY_SCOPE_REQUIRED", "Only company-wide HR/Admin can cancel this override.", 403
@@ -824,6 +981,18 @@ def delete_schedule_override(
             Employee.company_id == current_admin.company_id,
             Employee.status != "deleted",
             *([Employee.id == item.employee_id] if item.employee_id else []),
+            *(
+                [
+                    Employee.id.in_(
+                        select(TeamMember.employee_id).where(
+                            TeamMember.team_id == item.team_id,
+                            TeamMember.status == "active",
+                        )
+                    )
+                ]
+                if item.team_id
+                else []
+            ),
         )
     ).all()
     affected_date = item.effective_date
@@ -836,6 +1005,7 @@ def delete_schedule_override(
         details={
             "scope": item.scope,
             "employee_id": str(item.employee_id) if item.employee_id else None,
+            "team_id": str(item.team_id) if item.team_id else None,
             "effective_date": item.effective_date.isoformat() if item.effective_date else None,
             "reason": item.reason,
         },
@@ -857,6 +1027,8 @@ def delete_schedule_override(
 
 
 EXPORT_COLUMNS = [
+    ("Period start", "period_start"),
+    ("Period end", "period_end"),
     ("Employee", "employee_name"),
     ("Team", "team"),
     ("Job title", "job_title"),
@@ -879,6 +1051,8 @@ EXPORT_COLUMNS = [
     ("Unpaid breaks", "unpaid_break_seconds"),
     ("Recorded overtime", "recorded_overtime_seconds"),
     ("Payable overtime", "approved_overtime_seconds"),
+    ("Overtime decision", "overtime_decision"),
+    ("Overtime multiplier", "overtime_multiplier"),
     ("Base salary", "base_salary"),
     ("Overtime amount", "overtime_amount"),
     ("Deductions", "total_deductions"),
@@ -886,25 +1060,156 @@ EXPORT_COLUMNS = [
     ("Final salary", "final_salary"),
     ("Status", "status"),
     ("Notes", "adjustment_note"),
+    ("Lateness reason", "lateness_note"),
+    ("Idle reason", "idle_note"),
+    ("Overtime reason", "overtime_note"),
+    ("Manual adjustments", "manual_adjustments"),
 ]
 
 
-def _export_rows(db: Session, admin: AdminUser, month: str) -> list[dict]:
+def _export_rows(
+    db: Session,
+    admin: AdminUser,
+    month: str,
+    *,
+    team: str | None = None,
+    employee_id: UUID | None = None,
+    status: str | None = None,
+    overtime_eligible: bool | None = None,
+    start_date: date | None = None,
+    end_date: date | None = None,
+) -> tuple[list[dict], PayrollRun]:
     first, _ = month_bounds(month)
-    run = db.scalar(
-        select(PayrollRun).where(
-            PayrollRun.company_id == admin.company_id, PayrollRun.month == first
-        )
+    settings = get_or_create_payroll_settings(db, admin.company_id)
+    period_start, period_end = _period_for_request(settings, month, start_date, end_date)
+    run = get_or_create_run(
+        db,
+        company_id=admin.company_id,
+        month=first,
+        admin_user_id=admin.id,
+        period_start=period_start,
+        period_end=period_end,
+        cycle_timezone=settings.timezone,
     )
-    if run is None:
-        return []
+    refresh_run_entries(db, run)
+    db.commit()
     entries = db.scalars(
         select(PayrollEntry)
         .options(selectinload(PayrollEntry.employee))
         .where(PayrollEntry.payroll_run_id == run.id)
     ).all()
     entries = _scope_entries(db, admin, entries)
-    return [serialize_entry(item) for item in entries]
+    entries = _filtered_entries(
+        entries,
+        team=team,
+        employee_id=employee_id,
+        status=status,
+        overtime_eligible=overtime_eligible,
+        has_lateness=None,
+        has_idle=None,
+        has_deductions=None,
+        has_manual_adjustments=None,
+    )
+    rows = []
+    for item in entries:
+        row = serialize_entry(item, include_details=True)
+        row["period_start"] = (run.period_start or period_start).isoformat()
+        row["period_end"] = (run.period_end or period_end).isoformat()
+        row["manual_adjustments"] = "; ".join(
+            f"{adjustment['type']}: {adjustment['amount']} ({adjustment['reason']})"
+            for adjustment in row.get("adjustments", [])
+        )
+        rows.append(row)
+    totals: dict[str, dict[str, Decimal]] = {}
+    for item in entries:
+        currency = item.currency
+        summary = totals.setdefault(
+            currency,
+            {
+                "base_salary": Decimal(0),
+                "overtime_amount": Decimal(0),
+                "total_deductions": Decimal(0),
+                "total_bonuses": Decimal(0),
+                "final_salary": Decimal(0),
+            },
+        )
+        for key in summary:
+            summary[key] += Decimal(str(getattr(item, key) or 0))
+    for currency, summary in totals.items():
+        rows.append(
+            {
+                "period_start": (run.period_start or period_start).isoformat(),
+                "period_end": (run.period_end or period_end).isoformat(),
+                "employee_name": f"COMPANY TOTAL ({currency})",
+                "currency": currency,
+                **{key: float(value) for key, value in summary.items()},
+                "status": run.status,
+            }
+        )
+    return rows, run
+
+
+def _xlsx_document(rows: list[dict], run: PayrollRun) -> bytes:
+    def cell(reference: str, value: object) -> str:
+        escaped = html.escape(str(value if value is not None else ""))
+        return f'<c r="{reference}" t="inlineStr"><is><t>{escaped}</t></is></c>'
+
+    def column_name(index: int) -> str:
+        value = ""
+        while index:
+            index, remainder = divmod(index - 1, 26)
+            value = chr(65 + remainder) + value
+        return value
+
+    sheet_rows = [
+        '<row r="1">'
+        + cell("A1", "Payroll period")
+        + cell("B1", f"{run.period_start} to {run.period_end}")
+        + "</row>",
+        '<row r="2">'
+        + "".join(cell(f"{column_name(index)}2", label) for index, (label, _) in enumerate(EXPORT_COLUMNS, 1))
+        + "</row>",
+    ]
+    for row_index, row in enumerate(rows, 3):
+        sheet_rows.append(
+            f'<row r="{row_index}">'
+            + "".join(
+                cell(f"{column_name(column_index)}{row_index}", row.get(key, ""))
+                for column_index, (_, key) in enumerate(EXPORT_COLUMNS, 1)
+            )
+            + "</row>"
+        )
+    worksheet = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        f'<sheetData>{"".join(sheet_rows)}</sheetData></worksheet>'
+    )
+    content_types = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+        '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+        '<Default Extension="xml" ContentType="application/xml"/>'
+        '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
+        '<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
+        '</Types>'
+    )
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("[Content_Types].xml", content_types)
+        archive.writestr(
+            "_rels/.rels",
+            '<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>',
+        )
+        archive.writestr(
+            "xl/workbook.xml",
+            '<?xml version="1.0" encoding="UTF-8"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Payroll" sheetId="1" r:id="rId1"/></sheets></workbook>',
+        )
+        archive.writestr(
+            "xl/_rels/workbook.xml.rels",
+            '<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>',
+        )
+        archive.writestr("xl/worksheets/sheet1.xml", worksheet)
+    return output.getvalue()
 
 
 def _pdf_document(lines: list[str]) -> bytes:
@@ -951,9 +1256,25 @@ def export_payroll(
     db: Annotated[Session, Depends(get_db)],
     month: str = Query(pattern=r"^\d{4}-\d{2}$"),
     format: Literal["csv", "excel", "pdf"] = "csv",
+    team: str | None = None,
+    employee_id: UUID | None = None,
+    status: str | None = None,
+    overtime_eligible: bool | None = None,
+    start_date: date | None = None,
+    end_date: date | None = None,
 ):
     require_capability(current_admin, "payroll.view")
-    rows = _export_rows(db, current_admin, month)
+    rows, run = _export_rows(
+        db,
+        current_admin,
+        month,
+        team=team,
+        employee_id=employee_id,
+        status=status,
+        overtime_eligible=overtime_eligible,
+        start_date=start_date,
+        end_date=end_date,
+    )
     if format == "pdf":
         lines = ["Khaliduo Payroll " + month, " | ".join(label for label, _ in EXPORT_COLUMNS)]
         lines.extend(
@@ -965,20 +1286,10 @@ def export_payroll(
             headers={"Content-Disposition": f'attachment; filename="payroll-{month}.pdf"'},
         )
     if format == "excel":
-        header = "".join(f"<th>{html.escape(label)}</th>" for label, _ in EXPORT_COLUMNS)
-        body = "".join(
-            "<tr>"
-            + "".join(
-                f"<td>{html.escape(str(row.get(key) or ''))}</td>" for _, key in EXPORT_COLUMNS
-            )
-            + "</tr>"
-            for row in rows
-        )
-        document = f"<html><meta charset='utf-8'><table><thead><tr>{header}</tr></thead><tbody>{body}</tbody></table></html>"
         return Response(
-            content=document.encode("utf-8"),
-            media_type="application/vnd.ms-excel",
-            headers={"Content-Disposition": f'attachment; filename="payroll-{month}.xls"'},
+            content=_xlsx_document(rows, run),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f'attachment; filename="payroll-{month}.xlsx"'},
         )
     output = io.StringIO()
     writer = csv.writer(output)

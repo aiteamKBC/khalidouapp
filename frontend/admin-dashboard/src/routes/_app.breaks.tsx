@@ -15,7 +15,14 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
-import { listEmployeeBreakRules, type EmployeeBreakRules, type WorkProfile } from "@/api/employees";
+import {
+  listEmployeeBreakRules,
+  updateEmployee,
+  updateWorkProfile,
+  type EmployeeBreakRules,
+  type WorkProfile,
+} from "@/api/employees";
+import { listTeams } from "@/api/teams";
 import {
   createScheduleOverride,
   deleteScheduleOverride,
@@ -91,10 +98,12 @@ function temporaryScheduleOverride(
   overrides: ScheduleOverride[],
   employeeId: string,
   date: string,
+  teamIds: string[],
 ) {
   const relevant = overrides.filter((item) => item.effective_date === date);
   return (
     relevant.find((item) => item.employee_id === employeeId) ??
+    relevant.find((item) => item.team_id && teamIds.includes(item.team_id)) ??
     relevant.find((item) => item.scope === "company")
   );
 }
@@ -115,6 +124,10 @@ function BreaksPage() {
   const rows = useQuery({
     queryKey: ["break-profiles", scope],
     queryFn: () => listEmployeeBreakRules(scope),
+  });
+  const teams = useQuery({
+    queryKey: ["teams", scope],
+    queryFn: () => listTeams(scope),
   });
   const overrides = useQuery({
     queryKey: ["schedule-overrides", "upcoming"],
@@ -147,8 +160,8 @@ function BreaksPage() {
   return (
     <div className="studio-page">
       <PageHeader
-        title="Schedules & breaks"
-        description="See every employee's working hours and breaks, then update the normal schedule or one day only."
+        title="Work Schedule & Attendance"
+        description="Manage employee shifts, working days, breaks, overtime eligibility, and payroll inputs from one place."
         actions={
           canManage ? (
             <>
@@ -198,7 +211,7 @@ function BreaksPage() {
               >
                 <div className="min-w-0">
                   <p className="truncate text-sm font-bold">
-                    {item.employee_name || "All employees"}
+                    {item.employee_name || item.team_name || "All employees"}
                   </p>
                   <p className="text-xs text-muted-foreground">
                     {item.effective_date} ·{" "}
@@ -248,11 +261,21 @@ function BreaksPage() {
               scheduleOverrides,
               person.employeeId,
               todayIso(),
+              (teams.data ?? [])
+                .filter((team) => team.employeeIds.includes(person.employeeId))
+                .map((team) => team.id),
             );
             const rules = activeOverride?.break_rules ?? person.breakRules ?? [];
             const shiftStart = activeOverride?.shift_start ?? person.shiftStart;
             const shiftEnd = activeOverride?.shift_end ?? person.shiftEnd;
             const scheduledMinutes = minutesBetween(shiftStart, shiftEnd);
+            const scheduleSource = activeOverride?.employee_id
+              ? "Employee one-day exception"
+              : activeOverride?.team_id
+                ? "Team one-day exception"
+                : activeOverride?.scope === "company"
+                  ? "Company one-day exception"
+                  : "Employee permanent profile";
             return (
               <Card key={person.employeeId} className="p-4">
                 <div className="mb-3 flex items-start justify-between gap-3">
@@ -288,6 +311,9 @@ function BreaksPage() {
                     <p className="mt-0.5 font-mono text-lg font-extrabold tabular-nums">
                       {shiftStart}–{shiftEnd}
                     </p>
+                    <p className="mt-1 text-[11px] font-semibold text-muted-foreground">
+                      Source: {scheduleSource}
+                    </p>
                   </div>
                   <span className="rounded-full bg-primary/10 px-3 py-1 text-xs font-extrabold text-primary">
                     {formatMinutes(scheduledMinutes)}
@@ -311,6 +337,7 @@ function BreaksPage() {
       <BreakEditorDialog
         intent={editor}
         people={people}
+        teams={teams.data ?? []}
         onOpenChange={(open) => !open && setEditor(null)}
         onSaved={saved}
       />
@@ -366,22 +393,35 @@ function BreakRuleRow({ rule }: { rule: BreakRule }) {
 function BreakEditorDialog({
   intent,
   people,
+  teams,
   onOpenChange,
   onSaved,
 }: {
   intent: EditorIntent | null;
   people: EmployeeBreakRules[];
+  teams: Awaited<ReturnType<typeof listTeams>>;
   onOpenChange: (open: boolean) => void;
   onSaved: () => void;
 }) {
-  const [scope, setScope] = useState<"employee" | "employees" | "company">("company");
+  const [scope, setScope] = useState<"employee" | "employees" | "team" | "company">("company");
   const [employeeId, setEmployeeId] = useState("");
   const [employeeIds, setEmployeeIds] = useState<string[]>([]);
+  const [teamId, setTeamId] = useState("");
   const [effectiveDate, setEffectiveDate] = useState(todayIso());
   const [shiftStart, setShiftStart] = useState("09:00");
   const [shiftEnd, setShiftEnd] = useState("17:00");
   const [breaks, setBreaks] = useState<BreakDraft[]>(FALLBACK_BREAKS);
   const [reason, setReason] = useState("");
+  const [employeeName, setEmployeeName] = useState("");
+  const [jobTitle, setJobTitle] = useState("");
+  const [timezone, setTimezone] = useState("Africa/Cairo");
+  const [workingDays, setWorkingDays] = useState<number[]>([0, 1, 2, 3, 4]);
+  const [lateGraceMinutes, setLateGraceMinutes] = useState(15);
+  const [overtimeEnabled, setOvertimeEnabled] = useState(false);
+  const [overtimeMultiplier, setOvertimeMultiplier] = useState(1.5);
+  const [salaryAmount, setSalaryAmount] = useState(0);
+  const [salaryCurrency, setSalaryCurrency] = useState("EGP");
+  const [salaryType, setSalaryType] = useState<"monthly" | "hourly">("monthly");
 
   const selectedEmployee = people.find((person) => person.employeeId === employeeId);
   const permanent = intent?.kind !== "day";
@@ -400,10 +440,21 @@ function BreakEditorDialog({
     setScope(nextScope);
     setEmployeeId(nextEmployeeId);
     setEmployeeIds([]);
+    setTeamId("");
     setEffectiveDate(todayIso());
     setShiftStart(source?.shiftStart ?? "09:00");
     setShiftEnd(source?.shiftEnd ?? "17:00");
     setBreaks(toDrafts(source?.breakRules));
+    setEmployeeName(source?.name ?? "");
+    setJobTitle(source?.jobTitle ?? "");
+    setTimezone(source?.timezone ?? "Africa/Cairo");
+    setWorkingDays(source?.workingDays ?? [0, 1, 2, 3, 4]);
+    setLateGraceMinutes(source?.lateGraceMinutes ?? 15);
+    setOvertimeEnabled(source?.overtimeEnabled ?? false);
+    setOvertimeMultiplier(source?.overtimeRateMultiplier ?? 1.5);
+    setSalaryAmount(source?.salaryAmount ?? 0);
+    setSalaryCurrency(source?.salaryCurrency ?? "EGP");
+    setSalaryType(source?.salaryType ?? "monthly");
     setReason(
       intent.kind === "company"
         ? "Company work schedule update"
@@ -433,17 +484,48 @@ function BreakEditorDialog({
       (rule) =>
         !rule.name || rule.minutes <= 0 || rule.start_time < shiftStart || rule.end_time > shiftEnd,
     ) ||
+    rules.some(
+      (rule, index) =>
+        index > 0 &&
+        [...rules].sort((a, b) => a.start_time.localeCompare(b.start_time))[index - 1].end_time >
+          [...rules].sort((a, b) => a.start_time.localeCompare(b.start_time))[index].start_time,
+    ) ||
     !reason.trim() ||
     (scope === "employee" && !employeeId) ||
     (scope === "employees" && employeeIds.length === 0) ||
+    (scope === "team" && !teamId) ||
     (!permanent && !effectiveDate);
 
   const save = useMutation({
-    mutationFn: () =>
-      createScheduleOverride({
+    mutationFn: async () => {
+      if (permanent && intent?.kind === "employee") {
+        await updateEmployee(employeeId, {
+          name: employeeName.trim(),
+          jobTitle: jobTitle.trim(),
+          timezone,
+        });
+        await updateWorkProfile(employeeId, {
+          shiftStart,
+          shiftEnd,
+          requiredDailyMinutes: minutesBetween(shiftStart, shiftEnd),
+          workingDays,
+          weeklyOffDays: [0, 1, 2, 3, 4, 5, 6].filter((day) => !workingDays.includes(day)),
+          breakRules: rules,
+          lateGraceMinutes,
+          overtimeEnabled,
+          overtimeBasis: "outside_shift",
+          overtimeRateMultiplier: overtimeMultiplier,
+          salaryAmount,
+          salaryCurrency: salaryCurrency as WorkProfile["salaryCurrency"],
+          salaryType,
+        });
+        return { affected_employees: 1 };
+      }
+      return createScheduleOverride({
         scope,
         employee_id: scope === "employee" ? employeeId : undefined,
         employee_ids: scope === "employees" ? employeeIds : undefined,
+        team_id: scope === "team" ? teamId : undefined,
         override_type: "both",
         permanent,
         effective_date: permanent ? undefined : effectiveDate,
@@ -451,7 +533,8 @@ function BreakEditorDialog({
         shift_end: shiftEnd,
         break_rules: rules,
         reason: reason.trim(),
-      }),
+      });
+    },
     onSuccess: (data) => {
       toast.success(
         permanent
@@ -470,6 +553,16 @@ function BreakEditorDialog({
       setShiftStart(employee.shiftStart);
       setShiftEnd(employee.shiftEnd);
       setBreaks(toDrafts(employee.breakRules));
+      setEmployeeName(employee.name);
+      setJobTitle(employee.jobTitle ?? "");
+      setTimezone(employee.timezone);
+      setWorkingDays(employee.workingDays);
+      setLateGraceMinutes(employee.lateGraceMinutes);
+      setOvertimeEnabled(employee.overtimeEnabled);
+      setOvertimeMultiplier(employee.overtimeRateMultiplier);
+      setSalaryAmount(employee.salaryAmount);
+      setSalaryCurrency(employee.salaryCurrency ?? "EGP");
+      setSalaryType(employee.salaryType);
     }
   };
 
@@ -508,6 +601,7 @@ function BreakEditorDialog({
                 <SelectContent>
                   <SelectItem value="company">All employees</SelectItem>
                   <SelectItem value="employees">Selected employees</SelectItem>
+                  <SelectItem value="team">One team</SelectItem>
                   <SelectItem value="employee">One employee</SelectItem>
                 </SelectContent>
               </Select>
@@ -569,6 +663,140 @@ function BreakEditorDialog({
                 <p className="text-xs text-muted-foreground">{employeeIds.length} selected</p>
               </div>
             )}
+            {scope === "team" && (
+              <div className="sm:col-span-2">
+                <Field label="Team">
+                  <Select value={teamId} onValueChange={setTeamId}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Choose team" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {teams.map((team) => (
+                        <SelectItem key={team.id} value={team.id}>
+                          {team.name} · {team.employeeIds.length} employees
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </Field>
+              </div>
+            )}
+          </div>
+        )}
+
+        {permanent && intent?.kind === "employee" && (
+          <div className="grid gap-3 rounded-2xl border bg-muted/10 p-4 sm:grid-cols-2">
+            <Field label="Employee name">
+              <Input
+                value={employeeName}
+                onChange={(event) => setEmployeeName(event.target.value)}
+              />
+            </Field>
+            <Field label="Job title">
+              <Input value={jobTitle} onChange={(event) => setJobTitle(event.target.value)} />
+            </Field>
+            <Field label="Timezone">
+              <Input value={timezone} onChange={(event) => setTimezone(event.target.value)} />
+            </Field>
+            <Field label="Late grace (minutes)">
+              <Input
+                type="number"
+                min="0"
+                value={lateGraceMinutes}
+                onChange={(event) => setLateGraceMinutes(Number(event.target.value))}
+              />
+            </Field>
+            <div className="space-y-2 sm:col-span-2">
+              <Label className="text-xs font-bold uppercase tracking-wide text-muted-foreground">
+                Working days
+              </Label>
+              <div className="flex flex-wrap gap-2">
+                {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((label, day) => (
+                  <Button
+                    key={label}
+                    type="button"
+                    size="sm"
+                    variant={workingDays.includes(day) ? "default" : "outline"}
+                    onClick={() =>
+                      setWorkingDays((current) =>
+                        current.includes(day)
+                          ? current.filter((item) => item !== day)
+                          : [...current, day].sort(),
+                      )
+                    }
+                  >
+                    {label}
+                  </Button>
+                ))}
+              </div>
+            </div>
+            <Field label="Salary type">
+              <Select
+                value={salaryType}
+                onValueChange={(value) => setSalaryType(value as typeof salaryType)}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="monthly">Monthly</SelectItem>
+                  <SelectItem value="hourly">Hourly</SelectItem>
+                </SelectContent>
+              </Select>
+            </Field>
+            <Field label={salaryType === "monthly" ? "Monthly salary" : "Hourly rate"}>
+              <Input
+                type="number"
+                min="0"
+                step="0.01"
+                value={salaryAmount}
+                onChange={(event) => setSalaryAmount(Number(event.target.value))}
+              />
+            </Field>
+            <Field label="Currency">
+              <Select value={salaryCurrency} onValueChange={setSalaryCurrency}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {["EGP", "GBP", "USD", "EUR", "SAR", "AED"].map((currency) => (
+                    <SelectItem key={currency} value={currency}>
+                      {currency}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </Field>
+            <Field label="Hourly rate preview">
+              <Input
+                readOnly
+                value={
+                  salaryType === "hourly"
+                    ? salaryAmount.toFixed(2)
+                    : (
+                        salaryAmount / Math.max(1, (minutesBetween(shiftStart, shiftEnd) / 60) * 30)
+                      ).toFixed(2)
+                }
+              />
+            </Field>
+            <label className="flex items-center gap-3 rounded-xl border bg-card p-3 sm:col-span-2">
+              <Switch checked={overtimeEnabled} onCheckedChange={setOvertimeEnabled} />
+              <span className="flex-1">
+                <span className="block text-sm font-bold">Overtime eligible</span>
+                <span className="text-xs text-muted-foreground">
+                  Extra time is always recorded; payment still requires approval.
+                </span>
+              </span>
+              <Input
+                className="w-24"
+                type="number"
+                min="1"
+                step="0.25"
+                disabled={!overtimeEnabled}
+                value={overtimeMultiplier}
+                onChange={(event) => setOvertimeMultiplier(Number(event.target.value))}
+              />
+            </label>
           </div>
         )}
 

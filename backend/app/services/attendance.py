@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime
+from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -10,6 +11,7 @@ from app.models import (
     LeaveRequest,
     OvertimeRecord,
     TimeAdjustmentRequest,
+    WorkSession,
 )
 from app.services.activity_timeline import build_workday_timeline, local_today
 from app.services.schedules import effective_schedule, overlap_seconds
@@ -92,6 +94,15 @@ def calculate_daily_attendance(
     activity_intervals = [item for item in intervals if item[0]["type"] in {"worked", "idle"}]
     first_at = min((item[1] for item in activity_intervals), default=None)
     last_at = max((item[2] for item in activity_intervals), default=None)
+    session_ids = {UUID(item[0]["session_id"]) for item in intervals if item[0].get("session_id")}
+    actual_sign_out_at = None
+    if session_ids:
+        actual_sign_out_at = db.scalar(
+            select(WorkSession.ended_at)
+            .where(WorkSession.id.in_(session_ids), WorkSession.ended_at.is_not(None))
+            .order_by(WorkSession.ended_at.desc())
+            .limit(1)
+        )
     normal_worked = 0
     pre_shift_extra = 0
     post_shift_extra = 0
@@ -296,6 +307,7 @@ def calculate_daily_attendance(
         "scheduled_end_at": end_at,
         "actual_first_activity_at": first_at,
         "actual_last_activity_at": last_at,
+        "actual_sign_out_at": actual_sign_out_at,
         "normal_worked_seconds": normal_worked,
         "paid_break_seconds": paid_break,
         "unpaid_break_seconds": unpaid_break,
@@ -348,6 +360,7 @@ def serialize_daily_attendance(row: DailyAttendance, *, timeline: dict | None = 
         "actual_last_activity_at": row.actual_last_activity_at.isoformat()
         if row.actual_last_activity_at
         else None,
+        "actual_sign_out_at": row.actual_sign_out_at.isoformat() if row.actual_sign_out_at else None,
         "normal_worked_seconds": row.normal_worked_seconds,
         "paid_break_seconds": row.paid_break_seconds,
         "unpaid_break_seconds": row.unpaid_break_seconds,

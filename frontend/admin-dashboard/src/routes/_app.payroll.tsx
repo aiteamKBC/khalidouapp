@@ -32,9 +32,13 @@ import {
   getPayrollEntry,
   getPayrollExceptions,
   getPayrollSheet,
+  getPayrollSettings,
   removePayrollAdjustment,
   updatePayrollEntry,
   updatePayrollRunStatus,
+  updatePayrollSettings,
+  type PayrollFilters,
+  type PayrollSettings,
   type PayrollEntry,
   type PayrollEntryUpdate,
 } from "@/api/payroll";
@@ -96,6 +100,10 @@ function PayrollPage() {
   const [employeeId, setEmployeeId] = useState("all");
   const [selectedEntryId, setSelectedEntryId] = useState<string | null>(null);
   const [overrideOpen, setOverrideOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [customRange, setCustomRange] = useState(false);
+  const [customStart, setCustomStart] = useState("");
+  const [customEnd, setCustomEnd] = useState("");
 
   const employees = useQuery({
     queryKey: ["employees", scopedTeamIds()],
@@ -104,6 +112,8 @@ function PayrollPage() {
   const filters = useMemo(
     () => ({
       month,
+      start_date: customRange && customStart && customEnd ? customStart : undefined,
+      end_date: customRange && customStart && customEnd ? customEnd : undefined,
       team: team === "all" ? undefined : team,
       employee_id: employeeId === "all" ? undefined : employeeId,
       status: status === "all" ? undefined : status,
@@ -113,7 +123,7 @@ function PayrollPage() {
       has_deductions: signal === "deductions" ? true : undefined,
       has_manual_adjustments: signal === "adjustments" ? true : undefined,
     }),
-    [month, team, employeeId, status, signal],
+    [month, team, employeeId, status, signal, customRange, customStart, customEnd],
   );
   const sheet = useQuery({
     queryKey: ["payroll-sheet", filters],
@@ -121,8 +131,12 @@ function PayrollPage() {
     refetchInterval: 60_000,
   });
   const exceptions = useQuery({
-    queryKey: ["payroll-exceptions", month],
-    queryFn: () => getPayrollExceptions(month),
+    queryKey: ["payroll-exceptions", month, filters.start_date, filters.end_date],
+    queryFn: () =>
+      getPayrollExceptions(month, {
+        start_date: filters.start_date,
+        end_date: filters.end_date,
+      }),
     enabled: tab === "exceptions",
   });
 
@@ -150,7 +164,11 @@ function PayrollPage() {
               <CalendarClock className="mr-2 h-4 w-4" />
               Schedule override
             </Button>
-            <ExportMenu month={month} />
+            <Button variant="outline" onClick={() => setSettingsOpen(true)} disabled={!canManage}>
+              <Settings2 className="mr-2 h-4 w-4" />
+              Cycle settings
+            </Button>
+            <ExportMenu filters={filters} />
           </>
         }
       />
@@ -202,8 +220,17 @@ function PayrollPage() {
 
       <Card>
         <CardContent className="p-4">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border bg-muted/20 px-3 py-2 text-sm">
+            <span className="font-semibold">
+              Effective payroll period: {sheet.data?.run.period_start ?? "—"} →{" "}
+              {sheet.data?.run.period_end ?? "—"}
+            </span>
+            <span className="text-muted-foreground">
+              {sheet.data?.run.cycle_timezone ?? "Africa/Cairo"}
+            </span>
+          </div>
           <div className="grid gap-3 lg:grid-cols-[180px_minmax(180px,1fr)_180px_180px_auto]">
-            <Field label="Payroll month">
+            <Field label="Cycle ending month">
               <Input
                 type="month"
                 value={month}
@@ -264,6 +291,34 @@ function PayrollPage() {
                 Refresh
               </Button>
             </div>
+          </div>
+          <div className="mt-4 grid gap-3 border-t pt-4 sm:grid-cols-[auto_180px_180px_1fr] sm:items-end">
+            <label className="flex h-10 items-center gap-2 text-sm font-semibold">
+              <Checkbox
+                checked={customRange}
+                onCheckedChange={(value) => setCustomRange(value === true)}
+              />
+              Custom range
+            </label>
+            <Field label="Custom start">
+              <Input
+                type="date"
+                disabled={!customRange}
+                value={customStart}
+                onChange={(event) => setCustomStart(event.target.value)}
+              />
+            </Field>
+            <Field label="Custom end">
+              <Input
+                type="date"
+                disabled={!customRange}
+                value={customEnd}
+                onChange={(event) => setCustomEnd(event.target.value)}
+              />
+            </Field>
+            <p className="pb-2 text-xs text-muted-foreground">
+              Leave custom range off to use the configured company cycle.
+            </p>
           </div>
           <div className="mt-4 flex flex-wrap items-center gap-2 border-t pt-4">
             <Filter className="h-4 w-4 text-muted-foreground" />
@@ -345,6 +400,12 @@ function PayrollPage() {
         open={overrideOpen}
         onOpenChange={setOverrideOpen}
         employees={employees.data ?? []}
+        onSaved={() => void queryClient.invalidateQueries({ queryKey: ["payroll-sheet"] })}
+      />
+      <PayrollCycleDialog
+        open={settingsOpen}
+        onOpenChange={setSettingsOpen}
+        current={sheet.data?.settings}
         onSaved={() => void queryClient.invalidateQueries({ queryKey: ["payroll-sheet"] })}
       />
     </div>
@@ -1522,12 +1583,104 @@ function RunActions({
   );
 }
 
-function ExportMenu({ month }: { month: string }) {
+function PayrollCycleDialog({
+  open,
+  onOpenChange,
+  current,
+  onSaved,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  current?: PayrollSettings;
+  onSaved: () => void;
+}) {
+  const settings = useQuery({
+    queryKey: ["payroll-settings"],
+    queryFn: getPayrollSettings,
+    enabled: open,
+  });
+  const [form, setForm] = useState<PayrollSettings>({
+    cycle_start_day: 26,
+    cycle_end_day: 25,
+    timezone: "Africa/Cairo",
+  });
+  useEffect(() => {
+    const source = settings.data ?? current;
+    if (source) setForm(source);
+  }, [settings.data, current]);
+  const save = useMutation({
+    mutationFn: () => updatePayrollSettings(form),
+    onSuccess: () => {
+      toast.success("Payroll cycle settings saved");
+      onOpenChange(false);
+      onSaved();
+    },
+    onError: showError,
+  });
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Payroll cycle settings</DialogTitle>
+          <DialogDescription>
+            This company default is used by payroll totals, exceptions, and exports. Short months
+            use their last valid day.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="Cycle starts on day">
+            <Input
+              type="number"
+              min="1"
+              max="31"
+              value={form.cycle_start_day}
+              onChange={(event) =>
+                setForm({ ...form, cycle_start_day: Number(event.target.value) })
+              }
+            />
+          </Field>
+          <Field label="Cycle ends on day">
+            <Input
+              type="number"
+              min="1"
+              max="31"
+              value={form.cycle_end_day}
+              onChange={(event) => setForm({ ...form, cycle_end_day: Number(event.target.value) })}
+            />
+          </Field>
+          <div className="sm:col-span-2">
+            <Field label="Company timezone">
+              <Input
+                value={form.timezone}
+                onChange={(event) => setForm({ ...form, timezone: event.target.value })}
+                placeholder="Africa/Cairo"
+              />
+            </Field>
+          </div>
+          <div className="rounded-xl border bg-muted/20 p-3 text-sm sm:col-span-2">
+            Default example: day {form.cycle_start_day} of the previous month → day{" "}
+            {form.cycle_end_day} of the selected ending month.
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button loading={save.isPending} disabled={save.isPending} onClick={() => save.mutate()}>
+            Save cycle
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function ExportMenu({ filters }: { filters: PayrollFilters }) {
   const [pending, setPending] = useState(false);
   const run = async (format: "csv" | "excel" | "pdf") => {
     setPending(true);
     try {
-      await downloadPayroll(month, format);
+      await downloadPayroll(filters, format);
       toast.success(`${format.toUpperCase()} export downloaded`);
     } catch (error) {
       showError(error);

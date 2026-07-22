@@ -156,6 +156,9 @@ def test_multiple_sessions_keep_raw_lateness_and_unapproved_overtime_separate(
     assert row.approved_overtime_seconds == 0
     assert row.unapproved_overtime_seconds == 3600
     assert row.total_payable_seconds == 7 * 3600 + 40 * 60
+    assert row.actual_sign_out_at.replace(tzinfo=UTC) == datetime(
+        2026, 7, 21, 18, 0, tzinfo=UTC
+    )
 
     overtime.status = "approved"
     overtime.approved_seconds = 3600

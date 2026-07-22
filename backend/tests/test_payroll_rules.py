@@ -2,12 +2,30 @@ from datetime import date
 from decimal import Decimal
 
 from app.models import PayrollAdjustment, PayrollEntry
-from app.services.payroll import month_bounds, recalculate_entry
+from app.services.payroll import month_bounds, payroll_period_bounds, recalculate_entry
 
 
 def test_month_bounds_accepts_payroll_month():
     assert month_bounds("2026-02") == (date(2026, 2, 1), date(2026, 2, 28))
     assert month_bounds("2028-02") == (date(2028, 2, 1), date(2028, 2, 29))
+
+
+def test_default_payroll_cycle_runs_from_26_to_25():
+    assert payroll_period_bounds("2026-07", 26, 25) == (
+        date(2026, 6, 26),
+        date(2026, 7, 25),
+    )
+
+
+def test_payroll_cycle_clamps_short_month_days_safely():
+    assert payroll_period_bounds("2026-02", 31, 28) == (
+        date(2026, 1, 31),
+        date(2026, 2, 28),
+    )
+    assert payroll_period_bounds("2028-02", 31, 31) == (
+        date(2028, 2, 29),
+        date(2028, 2, 29),
+    )
 
 
 def test_payroll_decisions_are_manual_and_recalculate_final_salary():

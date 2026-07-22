@@ -426,6 +426,11 @@ function rebuildTrayMenu() {
   updateDisplaySleepBlocker();
 
   const trackingActive = Boolean(currentSessionId) && !trackingPausedByUser;
+  const normalTodaySeconds = Math.min(
+    runtimeStatus.dailyTargetSeconds,
+    runtimeStatus.normalSeconds +
+      (runtimeStatus.timeSummary?.today.manual_approved_seconds ?? 0),
+  );
   const updateLabel =
     runtimeStatus.updateStatus === "ready"
       ? `Update ${runtimeStatus.updateVersion ?? ""} ready to install`.trim()
@@ -447,7 +452,7 @@ function rebuildTrayMenu() {
       enabled: false,
     },
     {
-      label: `Worked Today: ${formatDuration(runtimeStatus.workedTodaySeconds)}`,
+      label: `Normal Today: ${formatDuration(normalTodaySeconds)}`,
       enabled: false,
     },
     { label: `Status: ${runtimeStatus.trackingStatus}`, enabled: false },
@@ -637,19 +642,7 @@ function applyWorkdayState(workday?: WorkdayState | null) {
           100,
       ),
     );
-    return;
   }
-  const normalSeconds = Math.min(
-    runtimeStatus.workedTodaySeconds,
-    runtimeStatus.dailyTargetSeconds,
-  );
-  runtimeStatus.normalSeconds = normalSeconds;
-  runtimeStatus.extraSeconds = Math.max(
-    0,
-    runtimeStatus.workedTodaySeconds - runtimeStatus.dailyTargetSeconds,
-  );
-  runtimeStatus.extraTimeStatus =
-    runtimeStatus.extraSeconds > 0 ? "recorded_not_counted" : "none";
 }
 
 function timeToMinuteOfDay(value?: string | null) {
@@ -716,6 +709,41 @@ function scheduledIdleIsCountable(at: Date) {
   });
 }
 
+function activeTimeBucket(at: Date): "normal" | "extra" {
+  const policy = runtimeStatus.requestPolicy;
+  if (!policy) return "normal";
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: policy.timezone || "UTC",
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(at);
+  const part = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((item) => item.type === type)?.value;
+  const weekday =
+    (
+      { Mon: 0, Tue: 1, Wed: 2, Thu: 3, Fri: 4, Sat: 5, Sun: 6 } as Record<
+        string,
+        number
+      >
+    )[part("weekday") ?? ""] ?? -1;
+  const shiftStart = timeToMinuteOfDay(policy.shift_start);
+  const shiftEnd = timeToMinuteOfDay(policy.shift_end);
+  if (
+    !policy.working_days.includes(weekday) ||
+    shiftStart === null ||
+    shiftEnd === null ||
+    shiftEnd <= shiftStart
+  ) {
+    return "extra";
+  }
+  const minuteOfDay = Number(part("hour")) * 60 + Number(part("minute"));
+  return minuteOfDay >= shiftStart && minuteOfDay < shiftEnd
+    ? "normal"
+    : "extra";
+}
+
 function recalculateWorkedTime() {
   if (
     !currentSessionId ||
@@ -760,10 +788,25 @@ function recalculateWorkedTime() {
     runtimeStatus.trackingStatus === "starting"
   ) {
     runtimeStatus.activeSeconds += elapsedSeconds;
+    if (activeTimeBucket(new Date(now)) === "normal") {
+      runtimeStatus.normalSeconds += elapsedSeconds;
+    } else {
+      runtimeStatus.extraSeconds += elapsedSeconds;
+      runtimeStatus.extraTimeStatus = runtimeStatus.overtimeEnabled
+        ? "pending_overtime"
+        : "recorded_not_counted";
+    }
   }
   runtimeStatus.workedTodaySeconds =
     workedTodayBaseSeconds + runtimeStatus.activeSeconds;
-  applyWorkdayState();
+  runtimeStatus.dailyTargetProgressPercent = Math.min(
+    100,
+    Math.round(
+      (runtimeStatus.normalSeconds /
+        Math.max(1, runtimeStatus.dailyTargetSeconds)) *
+        100,
+    ),
+  );
   rebuildTrayMenu();
 }
 
@@ -804,16 +847,6 @@ async function refreshWorkedTodayTotal() {
     runtimeStatus.workedTodaySeconds = Math.max(
       trackedTodaySeconds,
       workedTodayBaseSeconds + runtimeStatus.activeSeconds,
-    );
-    const countedTodaySeconds =
-      runtimeStatus.workedTodaySeconds + summary.today.manual_approved_seconds;
-    runtimeStatus.normalSeconds = Math.min(
-      countedTodaySeconds,
-      runtimeStatus.dailyTargetSeconds,
-    );
-    runtimeStatus.extraSeconds = Math.max(
-      0,
-      countedTodaySeconds - runtimeStatus.dailyTargetSeconds,
     );
   } catch (error) {
     log.warn("Failed to refresh today's worked time", error);
@@ -1524,7 +1557,7 @@ async function stopTrackingSession(reason = "Stopped by employee") {
   }
 
   try {
-    await endSession({
+    const result = await endSession({
       sessionId,
       activeSeconds,
       idleSeconds,
@@ -1532,6 +1565,8 @@ async function stopTrackingSession(reason = "Stopped by employee") {
       endedAt,
       eventId,
     });
+    syncRuntimeFromSession(result.session);
+    applyWorkdayState(result.workday);
     await refreshWorkedTodayTotal();
     runtimeStatus.connectionStatus = "online";
     runtimeStatus.lastSuccessfulSyncAt = new Date().toISOString();
