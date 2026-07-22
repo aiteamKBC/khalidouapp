@@ -13,6 +13,7 @@ from app.models import (
     Device,
     Project,
     Task,
+    TaskCollaborator,
     TaskChecklistItem,
     Team,
     TeamMember,
@@ -317,6 +318,22 @@ def get_employee_task_context(
     )
     if not is_member:
         raise ApiError("FORBIDDEN_TASK", "This task is not assigned to one of your teams.", 403)
+    is_participant = task.assignee_employee_id == device.employee_id or bool(
+        db.scalar(
+            select(
+                exists().where(
+                    TaskCollaborator.task_id == task.id,
+                    TaskCollaborator.employee_id == device.employee_id,
+                )
+            )
+        )
+    )
+    if not is_participant:
+        raise ApiError(
+            "FORBIDDEN_TASK",
+            "This task is not assigned to you.",
+            403,
+        )
     if task.stage not in TRACKABLE_STAGES:
         raise ApiError(
             "TASK_NOT_TRACKABLE",
@@ -340,6 +357,13 @@ def list_employee_tasks(db: Session, device: Device) -> list[dict[str, Any]]:
             TeamMember.employee_id == device.employee_id,
             TeamMember.status == "active",
             Task.stage.in_(list(TRACKABLE_STAGES)),
+            (
+                (Task.assignee_employee_id == device.employee_id)
+                | exists().where(
+                    TaskCollaborator.task_id == Task.id,
+                    TaskCollaborator.employee_id == device.employee_id,
+                )
+            ),
         )
         .order_by(Team.name, Project.name, Task.name)
     ).all()

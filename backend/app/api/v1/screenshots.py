@@ -1,6 +1,6 @@
 from datetime import date
 from shutil import disk_usage
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request
@@ -27,7 +27,7 @@ from app.core.config import settings
 from app.core.exceptions import ApiError
 from app.core.responses import success_response
 from app.database.session import get_db
-from app.models import AdminUser, Screenshot, WorkSession
+from app.models import AdminUser, Employee, Screenshot, ScreenshotCaptureEvent, WorkSession
 from app.services.audit import record_audit_log
 from app.services.permissions import require_capability
 from app.services.projects import get_project_or_404, get_task_or_404
@@ -85,6 +85,7 @@ def list_screenshots(
     day: date | None = None,
     start_time: date | None = None,
     end_time: date | None = None,
+    work_category: Literal["scheduled_shift", "off_shift", "unknown"] | None = None,
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=25, ge=1, le=100),
 ):
@@ -122,11 +123,71 @@ def list_screenshots(
         statement = statement.where(Screenshot.captured_at >= day_bounds(start_time)[0])
     if end_time:
         statement = statement.where(Screenshot.captured_at <= day_bounds(end_time)[1])
+    if work_category:
+        statement = statement.where(Screenshot.work_category == work_category)
     statement = statement.order_by(Screenshot.captured_at.desc())
     total = count_for(db, statement)
     screenshots = db.scalars(apply_pagination(statement, page, page_size)).all()
     return success_response(
         data=[serialize_with_url(item) for item in screenshots],
+        meta=pagination_meta(total, page, page_size),
+    )
+
+
+@router.get("/capture-events")
+def list_capture_events(
+    current_admin: Annotated[AdminUser, Depends(get_current_admin)],
+    db: Annotated[Session, Depends(get_db)],
+    employee_id: UUID | None = None,
+    day: date | None = None,
+    outcome: Literal["captured", "skipped"] | None = None,
+    reason: str | None = None,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=200),
+):
+    require_capability(current_admin, "screenshots.view")
+    statement = (
+        select(ScreenshotCaptureEvent, Employee.name)
+        .join(Employee, Employee.id == ScreenshotCaptureEvent.employee_id)
+        .where(ScreenshotCaptureEvent.company_id == current_admin.company_id)
+    )
+    statement = apply_employee_scope(
+        statement,
+        db,
+        current_admin,
+        ScreenshotCaptureEvent.employee_id,
+    )
+    if employee_id:
+        ensure_employee_access(db, current_admin, employee_id)
+        statement = statement.where(ScreenshotCaptureEvent.employee_id == employee_id)
+    if day:
+        start, end = day_bounds(day)
+        statement = statement.where(ScreenshotCaptureEvent.occurred_at.between(start, end))
+    if outcome:
+        statement = statement.where(ScreenshotCaptureEvent.outcome == outcome)
+    if reason:
+        statement = statement.where(ScreenshotCaptureEvent.reason == reason)
+    statement = statement.order_by(ScreenshotCaptureEvent.occurred_at.desc())
+    total = count_for(db, statement)
+    rows = db.execute(apply_pagination(statement, page, page_size)).all()
+    return success_response(
+        data=[
+            {
+                "id": str(event.id),
+                "employee_id": str(event.employee_id),
+                "employee_name": employee_name,
+                "device_id": str(event.device_id),
+                "session_id": str(event.session_id) if event.session_id else None,
+                "screenshot_id": str(event.screenshot_id) if event.screenshot_id else None,
+                "occurred_at": event.occurred_at.isoformat(),
+                "outcome": event.outcome,
+                "reason": event.reason,
+                "work_category": event.work_category,
+                "power_source": event.power_source,
+                "tracking_status": event.tracking_status,
+            }
+            for event, employee_name in rows
+        ],
         meta=pagination_meta(total, page, page_size),
     )
 

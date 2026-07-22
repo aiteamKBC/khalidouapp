@@ -9,6 +9,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.models import (
+    DailyAttendance,
     Employee,
     EmployeeWorkProfile,
     LeaveRequest,
@@ -22,6 +23,7 @@ from app.models import (
     WorkScheduleOverride,
     WorkSession,
 )
+from app.services.attendance import calculate_daily_attendance
 from app.services.work_profiles import get_or_create_work_profile
 
 
@@ -55,6 +57,12 @@ def decimal(value: object) -> Decimal:
 
 def money(value: Decimal) -> Decimal:
     return value.quantize(MONEY, rounding=ROUND_HALF_UP)
+
+
+def _as_utc(value: datetime | None) -> datetime:
+    if value is None:
+        return datetime.min.replace(tzinfo=UTC)
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
 
 
 def get_or_create_run(
@@ -218,6 +226,9 @@ def calculate_employee_metrics(
     paid_break_seconds = 0
     unpaid_break_seconds = 0
     late_minutes = 0
+    raw_late_minutes = 0
+    early_leave_minutes = 0
+    scheduled_leave_days = 0
     absence_days = 0
     elapsed_last = min(last, datetime.now(zone).date())
     working_days = set(profile.working_days or [0, 1, 2, 3, 4])
@@ -225,6 +236,8 @@ def calculate_employee_metrics(
     while cursor <= last:
         if cursor.weekday() in working_days:
             expected_days += 1
+            if cursor in leave_days:
+                scheduled_leave_days += 1
             override = _daily_override(overrides, employee.id, cursor)
             shift_start, shift_end, rules = _day_schedule(profile, override)
             if shift_start and shift_end and shift_end > shift_start:
@@ -248,8 +261,34 @@ def calculate_employee_metrics(
                 first_start = min(item.started_at for item in day_sessions).astimezone(zone)
                 scheduled = datetime.combine(cursor, shift_start, tzinfo=zone)
                 grace = timedelta(minutes=int(profile.late_grace_minutes or 15))
+                if first_start > scheduled:
+                    raw_late_minutes += int((first_start - scheduled).total_seconds() // 60)
                 if first_start > scheduled + grace:
                     late_minutes += int((first_start - scheduled - grace).total_seconds() // 60)
+            if day_sessions and shift_end and cursor not in leave_days:
+                scheduled_end = datetime.combine(cursor, shift_end, tzinfo=zone)
+                last_end = max(
+                    (item.ended_at or item.updated_at or item.started_at).astimezone(zone)
+                    for item in day_sessions
+                )
+                approved_early = next(
+                    (
+                        item
+                        for item in adjustments
+                        if item.requested_date == cursor
+                        and item.request_type == "early_leave"
+                        and item.status == "approved"
+                        and item.source_start_at is not None
+                    ),
+                    None,
+                )
+                expected_end = (
+                    min(scheduled_end, approved_early.source_start_at.astimezone(zone))
+                    if approved_early
+                    else scheduled_end
+                )
+                if datetime.now(zone) >= expected_end and last_end < expected_end:
+                    early_leave_minutes += int((expected_end - last_end).total_seconds() // 60)
         cursor += timedelta(days=1)
 
     worked_seconds = sum(max(0, item.active_seconds - item.deducted_seconds) for item in sessions)
@@ -269,6 +308,111 @@ def calculate_employee_metrics(
         for item in overtime_records
         if item.status == "rejected"
     )
+
+    # DailyAttendance is the canonical attendance evidence used by payroll.
+    # Materialize days that contain a source record and reuse immutable past
+    # results until a source/profile changes. This avoids summing overlapping
+    # sessions twice and keeps subsequent payroll refreshes inexpensive.
+    relevant_days = set(sessions_by_day)
+    relevant_days.update(item.requested_date for item in adjustments)
+    relevant_days.update(item.work_date for item in overtime_records)
+    relevant_days.update(day for day in leave_days if first <= day <= last)
+    employee_today = datetime.now(zone).date()
+    if first <= employee_today <= last:
+        relevant_days.add(employee_today)
+    stored_rows = {
+        item.work_date: item
+        for item in db.scalars(
+            select(DailyAttendance).where(
+                DailyAttendance.company_id == company_id,
+                DailyAttendance.employee_id == employee.id,
+                DailyAttendance.work_date.between(first, last),
+            )
+        ).all()
+    }
+    override_updates = {
+        item.effective_date: _as_utc(item.updated_at)
+        for item in overrides
+        if item.employee_id in {None, employee.id}
+    }
+    source_updates: dict[date, datetime] = defaultdict(lambda: _as_utc(profile.updated_at))
+    for day, items in sessions_by_day.items():
+        source_updates[day] = max(
+            source_updates[day], *(_as_utc(item.updated_at) for item in items)
+        )
+    for item in adjustments:
+        source_updates[item.requested_date] = max(
+            source_updates[item.requested_date], _as_utc(item.updated_at)
+        )
+    for item in overtime_records:
+        source_updates[item.work_date] = max(
+            source_updates[item.work_date], _as_utc(item.updated_at)
+        )
+    for item in approved_leave:
+        cursor = max(first, item.start_date)
+        leave_last = min(last, item.end_date)
+        while cursor <= leave_last:
+            source_updates[cursor] = max(source_updates[cursor], _as_utc(item.updated_at))
+            cursor += timedelta(days=1)
+    for day, updated_at in override_updates.items():
+        source_updates[day] = max(source_updates[day], updated_at)
+
+    attendance_rows: list[DailyAttendance] = []
+    for work_date in sorted(day for day in relevant_days if first <= day <= last):
+        stored = stored_rows.get(work_date)
+        stale = (
+            stored is None
+            or work_date == employee_today
+            or _as_utc(stored.calculated_at) < source_updates[work_date]
+        )
+        if stale:
+            stored, _ = calculate_daily_attendance(
+                db,
+                employee=employee,
+                work_date=work_date,
+                now=datetime.now(UTC),
+            )
+        attendance_rows.append(stored)
+
+    if attendance_rows:
+        worked_seconds = sum(item.normal_worked_seconds for item in attendance_rows)
+        idle_seconds = sum(item.idle_seconds for item in attendance_rows)
+        manual = {
+            "approved": sum(item.approved_manual_seconds for item in attendance_rows),
+            "pending": sum(item.pending_manual_seconds for item in attendance_rows),
+            "rejected": sum(item.rejected_manual_seconds for item in attendance_rows),
+        }
+        paid_break_seconds = sum(item.paid_break_seconds for item in attendance_rows)
+        unpaid_break_seconds = sum(item.unpaid_break_seconds for item in attendance_rows)
+        raw_late_minutes = sum(item.raw_late_seconds for item in attendance_rows) // 60
+        late_minutes = sum(item.deductible_late_seconds for item in attendance_rows) // 60
+        early_leave_minutes = sum(item.early_leave_seconds for item in attendance_rows) // 60
+        recorded_overtime = sum(item.recorded_overtime_seconds for item in attendance_rows)
+        approved_overtime = sum(item.approved_overtime_seconds for item in attendance_rows)
+        rejected_overtime = sum(
+            max(0, item.recorded_extra_seconds)
+            for item in overtime_records
+            if item.status == "rejected"
+        )
+        canonical_regular_seconds = sum(
+            max(0, item.total_payable_seconds - item.approved_overtime_seconds)
+            for item in attendance_rows
+        )
+        canonical_total_payable_seconds = sum(
+            item.total_payable_seconds for item in attendance_rows
+        )
+        canonical_worked_days = sum(
+            1
+            for item in attendance_rows
+            if item.actual_first_activity_at is not None or item.approved_manual_seconds > 0
+        )
+    else:
+        canonical_regular_seconds = min(
+            expected_seconds,
+            worked_seconds + manual["approved"] + paid_break_seconds,
+        )
+        canonical_total_payable_seconds = canonical_regular_seconds + approved_overtime
+        canonical_worked_days = len(sessions_by_day)
     configured = decimal(profile.salary_amount)
     monthly_paid_hours = Decimal(int(profile.required_daily_minutes or 480) * 30) / Decimal(60)
     hourly_rate = (
@@ -276,10 +420,7 @@ def calculate_employee_metrics(
         if profile.salary_type == "hourly"
         else (configured / monthly_paid_hours if monthly_paid_hours else Decimal(0))
     )
-    regular_payable_seconds = min(
-        expected_seconds,
-        worked_seconds + manual["approved"] + paid_break_seconds,
-    )
+    regular_payable_seconds = min(expected_seconds, canonical_regular_seconds)
     base_salary = (
         configured
         if profile.salary_type == "monthly"
@@ -301,13 +442,19 @@ def calculate_employee_metrics(
         "salary_amount": money(configured),
         "hourly_rate": hourly_rate.quantize(Decimal("0.0001")),
         "expected_work_days": expected_days,
+        "worked_days": canonical_worked_days,
+        "leave_days": scheduled_leave_days,
         "expected_seconds": expected_seconds,
         "worked_seconds": worked_seconds,
+        "normal_seconds": regular_payable_seconds,
+        "total_payable_seconds": canonical_total_payable_seconds,
         "approved_manual_seconds": manual["approved"],
         "pending_manual_seconds": manual["pending"],
         "rejected_manual_seconds": manual["rejected"],
         "idle_seconds": idle_seconds,
         "late_minutes": late_minutes,
+        "raw_late_minutes": raw_late_minutes,
+        "early_leave_minutes": early_leave_minutes,
         "paid_break_seconds": paid_break_seconds,
         "unpaid_break_seconds": unpaid_break_seconds,
         "absence_days": absence_days,
@@ -503,13 +650,19 @@ def refresh_run_entries(db: Session, run: PayrollRun) -> list[PayrollEntry]:
             "salary_amount",
             "hourly_rate",
             "expected_work_days",
+            "worked_days",
+            "leave_days",
             "expected_seconds",
             "worked_seconds",
+            "normal_seconds",
+            "total_payable_seconds",
             "approved_manual_seconds",
             "pending_manual_seconds",
             "rejected_manual_seconds",
             "idle_seconds",
             "late_minutes",
+            "raw_late_minutes",
+            "early_leave_minutes",
             "paid_break_seconds",
             "unpaid_break_seconds",
             "absence_days",
@@ -560,13 +713,19 @@ def serialize_entry(entry: PayrollEntry, *, include_details: bool = False) -> di
         "currency": entry.currency,
         "hourly_rate": float(entry.hourly_rate),
         "expected_work_days": entry.expected_work_days,
+        "worked_days": entry.worked_days,
+        "leave_days": entry.leave_days,
         "expected_seconds": entry.expected_seconds,
         "worked_seconds": entry.worked_seconds,
+        "normal_seconds": entry.normal_seconds,
+        "total_payable_seconds": entry.total_payable_seconds,
         "approved_manual_seconds": entry.approved_manual_seconds,
         "pending_manual_seconds": entry.pending_manual_seconds,
         "rejected_manual_seconds": entry.rejected_manual_seconds,
         "idle_seconds": entry.idle_seconds,
         "late_minutes": entry.late_minutes,
+        "raw_late_minutes": entry.raw_late_minutes,
+        "early_leave_minutes": entry.early_leave_minutes,
         "paid_break_seconds": entry.paid_break_seconds,
         "unpaid_break_seconds": entry.unpaid_break_seconds,
         "absence_days": entry.absence_days,

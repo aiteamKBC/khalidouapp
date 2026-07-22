@@ -282,7 +282,7 @@ export async function apiFile(path: string): Promise<Blob> {
 
 export function withQuery(
   path: string,
-  params: Record<string, string | number | undefined | null>,
+  params: Record<string, string | number | boolean | undefined | null>,
 ) {
   const search = new URLSearchParams();
   Object.entries(params).forEach(([key, value]) => {

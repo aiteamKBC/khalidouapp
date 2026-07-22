@@ -178,10 +178,34 @@ def build_workday_timeline(
         ):
             has_open_session = True
 
-    merged: list[dict] = []
-    for interval in sorted(intervals, key=lambda item: item["started_at"]):
-        if interval["ended_at"] <= interval["started_at"]:
+    # A restart or delayed offline sync can briefly leave overlapping sessions.
+    # Turn them into one disjoint timeline so the same wall-clock second can
+    # never be counted twice. Any active input wins over idle/locked signals
+    # from an older session or another enrolled device.
+    valid_intervals = [item for item in intervals if item["ended_at"] > item["started_at"]]
+    boundaries = sorted(
+        {point for item in valid_intervals for point in (item["started_at"], item["ended_at"])}
+    )
+    state_priority = {"worked": 4, "idle": 3, "locked": 2, "sleeping": 1}
+    disjoint: list[dict] = []
+    for start_at, end_at in zip(boundaries, boundaries[1:], strict=False):
+        covering = [
+            item
+            for item in valid_intervals
+            if item["started_at"] < end_at and item["ended_at"] > start_at
+        ]
+        if not covering:
             continue
+        selected = max(
+            covering,
+            key=lambda item: (state_priority.get(item["type"], 0), item["started_at"]),
+        ).copy()
+        selected["started_at"] = start_at
+        selected["ended_at"] = end_at
+        disjoint.append(selected)
+
+    merged: list[dict] = []
+    for interval in disjoint:
         previous = merged[-1] if merged else None
         if (
             previous
@@ -192,7 +216,7 @@ def build_workday_timeline(
         ):
             previous["ended_at"] = interval["ended_at"]
         else:
-            merged.append(interval.copy())
+            merged.append(interval)
 
     totals = {"worked": 0, "idle": 0, "locked": 0, "sleeping": 0}
     serialized_intervals = []
@@ -231,6 +255,7 @@ def build_workday_timeline(
         else last_visible_end.isoformat()
         if last_visible_end
         else None,
+        "last_activity_at": last_visible_end.isoformat() if last_visible_end else None,
         "is_running": has_open_session,
         "worked_seconds": totals["worked"],
         "idle_seconds": totals["idle"],

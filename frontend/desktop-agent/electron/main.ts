@@ -27,6 +27,7 @@ import {
   listAgentRecentScreenshots,
   listAgentTasks,
   initiateScreenshot,
+  reportScreenshotSkip,
   listTimeAdjustmentRequests,
   sendQueuedRequest,
   sendActivityEvent,
@@ -77,6 +78,7 @@ const {
   Menu,
   Notification,
   powerMonitor,
+  powerSaveBlocker,
   screen,
   Tray,
 } = electronMain;
@@ -106,6 +108,9 @@ type AgentRuntimeStatus = {
   idleSeconds: number;
   connectionStatus: "online" | "offline";
   lastScreenshotAt: string | null;
+  screenshotMonitoringEnabled: boolean;
+  screenshotCaptureActive: boolean;
+  powerSource: "ac" | "battery";
   lastSuccessfulSyncAt: string | null;
   agentVersion: string;
   tasks: RuntimeTask[];
@@ -211,6 +216,8 @@ let hasPromptedForDownloadedUpdate = false;
 let lastFullSummaryRefreshAt = 0;
 let lastMetadataRefreshAt = 0;
 let paidPauseTimer: ReturnType<typeof setTimeout> | null = null;
+let displaySleepBlockerId: number | null = null;
+let onAcPower = true;
 let trackingConfig: TrackingConfig = {
   screenshot_enabled: true,
   screenshot_interval_minutes: 10,
@@ -234,6 +241,9 @@ const runtimeStatus: AgentRuntimeStatus = {
   idleSeconds: 0,
   connectionStatus: "offline",
   lastScreenshotAt: null,
+  screenshotMonitoringEnabled: true,
+  screenshotCaptureActive: false,
+  powerSource: "ac",
   lastSuccessfulSyncAt: null,
   agentVersion: app.getVersion(),
   tasks: [],
@@ -262,7 +272,7 @@ const runtimeStatus: AgentRuntimeStatus = {
 };
 
 const privacyNotice =
-  "This application records working time, online status, idle status, and periodic screenshots during work sessions. It does not record typed text, passwords, webcam, microphone, or personal files.";
+  "While this enrolled device is active, unlocked, and connected to AC power, company policy may capture periodic workplace screenshots even when no task timer is selected. It does not record typed text, passwords, webcam, microphone, or personal files.";
 
 dotenv.config({
   path: app.isPackaged
@@ -385,10 +395,35 @@ function formatDuration(totalSeconds: number) {
   return `${hours}:${minutes}:${seconds}`;
 }
 
+function updateDisplaySleepBlocker() {
+  const shouldKeepDisplayAwake =
+    runtimeStatus.enrolled &&
+    Boolean(currentSessionId) &&
+    !trackingPausedByUser &&
+    !runtimeStatus.trackingPaused &&
+    !isQuitting;
+  const blockerIsRunning =
+    displaySleepBlockerId !== null &&
+    powerSaveBlocker.isStarted(displaySleepBlockerId);
+
+  if (shouldKeepDisplayAwake && !blockerIsRunning) {
+    displaySleepBlockerId = powerSaveBlocker.start("prevent-display-sleep");
+    log.info("Display sleep prevention enabled while tracking is running");
+    return;
+  }
+  if (!shouldKeepDisplayAwake && blockerIsRunning && displaySleepBlockerId !== null) {
+    powerSaveBlocker.stop(displaySleepBlockerId);
+    displaySleepBlockerId = null;
+    log.info("Display sleep prevention disabled");
+  }
+}
+
 function rebuildTrayMenu() {
   if (!tray) {
     return;
   }
+
+  updateDisplaySleepBlocker();
 
   const trackingActive = Boolean(currentSessionId) && !trackingPausedByUser;
   const updateLabel =
@@ -585,6 +620,15 @@ function applyWorkdayState(workday?: WorkdayState | null) {
     runtimeStatus.extraSeconds = workday.extra_seconds;
     runtimeStatus.overtimeEnabled = workday.overtime_enabled;
     runtimeStatus.extraTimeStatus = workday.extra_time_status;
+    const trackedTodaySeconds = workday.normal_seconds + workday.extra_seconds;
+    runtimeStatus.workedTodaySeconds = Math.max(
+      runtimeStatus.workedTodaySeconds,
+      trackedTodaySeconds,
+    );
+    workedTodayBaseSeconds = Math.max(
+      0,
+      trackedTodaySeconds - runtimeStatus.activeSeconds,
+    );
     runtimeStatus.dailyTargetProgressPercent = Math.min(
       100,
       Math.round(
@@ -606,6 +650,70 @@ function applyWorkdayState(workday?: WorkdayState | null) {
   );
   runtimeStatus.extraTimeStatus =
     runtimeStatus.extraSeconds > 0 ? "recorded_not_counted" : "none";
+}
+
+function timeToMinuteOfDay(value?: string | null) {
+  if (!value) return null;
+  const [hour, minute] = value.slice(0, 5).split(":").map(Number);
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return null;
+  return hour * 60 + minute;
+}
+
+function scheduledIdleIsCountable(at: Date) {
+  const policy = runtimeStatus.requestPolicy;
+  if (!policy) return true;
+  if (policy.approved_leave_today) return false;
+  if (
+    runtimeStatus.paidPauseEndsAt &&
+    new Date(runtimeStatus.paidPauseEndsAt).getTime() > at.getTime()
+  ) {
+    return false;
+  }
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: policy.timezone || "UTC",
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(at);
+  const part = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((item) => item.type === type)?.value;
+  const weekday =
+    (
+      { Mon: 0, Tue: 1, Wed: 2, Thu: 3, Fri: 4, Sat: 5, Sun: 6 } as Record<
+        string,
+        number
+      >
+    )[part("weekday") ?? ""] ?? -1;
+  if (!policy.working_days.includes(weekday)) return false;
+  const minuteOfDay = Number(part("hour")) * 60 + Number(part("minute"));
+  const shiftStart = timeToMinuteOfDay(policy.shift_start);
+  const shiftEnd = timeToMinuteOfDay(policy.shift_end);
+  if (
+    shiftStart === null ||
+    shiftEnd === null ||
+    minuteOfDay < shiftStart ||
+    minuteOfDay >= shiftEnd
+  ) {
+    return false;
+  }
+  const approvedEarlyLeave = timeToMinuteOfDay(
+    policy.approved_early_leave_from,
+  );
+  if (approvedEarlyLeave !== null && minuteOfDay >= approvedEarlyLeave) {
+    return false;
+  }
+  return !(policy.break_rules ?? []).some((rule) => {
+    if (!rule.paid) return false;
+    const start = timeToMinuteOfDay(rule.start_time);
+    const end = timeToMinuteOfDay(rule.end_time);
+    return (
+      start !== null &&
+      end !== null &&
+      minuteOfDay >= start &&
+      minuteOfDay < end
+    );
+  });
 }
 
 function recalculateWorkedTime() {
@@ -644,7 +752,9 @@ function recalculateWorkedTime() {
   }
 
   if (runtimeStatus.trackingStatus === "idle") {
-    runtimeStatus.idleSeconds += elapsedSeconds;
+    if (scheduledIdleIsCountable(new Date(now))) {
+      runtimeStatus.idleSeconds += elapsedSeconds;
+    }
   } else if (
     runtimeStatus.trackingStatus === "active" ||
     runtimeStatus.trackingStatus === "starting"
@@ -664,6 +774,7 @@ async function refreshWorkedTodayTotal() {
     return;
   }
   try {
+    const previousTimelineDate = runtimeStatus.todayTimeline?.date ?? null;
     const summary = await getAgentSummary();
     runtimeStatus.employeeName = summary.employee.name;
     runtimeStatus.employeeAvatarUrl = summary.employee.avatar_url;
@@ -678,12 +789,32 @@ async function refreshWorkedTodayTotal() {
       summary.daily_target_progress_percent ?? 0;
     runtimeStatus.activityPercent = summary.activity_percent ?? 0;
     runtimeStatus.todayTimeline = summary.today_timeline;
-    workedTodayBaseSeconds = Math.max(
-      0,
-      summary.today.tracked_active_seconds - runtimeStatus.activeSeconds,
+    const trackedTodaySeconds = Math.max(
+      summary.today.tracked_active_seconds,
+      summary.today_timeline?.worked_seconds ?? 0,
     );
-    runtimeStatus.workedTodaySeconds =
-      workedTodayBaseSeconds + runtimeStatus.activeSeconds;
+    const serverBaseSeconds = Math.max(
+      0,
+      trackedTodaySeconds - runtimeStatus.activeSeconds,
+    );
+    workedTodayBaseSeconds =
+      previousTimelineDate === summary.today_timeline?.date
+        ? Math.max(workedTodayBaseSeconds, serverBaseSeconds)
+        : serverBaseSeconds;
+    runtimeStatus.workedTodaySeconds = Math.max(
+      trackedTodaySeconds,
+      workedTodayBaseSeconds + runtimeStatus.activeSeconds,
+    );
+    const countedTodaySeconds =
+      runtimeStatus.workedTodaySeconds + summary.today.manual_approved_seconds;
+    runtimeStatus.normalSeconds = Math.min(
+      countedTodaySeconds,
+      runtimeStatus.dailyTargetSeconds,
+    );
+    runtimeStatus.extraSeconds = Math.max(
+      0,
+      countedTodaySeconds - runtimeStatus.dailyTargetSeconds,
+    );
   } catch (error) {
     log.warn("Failed to refresh today's worked time", error);
   }
@@ -935,6 +1066,10 @@ function startTimers() {
     );
   }
   startIdleMonitor();
+  startScreenshotMonitoring();
+}
+
+function startScreenshotMonitoring() {
   scheduleNextScreenshot();
   if (!syncTimer) {
     syncTimer = setInterval(() => void syncPendingQueues(), 30_000);
@@ -969,28 +1104,24 @@ function clearRuntimeTimers() {
   }
 }
 
-function shouldCaptureScreenshot() {
-  if (
-    trackingPausedByUser ||
-    !runtimeStatus.enrolled ||
-    !currentSessionId ||
-    !trackingConfig.screenshot_enabled
-  ) {
-    return false;
-  }
+function screenshotCaptureBlockReason(): string | null {
+  if (!runtimeStatus.enrolled) return "device_not_enrolled";
+  if (!trackingConfig.screenshot_enabled) return "capture_disabled";
+  if (!onAcPower) return "battery_power";
   if (
     runtimeStatus.trackingStatus === "locked" ||
     runtimeStatus.trackingStatus === "sleeping"
   ) {
-    return false;
+    return runtimeStatus.trackingStatus === "locked" ? "screen_locked" : "system_sleeping";
   }
+  const systemIdleSeconds = powerMonitor.getSystemIdleTime();
   if (
-    runtimeStatus.trackingStatus === "idle" &&
-    !trackingConfig.capture_during_idle
+    runtimeStatus.trackingStatus === "idle" ||
+    systemIdleSeconds >= Math.max(60, trackingConfig.idle_threshold_minutes * 60)
   ) {
-    return false;
+    return "no_user_activity";
   }
-  return true;
+  return null;
 }
 
 async function refreshTrackingConfig() {
@@ -1025,10 +1156,23 @@ async function refreshTrackingConfig() {
 }
 
 async function captureAndUploadScreenshot() {
-  if (!shouldCaptureScreenshot() || !currentSessionId) {
-    log.info(
-      "Screenshot skipped because tracking state does not allow capture",
-    );
+  const blockReason = screenshotCaptureBlockReason();
+  if (blockReason) {
+    log.info("Screenshot skipped", { reason: blockReason });
+    if (runtimeStatus.enrolled) {
+      try {
+        await reportScreenshotSkip({
+          eventId: randomUUID(),
+          sessionId: currentSessionId,
+          occurredAt: new Date().toISOString(),
+          reason: blockReason,
+          powerSource: onAcPower ? "ac" : "battery",
+          trackingStatus: runtimeStatus.trackingStatus,
+        });
+      } catch (error) {
+        log.warn("Failed to report screenshot skip reason", error);
+      }
+    }
     return;
   }
 
@@ -1075,6 +1219,7 @@ async function captureAndUploadScreenshot() {
       displayId: source.display_id || String(displays[index]?.id ?? index + 1),
       displayName: source.name || `Screen ${index + 1}`,
       displayCount: sources.length,
+      powerSource: onAcPower ? "ac" : "battery",
     };
 
     try {
@@ -1199,9 +1344,7 @@ function scheduleNextScreenshot() {
     return;
   }
   if (
-    trackingPausedByUser ||
     !runtimeStatus.enrolled ||
-    !currentSessionId ||
     !trackingConfig.screenshot_enabled
   ) {
     screenshotQueue = [];
@@ -1362,9 +1505,9 @@ async function stopTrackingSession(reason = "Stopped by employee") {
   runtimeStatus.trackingPaused = true;
   saveTrackingPreferences();
   clearRuntimeTimers();
-  screenshotQueue = [];
-  screenshotWindowEndsAt = null;
-  saveScreenshotSchedule(null);
+  // Task/work-time tracking may pause, but workplace screenshot monitoring is
+  // an independent company policy and continues for an enrolled active device.
+  startScreenshotMonitoring();
 
   const sessionId = currentSessionId;
   const eventId = randomUUID();
@@ -1776,8 +1919,12 @@ function showRequiredUpdatePrompt(version: string | null) {
 }
 
 function runtimeStatusPayload() {
+  const screenshotBlockReason = screenshotCaptureBlockReason();
   return {
     ...runtimeStatus,
+    screenshotMonitoringEnabled: runtimeStatus.enrolled && trackingConfig.screenshot_enabled,
+    screenshotCaptureActive: screenshotBlockReason === null,
+    powerSource: onAcPower ? "ac" : "battery",
     privacyNotice,
   };
 }
@@ -1874,6 +2021,7 @@ async function finishTrackingBeforeUpdate() {
   const sessionId = currentSessionId;
   currentSessionId = null;
   runtimeStatus.sessionStartedAt = null;
+  updateDisplaySleepBlocker();
 
   if (sessionId) {
     try {
@@ -1991,6 +2139,15 @@ function configureAutoUpdater() {
 }
 
 function wireSystemEvents() {
+  onAcPower = !powerMonitor.isOnBatteryPower();
+  powerMonitor.on("on-ac", () => {
+    onAcPower = true;
+    log.info("AC power detected; screenshot capture is eligible");
+  });
+  powerMonitor.on("on-battery", () => {
+    onAcPower = false;
+    log.info("Battery power detected; screenshot capture is paused");
+  });
   powerMonitor.on("lock-screen", () => {
     recalculateWorkedTime();
     void sendStateEvent("screen_locked", "locked");
@@ -2027,6 +2184,7 @@ app.on("second-instance", () => showMainWindow());
 
 app.on("before-quit", (event) => {
   isQuitting = true;
+  updateDisplaySleepBlocker();
   if (updateCheckTimer) clearInterval(updateCheckTimer);
   if (initialUpdateCheckTimer) clearTimeout(initialUpdateCheckTimer);
 
@@ -2107,8 +2265,12 @@ app.whenReady().then(async () => {
   await createMainWindow();
   configureAutoUpdater();
   showMainWindow();
-  if (runtimeStatus.enrolled && !trackingPausedByUser) {
-    await startTrackingAutomatically();
+  if (runtimeStatus.enrolled) {
+    await refreshTrackingConfig();
+    startScreenshotMonitoring();
+    if (!trackingPausedByUser) {
+      await startTrackingAutomatically();
+    }
   }
   rebuildTrayMenu();
 });

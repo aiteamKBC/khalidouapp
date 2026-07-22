@@ -21,6 +21,7 @@ from app.services.leave_management import (
 )
 from app.services.work_profiles import get_or_create_work_profile
 from app.services.permissions import require_capability
+from app.services.attendance import refresh_daily_attendance_range
 
 router = APIRouter(prefix="/leave-requests", tags=["leave-requests"])
 
@@ -77,6 +78,14 @@ def record_manual_leave(
         review_note="Recorded directly by HR/Admin",
     )
     db.add(row)
+    db.flush()
+    refresh_daily_attendance_range(
+        db,
+        employee=employee,
+        start_date=row.start_date,
+        end_date=row.end_date,
+        now=row.reviewed_at,
+    )
     db.commit()
     db.refresh(row)
     return success_response(data=serialize_leave_request(row))
@@ -128,7 +137,7 @@ def review_leave_request(
     )
     if row is None:
         raise ApiError("LEAVE_REQUEST_NOT_FOUND", "Holiday request was not found.", 404)
-    ensure_employee_access(db, current_admin, row.employee_id)
+    employee = ensure_employee_access(db, current_admin, row.employee_id)
     if row.status != "pending":
         raise ApiError("LEAVE_REQUEST_REVIEWED", "This holiday request was already reviewed.", 409)
     if payload.status == "approved" and row.leave_type == "annual":
@@ -144,6 +153,14 @@ def review_leave_request(
     row.reviewed_by_admin_user_id = current_admin.id
     row.reviewed_at = datetime.now(UTC)
     db.add(row)
+    db.flush()
+    refresh_daily_attendance_range(
+        db,
+        employee=employee,
+        start_date=row.start_date,
+        end_date=row.end_date,
+        now=row.reviewed_at,
+    )
     db.commit()
     db.refresh(row)
     return success_response(data=serialize_leave_request(row))

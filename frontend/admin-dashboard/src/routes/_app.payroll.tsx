@@ -372,10 +372,14 @@ function PayrollTable({
               <TableHead className="sticky left-0 z-10 min-w-[210px] bg-card">Employee</TableHead>
               <TableHead>Expected</TableHead>
               <TableHead>Worked</TableHead>
+              <TableHead>Leave / absent</TableHead>
+              <TableHead>Normal</TableHead>
+              <TableHead>Payable</TableHead>
               <TableHead>Manual</TableHead>
+              <TableHead>Breaks</TableHead>
               <TableHead>Idle</TableHead>
               <TableHead>Late</TableHead>
-              <TableHead>Absence</TableHead>
+              <TableHead>Early leave</TableHead>
               <TableHead>Overtime</TableHead>
               <TableHead>Base</TableHead>
               <TableHead>Deductions</TableHead>
@@ -388,13 +392,13 @@ function PayrollTable({
           <TableBody>
             {loading ? (
               <TableRow>
-                <TableCell colSpan={14} className="h-40 text-center text-muted-foreground">
+                <TableCell colSpan={18} className="h-40 text-center text-muted-foreground">
                   Calculating payroll…
                 </TableCell>
               </TableRow>
             ) : entries.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={14} className="h-40 text-center text-muted-foreground">
+                <TableCell colSpan={18} className="h-40 text-center text-muted-foreground">
                   No employees match these filters.
                 </TableCell>
               </TableRow>
@@ -409,9 +413,26 @@ function PayrollTable({
                   </TableCell>
                   <TimeCell
                     seconds={entry.expected_seconds}
-                    note={`${entry.expected_work_days} days`}
+                    note={`${entry.expected_work_days} scheduled days`}
                   />
-                  <TimeCell seconds={entry.worked_seconds} />
+                  <TimeCell
+                    seconds={entry.worked_seconds}
+                    note={`${entry.worked_days} worked days`}
+                  />
+                  <TableCell className="whitespace-nowrap">
+                    <div className="font-semibold">{entry.leave_days} leave</div>
+                    <div
+                      className={
+                        entry.absence_days
+                          ? "text-xs text-destructive"
+                          : "text-xs text-muted-foreground"
+                      }
+                    >
+                      {entry.absence_days} absent
+                    </div>
+                  </TableCell>
+                  <TimeCell seconds={entry.normal_seconds} />
+                  <TimeCell seconds={entry.total_payable_seconds} />
                   <TimeCell
                     seconds={entry.approved_manual_seconds}
                     note={
@@ -421,6 +442,10 @@ function PayrollTable({
                     }
                     warning={entry.pending_manual_seconds > 0}
                   />
+                  <TimeCell
+                    seconds={entry.paid_break_seconds}
+                    note={`${shortTime(entry.unpaid_break_seconds)} unpaid`}
+                  />
                   <TimeCell seconds={entry.idle_seconds} warning={entry.idle_seconds > 0} />
                   <TableCell
                     className={
@@ -429,16 +454,19 @@ function PayrollTable({
                         : "text-muted-foreground"
                     }
                   >
-                    {entry.late_minutes}m
+                    <div>{entry.late_minutes}m deductible</div>
+                    <div className="text-xs font-normal text-muted-foreground">
+                      {entry.raw_late_minutes}m raw
+                    </div>
                   </TableCell>
                   <TableCell
                     className={
-                      entry.absence_days
+                      entry.early_leave_minutes
                         ? "font-semibold text-destructive"
                         : "text-muted-foreground"
                     }
                   >
-                    {entry.absence_days}
+                    {entry.early_leave_minutes}m
                   </TableCell>
                   <TimeCell
                     seconds={entry.recorded_overtime_seconds}
@@ -895,11 +923,11 @@ function EmployeeProfileDialog({
       setForm({
         shiftStart: profile.data.shiftStart ?? "09:00",
         shiftEnd: profile.data.shiftEnd ?? "17:00",
-        workingDays: profile.data.workingDays,
-        weeklyOffDays: profile.data.weeklyOffDays,
-        requiredDailyMinutes: profile.data.requiredDailyMinutes,
+        workingDays: profile.data.workingDays ?? undefined,
+        weeklyOffDays: profile.data.weeklyOffDays ?? undefined,
+        requiredDailyMinutes: profile.data.requiredDailyMinutes ?? undefined,
         breakRules: profile.data.breakRules,
-        lateGraceMinutes: profile.data.lateGraceMinutes,
+        lateGraceMinutes: profile.data.lateGraceMinutes ?? undefined,
         deductionPolicy: profile.data.deductionPolicy,
         overtimeEnabled: profile.data.overtimeEnabled,
         overtimeBasis: profile.data.overtimeBasis ?? "outside_shift",
@@ -1045,8 +1073,9 @@ function ScheduleOverrideDialog({
   employees: Awaited<ReturnType<typeof listEmployees>>;
   onSaved: () => void;
 }) {
-  const [scope, setScope] = useState<"employee" | "company">("employee");
+  const [scope, setScope] = useState<"employee" | "employees" | "company">("employee");
   const [employeeId, setEmployeeId] = useState("");
+  const [employeeIds, setEmployeeIds] = useState<string[]>([]);
   const [type, setType] = useState<"shift" | "breaks" | "both">("shift");
   const [permanent, setPermanent] = useState(false);
   const [effectiveDate, setEffectiveDate] = useState(new Date().toISOString().slice(0, 10));
@@ -1067,6 +1096,7 @@ function ScheduleOverrideDialog({
       createScheduleOverride({
         scope,
         employee_id: scope === "employee" ? employeeId : undefined,
+        employee_ids: scope === "employees" ? employeeIds : undefined,
         override_type: type,
         permanent,
         effective_date: permanent ? undefined : effectiveDate,
@@ -1099,6 +1129,7 @@ function ScheduleOverrideDialog({
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="employee">One employee</SelectItem>
+                <SelectItem value="employees">Selected employees</SelectItem>
                 <SelectItem value="company">All employees</SelectItem>
               </SelectContent>
             </Select>
@@ -1130,6 +1161,37 @@ function ScheduleOverrideDialog({
                 </SelectContent>
               </Select>
             </Field>
+          )}
+          {scope === "employees" && (
+            <div className="space-y-2 sm:col-span-2">
+              <Label>Employees</Label>
+              <div className="grid max-h-48 gap-2 overflow-y-auto rounded-xl border p-3 sm:grid-cols-2">
+                {employees.map((employee) => (
+                  <label
+                    key={employee.id}
+                    className="flex items-center gap-2 rounded-lg p-2 hover:bg-muted/50"
+                  >
+                    <Checkbox
+                      checked={employeeIds.includes(employee.id)}
+                      onCheckedChange={(checked) =>
+                        setEmployeeIds((current) =>
+                          checked === true
+                            ? [...new Set([...current, employee.id])]
+                            : current.filter((id) => id !== employee.id),
+                        )
+                      }
+                    />
+                    <span className="min-w-0">
+                      <span className="block truncate text-sm font-semibold">{employee.name}</span>
+                      <span className="block truncate text-xs text-muted-foreground">
+                        {employee.email}
+                      </span>
+                    </span>
+                  </label>
+                ))}
+              </div>
+              <p className="text-xs text-muted-foreground">{employeeIds.length} selected</p>
+            </div>
           )}
           <label className="flex items-center gap-3 rounded-lg border p-3">
             <Checkbox
@@ -1239,6 +1301,7 @@ function ScheduleOverrideDialog({
               save.isPending ||
               !reason.trim() ||
               (scope === "employee" && !employeeId) ||
+              (scope === "employees" && employeeIds.length === 0) ||
               (type !== "shift" && invalidBreak)
             }
           >
@@ -1496,12 +1559,18 @@ function CalculationGrid({ entry }: { entry: PayrollEntry }) {
     ["Hourly rate", money(entry.hourly_rate, entry.currency)],
     ["Expected hours", shortTime(entry.expected_seconds)],
     ["Worked hours", shortTime(entry.worked_seconds)],
+    ["Normal payable hours", shortTime(entry.normal_seconds)],
+    ["Total payable hours", shortTime(entry.total_payable_seconds)],
+    ["Scheduled / worked days", `${entry.expected_work_days} / ${entry.worked_days}`],
+    ["Leave / absence days", `${entry.leave_days} / ${entry.absence_days}`],
     ["Paid breaks", shortTime(entry.paid_break_seconds)],
     ["Unpaid breaks", shortTime(entry.unpaid_break_seconds)],
-    ["Lateness", `${entry.late_minutes}m`],
+    ["Lateness raw / deductible", `${entry.raw_late_minutes}m / ${entry.late_minutes}m`],
+    ["Early leave", `${entry.early_leave_minutes}m`],
     ["Idle time", shortTime(entry.idle_seconds)],
     ["Manual approved", shortTime(entry.approved_manual_seconds)],
     ["Overtime recorded", shortTime(entry.recorded_overtime_seconds)],
+    ["Overtime approved", shortTime(entry.approved_overtime_seconds)],
     ["Overtime paid", money(entry.overtime_amount, entry.currency)],
     ["Deductions", money(entry.total_deductions, entry.currency)],
     ["Bonuses", money(entry.total_bonuses, entry.currency)],

@@ -5,7 +5,7 @@ type BackendScreenshot = {
   id: string;
   employee_id: string;
   device_id: string;
-  session_id: string;
+  session_id?: string | null;
   team_id?: string | null;
   project_id?: string | null;
   task_id?: string | null;
@@ -14,6 +14,8 @@ type BackendScreenshot = {
   thumbnail_url?: string;
   display_id?: string | null;
   display_name?: string | null;
+  work_category: "scheduled_shift" | "off_shift" | "unknown";
+  power_source: "ac" | "battery" | "unknown";
 };
 
 function mapScreenshot(screenshot: BackendScreenshot, teamId: string): Screenshot {
@@ -23,7 +25,7 @@ function mapScreenshot(screenshot: BackendScreenshot, teamId: string): Screensho
     teamId: screenshot.team_id ?? teamId,
     projectId: screenshot.project_id ?? undefined,
     taskId: screenshot.task_id ?? undefined,
-    sessionId: screenshot.session_id,
+    sessionId: screenshot.session_id ?? undefined,
     deviceId: screenshot.device_id,
     capturedAt: screenshot.captured_at,
     thumbnailUrl: screenshot.thumbnail_url ?? screenshot.temporary_url,
@@ -31,6 +33,8 @@ function mapScreenshot(screenshot: BackendScreenshot, teamId: string): Screensho
     isIdle: false,
     displayId: screenshot.display_id ?? undefined,
     displayName: screenshot.display_name ?? undefined,
+    workCategory: screenshot.work_category,
+    powerSource: screenshot.power_source,
   };
 }
 
@@ -41,6 +45,7 @@ export async function listScreenshotPage(options: {
   employeeId?: string;
   teamId?: string;
   day?: string;
+  workCategory?: string;
 }): Promise<{ items: Screenshot[]; page: number; pages: number; total: number }> {
   const scopedTeamId = options.scopedTeamIds?.length === 1 ? options.scopedTeamIds[0] : undefined;
   const teamId = options.teamId && options.teamId !== "all" ? options.teamId : scopedTeamId;
@@ -51,6 +56,7 @@ export async function listScreenshotPage(options: {
       employee_id: options.employeeId === "all" ? undefined : options.employeeId,
       team_id: teamId,
       day: options.day,
+      work_category: options.workCategory === "all" ? undefined : options.workCategory,
     }),
   );
   return {
@@ -118,4 +124,66 @@ export async function getScreenshotStorageStatus(): Promise<{
     warningPercent: status.warning_percent,
     healthy: status.healthy,
   };
+}
+
+export type ScreenshotCaptureEvent = {
+  id: string;
+  employeeId: string;
+  employeeName: string;
+  deviceId: string;
+  sessionId?: string | null;
+  screenshotId?: string | null;
+  occurredAt: string;
+  outcome: "captured" | "skipped";
+  reason?: string | null;
+  workCategory: "scheduled_shift" | "off_shift" | "unknown";
+  powerSource: "ac" | "battery" | "unknown";
+  trackingStatus?: string | null;
+};
+
+export async function listScreenshotCaptureEvents(
+  options: {
+    employeeId?: string;
+    day?: string;
+    outcome?: "captured" | "skipped";
+    pageSize?: number;
+  } = {},
+): Promise<ScreenshotCaptureEvent[]> {
+  const rows = await apiFetch<
+    Array<{
+      id: string;
+      employee_id: string;
+      employee_name: string;
+      device_id: string;
+      session_id?: string | null;
+      screenshot_id?: string | null;
+      occurred_at: string;
+      outcome: "captured" | "skipped";
+      reason?: string | null;
+      work_category: "scheduled_shift" | "off_shift" | "unknown";
+      power_source: "ac" | "battery" | "unknown";
+      tracking_status?: string | null;
+    }>
+  >(
+    withQuery("/screenshots/capture-events", {
+      employee_id: options.employeeId,
+      day: options.day,
+      outcome: options.outcome,
+      page_size: options.pageSize ?? 50,
+    }),
+  );
+  return rows.map((row) => ({
+    id: row.id,
+    employeeId: row.employee_id,
+    employeeName: row.employee_name,
+    deviceId: row.device_id,
+    sessionId: row.session_id,
+    screenshotId: row.screenshot_id,
+    occurredAt: row.occurred_at,
+    outcome: row.outcome,
+    reason: row.reason,
+    workCategory: row.work_category,
+    powerSource: row.power_source,
+    trackingStatus: row.tracking_status,
+  }));
 }

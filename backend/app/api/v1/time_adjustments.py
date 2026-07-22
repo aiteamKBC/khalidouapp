@@ -14,6 +14,7 @@ from app.database.session import get_db
 from app.models import AdminUser, Employee, TimeAdjustmentRequest
 from app.schemas.admin import TimeAdjustmentReview
 from app.services.audit import record_audit_log
+from app.services.attendance import refresh_daily_attendance_range
 from app.services.permissions import require_capability
 from app.services.time_adjustments import (
     get_time_adjustment_or_404,
@@ -65,7 +66,7 @@ def review_time_adjustment_request(
 ):
     require_capability(current_admin, "time_requests.manage")
     row = get_time_adjustment_or_404(db, current_admin.company_id, request_id)
-    ensure_employee_access(db, current_admin, row.employee_id)
+    employee = ensure_employee_access(db, current_admin, row.employee_id)
     row.status = payload.status
     row.approved_seconds = (
         (payload.approved_minutes * 60)
@@ -78,8 +79,14 @@ def review_time_adjustment_request(
     row.reviewed_by_admin_user_id = current_admin.id
     row.reviewed_at = datetime.now(UTC)
     db.add(row)
-    db.commit()
-    db.refresh(row)
+    db.flush()
+    refresh_daily_attendance_range(
+        db,
+        employee=employee,
+        start_date=row.requested_date,
+        end_date=row.requested_date,
+        now=row.reviewed_at,
+    )
     record_audit_log(
         db,
         current_admin,
@@ -94,4 +101,5 @@ def review_time_adjustment_request(
         request=request,
     )
     db.commit()
+    db.refresh(row)
     return success_response(data=serialize_time_adjustment_request(row))

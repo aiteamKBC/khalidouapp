@@ -25,11 +25,13 @@ from app.models import (
     PayrollAdjustment,
     PayrollEntry,
     PayrollRun,
+    OvertimeRecord,
     WorkScheduleOverride,
     TimeAdjustmentRequest,
 )
 from app.schemas.admin import BreakRule
 from app.services.audit import record_audit_log
+from app.services.activity_timeline import local_today
 from app.services.payroll import (
     get_or_create_run,
     month_bounds,
@@ -41,6 +43,7 @@ from app.services.payroll import (
 from app.services.permissions import require_capability
 from app.services.permissions import has_company_data_scope
 from app.services.work_profiles import get_or_create_work_profile, refresh_profile_completed_at
+from app.services.attendance import refresh_daily_attendance_range
 
 
 router = APIRouter(prefix="/payroll", tags=["payroll"])
@@ -87,9 +90,10 @@ class PayrollRunStatusUpdate(BaseModel):
 
 
 class ScheduleOverrideCreate(BaseModel):
-    scope: Literal["employee", "company"]
+    scope: Literal["employee", "employees", "company"]
     override_type: Literal["shift", "breaks", "both"]
     employee_id: UUID | None = None
+    employee_ids: list[UUID] = Field(default_factory=list, max_length=500)
     effective_date: date | None = None
     permanent: bool = False
     shift_start: str | None = None
@@ -101,6 +105,8 @@ class ScheduleOverrideCreate(BaseModel):
     def validate_scope_and_timing(self):
         if self.scope == "employee" and self.employee_id is None:
             raise ValueError("Choose an employee for an employee override.")
+        if self.scope == "employees" and not self.employee_ids:
+            raise ValueError("Choose at least one employee for a group override.")
         if not self.permanent and self.effective_date is None:
             raise ValueError("A one-day override requires an effective date.")
         if self.override_type in {"shift", "both"} and not (self.shift_start and self.shift_end):
@@ -263,7 +269,7 @@ def update_payroll_entry(
     require_capability(current_admin, "payroll.manage")
     entry = _entry_or_404(db, current_admin.company_id, entry_id)
     _ensure_entry_access(db, current_admin, entry)
-    _run_editable(db, entry)
+    run = _run_editable(db, entry)
     changes = payload.model_dump(exclude_unset=True)
     before = {
         key: str(getattr(entry, key)) if getattr(entry, key) is not None else None
@@ -272,6 +278,45 @@ def update_payroll_entry(
     for key, value in changes.items():
         setattr(entry, key, value)
     entry.pay_overtime = entry.overtime_decision == "paid"
+    if "overtime_decision" in changes:
+        first, last = month_bounds(run.month)
+        overtime_rows = db.scalars(
+            select(OvertimeRecord).where(
+                OvertimeRecord.company_id == current_admin.company_id,
+                OvertimeRecord.employee_id == entry.employee_id,
+                OvertimeRecord.work_date.between(first, last),
+            )
+        ).all()
+        affected_dates = set()
+        for overtime in overtime_rows:
+            affected_dates.add(overtime.work_date)
+            if entry.overtime_decision == "paid":
+                overtime.status = "approved"
+                overtime.approved_seconds = overtime.recorded_extra_seconds
+            elif entry.overtime_decision == "rejected":
+                overtime.status = "rejected"
+                overtime.approved_seconds = 0
+            else:
+                overtime.status = (
+                    "pending" if overtime.overtime_enabled_snapshot else "recorded_not_counted"
+                )
+                overtime.approved_seconds = 0
+            db.add(overtime)
+        entry.approved_overtime_seconds = (
+            entry.recorded_overtime_seconds if entry.overtime_decision == "paid" else 0
+        )
+        entry.rejected_overtime_seconds = (
+            entry.recorded_overtime_seconds if entry.overtime_decision == "rejected" else 0
+        )
+        db.flush()
+        for affected_date in sorted(affected_dates):
+            refresh_daily_attendance_range(
+                db,
+                employee=entry.employee,
+                start_date=affected_date,
+                end_date=affected_date,
+                now=datetime.now(UTC),
+            )
     if (
         entry.deduct_lateness
         and entry.lateness_deduction_amount > 0
@@ -550,15 +595,14 @@ def create_schedule_override(
             "COMPANY_SCOPE_REQUIRED", "Only company-wide HR/Admin can override all employees.", 403
         )
     employee_ids: list[UUID]
-    if payload.scope == "employee":
-        employee = db.scalar(
-            select(Employee).where(
-                Employee.id == payload.employee_id, Employee.company_id == current_admin.company_id
-            )
+    if payload.scope in {"employee", "employees"}:
+        employee_ids = (
+            [payload.employee_id]
+            if payload.scope == "employee" and payload.employee_id
+            else list(dict.fromkeys(payload.employee_ids))
         )
-        if employee is None:
-            raise ApiError("EMPLOYEE_NOT_FOUND", "Employee was not found.", 404)
-        employee_ids = [employee.id]
+        for employee_id in employee_ids:
+            ensure_employee_access(db, current_admin, employee_id)
     else:
         employee_ids = list(
             db.scalars(
@@ -619,20 +663,25 @@ def create_schedule_override(
                         "Every break must be fully inside the affected shift.",
                         400,
                     )
-    item = WorkScheduleOverride(
-        company_id=current_admin.company_id,
-        employee_id=payload.employee_id if payload.scope == "employee" else None,
-        scope=payload.scope,
-        override_type=payload.override_type,
-        effective_date=None if payload.permanent else payload.effective_date,
-        permanent=payload.permanent,
-        shift_start=parsed_start,
-        shift_end=parsed_end,
-        break_rules=rules,
-        reason=payload.reason,
-        created_by_admin_user_id=current_admin.id,
-    )
-    db.add(item)
+    target_ids: list[UUID | None] = [None] if payload.scope == "company" else employee_ids
+    items = [
+        WorkScheduleOverride(
+            company_id=current_admin.company_id,
+            employee_id=employee_id,
+            scope="company" if employee_id is None else "employee",
+            override_type=payload.override_type,
+            effective_date=None if payload.permanent else payload.effective_date,
+            permanent=payload.permanent,
+            shift_start=parsed_start,
+            shift_end=parsed_end,
+            break_rules=rules,
+            reason=payload.reason,
+            created_by_admin_user_id=current_admin.id,
+        )
+        for employee_id in target_ids
+    ]
+    db.add_all(items)
+    db.flush()
     if payload.permanent:
         profiles = db.scalars(
             select(EmployeeWorkProfile).where(EmployeeWorkProfile.employee_id.in_(employee_ids))
@@ -650,17 +699,161 @@ def create_schedule_override(
                 profile.break_rules = rules
             refresh_profile_completed_at(profile)
             db.add(profile)
+    db.flush()
+    affected_employees = db.scalars(
+        select(Employee).where(
+            Employee.company_id == current_admin.company_id,
+            Employee.id.in_(employee_ids),
+        )
+    ).all()
+    for employee in affected_employees:
+        affected_date = (
+            local_today(employee.timezone or "UTC") if payload.permanent else payload.effective_date
+        )
+        refresh_daily_attendance_range(
+            db,
+            employee=employee,
+            start_date=affected_date,
+            end_date=affected_date,
+        )
     record_audit_log(
         db,
         current_admin,
         "created",
         "work_schedule_override",
-        entity_id=item.id,
-        details=payload.model_dump(mode="json"),
+        entity_id=items[0].id,
+        details={
+            **payload.model_dump(mode="json"),
+            "override_ids": [str(item.id) for item in items],
+            "affected_employee_ids": [str(item) for item in employee_ids],
+        },
         request=request,
     )
     db.commit()
-    return success_response(data={"id": str(item.id), "affected_employees": len(employee_ids)})
+    return success_response(
+        data={
+            "id": str(items[0].id),
+            "ids": [str(item.id) for item in items],
+            "affected_employees": len(employee_ids),
+        }
+    )
+
+
+@router.get("/schedule-overrides")
+def list_schedule_overrides(
+    current_admin: Annotated[AdminUser, Depends(get_current_admin)],
+    db: Annotated[Session, Depends(get_db)],
+    upcoming_only: bool = Query(default=True),
+):
+    """List temporary schedule exceptions that still affect (or recently affected) payroll."""
+    require_capability(current_admin, "payroll.manage")
+    statement = select(WorkScheduleOverride).where(
+        WorkScheduleOverride.company_id == current_admin.company_id,
+        WorkScheduleOverride.permanent.is_(False),
+    )
+    if upcoming_only:
+        statement = statement.where(WorkScheduleOverride.effective_date >= date.today())
+    employee_ids = accessible_employee_ids_statement(db, current_admin)
+    if employee_ids is not None:
+        statement = statement.where(WorkScheduleOverride.employee_id.in_(employee_ids))
+    items = db.scalars(
+        statement.order_by(
+            WorkScheduleOverride.effective_date.asc(),
+            WorkScheduleOverride.created_at.desc(),
+        )
+    ).all()
+    employee_names = {
+        employee.id: employee.name
+        for employee in db.scalars(
+            select(Employee).where(
+                Employee.company_id == current_admin.company_id,
+                Employee.id.in_([item.employee_id for item in items if item.employee_id]),
+            )
+        ).all()
+    }
+    return success_response(
+        data=[
+            {
+                "id": str(item.id),
+                "scope": item.scope,
+                "override_type": item.override_type,
+                "employee_id": str(item.employee_id) if item.employee_id else None,
+                "employee_name": employee_names.get(item.employee_id),
+                "effective_date": item.effective_date.isoformat() if item.effective_date else None,
+                "break_rules": item.break_rules,
+                "shift_start": item.shift_start.strftime("%H:%M") if item.shift_start else None,
+                "shift_end": item.shift_end.strftime("%H:%M") if item.shift_end else None,
+                "reason": item.reason,
+                "created_at": item.created_at.isoformat(),
+            }
+            for item in items
+        ]
+    )
+
+
+@router.delete("/schedule-overrides/{override_id}")
+def delete_schedule_override(
+    override_id: UUID,
+    request: Request,
+    current_admin: Annotated[AdminUser, Depends(get_current_admin)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    require_capability(current_admin, "payroll.manage")
+    item = db.scalar(
+        select(WorkScheduleOverride).where(
+            WorkScheduleOverride.id == override_id,
+            WorkScheduleOverride.company_id == current_admin.company_id,
+        )
+    )
+    if item is None:
+        raise ApiError("SCHEDULE_OVERRIDE_NOT_FOUND", "Schedule override was not found.", 404)
+    if item.permanent:
+        raise ApiError(
+            "PERMANENT_OVERRIDE_CANNOT_BE_DELETED",
+            "Permanent schedules must be replaced with a new permanent setting.",
+            409,
+        )
+    if item.employee_id:
+        ensure_employee_access(db, current_admin, item.employee_id)
+    elif not has_company_data_scope(current_admin):
+        raise ApiError(
+            "COMPANY_SCOPE_REQUIRED", "Only company-wide HR/Admin can cancel this override.", 403
+        )
+    affected_employees = db.scalars(
+        select(Employee).where(
+            Employee.company_id == current_admin.company_id,
+            Employee.status != "deleted",
+            *([Employee.id == item.employee_id] if item.employee_id else []),
+        )
+    ).all()
+    affected_date = item.effective_date
+    record_audit_log(
+        db,
+        current_admin,
+        "deleted",
+        "work_schedule_override",
+        entity_id=item.id,
+        details={
+            "scope": item.scope,
+            "employee_id": str(item.employee_id) if item.employee_id else None,
+            "effective_date": item.effective_date.isoformat() if item.effective_date else None,
+            "reason": item.reason,
+        },
+        request=request,
+    )
+    db.delete(item)
+    db.flush()
+    if affected_date is not None:
+        for employee in affected_employees:
+            if affected_date <= local_today(employee.timezone or "UTC"):
+                refresh_daily_attendance_range(
+                    db,
+                    employee=employee,
+                    start_date=affected_date,
+                    end_date=affected_date,
+                )
+    db.commit()
+    return success_response(data={"deleted": True})
 
 
 EXPORT_COLUMNS = [
@@ -670,14 +863,20 @@ EXPORT_COLUMNS = [
     ("Salary", "salary"),
     ("Currency", "currency"),
     ("Expected days", "expected_work_days"),
+    ("Worked days", "worked_days"),
+    ("Leave days", "leave_days"),
+    ("Absence days", "absence_days"),
     ("Expected seconds", "expected_seconds"),
     ("Worked seconds", "worked_seconds"),
+    ("Normal payable seconds", "normal_seconds"),
+    ("Total payable seconds", "total_payable_seconds"),
     ("Manual approved", "approved_manual_seconds"),
     ("Idle seconds", "idle_seconds"),
-    ("Late minutes", "late_minutes"),
+    ("Raw late minutes", "raw_late_minutes"),
+    ("Deductible late minutes", "late_minutes"),
+    ("Early leave minutes", "early_leave_minutes"),
     ("Paid breaks", "paid_break_seconds"),
     ("Unpaid breaks", "unpaid_break_seconds"),
-    ("Absence days", "absence_days"),
     ("Recorded overtime", "recorded_overtime_seconds"),
     ("Payable overtime", "approved_overtime_seconds"),
     ("Base salary", "base_salary"),

@@ -10,9 +10,21 @@ from PIL import Image, UnidentifiedImageError
 
 from app.core.config import settings
 from app.core.exceptions import ApiError
-from app.models import Device, Screenshot, TrackingSettings
-from app.schemas.screenshot import ScreenshotCompleteRequest, ScreenshotInitiateRequest
+from app.models import (
+    Device,
+    Employee,
+    Screenshot,
+    ScreenshotCaptureEvent,
+    TrackingSettings,
+)
+from app.schemas.screenshot import (
+    ScreenshotCompleteRequest,
+    ScreenshotInitiateRequest,
+    ScreenshotSkipRequest,
+)
 from app.services.session_tracking import get_owned_session, utc
+from app.services.schedules import effective_schedule, timezone_for
+from app.services.work_profiles import get_or_create_work_profile
 from app.storage.local import LocalScreenshotStorage
 
 ALLOWED_SCREENSHOT_MIME_TYPES = {"image/jpeg", "image/webp"}
@@ -76,7 +88,7 @@ def serialize_screenshot(screenshot: Screenshot) -> dict[str, Any]:
         "company_id": str(screenshot.company_id),
         "employee_id": str(screenshot.employee_id),
         "device_id": str(screenshot.device_id),
-        "session_id": str(screenshot.session_id),
+        "session_id": str(screenshot.session_id) if screenshot.session_id else None,
         "team_id": str(screenshot.team_id) if screenshot.team_id else None,
         "project_id": str(screenshot.project_id) if screenshot.project_id else None,
         "task_id": str(screenshot.task_id) if screenshot.task_id else None,
@@ -88,6 +100,8 @@ def serialize_screenshot(screenshot: Screenshot) -> dict[str, Any]:
         "display_name": screenshot.display_name,
         "file_size": screenshot.file_size,
         "checksum": screenshot.checksum,
+        "work_category": screenshot.work_category,
+        "power_source": screenshot.power_source,
         "status": screenshot.status,
         "tracked_seconds": screenshot.tracked_seconds,
         "deleted_time_seconds": screenshot.deleted_time_seconds,
@@ -113,7 +127,22 @@ def initiate_screenshot(
     db: Session, device: Device, payload: ScreenshotInitiateRequest
 ) -> dict[str, Any]:
     validate_screenshot_size(payload.file_size)
-    session = get_owned_session(db, device, payload.session_id)
+    if payload.power_source != "ac":
+        raise ApiError(
+            "SCREENSHOT_AC_POWER_REQUIRED",
+            "Screenshot capture is allowed only while the device reports AC power.",
+            409,
+        )
+    tracking_settings = db.scalar(
+        select(TrackingSettings).where(TrackingSettings.company_id == device.company_id)
+    )
+    if tracking_settings is not None and not tracking_settings.screenshot_enabled:
+        raise ApiError(
+            "SCREENSHOT_CAPTURE_DISABLED",
+            "Screenshot capture is disabled by company policy.",
+            403,
+        )
+    session = get_owned_session(db, device, payload.session_id) if payload.session_id else None
     existing = db.scalar(
         select(Screenshot).where(
             Screenshot.id == payload.screenshot_id,
@@ -127,15 +156,37 @@ def initiate_screenshot(
             "duplicate": True,
         }
 
+    employee = db.get(Employee, device.employee_id)
+    if employee is None or employee.status != "active":
+        raise ApiError(
+            "SCREENSHOT_EMPLOYEE_INACTIVE",
+            "This device is not assigned to an active employee.",
+            403,
+        )
+    category = "unknown"
+    if employee is not None:
+        captured_at = utc(payload.captured_at)
+        profile = get_or_create_work_profile(db, employee)
+        local_day = captured_at.astimezone(timezone_for(employee)).date()
+        schedule = effective_schedule(db, employee, profile, local_day)
+        if schedule["start_at"] and schedule["end_at"]:
+            category = (
+                "scheduled_shift"
+                if schedule["start_at"] <= captured_at <= schedule["end_at"]
+                else "off_shift"
+            )
+        else:
+            category = "off_shift"
+
     screenshot = Screenshot(
         id=payload.screenshot_id,
         company_id=device.company_id,
         employee_id=device.employee_id,
         device_id=device.id,
-        session_id=session.id,
-        team_id=session.team_id,
-        project_id=session.project_id,
-        task_id=session.task_id,
+        session_id=session.id if session else None,
+        team_id=session.team_id if session else None,
+        project_id=session.project_id if session else None,
+        task_id=session.task_id if session else None,
         captured_at=utc(payload.captured_at),
         storage_path=build_storage_path(device, payload),
         thumbnail_path=None,
@@ -146,11 +197,10 @@ def initiate_screenshot(
         display_name=payload.display_name,
         file_size=payload.file_size,
         checksum=payload.checksum.lower(),
+        work_category=category,
+        power_source=payload.power_source,
         status="initiated",
         tracked_seconds=0,
-    )
-    tracking_settings = db.scalar(
-        select(TrackingSettings).where(TrackingSettings.company_id == device.company_id)
     )
     if tracking_settings is not None:
         screenshot.tracked_seconds = max(
@@ -162,6 +212,22 @@ def initiate_screenshot(
             ),
         )
     db.add(screenshot)
+    db.add(
+        ScreenshotCaptureEvent(
+            company_id=device.company_id,
+            employee_id=device.employee_id,
+            device_id=device.id,
+            session_id=session.id if session else None,
+            screenshot_id=screenshot.id,
+            event_key=f"captured:{screenshot.id}",
+            occurred_at=utc(payload.captured_at),
+            outcome="captured",
+            reason=None,
+            work_category=category,
+            power_source=payload.power_source,
+            tracking_status=session.status if session else "device_active",
+        )
+    )
     db.commit()
     db.refresh(screenshot)
 
@@ -170,6 +236,54 @@ def initiate_screenshot(
         "upload_url": f"/api/v1/agent/screenshots/{screenshot.id}/upload",
         "duplicate": False,
     }
+
+
+def record_screenshot_skip(
+    db: Session, device: Device, payload: ScreenshotSkipRequest
+) -> dict[str, Any]:
+    event_key = f"skip:{payload.event_id}"
+    existing = db.scalar(
+        select(ScreenshotCaptureEvent).where(
+            ScreenshotCaptureEvent.device_id == device.id,
+            ScreenshotCaptureEvent.event_key == event_key,
+        )
+    )
+    if existing is not None:
+        return {"recorded": True, "duplicate": True}
+    session = get_owned_session(db, device, payload.session_id) if payload.session_id else None
+    employee = db.get(Employee, device.employee_id)
+    category = "unknown"
+    occurred_at = utc(payload.occurred_at)
+    if employee is not None:
+        profile = get_or_create_work_profile(db, employee)
+        local_day = occurred_at.astimezone(timezone_for(employee)).date()
+        schedule = effective_schedule(db, employee, profile, local_day)
+        if schedule["start_at"] and schedule["end_at"]:
+            category = (
+                "scheduled_shift"
+                if schedule["start_at"] <= occurred_at <= schedule["end_at"]
+                else "off_shift"
+            )
+        else:
+            category = "off_shift"
+    db.add(
+        ScreenshotCaptureEvent(
+            company_id=device.company_id,
+            employee_id=device.employee_id,
+            device_id=device.id,
+            session_id=session.id if session else None,
+            screenshot_id=None,
+            event_key=event_key,
+            occurred_at=occurred_at,
+            outcome="skipped",
+            reason=payload.reason,
+            work_category=category,
+            power_source=payload.power_source,
+            tracking_status=payload.tracking_status,
+        )
+    )
+    db.commit()
+    return {"recorded": True, "duplicate": False, "work_category": category}
 
 
 def upload_screenshot_content(

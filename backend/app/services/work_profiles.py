@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import ApiError
-from app.models import Employee, EmployeeWorkProfile, WorkSession
+from app.models import Employee, EmployeeWorkProfile, WorkScheduleOverride, WorkSession
 
 REQUIRED_PROFILE_FIELDS = (
     "shift_start",
@@ -49,17 +49,66 @@ DEFAULT_DEDUCTION_POLICY = {
 
 
 def get_or_create_work_profile(db: Session, employee: Employee) -> EmployeeWorkProfile:
-    profile = employee.work_profile
+    # Query by the database key instead of trusting a possibly stale loaded
+    # relationship. The profile may have been created by another request after
+    # this Employee instance was loaded.
+    profile = db.scalar(
+        select(EmployeeWorkProfile).where(
+            EmployeeWorkProfile.company_id == employee.company_id,
+            EmployeeWorkProfile.employee_id == employee.id,
+        )
+    )
     if profile is None:
+        company_shift_default = db.scalar(
+            select(WorkScheduleOverride)
+            .where(
+                WorkScheduleOverride.company_id == employee.company_id,
+                WorkScheduleOverride.scope == "company",
+                WorkScheduleOverride.permanent.is_(True),
+                WorkScheduleOverride.override_type.in_(["shift", "both"]),
+            )
+            .order_by(WorkScheduleOverride.created_at.desc())
+        )
+        company_break_default = db.scalar(
+            select(WorkScheduleOverride)
+            .where(
+                WorkScheduleOverride.company_id == employee.company_id,
+                WorkScheduleOverride.scope == "company",
+                WorkScheduleOverride.permanent.is_(True),
+                WorkScheduleOverride.override_type.in_(["breaks", "both"]),
+            )
+            .order_by(WorkScheduleOverride.created_at.desc())
+        )
         profile = EmployeeWorkProfile(
             company_id=employee.company_id,
             employee_id=employee.id,
-            shift_start=datetime.strptime("09:00", "%H:%M").time(),
-            shift_end=datetime.strptime("17:00", "%H:%M").time(),
+            shift_start=(
+                company_shift_default.shift_start
+                if company_shift_default and company_shift_default.shift_start
+                else datetime.strptime("09:00", "%H:%M").time()
+            ),
+            shift_end=(
+                company_shift_default.shift_end
+                if company_shift_default and company_shift_default.shift_end
+                else datetime.strptime("17:00", "%H:%M").time()
+            ),
             working_days=[0, 1, 2, 3, 4],
             weekly_off_days=[5, 6],
-            required_daily_minutes=480,
-            break_rules=DEFAULT_BREAK_RULES,
+            required_daily_minutes=(
+                company_shift_default.shift_end.hour * 60
+                + company_shift_default.shift_end.minute
+                - company_shift_default.shift_start.hour * 60
+                - company_shift_default.shift_start.minute
+                if company_shift_default
+                and company_shift_default.shift_start
+                and company_shift_default.shift_end
+                else 480
+            ),
+            break_rules=(
+                company_break_default.break_rules
+                if company_break_default and company_break_default.break_rules is not None
+                else DEFAULT_BREAK_RULES
+            ),
             late_grace_minutes=15,
             no_show_threshold_minutes=30,
             schedule_type="fixed",

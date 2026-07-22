@@ -5,6 +5,7 @@ export type BackendWorkdayTimeline = {
   timezone: string;
   first_started_at?: string | null;
   last_ended_at?: string | null;
+  last_activity_at?: string | null;
   is_running: boolean;
   worked_seconds: number;
   idle_seconds: number;
@@ -28,6 +29,7 @@ export function mapWorkdayTimeline(row: BackendWorkdayTimeline): WorkdayTimeline
     timezone: row.timezone,
     firstStartedAt: row.first_started_at ?? undefined,
     lastEndedAt: row.last_ended_at ?? undefined,
+    lastActivityAt: row.last_activity_at ?? undefined,
     isRunning: row.is_running,
     workedSeconds: row.worked_seconds,
     idleSeconds: row.idle_seconds,

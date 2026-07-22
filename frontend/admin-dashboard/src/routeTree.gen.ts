@@ -32,6 +32,7 @@ import { Route as AppDevicesRouteImport } from './routes/_app.devices'
 import { Route as AppDashboardRouteImport } from './routes/_app.dashboard'
 import { Route as AppBreaksRouteImport } from './routes/_app.breaks'
 import { Route as AppAuditLogRouteImport } from './routes/_app.audit-log'
+import { Route as AppAttendanceRouteImport } from './routes/_app.attendance'
 import { Route as AppTeamsTeamIdRouteImport } from './routes/_app.teams.$teamId'
 import { Route as AppSettingsTrackingRouteImport } from './routes/_app.settings.tracking'
 import { Route as AppProjectsProjectIdRouteImport } from './routes/_app.projects.$projectId'
@@ -152,6 +153,11 @@ const AppAuditLogRoute = AppAuditLogRouteImport.update({
   path: '/audit-log',
   getParentRoute: () => AppRoute,
 } as any)
+const AppAttendanceRoute = AppAttendanceRouteImport.update({
+  id: '/attendance',
+  path: '/attendance',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppTeamsTeamIdRoute = AppTeamsTeamIdRouteImport.update({
   id: '/$teamId',
   path: '/$teamId',
@@ -184,6 +190,7 @@ export interface FileRoutesByFullPath {
   '/download': typeof DownloadRoute
   '/employee': typeof EmployeeRoute
   '/login': typeof LoginRoute
+  '/attendance': typeof AppAttendanceRoute
   '/audit-log': typeof AppAuditLogRoute
   '/breaks': typeof AppBreaksRoute
   '/dashboard': typeof AppDashboardRoute
@@ -213,6 +220,7 @@ export interface FileRoutesByTo {
   '/download': typeof DownloadRoute
   '/employee': typeof EmployeeRoute
   '/login': typeof LoginRoute
+  '/attendance': typeof AppAttendanceRoute
   '/audit-log': typeof AppAuditLogRoute
   '/breaks': typeof AppBreaksRoute
   '/dashboard': typeof AppDashboardRoute
@@ -244,6 +252,7 @@ export interface FileRoutesById {
   '/download': typeof DownloadRoute
   '/employee': typeof EmployeeRoute
   '/login': typeof LoginRoute
+  '/_app/attendance': typeof AppAttendanceRoute
   '/_app/audit-log': typeof AppAuditLogRoute
   '/_app/breaks': typeof AppBreaksRoute
   '/_app/dashboard': typeof AppDashboardRoute
@@ -275,6 +284,7 @@ export interface FileRouteTypes {
     | '/download'
     | '/employee'
     | '/login'
+    | '/attendance'
     | '/audit-log'
     | '/breaks'
     | '/dashboard'
@@ -304,6 +314,7 @@ export interface FileRouteTypes {
     | '/download'
     | '/employee'
     | '/login'
+    | '/attendance'
     | '/audit-log'
     | '/breaks'
     | '/dashboard'
@@ -334,6 +345,7 @@ export interface FileRouteTypes {
     | '/download'
     | '/employee'
     | '/login'
+    | '/_app/attendance'
     | '/_app/audit-log'
     | '/_app/breaks'
     | '/_app/dashboard'
@@ -530,6 +542,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppAuditLogRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/attendance': {
+      id: '/_app/attendance'
+      path: '/attendance'
+      fullPath: '/attendance'
+      preLoaderRoute: typeof AppAttendanceRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/teams/$teamId': {
       id: '/_app/teams/$teamId'
       path: '/$teamId'
@@ -617,6 +636,7 @@ const AppTeamsRouteWithChildren = AppTeamsRoute._addFileChildren(
 )
 
 interface AppRouteChildren {
+  AppAttendanceRoute: typeof AppAttendanceRoute
   AppAuditLogRoute: typeof AppAuditLogRoute
   AppBreaksRoute: typeof AppBreaksRoute
   AppDashboardRoute: typeof AppDashboardRoute
@@ -638,6 +658,7 @@ interface AppRouteChildren {
 }
 
 const AppRouteChildren: AppRouteChildren = {
+  AppAttendanceRoute: AppAttendanceRoute,
   AppAuditLogRoute: AppAuditLogRoute,
   AppBreaksRoute: AppBreaksRoute,
   AppDashboardRoute: AppDashboardRoute,

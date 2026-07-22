@@ -64,16 +64,20 @@ export function WorkdayTimeline({ timeline }: { timeline?: WorkdayTimelineData }
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 text-sm md:grid-cols-5">
         <Metric
           label="First start"
           value={formatClock(timeline.firstStartedAt, timeline.timezone)}
         />
         <Metric
-          label={timeline.isRunning ? "Current" : "Last end"}
+          label="Last activity"
+          value={formatClock(timeline.lastActivityAt, timeline.timezone)}
+        />
+        <Metric
+          label="End"
           value={
             timeline.isRunning
-              ? "Working now"
+              ? "In progress"
               : formatClock(timeline.lastEndedAt, timeline.timezone)
           }
         />

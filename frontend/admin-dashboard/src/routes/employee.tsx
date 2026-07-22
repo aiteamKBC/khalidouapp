@@ -33,6 +33,7 @@ import {
   employeeProjects,
   employeeScreenshots,
   employeeSummary,
+  employeeWorkProfile,
   employeeTasks,
   employeeTimeRequests,
   employeeNotifications,
@@ -228,6 +229,10 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
     queryKey: [...employeePortalQueryKey, "summary"],
     queryFn: () => employeeSummary(token),
     refetchInterval: 60_000,
+  });
+  const workProfile = useQuery({
+    queryKey: [...employeePortalQueryKey, "work-profile"],
+    queryFn: () => employeeWorkProfile(token),
   });
   const tasks = useQuery({
     queryKey: [...employeePortalQueryKey, "tasks"],
@@ -466,6 +471,56 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
           <PeriodCard title="This week" period={summary.data?.week} icon={CalendarClock} />
           <PeriodCard title="This month" period={summary.data?.month} icon={Star} />
         </div>
+        <Card>
+          <CardHeader className="pb-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <CardTitle>Today&apos;s schedule & attendance</CardTitle>
+              {summary.data?.daily_attendance && (
+                <StatusBadge status={summary.data.daily_attendance.status as never} />
+              )}
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div className="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
+              <div className="rounded-lg border p-3">
+                <p className="text-xs text-muted-foreground">Scheduled shift</p>
+                <p className="mt-1 font-semibold">
+                  {workProfile.data?.shift_start?.slice(0, 5) ?? "—"} –{" "}
+                  {workProfile.data?.shift_end?.slice(0, 5) ?? "—"}
+                </p>
+              </div>
+              <div className="rounded-lg border p-3">
+                <p className="text-xs text-muted-foreground">First / last activity</p>
+                <p className="mt-1 font-semibold">
+                  {summary.data?.daily_attendance.actual_first_activity_at
+                    ? new Date(
+                        summary.data.daily_attendance.actual_first_activity_at,
+                      ).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+                    : "—"}
+                  {" / "}
+                  {summary.data?.daily_attendance.actual_last_activity_at
+                    ? new Date(
+                        summary.data.daily_attendance.actual_last_activity_at,
+                      ).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+                    : "—"}
+                </p>
+              </div>
+              <div className="rounded-lg border p-3">
+                <p className="text-xs text-muted-foreground">Payable today</p>
+                <p className="mt-1 font-semibold">
+                  {formatDuration(summary.data?.daily_attendance.total_payable_seconds ?? 0)}
+                </p>
+              </div>
+              <div className="rounded-lg border p-3">
+                <p className="text-xs text-muted-foreground">Late / overtime</p>
+                <p className="mt-1 font-semibold">
+                  {formatDuration(summary.data?.daily_attendance.raw_late_seconds ?? 0)} /{" "}
+                  {formatDuration(summary.data?.daily_attendance.recorded_overtime_seconds ?? 0)}
+                </p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
         <Card>
           <CardHeader>
             <CardTitle>Today's activity</CardTitle>

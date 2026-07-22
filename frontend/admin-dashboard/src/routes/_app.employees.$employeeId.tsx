@@ -126,10 +126,18 @@ function EmployeeDetailPage() {
     return date >= weekStart;
   });
   const monthTimesheets = empTs.filter((timesheet) => timesheet.date.startsWith(monthKey));
+  const timelineWorkedMinutes = Math.floor((timeline.data?.workedSeconds ?? 0) / 60);
+  const timelineIdleMinutes = Math.floor((timeline.data?.idleSeconds ?? 0) / 60);
   const todaySummary = {
-    totalMinutes: todayTimesheet?.totalMinutes ?? e.workedTodayMinutes,
-    activeMinutes: todayTimesheet?.activeMinutes ?? e.activeMinutes,
-    idleMinutes: todayTimesheet?.idleMinutes ?? e.idleMinutes,
+    totalMinutes: Math.max(
+      todayTimesheet?.totalMinutes ?? e.workedTodayMinutes,
+      timelineWorkedMinutes,
+    ),
+    activeMinutes: Math.max(
+      todayTimesheet?.activeMinutes ?? e.activeMinutes,
+      timelineWorkedMinutes,
+    ),
+    idleMinutes: Math.max(todayTimesheet?.idleMinutes ?? e.idleMinutes, timelineIdleMinutes),
     points: todayTimesheet?.points ?? 0,
     screenshots: todayTimesheet?.screenshotCount ?? 0,
   };

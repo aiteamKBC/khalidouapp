@@ -386,3 +386,85 @@ def test_heartbeat_splits_normal_and_overtime_when_employee_is_eligible(tracking
     assert overtime is not None
     assert overtime.status == "pending"
     assert overtime.recorded_extra_seconds == 60 * 60
+
+
+def test_workday_totals_continue_across_restarted_sessions(tracking_context):
+    db, device = tracking_context
+    profile = EmployeeWorkProfile(
+        company_id=device.company_id,
+        employee_id=device.employee_id,
+        required_daily_minutes=8 * 60,
+        overtime_enabled=False,
+    )
+    db.add(profile)
+    first = start_or_get_session(
+        db,
+        device,
+        SessionStartRequest(started_at=datetime.now(UTC) - timedelta(hours=3)),
+    )
+    end_session(
+        db,
+        device=device,
+        session_id=UUID(first["session"]["id"]),
+        payload=SessionEndRequest(
+            ended_at=datetime.now(UTC) - timedelta(hours=1),
+            active_seconds=2 * 60 * 60,
+            idle_seconds=0,
+            reason="Application restarted",
+        ),
+    )
+    second = start_or_get_session(
+        db,
+        device,
+        SessionStartRequest(started_at=datetime.now(UTC)),
+    )
+
+    heartbeat = record_heartbeat(
+        db,
+        device=device,
+        session_id=UUID(second["session"]["id"]),
+        payload=HeartbeatRequest(
+            event_id=uuid4(),
+            timestamp=datetime.now(UTC),
+            status="active",
+            active_seconds=30 * 60,
+            idle_seconds=0,
+            agent_version="1.0.0",
+        ),
+    )
+
+    assert heartbeat["workday"]["normal_seconds"] == 2 * 60 * 60 + 30 * 60
+    assert heartbeat["workday"]["extra_seconds"] == 0
+
+
+def test_session_end_cannot_replace_newer_server_totals_with_stale_client_values(
+    tracking_context,
+):
+    db, device = tracking_context
+    session = WorkSession(
+        company_id=device.company_id,
+        employee_id=device.employee_id,
+        device_id=device.id,
+        started_at=datetime.now(UTC) - timedelta(minutes=20),
+        status="active",
+        active_seconds=600,
+        idle_seconds=90,
+    )
+    db.add(session)
+    db.commit()
+
+    ended = end_session(
+        db,
+        device=device,
+        session_id=session.id,
+        payload=SessionEndRequest(
+            event_id=uuid4(),
+            ended_at=datetime.now(UTC),
+            active_seconds=10,
+            idle_seconds=5,
+            reason="Client restarted during an application update",
+        ),
+    )["session"]
+
+    assert ended["active_seconds"] == 600
+    assert ended["idle_seconds"] == 90

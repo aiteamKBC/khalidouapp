@@ -17,6 +17,7 @@ import {
   CircleUserRound,
   Coffee,
   Palmtree,
+  CalendarCheck2,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { BrandLogo } from "@/components/ui/brand-logo";
@@ -39,6 +40,12 @@ const navGroups: { label: string; items: NavItem[] }[] = [
   {
     label: "Monitor",
     items: [
+      {
+        to: "/attendance",
+        label: "Attendance",
+        icon: CalendarCheck2,
+        permission: permissions.timesheetsView,
+      },
       {
         to: "/dashboard",
         label: "Overview",
@@ -76,7 +83,12 @@ const navGroups: { label: string; items: NavItem[] }[] = [
         icon: ClockPlus,
         permission: permissions.timeRequestsView,
       },
-      { to: "/breaks", label: "Breaks", icon: Coffee, permission: permissions.breaksView },
+      {
+        to: "/breaks",
+        label: "Schedules & Breaks",
+        icon: Coffee,
+        permission: permissions.breaksView,
+      },
       {
         to: "/holiday-requests",
         label: "Holiday Requests",

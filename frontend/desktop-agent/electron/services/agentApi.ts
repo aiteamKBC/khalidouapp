@@ -145,6 +145,15 @@ export type RequestPolicy = {
   shift_start: string | null;
   shift_end: string | null;
   working_days: number[];
+  break_rules?: Array<{
+    name: string;
+    minutes: number;
+    paid: boolean;
+    start_time?: string | null;
+    end_time?: string | null;
+  }>;
+  approved_leave_today?: boolean;
+  approved_early_leave_from?: string | null;
   weekly_early_leave_minutes: number;
   weekly_early_leave_used_minutes: number;
   weekly_early_leave_remaining_minutes: number;
@@ -211,6 +220,7 @@ export type AgentWorkdayTimeline = {
   timezone: string;
   first_started_at: string | null;
   last_ended_at: string | null;
+  last_activity_at: string | null;
   is_running: boolean;
   worked_seconds: number;
   idle_seconds: number;
@@ -598,7 +608,7 @@ export async function sendQueuedRequest(
 
 export type ScreenshotMetadata = {
   screenshotId: string;
-  sessionId: string;
+  sessionId?: string | null;
   capturedAt: string;
   width: number;
   height: number;
@@ -608,6 +618,7 @@ export type ScreenshotMetadata = {
   displayId?: string;
   displayName?: string;
   displayCount?: number;
+  powerSource?: "ac" | "battery" | "unknown";
 };
 
 export async function initiateScreenshot(metadata: ScreenshotMetadata) {
@@ -627,6 +638,30 @@ export async function initiateScreenshot(metadata: ScreenshotMetadata) {
       display_id: metadata.displayId,
       display_name: metadata.displayName,
       display_count: metadata.displayCount ?? 1,
+      power_source: metadata.powerSource ?? "unknown",
+    },
+    { headers: getAuthHeaders() },
+  );
+  return response.data.data;
+}
+
+export async function reportScreenshotSkip(options: {
+  eventId: string;
+  sessionId?: string | null;
+  occurredAt: string;
+  reason: string;
+  powerSource: "ac" | "battery" | "unknown";
+  trackingStatus?: string | null;
+}) {
+  const response = await axios.post<ApiSuccess<Record<string, unknown>>>(
+    `${getApiBaseUrl()}/agent/screenshots/skips`,
+    {
+      event_id: options.eventId,
+      session_id: options.sessionId,
+      occurred_at: options.occurredAt,
+      reason: options.reason,
+      power_source: options.powerSource,
+      tracking_status: options.trackingStatus,
     },
     { headers: getAuthHeaders() },
   );

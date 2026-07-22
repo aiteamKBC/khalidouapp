@@ -164,6 +164,7 @@ function mapEmployee(status: BackendEmployeeStatus, teamIds: string[]): Employee
     code: employee.employee_code,
     email: employee.email,
     jobTitle: normalizeAiAcronym(employee.job_title ?? ""),
+    timezone: employee.timezone || "Africa/Cairo",
     teamRole: status.team_role ?? undefined,
     teamIds,
     status: normalizeEmployeeStatus(status.activity_status),
@@ -286,6 +287,9 @@ export type EmployeeBreakRules = {
   employeeId: string;
   name: string;
   email: string;
+  shiftStart: string;
+  shiftEnd: string;
+  requiredDailyMinutes: number;
   breakRules: WorkProfile["breakRules"];
 };
 
@@ -298,6 +302,9 @@ export async function listEmployeeBreakRules(
       employee_id: string;
       name: string;
       email: string;
+      shift_start: string;
+      shift_end: string;
+      required_daily_minutes: number;
       break_rules: WorkProfile["breakRules"];
     }>
   >(withQuery("/employees/break-rules", { team_id: teamId }));
@@ -305,6 +312,9 @@ export async function listEmployeeBreakRules(
     employeeId: row.employee_id,
     name: row.name,
     email: row.email,
+    shiftStart: row.shift_start,
+    shiftEnd: row.shift_end,
+    requiredDailyMinutes: row.required_daily_minutes,
     breakRules: row.break_rules,
   }));
 }

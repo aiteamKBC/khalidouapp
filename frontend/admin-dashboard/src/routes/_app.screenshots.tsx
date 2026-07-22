@@ -8,6 +8,7 @@ import {
   Download,
   Folder,
   ImageOff,
+  ListChecks,
   Trash2,
 } from "lucide-react";
 import { PageHeader } from "@/components/ui/page-header";
@@ -25,7 +26,12 @@ import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ProtectedImage } from "@/components/ProtectedImage";
-import { deleteScreenshot, downloadScreenshot, listScreenshotPage } from "@/api/screenshots";
+import {
+  deleteScreenshot,
+  downloadScreenshot,
+  listScreenshotCaptureEvents,
+  listScreenshotPage,
+} from "@/api/screenshots";
 import { listEmployees } from "@/api/employees";
 import { listTasks } from "@/api/projects";
 import { listTeams } from "@/api/teams";
@@ -64,10 +70,12 @@ function ScreenshotsPage() {
   const [empId, setEmpId] = useState("all");
   const [teamId, setTeamId] = useState("all");
   const [date, setDate] = useState("");
+  const [workCategory, setWorkCategory] = useState("all");
   const [page, setPage] = useState(1);
   const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null);
+  const [auditOpen, setAuditOpen] = useState(false);
   const shots = useQuery({
-    queryKey: ["screenshots", scope, page, empId, teamId, date],
+    queryKey: ["screenshots", scope, page, empId, teamId, date, workCategory],
     queryFn: () =>
       listScreenshotPage({
         scopedTeamIds: scope,
@@ -75,10 +83,21 @@ function ScreenshotsPage() {
         employeeId: empId,
         teamId,
         day: date || undefined,
+        workCategory,
       }),
   });
   const [openIdx, setOpenIdx] = useState<number | null>(null);
   const [failedIds, setFailedIds] = useState<Set<string>>(new Set());
+  const captureAudit = useQuery({
+    queryKey: ["screenshot-capture-audit", empId, date],
+    queryFn: () =>
+      listScreenshotCaptureEvents({
+        employeeId: empId === "all" ? undefined : empId,
+        day: date || undefined,
+        pageSize: 75,
+      }),
+    enabled: auditOpen,
+  });
 
   const deleteMutation = useMutation({
     mutationFn: deleteScreenshot,
@@ -99,7 +118,7 @@ function ScreenshotsPage() {
     setPage(1);
     setSelectedFolderId(null);
     setOpenIdx(null);
-  }, [empId, teamId, date]);
+  }, [empId, teamId, date, workCategory]);
 
   const filtered = shots.data?.items ?? [];
 
@@ -138,10 +157,15 @@ function ScreenshotsPage() {
       <PageHeader
         title="Screenshots"
         description={`Review captured screenshots with filters and quick preview${shots.data ? ` · ${shots.data.total} total` : ""}.`}
+        actions={
+          <Button variant="outline" onClick={() => setAuditOpen(true)}>
+            <ListChecks className="mr-2 h-4 w-4" /> Capture audit
+          </Button>
+        }
       />
 
       <Card className="p-4 mb-4">
-        <div className="grid gap-3 sm:grid-cols-4">
+        <div className="grid gap-3 sm:grid-cols-5">
           <Select value={empId} onValueChange={setEmpId}>
             <SelectTrigger>
               <SelectValue placeholder="Employee" />
@@ -169,12 +193,23 @@ function ScreenshotsPage() {
             </SelectContent>
           </Select>
           <Input type="date" value={date} onChange={(event) => setDate(event.target.value)} />
+          <Select value={workCategory} onValueChange={setWorkCategory}>
+            <SelectTrigger>
+              <SelectValue placeholder="Work category" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All activity</SelectItem>
+              <SelectItem value="scheduled_shift">Scheduled shift</SelectItem>
+              <SelectItem value="off_shift">Off-shift activity</SelectItem>
+            </SelectContent>
+          </Select>
           <Button
             variant="outline"
             onClick={() => {
               setEmpId("all");
               setTeamId("all");
               setDate("");
+              setWorkCategory("all");
             }}
           >
             Reset
@@ -395,7 +430,8 @@ function ScreenshotsPage() {
                     {taskOf(current)?.name ?? "No task"}
                   </div>
                   <div className="text-muted-foreground text-xs">
-                    {formatDateTime(current.capturedAt)} - Session {current.sessionId}
+                    {formatDateTime(current.capturedAt)} -{" "}
+                    {current.sessionId ? `Session ${current.sessionId}` : "Independent capture"}
                   </div>
                   {current.displayName && (
                     <div className="text-muted-foreground text-xs">
@@ -450,6 +486,55 @@ function ScreenshotsPage() {
               </div>
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={auditOpen} onOpenChange={setAuditOpen}>
+        <DialogContent className="max-h-[85vh] max-w-4xl overflow-y-auto">
+          <DialogTitle>Screenshot capture audit</DialogTitle>
+          <p className="text-sm text-muted-foreground">
+            Server-recorded capture attempts and the exact reason a screenshot was skipped.
+          </p>
+          <div className="mt-3 overflow-hidden rounded-xl border">
+            {captureAudit.isLoading ? (
+              <div className="p-8 text-center text-sm text-muted-foreground">Loading audit…</div>
+            ) : captureAudit.isError ? (
+              <div className="p-8 text-center text-sm text-destructive">
+                Capture audit could not be loaded.
+              </div>
+            ) : captureAudit.data?.length ? (
+              <div className="divide-y">
+                {captureAudit.data.map((event) => (
+                  <div
+                    key={event.id}
+                    className="grid gap-2 px-4 py-3 text-sm sm:grid-cols-[1.1fr_1fr_1fr_auto] sm:items-center"
+                  >
+                    <div>
+                      <p className="font-semibold">{event.employeeName}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {formatDateTime(event.occurredAt)}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="font-medium capitalize">{event.outcome}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {event.reason?.replaceAll("_", " ") || "Screenshot stored"}
+                      </p>
+                    </div>
+                    <div className="text-xs capitalize text-muted-foreground">
+                      <p>{event.workCategory.replaceAll("_", " ")}</p>
+                      <p>Power: {event.powerSource}</p>
+                    </div>
+                    <StatusBadge status={event.outcome === "captured" ? "active" : "idle"} />
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="p-8 text-center text-sm text-muted-foreground">
+                No capture attempts match the current employee/date filters.
+              </div>
+            )}
+          </div>
         </DialogContent>
       </Dialog>
     </div>

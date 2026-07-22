@@ -40,6 +40,8 @@ from app.schemas.admin import (
     EmployeeUpdate,
 )
 from app.services.audit import record_audit_log
+from app.services.activity_timeline import local_today
+from app.services.attendance import refresh_daily_attendance_range
 from app.services.email import (
     enqueue_employee_invitation_email,
 )
@@ -115,7 +117,7 @@ def list_employee_break_rules(
     db: Annotated[Session, Depends(get_db)],
     team_id: UUID | None = None,
 ):
-    """Break rules for every employee in scope in a single query.
+    """Work schedule and break rules for every employee in scope in one query.
 
     Avoids one /employees/{id}/work-profile round trip per employee, which is
     slow when the database has significant network latency.
@@ -123,7 +125,15 @@ def list_employee_break_rules(
 
     require_capability(current_admin, "payroll.view")
     statement = (
-        select(Employee.id, Employee.name, Employee.email, EmployeeWorkProfile.break_rules)
+        select(
+            Employee.id,
+            Employee.name,
+            Employee.email,
+            EmployeeWorkProfile.shift_start,
+            EmployeeWorkProfile.shift_end,
+            EmployeeWorkProfile.required_daily_minutes,
+            EmployeeWorkProfile.break_rules,
+        )
         .select_from(Employee)
         .outerjoin(EmployeeWorkProfile, EmployeeWorkProfile.employee_id == Employee.id)
         .where(
@@ -141,8 +151,21 @@ def list_employee_break_rules(
                 "name": name,
                 "email": email,
                 "break_rules": break_rules if break_rules is not None else DEFAULT_BREAK_RULES,
+                "shift_start": shift_start.isoformat(timespec="minutes")
+                if shift_start
+                else "09:00",
+                "shift_end": shift_end.isoformat(timespec="minutes") if shift_end else "17:00",
+                "required_daily_minutes": required_daily_minutes or 480,
             }
-            for employee_id, name, email, break_rules in rows
+            for (
+                employee_id,
+                name,
+                email,
+                shift_start,
+                shift_end,
+                required_daily_minutes,
+                break_rules,
+            ) in rows
         ]
     )
 
@@ -432,6 +455,14 @@ def update_employee_work_profile(
         setattr(profile, key, value)
     refresh_profile_completed_at(profile)
     db.add(profile)
+    db.flush()
+    employee_today = local_today(employee.timezone or "UTC")
+    refresh_daily_attendance_range(
+        db,
+        employee=employee,
+        start_date=employee_today,
+        end_date=employee_today,
+    )
     record_audit_log(
         db,
         current_admin,

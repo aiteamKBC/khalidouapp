@@ -36,6 +36,9 @@ const fallbackStatus: AgentStatus = {
   paidPauseBalanceRemainingSeconds: null,
   connectionStatus: "offline",
   lastScreenshotAt: null,
+  screenshotMonitoringEnabled: true,
+  screenshotCaptureActive: false,
+  powerSource: "ac",
   lastSuccessfulSyncAt: null,
   agentVersion: "1.0.0",
   tasks: [],
@@ -59,7 +62,7 @@ const fallbackStatus: AgentStatus = {
   updateVersion: null,
   updatePercent: null,
   privacyNotice:
-    "This application records working time, online status, idle status, and periodic screenshots during work sessions. It does not record typed text, passwords, webcam, microphone, or personal files.",
+    "While this enrolled device is active, unlocked, and connected to AC power, company policy may capture periodic workplace screenshots even when no task timer is selected. It does not record typed text, passwords, webcam, microphone, or personal files.",
 };
 
 const TRACKABLE_TASK_STAGES = new Set(["backlog", "assigned", "in_progress"]);
@@ -495,6 +498,17 @@ function App() {
   }, [status.selectedTask?.projectId]);
 
   useEffect(() => {
+    if (projectFilterId || status.selectedTask || status.projects.length === 0) {
+      return;
+    }
+    const defaultProject =
+      status.projects.find(
+        (project) => project.name.trim().toLowerCase() === "general work",
+      ) ?? status.projects[0];
+    setProjectFilterId(defaultProject.id);
+  }, [projectFilterId, status.projects, status.selectedTask]);
+
+  useEffect(() => {
     setTaskCompletionNote("");
     setNewChecklistTitle("");
   }, [status.selectedTask?.id]);
@@ -806,8 +820,10 @@ function App() {
       );
       return;
     }
-    if (timeRequestReason.trim().length < 3) {
-      setTimeRequestError("Explain what you were doing during this idle time.");
+    if (timeRequestReason.trim().length < 10) {
+      setTimeRequestError(
+        "Write a clear description of what you were doing during this idle time.",
+      );
       return;
     }
 
@@ -1317,6 +1333,21 @@ function App() {
           {status.enrolled ? formatDuration(countedTodaySeconds) : ""}
         </span>
         <span className="k-spacer" />
+        {status.screenshotMonitoringEnabled && (
+          <span
+            className={`k-capture-indicator ${status.screenshotCaptureActive ? "is-active" : "is-paused"}`}
+            title={
+              status.screenshotCaptureActive
+                ? "Workplace screenshots are active"
+                : status.powerSource === "battery"
+                  ? "Screenshots pause while this device is on battery"
+                  : "Screenshot monitoring is temporarily paused"
+            }
+          >
+            <span aria-hidden="true">●</span>
+            {status.screenshotCaptureActive ? "Screenshots active" : "Screenshots paused"}
+          </span>
+        )}
         <button
           type="button"
           className={`k-sync k-sync-${status.connectionStatus}`}
@@ -1765,6 +1796,8 @@ function HomeView({
   idleRequestOptions: IdleRequestOption[];
   onRequestManualTime: (option?: IdleRequestOption) => void;
 }) {
+  const todayIdleSeconds =
+    status.timeSummary?.today.idle_seconds ?? status.idleSeconds;
   const isPaused = status.trackingPaused || status.trackingStatus === "paused";
   const shouldResume =
     isPaused ||
@@ -1891,7 +1924,7 @@ function HomeView({
               <strong>{status.activityPercent}%</strong>
             </div>
             <div>
-              <span>Session</span>
+              <span>Current session</span>
               <strong>{formatDuration(status.activeSeconds)}</strong>
             </div>
             <div>
@@ -1905,7 +1938,7 @@ function HomeView({
             </div>
             <div>
               <span>Idle</span>
-              <strong>{formatDuration(status.idleSeconds)}</strong>
+              <strong>{formatDuration(todayIdleSeconds)}</strong>
               <button
                 type="button"
                 className="k-meta-action"
@@ -1917,6 +1950,44 @@ function HomeView({
             </div>
           </div>
         </div>
+
+        <section className="k-workday-time-strip" aria-label="Today's workday timing">
+          <div>
+            <span>Started at</span>
+            <strong>
+              {status.todayTimeline?.first_started_at
+                ? formatClock(
+                    status.todayTimeline.first_started_at,
+                    status.todayTimeline.timezone,
+                  )
+                : "Not started"}
+            </strong>
+          </div>
+          <div>
+            <span>Last activity</span>
+            <strong>
+              {status.todayTimeline?.last_activity_at
+                ? formatClock(
+                    status.todayTimeline.last_activity_at,
+                    status.todayTimeline.timezone,
+                  )
+                : "—"}
+            </strong>
+          </div>
+          <div>
+            <span>Ended at</span>
+            <strong>
+              {status.todayTimeline?.is_running
+                ? "In progress"
+                : status.todayTimeline?.last_ended_at
+                  ? formatClock(
+                      status.todayTimeline.last_ended_at,
+                      status.todayTimeline.timezone,
+                    )
+                  : "—"}
+            </strong>
+          </div>
+        </section>
 
         <div className="k-stat-grid">
           <Stat
@@ -1937,7 +2008,7 @@ function HomeView({
           />
           <Stat
             label="Idle"
-            value={formatDuration(status.idleSeconds)}
+            value={formatDuration(todayIdleSeconds)}
             tone="warn"
           />
         </div>
@@ -2103,7 +2174,19 @@ function Timeline({
                   ? "Now"
                   : formatClock(interval.ended_at, timeline.timezone)}
               </span>
-              <b>{labels[interval.type]}</b>
+              <b
+                title={
+                  interval.type === "worked"
+                    ? interval.task_name ?? interval.project_name ?? labels[interval.type]
+                    : labels[interval.type]
+                }
+              >
+                {labels[interval.type]}
+                {interval.type === "worked" &&
+                (interval.task_name || interval.project_name)
+                  ? ` · ${interval.task_name ?? interval.project_name}`
+                  : ""}
+              </b>
               <small>
                 {formatDuration(
                   interval.is_current
@@ -2596,6 +2679,15 @@ function RequestCentreView(props: RequestCentreProps) {
   const toggle = (type: "idle" | "early" | "leave") =>
     props.onExpandedRequestChange(expandedRequest === type ? null : type);
 
+  useEffect(() => {
+    if (!expandedRequest) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") props.onExpandedRequestChange(null);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [expandedRequest, props]);
+
   return (
     <section className="k-page k-requests-page">
       <header className="k-page-header">
@@ -2655,12 +2747,39 @@ function RequestCentreView(props: RequestCentreProps) {
               aria-expanded={expandedRequest === "idle"}
               onClick={() => toggle("idle")}
             >
-              {expandedRequest === "idle" ? "Close" : "Explain"}
+              Explain
             </button>
           </div>
           {expandedRequest === "idle" && (
-            <div className="k-request-form-shell">
-              <form className="k-form" onSubmit={props.onSubmitIdleTimeRequest}>
+            <div
+              className="k-request-form-shell"
+              onMouseDown={(event) => {
+                if (event.target === event.currentTarget) {
+                  props.onExpandedRequestChange(null);
+                }
+              }}
+            >
+              <form
+                className="k-form k-request-dialog"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="idle-request-title"
+                onSubmit={props.onSubmitIdleTimeRequest}
+              >
+                <header className="k-request-dialog-header">
+                  <div>
+                    <h2 id="idle-request-title">Explain Idle Time</h2>
+                    <p>Choose the detected period and explain the work you completed.</p>
+                  </div>
+                  <button
+                    type="button"
+                    className="k-dialog-close"
+                    aria-label="Close request"
+                    onClick={() => props.onExpandedRequestChange(null)}
+                  >
+                    ×
+                  </button>
+                </header>
                 <div className="k-request-form-grid">
                   <label>
                     Idle period
@@ -2713,11 +2832,12 @@ function RequestCentreView(props: RequestCentreProps) {
                     onChange={(event) =>
                       props.onTimeRequestReasonChange(event.target.value)
                     }
-                    minLength={3}
+                    minLength={10}
                     maxLength={1000}
                     placeholder="Client call, meeting, offline work, or a system issue..."
                     required
                   />
+                  <small>Required · at least 10 characters</small>
                 </label>
                 <div className="k-form-footer">
                   <span>
@@ -2728,7 +2848,11 @@ function RequestCentreView(props: RequestCentreProps) {
                   </span>
                   <button
                     className="k-primary"
-                    disabled={props.isSubmittingTimeRequest || !selectedIdle}
+                    disabled={
+                      props.isSubmittingTimeRequest ||
+                      !selectedIdle ||
+                      props.timeRequestReason.trim().length < 10
+                    }
                   >
                     {props.isSubmittingTimeRequest
                       ? "Submitting..."
@@ -2769,15 +2893,39 @@ function RequestCentreView(props: RequestCentreProps) {
               aria-expanded={expandedRequest === "early"}
               onClick={() => toggle("early")}
             >
-              {expandedRequest === "early" ? "Close" : "Request"}
+              Request
             </button>
           </div>
           {expandedRequest === "early" && (
-            <div className="k-request-form-shell">
+            <div
+              className="k-request-form-shell"
+              onMouseDown={(event) => {
+                if (event.target === event.currentTarget) {
+                  props.onExpandedRequestChange(null);
+                }
+              }}
+            >
               <form
-                className="k-form"
+                className="k-form k-request-dialog"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="early-request-title"
                 onSubmit={props.onSubmitEarlyLeaveRequest}
               >
+                <header className="k-request-dialog-header">
+                  <div>
+                    <h2 id="early-request-title">Early Leave Permission</h2>
+                    <p>Request permission to leave before your scheduled shift ends.</p>
+                  </div>
+                  <button
+                    type="button"
+                    className="k-dialog-close"
+                    aria-label="Close request"
+                    onClick={() => props.onExpandedRequestChange(null)}
+                  >
+                    ×
+                  </button>
+                </header>
                 <div className="k-request-form-grid k-request-form-grid-four">
                   <label>
                     Selected date
@@ -2882,12 +3030,39 @@ function RequestCentreView(props: RequestCentreProps) {
               aria-expanded={expandedRequest === "leave"}
               onClick={() => toggle("leave")}
             >
-              {expandedRequest === "leave" ? "Close" : "Plan leave"}
+              Plan leave
             </button>
           </div>
           {expandedRequest === "leave" && (
-            <div className="k-request-form-shell">
-              <form className="k-form" onSubmit={props.onSubmitLeaveRequest}>
+            <div
+              className="k-request-form-shell"
+              onMouseDown={(event) => {
+                if (event.target === event.currentTarget) {
+                  props.onExpandedRequestChange(null);
+                }
+              }}
+            >
+              <form
+                className="k-form k-request-dialog"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="leave-request-title"
+                onSubmit={props.onSubmitLeaveRequest}
+              >
+                <header className="k-request-dialog-header">
+                  <div>
+                    <h2 id="leave-request-title">Annual Leave</h2>
+                    <p>Request one or more complete scheduled working days.</p>
+                  </div>
+                  <button
+                    type="button"
+                    className="k-dialog-close"
+                    aria-label="Close request"
+                    onClick={() => props.onExpandedRequestChange(null)}
+                  >
+                    ×
+                  </button>
+                </header>
                 <div className="k-request-form-grid k-request-form-grid-four">
                   <label>
                     From date

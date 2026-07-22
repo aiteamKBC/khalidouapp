@@ -98,6 +98,7 @@ export interface Employee {
   code: string;
   email: string;
   jobTitle: string;
+  timezone: string;
   teamRole?: TeamMemberRole;
   teamIds: string[];
   status: EmployeeStatus;
@@ -169,7 +170,7 @@ export interface WorkdayInterval {
   startedAt: string;
   endedAt?: string;
   durationSeconds: number;
-  sessionId: string;
+  sessionId?: string;
   projectName?: string;
   taskName?: string;
   isCurrent: boolean;
@@ -180,6 +181,7 @@ export interface WorkdayTimeline {
   timezone: string;
   firstStartedAt?: string;
   lastEndedAt?: string;
+  lastActivityAt?: string;
   isRunning: boolean;
   workedSeconds: number;
   idleSeconds: number;
@@ -194,7 +196,7 @@ export interface Screenshot {
   teamId: string;
   projectId?: string;
   taskId?: string;
-  sessionId: string;
+  sessionId?: string;
   deviceId: string;
   capturedAt: string;
   thumbnailUrl: string;
@@ -202,6 +204,8 @@ export interface Screenshot {
   isIdle: boolean;
   displayId?: string;
   displayName?: string;
+  workCategory: "scheduled_shift" | "off_shift" | "unknown";
+  powerSource: "ac" | "battery" | "unknown";
 }
 
 export interface Timesheet {

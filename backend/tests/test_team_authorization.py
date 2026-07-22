@@ -21,7 +21,9 @@ from app.models import (
     Company,
     Device,
     DeviceToken,
+    DailyAttendance,
     Employee,
+    OvertimeRecord,
     Project,
     Screenshot,
     Task,
@@ -325,6 +327,7 @@ def team_client():
         "employee_a": employee_a,
         "employee_b": employee_b,
         "shared_employee": shared_employee,
+        "other_employee": other_employee,
         "screenshot_a": screenshot_a,
         "screenshot_b": screenshot_b,
         "session_a": session_a,
@@ -342,6 +345,158 @@ def team_client():
     finally:
         app.dependency_overrides.clear()
         Base.metadata.drop_all(engine)
+
+
+def test_attendance_detail_enforces_team_and_company_isolation(team_client):
+    client, data = team_client
+    today = local_today("UTC").isoformat()
+
+    own_team = client.get(
+        f"/api/v1/attendance/employee/{data['employee_a'].id}/{today}",
+        headers=data["owner_headers"],
+    )
+    assert own_team.status_code == 200
+
+    other_team = client.get(
+        f"/api/v1/attendance/employee/{data['employee_b'].id}/{today}",
+        headers=data["owner_headers"],
+    )
+    assert other_team.status_code in {403, 404}
+
+    other_company = client.get(
+        f"/api/v1/attendance/employee/{data['other_employee'].id}/{today}",
+        headers=data["general_headers"],
+    )
+    assert other_company.status_code in {403, 404}
+
+
+def test_group_schedule_override_validates_every_employee_company(team_client):
+    client, data = team_client
+    payload = {
+        "scope": "employees",
+        "override_type": "shift",
+        "employee_ids": [str(data["employee_a"].id), str(data["employee_b"].id)],
+        "effective_date": (local_today("UTC") + timedelta(days=1)).isoformat(),
+        "permanent": False,
+        "shift_start": "10:00",
+        "shift_end": "18:00",
+        "reason": "Group coverage change",
+    }
+    allowed = client.post(
+        "/api/v1/payroll/schedule-overrides",
+        json=payload,
+        headers=data["general_headers"],
+    )
+    assert allowed.status_code == 200
+    assert allowed.json()["data"]["affected_employees"] == 2
+
+    payload["employee_ids"] = [str(data["other_employee"].id)]
+    isolated = client.post(
+        "/api/v1/payroll/schedule-overrides",
+        json=payload,
+        headers=data["general_headers"],
+    )
+    assert isolated.status_code in {403, 404}
+
+
+def test_cancelling_today_override_restores_normal_schedule_immediately(team_client):
+    client, data = team_client
+    today = local_today("UTC")
+    created = client.post(
+        "/api/v1/payroll/schedule-overrides",
+        json={
+            "scope": "employee",
+            "override_type": "shift",
+            "employee_id": str(data["employee_a"].id),
+            "effective_date": today.isoformat(),
+            "permanent": False,
+            "shift_start": "10:00",
+            "shift_end": "18:00",
+            "reason": "Temporary coverage test",
+        },
+        headers=data["general_headers"],
+    )
+    assert created.status_code == 200
+
+    changed = client.get(
+        f"/api/v1/attendance/employee/{data['employee_a'].id}/{today.isoformat()}",
+        headers=data["general_headers"],
+    )
+    assert changed.status_code == 200
+    assert changed.json()["data"]["scheduled_start_at"].endswith("10:00:00+00:00")
+
+    deleted = client.delete(
+        f"/api/v1/payroll/schedule-overrides/{created.json()['data']['id']}",
+        headers=data["general_headers"],
+    )
+    assert deleted.status_code == 200
+
+    restored = client.get(
+        f"/api/v1/attendance/employee/{data['employee_a'].id}/{today.isoformat()}",
+        headers=data["general_headers"],
+    )
+    assert restored.status_code == 200
+    assert restored.json()["data"]["scheduled_start_at"].endswith("09:00:00+00:00")
+
+
+def test_payroll_overtime_decision_updates_daily_source_records(team_client):
+    client, data = team_client
+    work_date = local_today("UTC")
+    db: Session = data["session_factory"]()
+    try:
+        db.add(
+            OvertimeRecord(
+                company_id=data["employee_a"].company_id,
+                employee_id=data["employee_a"].id,
+                work_session_id=data["session_a"].id,
+                work_date=work_date,
+                overtime_enabled_snapshot=True,
+                recorded_extra_seconds=3600,
+                approved_seconds=0,
+                status="pending",
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    sheet = client.get(
+        f"/api/v1/payroll/sheet?month={work_date.strftime('%Y-%m')}",
+        headers=data["general_headers"],
+    )
+    assert sheet.status_code == 200
+    entry = next(
+        item
+        for item in sheet.json()["data"]["entries"]
+        if item["employee_id"] == str(data["employee_a"].id)
+    )
+    decision = client.patch(
+        f"/api/v1/payroll/entries/{entry['id']}",
+        json={"overtime_decision": "paid", "overtime_note": "Approved by HR"},
+        headers=data["general_headers"],
+    )
+    assert decision.status_code == 200
+    assert decision.json()["data"]["approved_overtime_seconds"] == 3600
+
+    db = data["session_factory"]()
+    try:
+        overtime = db.scalar(
+            select(OvertimeRecord).where(
+                OvertimeRecord.employee_id == data["employee_a"].id,
+                OvertimeRecord.work_date == work_date,
+            )
+        )
+        attendance = db.scalar(
+            select(DailyAttendance).where(
+                DailyAttendance.employee_id == data["employee_a"].id,
+                DailyAttendance.work_date == work_date,
+            )
+        )
+        assert overtime.status == "approved"
+        assert overtime.approved_seconds == 3600
+        assert attendance.approved_overtime_seconds == 3600
+    finally:
+        db.close()
 
 
 def add_fixture_task(
@@ -675,9 +830,15 @@ def test_team_owner_cannot_access_unassigned_team_project_tasks(team_client):
     assert response.status_code == 403
 
 
-def test_employee_picker_allows_same_team_colleague_task_and_hides_unavailable_stages(team_client):
+def test_employee_picker_only_allows_tasks_assigned_to_employee(team_client):
     client, data = team_client
 
+    own_task_id = add_fixture_task(
+        data,
+        name="Own assigned task",
+        stage="assigned",
+        assignee_key="employee_a",
+    )
     colleague_task_id = add_fixture_task(
         data,
         name="Colleague task",
@@ -718,13 +879,13 @@ def test_employee_picker_allows_same_team_colleague_task_and_hides_unavailable_s
     assert tasks_response.status_code == 200
     visible_tasks = {task["id"]: task for task in tasks_response.json()["data"]}
     visible_ids = set(visible_tasks)
-    assert colleague_task_id in visible_ids
-    assert visible_tasks[colleague_task_id]["can_update_stage"] is False
+    assert own_task_id in visible_ids
+    assert visible_tasks[own_task_id]["can_update_stage"] is True
+    assert colleague_task_id not in visible_ids
     assert excluded_ids.isdisjoint(visible_ids)
     assert str(data["task_a"].id) not in visible_ids
     assert other_team_task_id not in visible_ids
-    assert select_response.status_code == 200
-    assert select_response.json()["data"]["session"]["task_id"] == colleague_task_id
+    assert select_response.status_code == 403
     assert forbidden_response.status_code == 403
 
 
@@ -1039,6 +1200,39 @@ def test_desktop_summary_matches_employee_periods_and_profile(team_client):
             "manual_pending_seconds",
             "manual_rejected_seconds",
         }.issubset(period)
+
+
+def test_desktop_summary_recovers_elapsed_work_when_an_update_started_a_new_session(
+    team_client,
+):
+    client, data = team_client
+    now = datetime.now(UTC)
+    db = data["session_factory"]()
+    try:
+        prior_session = WorkSession(
+            company_id=data["employee_a"].company_id,
+            employee_id=data["employee_a"].id,
+            device_id=data["session_a"].device_id,
+            started_at=now - timedelta(minutes=40),
+            ended_at=now - timedelta(minutes=10),
+            status="ended",
+            active_seconds=0,
+            idle_seconds=0,
+        )
+        db.add(prior_session)
+        db.commit()
+    finally:
+        db.close()
+
+    response = client.get("/api/v1/agent/summary", headers=data["device_headers"])
+
+    assert response.status_code == 200
+    summary = response.json()["data"]
+    timeline = summary["today_timeline"]
+    assert timeline["worked_seconds"] >= 30 * 60
+    assert summary["today"]["tracked_active_seconds"] >= timeline["worked_seconds"]
+    assert timeline["first_started_at"] is not None
+    assert timeline["last_activity_at"] is not None
 
 
 def test_workday_timeline_splits_work_idle_and_locked_periods(team_client):

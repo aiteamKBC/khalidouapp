@@ -15,6 +15,7 @@ from app.models import (
     OvertimeRecord,
     PauseBalance,
     PauseSession,
+    WorkScheduleOverride,
     WorkSession,
 )
 from app.schemas.session import (
@@ -121,12 +122,44 @@ def local_work_date(db: Session, employee_id: UUID, at: datetime) -> tuple[Any, 
     return utc(at).astimezone(zone).date(), zone
 
 
-def employee_required_daily_seconds(db: Session, employee_id: UUID) -> int:
+def employee_required_daily_seconds(
+    db: Session, employee_id: UUID, at: datetime | None = None
+) -> int:
     required_minutes = db.scalar(
         select(EmployeeWorkProfile.required_daily_minutes).where(
             EmployeeWorkProfile.employee_id == employee_id
         )
     )
+    if at is not None:
+        work_date, _ = local_work_date(db, employee_id, at)
+        company_id = db.scalar(select(Employee.company_id).where(Employee.id == employee_id))
+        common = (
+            WorkScheduleOverride.company_id == company_id,
+            WorkScheduleOverride.permanent.is_(False),
+            WorkScheduleOverride.effective_date == work_date,
+            WorkScheduleOverride.override_type.in_(["shift", "both"]),
+        )
+        override = db.scalar(
+            select(WorkScheduleOverride)
+            .where(*common, WorkScheduleOverride.employee_id == employee_id)
+            .order_by(WorkScheduleOverride.created_at.desc())
+        ) or db.scalar(
+            select(WorkScheduleOverride)
+            .where(*common, WorkScheduleOverride.employee_id.is_(None))
+            .order_by(WorkScheduleOverride.created_at.desc())
+        )
+        if (
+            override
+            and override.shift_start
+            and override.shift_end
+            and override.shift_end > override.shift_start
+        ):
+            return (
+                override.shift_end.hour * 3600
+                + override.shift_end.minute * 60
+                - override.shift_start.hour * 3600
+                - override.shift_start.minute * 60
+            )
     return max(60, int(required_minutes or 480)) * 60
 
 
@@ -140,32 +173,54 @@ def employee_overtime_enabled(db: Session, employee_id: UUID) -> bool:
     )
 
 
-def sync_session_time_buckets(db: Session, session: WorkSession) -> None:
-    required_seconds = employee_required_daily_seconds(db, session.employee_id)
-    worked_seconds = max(0, session.active_seconds - session.deducted_seconds)
-    session.normal_seconds = min(worked_seconds, required_seconds)
-    session.extra_seconds = max(0, worked_seconds - required_seconds)
+def _sessions_for_workday(db: Session, session: WorkSession) -> list[WorkSession]:
+    work_date, zone = local_work_date(db, session.employee_id, session.started_at)
+    start = datetime.combine(work_date, time.min, tzinfo=zone).astimezone(UTC)
+    end = datetime.combine(work_date + timedelta(days=1), time.min, tzinfo=zone).astimezone(UTC)
+    return list(
+        db.scalars(
+            select(WorkSession)
+            .where(
+                WorkSession.company_id == session.company_id,
+                WorkSession.employee_id == session.employee_id,
+                WorkSession.started_at >= start,
+                WorkSession.started_at < end,
+            )
+            .order_by(WorkSession.started_at, WorkSession.created_at)
+        ).all()
+    )
 
-    if session.extra_seconds > 0:
-        work_date, _ = local_work_date(db, session.employee_id, session.started_at)
+
+def sync_session_time_buckets(db: Session, session: WorkSession) -> None:
+    required_seconds = employee_required_daily_seconds(db, session.employee_id, session.started_at)
+    remaining_normal_seconds = required_seconds
+    work_date, _ = local_work_date(db, session.employee_id, session.started_at)
+    for day_session in _sessions_for_workday(db, session):
+        worked_seconds = max(0, day_session.active_seconds - day_session.deducted_seconds)
+        day_session.normal_seconds = min(worked_seconds, remaining_normal_seconds)
+        day_session.extra_seconds = max(0, worked_seconds - day_session.normal_seconds)
+        remaining_normal_seconds = max(0, remaining_normal_seconds - day_session.normal_seconds)
+        db.add(day_session)
+        if day_session.extra_seconds <= 0:
+            continue
         record = db.scalar(
-            select(OvertimeRecord).where(OvertimeRecord.work_session_id == session.id)
+            select(OvertimeRecord).where(OvertimeRecord.work_session_id == day_session.id)
         )
-        enabled = employee_overtime_enabled(db, session.employee_id)
+        enabled = employee_overtime_enabled(db, day_session.employee_id)
         status = "pending" if enabled else "recorded_not_counted"
         if record is None:
             record = OvertimeRecord(
-                company_id=session.company_id,
-                employee_id=session.employee_id,
-                work_session_id=session.id,
+                company_id=day_session.company_id,
+                employee_id=day_session.employee_id,
+                work_session_id=day_session.id,
                 work_date=work_date,
                 overtime_enabled_snapshot=enabled,
-                recorded_extra_seconds=session.extra_seconds,
+                recorded_extra_seconds=day_session.extra_seconds,
                 status=status,
             )
         else:
             record.recorded_extra_seconds = max(
-                record.recorded_extra_seconds, session.extra_seconds
+                record.recorded_extra_seconds, day_session.extra_seconds
             )
             if record.approved_seconds <= 0:
                 record.status = status
@@ -275,18 +330,21 @@ def pause_state_payload(
 
 
 def workday_state_payload(db: Session, session: WorkSession) -> dict[str, Any]:
-    required_seconds = employee_required_daily_seconds(db, session.employee_id)
+    required_seconds = employee_required_daily_seconds(db, session.employee_id, session.started_at)
     overtime_enabled = employee_overtime_enabled(db, session.employee_id)
     sync_session_time_buckets(db, session)
+    day_sessions = _sessions_for_workday(db, session)
+    normal_seconds = sum(item.normal_seconds for item in day_sessions)
+    extra_seconds = sum(item.extra_seconds for item in day_sessions)
     return {
         "required_normal_seconds": required_seconds,
-        "normal_seconds": session.normal_seconds,
-        "normal_remaining_seconds": max(0, required_seconds - session.normal_seconds),
-        "extra_seconds": session.extra_seconds,
+        "normal_seconds": normal_seconds,
+        "normal_remaining_seconds": max(0, required_seconds - normal_seconds),
+        "extra_seconds": extra_seconds,
         "overtime_enabled": overtime_enabled,
         "extra_time_status": (
             "none"
-            if session.extra_seconds <= 0
+            if extra_seconds <= 0
             else "pending_overtime"
             if overtime_enabled
             else "recorded_not_counted"
@@ -784,9 +842,9 @@ def end_session(
     session.ended_at = ended_at
     session.status = "ended"
     if payload.active_seconds is not None:
-        session.active_seconds = payload.active_seconds
+        session.active_seconds = max(session.active_seconds, payload.active_seconds)
     if payload.idle_seconds is not None:
-        session.idle_seconds = payload.idle_seconds
+        session.idle_seconds = max(session.idle_seconds, payload.idle_seconds)
 
     create_activity_event(
         db,

@@ -16,7 +16,6 @@ import {
   Archive,
   ArchiveRestore,
   Trash2,
-  Pencil,
   MoreHorizontal,
   LayoutDashboard,
   CalendarCheck,
@@ -81,12 +80,14 @@ import { StatusBadge } from "@/components/ui/status-badge";
 import { cn } from "@/lib/utils";
 import {
   getEmployee,
+  getWorkProfile,
   listEmployees,
   updateEmployee,
-  updateEmployeePassword,
+  updateWorkProfile,
+  type WorkProfile,
 } from "@/api/employees";
 import { listUsers, updateUser } from "@/api/users";
-import { listTeams } from "@/api/teams";
+import { addTeamMember, listTeams, removeTeamMember, updateTeamMemberRole } from "@/api/teams";
 import {
   archivePerson,
   deletePerson,
@@ -106,7 +107,15 @@ import {
 import { useAuth } from "@/lib/auth";
 import { permissions } from "@/lib/permissions";
 import { toast } from "sonner";
-import type { DataScope, Employee, PermissionMode, Role, Team, User } from "@/types";
+import type {
+  DataScope,
+  Employee,
+  PermissionMode,
+  Role,
+  Team,
+  TeamMemberRole,
+  User,
+} from "@/types";
 import { LiveActivityPage } from "./_app.live-activity";
 
 export const Route = createFileRoute("/_app/people")({
@@ -132,6 +141,31 @@ type TypeFilter = "all" | "employees" | "admins";
 type RoleFilter = "all" | "employee" | Role;
 type StatusFilter = "all" | "active" | "invited" | "archived";
 type AccessPreset = EditableRole | "custom";
+
+const WORK_DAYS = [
+  { value: 0, label: "Mon" },
+  { value: 1, label: "Tue" },
+  { value: 2, label: "Wed" },
+  { value: 3, label: "Thu" },
+  { value: 4, label: "Fri" },
+  { value: 5, label: "Sat" },
+  { value: 6, label: "Sun" },
+];
+
+function shiftMinutes(start: string, end: string) {
+  const [startHour = 0, startMinute = 0] = start.split(":").map(Number);
+  const [endHour = 0, endMinute = 0] = end.split(":").map(Number);
+  const startTotal = startHour * 60 + startMinute;
+  let endTotal = endHour * 60 + endMinute;
+  if (endTotal <= startTotal) endTotal += 24 * 60;
+  return endTotal - startTotal;
+}
+
+function addClockMinutes(value: string, minutes: number) {
+  const [hour = 0, minute = 0] = value.split(":").map(Number);
+  const total = (hour * 60 + minute + minutes) % (24 * 60);
+  return `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
+}
 
 type PersonRow = {
   id: string;
@@ -275,12 +309,6 @@ function PeopleDirectory({
   const [wizardOpen, setWizardOpen] = useState(false);
   const [archiveTarget, setArchiveTarget] = useState<PersonRow | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<PersonRow | null>(null);
-  const [employeePasswordRow, setEmployeePasswordRow] = useState<PersonRow | null>(null);
-  const [employeePassword, setEmployeePassword] = useState("");
-  const [editEmployeeRow, setEditEmployeeRow] = useState<PersonRow | null>(null);
-  const [editEmployeeName, setEditEmployeeName] = useState("");
-  const [editEmployeeEmail, setEditEmployeeEmail] = useState("");
-  const [editEmployeeJobTitle, setEditEmployeeJobTitle] = useState("");
 
   // Admin edit ("manage access") state.
   const [editPersonRow, setEditPersonRow] = useState<PersonRow | null>(null);
@@ -294,10 +322,26 @@ function PeopleDirectory({
   const [editPermissionMode, setEditPermissionMode] = useState<PermissionMode>("role");
   const [editDataScope, setEditDataScope] = useState<DataScope>("assigned_teams");
   const [editTeamIds, setEditTeamIds] = useState<string[]>([]);
+  const [editEmployeeTeamIds, setEditEmployeeTeamIds] = useState<string[]>([]);
+  const [editEmployeeTeamRole, setEditEmployeeTeamRole] = useState<TeamMemberRole>("member");
   const [editTrackAsEmployee, setEditTrackAsEmployee] = useState(false);
   const [editPermissions, setEditPermissions] = useState<string[]>([]);
+  const [editShiftStart, setEditShiftStart] = useState("09:00");
+  const [editShiftEnd, setEditShiftEnd] = useState("17:00");
+  const [editTimezone, setEditTimezone] = useState("Africa/Cairo");
+  const [editWorkingDays, setEditWorkingDays] = useState<number[]>([0, 1, 2, 3, 4]);
+  const [editLateGraceMinutes, setEditLateGraceMinutes] = useState(15);
+  const [editOvertimeEnabled, setEditOvertimeEnabled] = useState(false);
+  const [editOvertimeMultiplier, setEditOvertimeMultiplier] = useState(1);
+  const [editSalaryAmount, setEditSalaryAmount] = useState(0);
+  const [editSalaryCurrency, setEditSalaryCurrency] = useState<
+    "EGP" | "GBP" | "USD" | "EUR" | "SAR" | "AED"
+  >("EGP");
+  const [editSalaryType, setEditSalaryType] = useState<"monthly" | "hourly">("monthly");
+  const [editBreakRules, setEditBreakRules] = useState<NonNullable<WorkProfile["breakRules"]>>([]);
   const [showFullPermissions, setShowFullPermissions] = useState(false);
   const canManageAccess = can(permissions.accessManage);
+  const canManageTeams = can(permissions.teamsManage);
   const editingSelf = Boolean(
     (editUser && currentUser?.id === editUser.id) ||
     (editPersonRow?.employee &&
@@ -308,6 +352,29 @@ function PeopleDirectory({
   const canChangeRoles =
     canManageAccess && Boolean(editPersonRow) && !editingSelf && !isProtectedOwner;
   const allowedRoleOptions = useMemo(() => assignableRoles(currentUser), [currentUser]);
+  const managedEmployeeId =
+    editPersonRow?.dashboardEmployeeId ?? editPersonRow?.employee?.id ?? null;
+
+  const managedWorkProfile = useQuery({
+    queryKey: ["employee-work-profile", managedEmployeeId],
+    queryFn: () => getWorkProfile(managedEmployeeId!),
+    enabled: Boolean(managedEmployeeId && editPersonRow),
+  });
+
+  useEffect(() => {
+    const profile = managedWorkProfile.data;
+    if (!profile) return;
+    setEditShiftStart(profile.shiftStart ?? "09:00");
+    setEditShiftEnd(profile.shiftEnd ?? "17:00");
+    setEditWorkingDays(profile.workingDays ?? [0, 1, 2, 3, 4]);
+    setEditLateGraceMinutes(profile.lateGraceMinutes ?? 15);
+    setEditOvertimeEnabled(profile.overtimeEnabled);
+    setEditOvertimeMultiplier(profile.overtimeRateMultiplier ?? 1);
+    setEditSalaryAmount(profile.salaryAmount ?? 0);
+    setEditSalaryCurrency(profile.salaryCurrency ?? "EGP");
+    setEditSalaryType(profile.salaryType ?? "monthly");
+    setEditBreakRules(profile.breakRules ?? []);
+  }, [managedWorkProfile.data]);
 
   const catalog = useQuery({
     queryKey: ["permission-catalog"],
@@ -448,12 +515,57 @@ function PeopleDirectory({
           jobTitle: editJobTitle,
           password: editPassword || undefined,
         });
+        if (managedEmployeeId) {
+          await updateEmployee(managedEmployeeId, { timezone: editTimezone });
+        }
       } else if (editPersonRow.employee) {
         await updateEmployee(editPersonRow.employee.id, {
           name: editName,
           email: editEmail,
           jobTitle: editJobTitle,
+          timezone: editTimezone,
         });
+      }
+      if (managedEmployeeId && managedWorkProfile.data) {
+        await updateWorkProfile(managedEmployeeId, {
+          shiftStart: editShiftStart,
+          shiftEnd: editShiftEnd,
+          workingDays: editWorkingDays,
+          weeklyOffDays: WORK_DAYS.map((day) => day.value).filter(
+            (day) => !editWorkingDays.includes(day),
+          ),
+          requiredDailyMinutes: shiftMinutes(editShiftStart, editShiftEnd),
+          lateGraceMinutes: editLateGraceMinutes,
+          overtimeEnabled: editOvertimeEnabled,
+          overtimeBasis: editOvertimeEnabled
+            ? (managedWorkProfile.data.overtimeBasis ?? "outside_shift")
+            : undefined,
+          overtimeRateMultiplier: editOvertimeMultiplier,
+          breakRules: editBreakRules,
+          salaryAmount: editSalaryAmount,
+          salaryCurrency: editSalaryCurrency,
+          salaryType: editSalaryType,
+        });
+        if (canManageTeams) {
+          const originalTeamIds = new Set(
+            (employees.data ?? []).find((employee) => employee.id === managedEmployeeId)?.teamIds ??
+              [],
+          );
+          const nextTeamIds = new Set(editEmployeeTeamIds);
+          await Promise.all([
+            ...[...nextTeamIds]
+              .filter((teamId) => !originalTeamIds.has(teamId))
+              .map((teamId) => addTeamMember(teamId, managedEmployeeId, editEmployeeTeamRole)),
+            ...[...originalTeamIds]
+              .filter((teamId) => !nextTeamIds.has(teamId))
+              .map((teamId) => removeTeamMember(teamId, managedEmployeeId)),
+            ...[...nextTeamIds]
+              .filter((teamId) => originalTeamIds.has(teamId))
+              .map((teamId) =>
+                updateTeamMemberRole(teamId, managedEmployeeId, editEmployeeTeamRole),
+              ),
+          ]);
+        }
       }
       if (canChangeRoles || editPersonRow.kind === "employee") {
         const roleChanged = editRole !== currentRole;
@@ -497,7 +609,9 @@ function PeopleDirectory({
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["users"] }),
         queryClient.invalidateQueries({ queryKey: ["teams"] }),
+        queryClient.invalidateQueries({ queryKey: ["employees"] }),
         queryClient.invalidateQueries({ queryKey: ["admin-access"] }),
+        queryClient.invalidateQueries({ queryKey: ["employee-work-profile"] }),
       ]);
       if (editUser?.id === currentUser?.id) await refreshUser();
     },
@@ -546,63 +660,28 @@ function PeopleDirectory({
       toast.error(error instanceof Error ? error.message : "Failed to resend invitation"),
   });
 
-  const employeePasswordMutation = useMutation({
-    mutationFn: () => {
-      if (!employeePasswordRow?.employee) throw new Error("Choose an employee first.");
-      return updateEmployeePassword(employeePasswordRow.employee.id, employeePassword);
-    },
-    onSuccess: async () => {
-      toast.success("Employee password updated");
-      setEmployeePasswordRow(null);
-      setEmployeePassword("");
-      await queryClient.invalidateQueries({ queryKey: ["employees"] });
-    },
-    onError: (error) =>
-      toast.error(error instanceof Error ? error.message : "Failed to update employee password"),
-  });
-
-  const employeeEditMutation = useMutation({
-    mutationFn: () => {
-      if (!editEmployeeRow?.employee) throw new Error("Choose an employee first.");
-      return updateEmployee(editEmployeeRow.employee.id, {
-        name: editEmployeeName,
-        email: editEmployeeEmail,
-        jobTitle: editEmployeeJobTitle,
-      });
-    },
-    onSuccess: async () => {
-      toast.success("Employee details updated");
-      setEditEmployeeRow(null);
-      await queryClient.invalidateQueries({ queryKey: ["employees"] });
-      await queryClient.invalidateQueries({ queryKey: ["teams"] });
-    },
-    onError: (error) =>
-      toast.error(error instanceof Error ? error.message : "Failed to update employee"),
-  });
-
   function openAccess(row: PersonRow) {
     const user = row.user ?? null;
+    const trackedEmployee =
+      row.employee ??
+      (employees.data ?? []).find((employee) => employee.id === row.dashboardEmployeeId);
     setEditPersonRow(row);
     setEditUser(user);
     setEditName(row.name);
     setEditEmail(row.email);
     setEditJobTitle(user?.jobTitle ?? row.employee?.jobTitle ?? "");
+    setEditTimezone(trackedEmployee?.timezone ?? "Africa/Cairo");
     setEditPassword("");
     setEditRole(user?.role ?? "employee");
     setEditPreset(user ? (user.permissionMode === "custom" ? "custom" : user.role) : "employee");
     setEditPermissionMode(user?.permissionMode ?? "role");
     setEditDataScope(user?.dataScope ?? "assigned_teams");
     setEditTeamIds(user?.teamLeadTeamIds ?? row.teamIds);
+    setEditEmployeeTeamIds(trackedEmployee?.teamIds ?? []);
+    setEditEmployeeTeamRole(trackedEmployee?.teamRole ?? "member");
     setEditTrackAsEmployee(user?.trackAsEmployee ?? false);
     setEditPermissions(user?.permissions ?? []);
     setShowFullPermissions(false);
-  }
-
-  function openEmployeeEdit(row: PersonRow) {
-    setEditEmployeeRow(row);
-    setEditEmployeeName(row.employee?.name ?? row.name);
-    setEditEmployeeEmail(row.employee?.email ?? row.email);
-    setEditEmployeeJobTitle(row.employee?.jobTitle ?? "");
   }
 
   function choosePreset(preset: AccessPreset) {
@@ -933,13 +1012,7 @@ function PeopleDirectory({
                                 {canManageAccess && row.status !== "archived" && (
                                   <DropdownMenuItem onSelect={() => openAccess(row)}>
                                     <KeyRound className="h-4 w-4" />
-                                    Access & password
-                                  </DropdownMenuItem>
-                                )}
-                                {can(permissions.peopleManage) && row.status !== "archived" && (
-                                  <DropdownMenuItem onSelect={() => openEmployeeEdit(row)}>
-                                    <Pencil className="h-4 w-4" />
-                                    Edit profile
+                                    Manage employee
                                   </DropdownMenuItem>
                                 )}
                                 {(row.status === "invited" || row.status === "expired") &&
@@ -963,7 +1036,7 @@ function PeopleDirectory({
                                     canManageAdminUser(currentUser, row.user)) && (
                                     <DropdownMenuItem onSelect={() => openAccess(row)}>
                                       <KeyRound className="h-4 w-4" />
-                                      Access & password
+                                      Manage employee
                                     </DropdownMenuItem>
                                   )}
                               </>
@@ -1055,10 +1128,10 @@ function PeopleDirectory({
       >
         <DialogContent className="flex max-h-[88vh] flex-col overflow-hidden p-0 sm:max-w-3xl">
           <DialogHeader className="shrink-0 border-b px-5 py-4">
-            <DialogTitle>Access, password & permissions</DialogTitle>
+            <DialogTitle>Manage employee</DialogTitle>
             <DialogDescription>
-              Choose the person&apos;s role, password tools, visibility scope, and what they can
-              access.
+              Update identity, password, role, permissions, schedule, breaks, and overtime from one
+              place.
             </DialogDescription>
           </DialogHeader>
           <form
@@ -1160,6 +1233,359 @@ function PeopleDirectory({
                   )}
                 </div>
               </div>
+
+              {managedEmployeeId && (
+                <div className="space-y-3 rounded-xl border p-3">
+                  <div>
+                    <Label>Team membership & team role</Label>
+                    <p className="text-xs text-muted-foreground">
+                      Team role describes this person inside their teams. It is separate from the
+                      system access role below.
+                    </p>
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-[1fr_220px]">
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      {activeTeams.map((team) => (
+                        <label
+                          key={team.id}
+                          className="flex items-center gap-2 rounded-lg border p-2.5 text-sm font-semibold"
+                        >
+                          <Checkbox
+                            disabled={!canManageTeams}
+                            checked={editEmployeeTeamIds.includes(team.id)}
+                            onCheckedChange={(checked) =>
+                              setEditEmployeeTeamIds((current) =>
+                                checked === true
+                                  ? [...new Set([...current, team.id])]
+                                  : current.filter((id) => id !== team.id),
+                              )
+                            }
+                          />
+                          {team.name}
+                        </label>
+                      ))}
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>Role in selected teams</Label>
+                      <Select
+                        disabled={!canManageTeams}
+                        value={editEmployeeTeamRole}
+                        onValueChange={(value) => setEditEmployeeTeamRole(value as TeamMemberRole)}
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="team_manager">Team manager</SelectItem>
+                          <SelectItem value="team_lead">Team lead</SelectItem>
+                          <SelectItem value="senior">Senior</SelectItem>
+                          <SelectItem value="member">Member</SelectItem>
+                          <SelectItem value="trainee">Trainee</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      {!canManageTeams && (
+                        <p className="text-xs text-muted-foreground">
+                          Team membership is read-only without Manage teams permission.
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {managedEmployeeId && (
+                <div className="space-y-3 rounded-xl border p-3">
+                  <div>
+                    <Label>Work schedule & overtime</Label>
+                    <p className="text-xs text-muted-foreground">
+                      Attendance, lateness, idle time, and overtime use this employee schedule.
+                    </p>
+                  </div>
+                  {managedWorkProfile.isLoading ? (
+                    <Skeleton className="h-24 w-full" />
+                  ) : (
+                    <>
+                      <div className="grid gap-3 sm:grid-cols-4">
+                        <div className="space-y-1.5 sm:col-span-2">
+                          <Label>Timezone</Label>
+                          <Select value={editTimezone} onValueChange={setEditTimezone}>
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="Africa/Cairo">Africa/Cairo</SelectItem>
+                              <SelectItem value="Europe/London">Europe/London</SelectItem>
+                              <SelectItem value="UTC">UTC</SelectItem>
+                              <SelectItem value="Asia/Riyadh">Asia/Riyadh</SelectItem>
+                              <SelectItem value="Asia/Dubai">Asia/Dubai</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label htmlFor="manage-shift-start">Shift starts</Label>
+                          <Input
+                            id="manage-shift-start"
+                            type="time"
+                            value={editShiftStart}
+                            onChange={(event) => setEditShiftStart(event.target.value)}
+                          />
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label htmlFor="manage-shift-end">Shift ends</Label>
+                          <Input
+                            id="manage-shift-end"
+                            type="time"
+                            value={editShiftEnd}
+                            onChange={(event) => setEditShiftEnd(event.target.value)}
+                          />
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label htmlFor="manage-late-grace">Late grace (min)</Label>
+                          <Input
+                            id="manage-late-grace"
+                            type="number"
+                            min={0}
+                            max={180}
+                            value={editLateGraceMinutes}
+                            onChange={(event) =>
+                              setEditLateGraceMinutes(Number(event.target.value) || 0)
+                            }
+                          />
+                        </div>
+                        <div className="flex items-end">
+                          <label className="flex min-h-10 w-full items-center justify-between rounded-md border px-3 text-sm font-semibold">
+                            Overtime eligible
+                            <Switch
+                              checked={editOvertimeEnabled}
+                              onCheckedChange={setEditOvertimeEnabled}
+                            />
+                          </label>
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label htmlFor="manage-overtime-multiplier">Overtime multiplier</Label>
+                          <Input
+                            id="manage-overtime-multiplier"
+                            type="number"
+                            min={1}
+                            max={5}
+                            step={0.25}
+                            value={editOvertimeMultiplier}
+                            disabled={!editOvertimeEnabled}
+                            onChange={(event) =>
+                              setEditOvertimeMultiplier(Number(event.target.value) || 1)
+                            }
+                          />
+                        </div>
+                      </div>
+                      <div className="space-y-2">
+                        <p className="text-xs font-bold uppercase text-muted-foreground">
+                          Working days
+                        </p>
+                        <div className="flex flex-wrap gap-2">
+                          {WORK_DAYS.map((day) => {
+                            const selected = editWorkingDays.includes(day.value);
+                            return (
+                              <Button
+                                key={day.value}
+                                type="button"
+                                size="sm"
+                                variant={selected ? "default" : "outline"}
+                                onClick={() =>
+                                  setEditWorkingDays((current) =>
+                                    selected
+                                      ? current.filter((value) => value !== day.value)
+                                      : [...current, day.value].sort(),
+                                  )
+                                }
+                              >
+                                {day.label}
+                              </Button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="text-xs font-bold uppercase text-muted-foreground">
+                            Breaks
+                          </p>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={() =>
+                              setEditBreakRules((current) => [
+                                ...current,
+                                {
+                                  name: "New break",
+                                  minutes: 15,
+                                  paid: true,
+                                  start_time: editShiftStart,
+                                  end_time: addClockMinutes(editShiftStart, 15),
+                                },
+                              ])
+                            }
+                          >
+                            <Plus /> Add break
+                          </Button>
+                        </div>
+                        {editBreakRules.map((rule, index) => (
+                          <div
+                            key={`${rule.name}-${index}`}
+                            className="grid items-end gap-2 rounded-lg bg-muted/30 p-2 sm:grid-cols-[1fr_120px_120px_110px_auto]"
+                          >
+                            <div className="space-y-1">
+                              <Label>Break name</Label>
+                              <Input
+                                value={rule.name}
+                                onChange={(event) =>
+                                  setEditBreakRules((current) =>
+                                    current.map((item, itemIndex) =>
+                                      itemIndex === index
+                                        ? { ...item, name: event.target.value }
+                                        : item,
+                                    ),
+                                  )
+                                }
+                              />
+                            </div>
+                            <div className="space-y-1">
+                              <Label>Starts</Label>
+                              <Input
+                                type="time"
+                                value={rule.start_time ?? ""}
+                                onChange={(event) =>
+                                  setEditBreakRules((current) =>
+                                    current.map((item, itemIndex) =>
+                                      itemIndex === index
+                                        ? { ...item, start_time: event.target.value }
+                                        : item,
+                                    ),
+                                  )
+                                }
+                              />
+                            </div>
+                            <div className="space-y-1">
+                              <Label>Ends</Label>
+                              <Input
+                                type="time"
+                                value={rule.end_time ?? ""}
+                                onChange={(event) => {
+                                  const [startHour = 0, startMinute = 0] = String(
+                                    rule.start_time ?? "00:00",
+                                  )
+                                    .split(":")
+                                    .map(Number);
+                                  const [endHour = 0, endMinute = 0] = event.target.value
+                                    .split(":")
+                                    .map(Number);
+                                  const minutes = Math.max(
+                                    0,
+                                    endHour * 60 + endMinute - startHour * 60 - startMinute,
+                                  );
+                                  setEditBreakRules((current) =>
+                                    current.map((item, itemIndex) =>
+                                      itemIndex === index
+                                        ? { ...item, end_time: event.target.value, minutes }
+                                        : item,
+                                    ),
+                                  );
+                                }}
+                              />
+                            </div>
+                            <label className="flex h-10 items-center justify-between rounded-md border px-3 text-sm font-semibold">
+                              Paid
+                              <Switch
+                                checked={rule.paid}
+                                onCheckedChange={(paid) =>
+                                  setEditBreakRules((current) =>
+                                    current.map((item, itemIndex) =>
+                                      itemIndex === index ? { ...item, paid } : item,
+                                    ),
+                                  )
+                                }
+                              />
+                            </label>
+                            <Button
+                              type="button"
+                              size="icon"
+                              variant="ghost"
+                              aria-label={`Remove ${rule.name}`}
+                              onClick={() =>
+                                setEditBreakRules((current) =>
+                                  current.filter((_, itemIndex) => itemIndex !== index),
+                                )
+                              }
+                            >
+                              <Trash2 />
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+
+              {managedEmployeeId && (
+                <div className="space-y-3 rounded-xl border p-3">
+                  <div>
+                    <Label>Salary</Label>
+                    <p className="text-xs text-muted-foreground">
+                      Used by payroll previews and the monthly payroll sheet.
+                    </p>
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-3">
+                    <div className="space-y-1.5">
+                      <Label>Salary type</Label>
+                      <Select
+                        value={editSalaryType}
+                        onValueChange={(value) => setEditSalaryType(value as "monthly" | "hourly")}
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="monthly">Monthly</SelectItem>
+                          <SelectItem value="hourly">Hourly</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>
+                        {editSalaryType === "monthly" ? "Monthly salary" : "Hourly rate"}
+                      </Label>
+                      <Input
+                        type="number"
+                        min={0}
+                        step={0.01}
+                        value={editSalaryAmount}
+                        onChange={(event) => setEditSalaryAmount(Number(event.target.value) || 0)}
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>Currency</Label>
+                      <Select
+                        value={editSalaryCurrency}
+                        onValueChange={(value) =>
+                          setEditSalaryCurrency(value as typeof editSalaryCurrency)
+                        }
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {(["EGP", "GBP", "USD", "EUR", "SAR", "AED"] as const).map((currency) => (
+                            <SelectItem key={currency} value={currency}>
+                              {currency}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               <div className="rounded-xl border p-3">
                 <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1311,83 +1737,9 @@ function PeopleDirectory({
                 Cancel
               </Button>
               <Button type="submit" disabled={updateMutation.isPending}>
-                {updateMutation.isPending ? "Saving..." : "Save access"}
+                {updateMutation.isPending ? "Saving..." : "Save employee"}
               </Button>
             </div>
-          </form>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog
-        open={editEmployeeRow !== null}
-        onOpenChange={(open) => {
-          if (!open) setEditEmployeeRow(null);
-        }}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Edit employee — {editEmployeeRow?.name}</DialogTitle>
-            <DialogDescription>
-              Update the employee identity shown across People, Teams, screenshots, and timesheets.
-            </DialogDescription>
-          </DialogHeader>
-          <form
-            className="space-y-4"
-            onSubmit={(event) => {
-              event.preventDefault();
-              employeeEditMutation.mutate();
-            }}
-          >
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div className="space-y-1.5">
-                <Label htmlFor="employee-edit-name">Name</Label>
-                <Input
-                  id="employee-edit-name"
-                  value={editEmployeeName}
-                  onChange={(event) => setEditEmployeeName(event.target.value)}
-                  required
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="employee-edit-email">Work email</Label>
-                <Input
-                  id="employee-edit-email"
-                  type="email"
-                  value={editEmployeeEmail}
-                  onChange={(event) => setEditEmployeeEmail(event.target.value)}
-                  required
-                />
-              </div>
-              <div className="space-y-1.5 sm:col-span-2">
-                <Label htmlFor="employee-edit-job-title">Job title</Label>
-                <Input
-                  id="employee-edit-job-title"
-                  value={editEmployeeJobTitle}
-                  onChange={(event) => setEditEmployeeJobTitle(event.target.value)}
-                  placeholder="e.g. AI Engineer"
-                />
-                <p className="text-xs text-muted-foreground">
-                  This is the job title shown under the employee. Admin/HR/team-lead permissions are
-                  managed separately from Access & password.
-                </p>
-              </div>
-            </div>
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setEditEmployeeRow(null)}>
-                Cancel
-              </Button>
-              <Button
-                type="submit"
-                loading={employeeEditMutation.isPending}
-                disabled={
-                  employeeEditMutation.isPending ||
-                  !editEmployeeName.trim() ||
-                  !editEmployeeEmail.includes("@")
-                }
-              >
-                Save employee
-              </Button>
-            </DialogFooter>
           </form>
         </DialogContent>
       </Dialog>
@@ -1443,66 +1795,6 @@ function PeopleDirectory({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-
-      <Dialog
-        open={employeePasswordRow !== null}
-        onOpenChange={(open) => {
-          if (!open) {
-            setEmployeePasswordRow(null);
-            setEmployeePassword("");
-          }
-        }}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Set employee password — {employeePasswordRow?.name}</DialogTitle>
-            <DialogDescription>
-              Set or reset the password this employee uses for the employee portal and desktop
-              sign-in.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-3">
-            <div className="rounded-xl border bg-muted/25 p-3 text-sm">
-              <p className="font-semibold">{employeePasswordRow?.email}</p>
-              <p className="mt-1 text-xs text-muted-foreground">
-                This replaces the employee password. Share it with the employee securely.
-              </p>
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="employee-password">New password</Label>
-              <Input
-                id="employee-password"
-                type="password"
-                value={employeePassword}
-                onChange={(event) => setEmployeePassword(event.target.value)}
-                minLength={8}
-                placeholder="Minimum 8 characters"
-                autoFocus
-              />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => {
-                setEmployeePasswordRow(null);
-                setEmployeePassword("");
-              }}
-            >
-              Cancel
-            </Button>
-            <Button
-              type="button"
-              loading={employeePasswordMutation.isPending}
-              disabled={employeePasswordMutation.isPending || employeePassword.length < 8}
-              onClick={() => employeePasswordMutation.mutate()}
-            >
-              Set password
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

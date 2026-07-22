@@ -13,13 +13,19 @@ export type PayrollEntry = {
   currency: string;
   hourly_rate: number;
   expected_work_days: number;
+  worked_days: number;
+  leave_days: number;
   expected_seconds: number;
   worked_seconds: number;
+  normal_seconds: number;
+  total_payable_seconds: number;
   approved_manual_seconds: number;
   pending_manual_seconds: number;
   rejected_manual_seconds: number;
   idle_seconds: number;
   late_minutes: number;
+  raw_late_minutes: number;
+  early_leave_minutes: number;
   paid_break_seconds: number;
   unpaid_break_seconds: number;
   absence_days: number;
@@ -168,9 +174,10 @@ export function getPayrollExceptions(month: string) {
 }
 
 export function createScheduleOverride(input: {
-  scope: "employee" | "company";
+  scope: "employee" | "employees" | "company";
   override_type: "shift" | "breaks" | "both";
   employee_id?: string;
+  employee_ids?: string[];
   effective_date?: string;
   permanent: boolean;
   shift_start?: string;
@@ -187,6 +194,38 @@ export function createScheduleOverride(input: {
   return apiFetch<{ id: string; affected_employees: number }>("/payroll/schedule-overrides", {
     method: "POST",
     body: JSON.stringify(input),
+  });
+}
+
+export type ScheduleOverride = {
+  id: string;
+  scope: "employee" | "company";
+  override_type: "shift" | "breaks" | "both";
+  employee_id?: string | null;
+  employee_name?: string | null;
+  effective_date?: string | null;
+  break_rules?: Array<{
+    name: string;
+    minutes: number;
+    paid: boolean;
+    start_time?: string | null;
+    end_time?: string | null;
+  }> | null;
+  shift_start?: string | null;
+  shift_end?: string | null;
+  reason: string;
+  created_at: string;
+};
+
+export function listScheduleOverrides(upcomingOnly = true) {
+  return apiFetch<ScheduleOverride[]>(
+    withQuery("/payroll/schedule-overrides", { upcoming_only: upcomingOnly }),
+  );
+}
+
+export function deleteScheduleOverride(overrideId: string) {
+  return apiFetch<{ deleted: boolean }>(`/payroll/schedule-overrides/${overrideId}`, {
+    method: "DELETE",
   });
 }
 

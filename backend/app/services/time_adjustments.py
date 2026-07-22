@@ -70,6 +70,13 @@ def create_employee_time_adjustment_request(
     employee = db.get(Employee, device.employee_id)
     if employee is None:
         raise ApiError("EMPLOYEE_NOT_FOUND", "Employee profile was not found.", 404)
+    reason = reason.strip()
+    if request_type == IDLE_TIME_REQUEST and len(reason) < 10:
+        raise ApiError(
+            "IDLE_DESCRIPTION_REQUIRED",
+            "Write a clear description of what you were doing during this idle time.",
+            422,
+        )
 
     if request_type == EARLY_LEAVE_REQUEST:
         profile = get_or_create_work_profile(db, employee)
@@ -232,7 +239,7 @@ def create_employee_time_adjustment_request(
         source_start_at=source_start_at,
         source_end_at=source_end_at,
         requested_seconds=requested_seconds,
-        reason=reason.strip(),
+        reason=reason,
         status="pending",
     )
     db.add(row)

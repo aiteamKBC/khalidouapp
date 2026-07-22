@@ -60,6 +60,7 @@ from app.services.task_workflow import (
 )
 from app.services.screenshots import serialize_screenshot
 from app.services.activity_timeline import build_workday_timeline, local_today
+from app.services.attendance import calculate_daily_attendance, serialize_daily_attendance
 from app.services.time_adjustments import serialize_time_adjustment_request
 from app.services.work_profiles import (
     get_or_create_work_profile,
@@ -159,6 +160,23 @@ def period_summary(rows: list[dict], manual_status_seconds: dict[str, int] | Non
     }
 
 
+def reconcile_today_summary_with_timeline(summary: dict, timeline: dict) -> dict:
+    """Keep today's totals monotonic when a desktop restart creates a new session."""
+    reconciled = dict(summary)
+    tracked_active_seconds = max(
+        int(reconciled.get("tracked_active_seconds", 0)),
+        int(timeline.get("worked_seconds", 0)),
+    )
+    approved_manual_seconds = int(reconciled.get("manual_approved_seconds", 0))
+    reconciled["tracked_active_seconds"] = tracked_active_seconds
+    reconciled["active_seconds"] = tracked_active_seconds + approved_manual_seconds
+    reconciled["tracked_seconds"] = reconciled["active_seconds"] + int(
+        reconciled.get("idle_seconds", 0)
+    )
+    reconciled["points"] = round(reconciled["active_seconds"] / 3600, 2)
+    return reconciled
+
+
 def manual_request_status_seconds(
     db: Session,
     employee: Employee,
@@ -210,12 +228,30 @@ def summary(
         current_employee.id,
     )
     monthly_rows = apply_work_profile_idle_rules(monthly_rows, profile)
+    today_timeline = build_workday_timeline(
+        db,
+        company_id=current_employee.company_id,
+        employee_id=current_employee.id,
+        timezone_name=current_employee.timezone,
+        target_date=today,
+    )
+    today_summary = reconcile_today_summary_with_timeline(
+        period_summary(
+            daily_rows,
+            manual_request_status_seconds(db, current_employee, today, today),
+        ),
+        today_timeline,
+    )
+    daily_attendance, _ = calculate_daily_attendance(
+        db,
+        employee=current_employee,
+        work_date=today,
+        now=datetime.now(UTC),
+    )
+    db.commit()
     return success_response(
         data={
-            "today": period_summary(
-                daily_rows,
-                manual_request_status_seconds(db, current_employee, today, today),
-            ),
+            "today": today_summary,
             "week": period_summary(
                 weekly_rows,
                 manual_request_status_seconds(
@@ -230,13 +266,8 @@ def summary(
                 manual_request_status_seconds(db, current_employee, month_start, month_end),
             ),
             "days": monthly_rows,
-            "today_timeline": build_workday_timeline(
-                db,
-                company_id=current_employee.company_id,
-                employee_id=current_employee.id,
-                timezone_name=current_employee.timezone,
-                target_date=today,
-            ),
+            "today_timeline": today_timeline,
+            "daily_attendance": serialize_daily_attendance(daily_attendance),
             "points_rule": "1 hour of approved active work = 1 point",
         }
     )

@@ -34,7 +34,41 @@ export type PortalSummary = {
   month: PortalPeriod;
   days: Array<PortalPeriod & { date: string }>;
   todayTimeline: WorkdayTimeline;
+  daily_attendance: {
+    status: string;
+    scheduled_start_at?: string | null;
+    scheduled_end_at?: string | null;
+    actual_first_activity_at?: string | null;
+    actual_last_activity_at?: string | null;
+    normal_worked_seconds: number;
+    paid_break_seconds: number;
+    idle_seconds: number;
+    raw_late_seconds: number;
+    deductible_late_seconds: number;
+    early_leave_seconds: number;
+    recorded_overtime_seconds: number;
+    approved_overtime_seconds: number;
+    total_payable_seconds: number;
+  };
   points_rule: string;
+};
+
+export type PortalWorkProfile = {
+  shift_start?: string | null;
+  shift_end?: string | null;
+  working_days?: number[] | null;
+  weekly_off_days?: number[] | null;
+  required_daily_minutes?: number | null;
+  late_grace_minutes?: number | null;
+  overtime_enabled: boolean;
+  overtime_rate_multiplier?: number | null;
+  break_rules?: Array<{
+    name: string;
+    minutes: number;
+    paid: boolean;
+    start_time?: string | null;
+    end_time?: string | null;
+  }> | null;
 };
 
 export type PortalTask = {
@@ -163,6 +197,9 @@ export async function employeeSummary(token: string): Promise<PortalSummary> {
   const { today_timeline, ...summary } = result;
   return { ...summary, todayTimeline: mapWorkdayTimeline(today_timeline) };
 }
+
+export const employeeWorkProfile = (token: string) =>
+  apiFetch<PortalWorkProfile>("/employee-portal/work-profile", {}, token);
 
 export const employeeTasks = (token: string) =>
   apiFetch<PortalTask[]>("/employee-portal/tasks", {}, token).then((tasks) =>

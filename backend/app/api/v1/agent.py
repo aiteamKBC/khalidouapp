@@ -1,8 +1,10 @@
 from calendar import monthrange
 from datetime import date, timedelta
+import logging
 from typing import Annotated
 from uuid import UUID
 from datetime import UTC, datetime
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Body, Depends, Query, Request, UploadFile
 from fastapi.responses import FileResponse
@@ -10,7 +12,11 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import DeviceAuthContext, get_current_device, get_current_employee
-from app.api.v1.employee_portal import manual_request_status_seconds, period_summary
+from app.api.v1.employee_portal import (
+    manual_request_status_seconds,
+    period_summary,
+    reconcile_today_summary_with_timeline,
+)
 from app.api.v1.timesheets import timesheet_rows
 from app.core.responses import success_response
 from app.core.config import settings
@@ -20,6 +26,7 @@ from app.database.session import get_db
 from app.models import (
     Employee,
     LeaveRequest,
+    PauseSession,
     Project,
     Screenshot,
     Task,
@@ -27,6 +34,7 @@ from app.models import (
     Team,
     TeamMember,
     TimeAdjustmentRequest,
+    WorkScheduleOverride,
 )
 from app.schemas.agent import (
     AgentChecklistItemCreate,
@@ -46,7 +54,11 @@ from app.schemas.session import (
     SessionTaskUpdateRequest,
     SessionStartRequest,
 )
-from app.schemas.screenshot import ScreenshotCompleteRequest, ScreenshotInitiateRequest
+from app.schemas.screenshot import (
+    ScreenshotCompleteRequest,
+    ScreenshotInitiateRequest,
+    ScreenshotSkipRequest,
+)
 from app.services.device_enrollment import (
     enroll_employee_device,
     get_or_create_tracking_settings,
@@ -65,6 +77,7 @@ from app.services.session_tracking import (
 from app.services.screenshots import (
     complete_screenshot,
     initiate_screenshot,
+    record_screenshot_skip,
     upload_screenshot_content,
 )
 from app.services.projects import (
@@ -94,10 +107,188 @@ from app.services.time_adjustments import (
 )
 from app.services.work_profiles import get_or_create_work_profile
 from app.services.rate_limit import enforce_rate_limit
+from app.services.attendance import cached_daily_attendance
 
 router = APIRouter(prefix="/agent", tags=["desktop-agent"])
+logger = logging.getLogger(__name__)
 
 DEFAULT_DAILY_TARGET_SECONDS = 8 * 60 * 60
+
+
+def _employee_zone(employee: Employee) -> ZoneInfo:
+    try:
+        return ZoneInfo(employee.timezone or "UTC")
+    except ZoneInfoNotFoundError:
+        return ZoneInfo("UTC")
+
+
+def _as_utc(value: datetime) -> datetime:
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+
+
+def _latest_day_override(
+    db: Session,
+    employee: Employee,
+    work_date: date,
+    override_types: list[str],
+) -> WorkScheduleOverride | None:
+    common = (
+        WorkScheduleOverride.company_id == employee.company_id,
+        WorkScheduleOverride.permanent.is_(False),
+        WorkScheduleOverride.effective_date == work_date,
+        WorkScheduleOverride.override_type.in_(override_types),
+    )
+    employee_override = db.scalar(
+        select(WorkScheduleOverride)
+        .where(*common, WorkScheduleOverride.employee_id == employee.id)
+        .order_by(WorkScheduleOverride.created_at.desc())
+    )
+    if employee_override:
+        return employee_override
+    return db.scalar(
+        select(WorkScheduleOverride)
+        .where(*common, WorkScheduleOverride.employee_id.is_(None))
+        .order_by(WorkScheduleOverride.created_at.desc())
+    )
+
+
+def _resolved_day_policy(db: Session, employee: Employee, profile, work_date: date) -> dict:
+    shift_override = _latest_day_override(db, employee, work_date, ["shift", "both"])
+    break_override = _latest_day_override(db, employee, work_date, ["breaks", "both"])
+    approved_leave = db.scalar(
+        select(LeaveRequest.id).where(
+            LeaveRequest.company_id == employee.company_id,
+            LeaveRequest.employee_id == employee.id,
+            LeaveRequest.status == "approved",
+            LeaveRequest.start_date <= work_date,
+            LeaveRequest.end_date >= work_date,
+        )
+    )
+    approved_early_leave = db.scalar(
+        select(TimeAdjustmentRequest)
+        .where(
+            TimeAdjustmentRequest.company_id == employee.company_id,
+            TimeAdjustmentRequest.employee_id == employee.id,
+            TimeAdjustmentRequest.request_type == "early_leave",
+            TimeAdjustmentRequest.requested_date == work_date,
+            TimeAdjustmentRequest.status == "approved",
+        )
+        .order_by(TimeAdjustmentRequest.created_at.desc())
+    )
+    return {
+        "shift_start": (
+            shift_override.shift_start
+            if shift_override and shift_override.shift_start
+            else profile.shift_start
+        ),
+        "shift_end": (
+            shift_override.shift_end
+            if shift_override and shift_override.shift_end
+            else profile.shift_end
+        ),
+        "break_rules": (
+            break_override.break_rules
+            if break_override and break_override.break_rules is not None
+            else profile.break_rules or []
+        ),
+        "approved_leave": bool(approved_leave),
+        "approved_early_leave_from": (
+            approved_early_leave.source_start_at if approved_early_leave else None
+        ),
+    }
+
+
+def _seconds_after_exclusions(
+    start: datetime,
+    end: datetime,
+    exclusions: list[tuple[datetime, datetime]],
+) -> int:
+    clipped = sorted(
+        (max(start, excluded_start), min(end, excluded_end))
+        for excluded_start, excluded_end in exclusions
+        if excluded_end > start and excluded_start < end
+    )
+    cursor = start
+    included_seconds = 0
+    for excluded_start, excluded_end in clipped:
+        if excluded_start > cursor:
+            included_seconds += int((excluded_start - cursor).total_seconds())
+        cursor = max(cursor, excluded_end)
+    if cursor < end:
+        included_seconds += int((end - cursor).total_seconds())
+    return max(0, included_seconds)
+
+
+def _eligible_idle_seconds(
+    db: Session,
+    employee: Employee,
+    profile,
+    work_date: date,
+    timeline: dict,
+) -> int:
+    policy = _resolved_day_policy(db, employee, profile, work_date)
+    working_days = profile.working_days or [0, 1, 2, 3, 4]
+    weekly_off_days = profile.weekly_off_days or []
+    if (
+        work_date.weekday() not in working_days
+        or work_date.weekday() in weekly_off_days
+        or policy["approved_leave"]
+        or not policy["shift_start"]
+        or not policy["shift_end"]
+    ):
+        return 0
+
+    zone = _employee_zone(employee)
+    shift_start = datetime.combine(work_date, policy["shift_start"], tzinfo=zone).astimezone(UTC)
+    shift_end = datetime.combine(work_date, policy["shift_end"], tzinfo=zone).astimezone(UTC)
+    if shift_end <= shift_start:
+        return 0
+
+    exclusions: list[tuple[datetime, datetime]] = []
+    for rule in policy["break_rules"]:
+        if not rule.get("paid") or not rule.get("start_time") or not rule.get("end_time"):
+            continue
+        try:
+            break_start_time = datetime.strptime(str(rule["start_time"])[:5], "%H:%M").time()
+            break_end_time = datetime.strptime(str(rule["end_time"])[:5], "%H:%M").time()
+        except ValueError:
+            continue
+        exclusions.append(
+            (
+                datetime.combine(work_date, break_start_time, tzinfo=zone).astimezone(UTC),
+                datetime.combine(work_date, break_end_time, tzinfo=zone).astimezone(UTC),
+            )
+        )
+    if policy["approved_early_leave_from"]:
+        exclusions.append((_as_utc(policy["approved_early_leave_from"]), shift_end))
+    pauses = db.scalars(
+        select(PauseSession).where(
+            PauseSession.company_id == employee.company_id,
+            PauseSession.employee_id == employee.id,
+            PauseSession.started_at < shift_end,
+            PauseSession.scheduled_end_at > shift_start,
+        )
+    ).all()
+    exclusions.extend(
+        (_as_utc(pause.started_at), _as_utc(pause.scheduled_end_at)) for pause in pauses
+    )
+
+    total = 0
+    now = datetime.now(UTC)
+    for interval in timeline.get("intervals", []):
+        if interval.get("type") not in {"idle", "locked", "sleeping"}:
+            continue
+        interval_start = datetime.fromisoformat(interval["started_at"]).astimezone(UTC)
+        interval_end = (
+            datetime.fromisoformat(interval["ended_at"]).astimezone(UTC)
+            if interval.get("ended_at")
+            else now
+        )
+        eligible_start = max(interval_start, shift_start)
+        eligible_end = min(interval_end, shift_end)
+        if eligible_end > eligible_start:
+            total += _seconds_after_exclusions(eligible_start, eligible_end, exclusions)
+    return total
 
 
 @router.post("/enroll-authenticated")
@@ -126,6 +317,7 @@ def config(
         raise ApiError("EMPLOYEE_NOT_FOUND", "Employee profile was not found.", 404)
     profile = get_or_create_work_profile(db, employee)
     today = local_today(employee.timezone)
+    day_policy = _resolved_day_policy(db, employee, profile, today)
     week_start = today - timedelta(days=today.weekday())
     week_end = week_start + timedelta(days=6)
     early_leave_seconds = (
@@ -148,13 +340,22 @@ def config(
             **serialize_tracking_settings(settings_row),
             "request_policy": {
                 "timezone": employee.timezone,
-                "shift_start": profile.shift_start.isoformat(timespec="minutes")
-                if profile.shift_start
+                "shift_start": day_policy["shift_start"].isoformat(timespec="minutes")
+                if day_policy["shift_start"]
                 else None,
-                "shift_end": profile.shift_end.isoformat(timespec="minutes")
-                if profile.shift_end
+                "shift_end": day_policy["shift_end"].isoformat(timespec="minutes")
+                if day_policy["shift_end"]
                 else None,
                 "working_days": profile.working_days or [0, 1, 2, 3, 4],
+                "break_rules": day_policy["break_rules"],
+                "approved_leave_today": day_policy["approved_leave"],
+                "approved_early_leave_from": (
+                    _as_utc(day_policy["approved_early_leave_from"])
+                    .astimezone(_employee_zone(employee))
+                    .strftime("%H:%M")
+                    if day_policy["approved_early_leave_from"]
+                    else None
+                ),
                 "weekly_early_leave_minutes": weekly_allowance,
                 "weekly_early_leave_used_minutes": round(early_leave_seconds / 60),
                 "weekly_early_leave_remaining_minutes": max(
@@ -211,6 +412,8 @@ def agent_period_summary(context: DeviceAuthContext, db: Session) -> dict:
     month_start = today.replace(day=1)
     month_end = today.replace(day=monthrange(today.year, today.month)[1])
 
+    profile = get_or_create_work_profile(db, employee)
+
     def summarize(start: date, end: date) -> dict:
         rows = timesheet_rows(
             db,
@@ -224,8 +427,28 @@ def agent_period_summary(context: DeviceAuthContext, db: Session) -> dict:
             manual_request_status_seconds(db, employee, start, end),
         )
 
-    today_summary = summarize(today, today)
-    target_seconds = DEFAULT_DAILY_TARGET_SECONDS
+    timeline = build_workday_timeline(
+        db,
+        company_id=context.device.company_id,
+        employee_id=context.device.employee_id,
+        timezone_name=employee.timezone,
+    )
+    today_summary = reconcile_today_summary_with_timeline(summarize(today, today), timeline)
+    today_summary["idle_seconds"] = _eligible_idle_seconds(db, employee, profile, today, timeline)
+    today_summary["tracked_seconds"] = (
+        today_summary["active_seconds"] + today_summary["idle_seconds"]
+    )
+    today_policy = _resolved_day_policy(db, employee, profile, today)
+    shift_start = today_policy["shift_start"]
+    shift_end = today_policy["shift_end"]
+    target_seconds = int(profile.required_daily_minutes or 480) * 60
+    if shift_start and shift_end and shift_end > shift_start:
+        target_seconds = (
+            shift_end.hour * 3600
+            + shift_end.minute * 60
+            - shift_start.hour * 3600
+            - shift_start.minute * 60
+        )
     tracked_seconds = today_summary["tracked_active_seconds"]
     activity_base_seconds = tracked_seconds + today_summary["idle_seconds"]
     return {
@@ -245,12 +468,7 @@ def agent_period_summary(context: DeviceAuthContext, db: Session) -> dict:
         if activity_base_seconds
         else 0,
         "today": today_summary,
-        "today_timeline": build_workday_timeline(
-            db,
-            company_id=context.device.company_id,
-            employee_id=context.device.employee_id,
-            timezone_name=employee.timezone,
-        ),
+        "today_timeline": timeline,
         "week": summarize(week_start, week_start + timedelta(days=6)),
         "month": summarize(month_start, month_end),
     }
@@ -635,9 +853,29 @@ def heartbeat(
     context.device.last_ip_address = (
         request.client.host if request.client else context.device.last_ip_address
     )
-    return success_response(
-        data=record_heartbeat(db, device=context.device, session_id=session_id, payload=payload)
+    response = record_heartbeat(
+        db,
+        device=context.device,
+        session_id=session_id,
+        payload=payload,
     )
+    # Attendance is a derived read model. Refresh it at most once per minute so
+    # live admin screens remain current without making every heartbeat heavy.
+    try:
+        employee = db.get(Employee, context.device.employee_id)
+        if employee is not None:
+            cached_daily_attendance(
+                db,
+                employee=employee,
+                work_date=local_today(employee.timezone or "UTC", payload.timestamp),
+                now=payload.timestamp,
+                max_age_seconds=60,
+            )
+            db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception("Unable to refresh the daily attendance snapshot")
+    return success_response(data=response)
 
 
 @router.post("/sessions/{session_id}/pause")
@@ -695,6 +933,15 @@ def screenshot_initiate(
     db: Annotated[Session, Depends(get_db)],
 ):
     return success_response(data=initiate_screenshot(db, context.device, payload))
+
+
+@router.post("/screenshots/skips")
+def screenshot_skip(
+    payload: ScreenshotSkipRequest,
+    context: Annotated[DeviceAuthContext, Depends(get_current_device)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    return success_response(data=record_screenshot_skip(db, context.device, payload))
 
 
 @router.get("/screenshots/recent")

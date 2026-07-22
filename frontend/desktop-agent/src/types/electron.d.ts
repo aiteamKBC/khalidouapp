@@ -19,6 +19,9 @@ export type AgentStatus = {
   idleSeconds: number;
   connectionStatus: "online" | "offline";
   lastScreenshotAt: string | null;
+  screenshotMonitoringEnabled: boolean;
+  screenshotCaptureActive: boolean;
+  powerSource: "ac" | "battery";
   lastSuccessfulSyncAt: string | null;
   agentVersion: string;
   privacyNotice: string;
@@ -77,6 +80,7 @@ export type WorkdayTimeline = {
   timezone: string;
   first_started_at: string | null;
   last_ended_at: string | null;
+  last_activity_at: string | null;
   is_running: boolean;
   worked_seconds: number;
   idle_seconds: number;
