@@ -721,12 +721,12 @@ function App() {
   const countedTodaySeconds = timeBreakdown.segments
     .filter((segment) => segment.counted)
     .reduce((total, segment) => total + segment.seconds, 0);
-  const normalSeconds =
-    status.normalSeconds ||
-    Math.min(countedTodaySeconds, status.dailyTargetSeconds);
-  const extraSeconds =
-    status.extraSeconds ||
-    Math.max(0, countedTodaySeconds - status.dailyTargetSeconds);
+  const normalSeconds = status.enrolled
+    ? status.normalSeconds
+    : Math.min(countedTodaySeconds, status.dailyTargetSeconds);
+  const extraSeconds = status.enrolled
+    ? status.extraSeconds
+    : Math.max(0, countedTodaySeconds - status.dailyTargetSeconds);
   const targetProgress = Math.max(
     0,
     Math.min(

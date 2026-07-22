@@ -26,8 +26,11 @@ from app.schemas.session import (
     SessionTaskUpdateRequest,
     SessionStartRequest,
 )
+from app.services.activity_timeline import build_workday_timeline
 from app.services.projects import get_employee_task_context, list_employee_tasks
+from app.services.schedules import effective_schedule, overlap_seconds
 from app.services.task_workflow import TRACKABLE_STAGES
+from app.services.work_profiles import get_or_create_work_profile
 
 ACTIVE_SESSION_STATUSES = {"active", "idle", "locked", "sleeping"}
 UNENDED_SESSION_STATUSES = ACTIVE_SESSION_STATUSES | {"offline"}
@@ -191,21 +194,81 @@ def _sessions_for_workday(db: Session, session: WorkSession) -> list[WorkSession
     )
 
 
-def sync_session_time_buckets(db: Session, session: WorkSession) -> None:
-    required_seconds = employee_required_daily_seconds(db, session.employee_id, session.started_at)
-    remaining_normal_seconds = required_seconds
+def sync_session_time_buckets(
+    db: Session,
+    session: WorkSession,
+    *,
+    at: datetime | None = None,
+) -> None:
+    """Split active time using schedule boundaries, never an hours-completed threshold."""
+    employee = db.get(Employee, session.employee_id)
+    if employee is None:
+        return
+    calculated_at = utc(at)
     work_date, _ = local_work_date(db, session.employee_id, session.started_at)
+    profile = get_or_create_work_profile(db, employee)
+    schedule = effective_schedule(db, employee, profile, work_date)
+    shift_start = schedule["start_at"]
+    shift_end = schedule["end_at"]
+    timeline = build_workday_timeline(
+        db,
+        company_id=session.company_id,
+        employee_id=session.employee_id,
+        timezone_name=schedule["timezone"],
+        target_date=work_date,
+        now=calculated_at,
+    )
+    buckets: dict[UUID, dict[str, int]] = {}
+    for interval in timeline["intervals"]:
+        if interval["type"] != "worked":
+            continue
+        interval_start = utc(datetime.fromisoformat(interval["started_at"]))
+        interval_end = (
+            utc(datetime.fromisoformat(interval["ended_at"]))
+            if interval["ended_at"]
+            else calculated_at
+        )
+        if interval_end <= interval_start:
+            continue
+        interval_seconds = int((interval_end - interval_start).total_seconds())
+        normal_seconds = (
+            overlap_seconds(interval_start, interval_end, shift_start, shift_end)
+            if shift_start and shift_end
+            else 0
+        )
+        row = buckets.setdefault(UUID(interval["session_id"]), {"normal": 0, "extra": 0})
+        row["normal"] += normal_seconds
+        row["extra"] += max(0, interval_seconds - normal_seconds)
+
     for day_session in _sessions_for_workday(db, session):
         worked_seconds = max(0, day_session.active_seconds - day_session.deducted_seconds)
-        day_session.normal_seconds = min(worked_seconds, remaining_normal_seconds)
-        day_session.extra_seconds = max(0, worked_seconds - day_session.normal_seconds)
-        remaining_normal_seconds = max(0, remaining_normal_seconds - day_session.normal_seconds)
+        classified = buckets.get(day_session.id, {"normal": 0, "extra": 0})
+        classified_total = classified["normal"] + classified["extra"]
+        if classified_total > worked_seconds and classified_total > 0:
+            day_session.normal_seconds = round(
+                worked_seconds * classified["normal"] / classified_total
+            )
+            day_session.extra_seconds = max(0, worked_seconds - day_session.normal_seconds)
+        else:
+            day_session.normal_seconds = classified["normal"]
+            day_session.extra_seconds = classified["extra"]
+            unclassified = max(0, worked_seconds - classified_total)
+            session_end = utc(day_session.ended_at) if day_session.ended_at else calculated_at
+            if shift_end and session_end > shift_end:
+                day_session.extra_seconds += unclassified
+            else:
+                day_session.normal_seconds += unclassified
         db.add(day_session)
-        if day_session.extra_seconds <= 0:
-            continue
         record = db.scalar(
             select(OvertimeRecord).where(OvertimeRecord.work_session_id == day_session.id)
         )
+        if day_session.extra_seconds <= 0:
+            if record is not None:
+                record.recorded_extra_seconds = 0
+                record.approved_seconds = 0
+                record.status = "recorded_not_counted"
+                db.add(record)
+            continue
         enabled = employee_overtime_enabled(db, day_session.employee_id)
         status = "pending" if enabled else "recorded_not_counted"
         if record is None:
@@ -219,9 +282,8 @@ def sync_session_time_buckets(db: Session, session: WorkSession) -> None:
                 status=status,
             )
         else:
-            record.recorded_extra_seconds = max(
-                record.recorded_extra_seconds, day_session.extra_seconds
-            )
+            record.recorded_extra_seconds = day_session.extra_seconds
+            record.approved_seconds = min(record.approved_seconds, day_session.extra_seconds)
             if record.approved_seconds <= 0:
                 record.status = status
         db.add(record)
@@ -332,7 +394,6 @@ def pause_state_payload(
 def workday_state_payload(db: Session, session: WorkSession) -> dict[str, Any]:
     required_seconds = employee_required_daily_seconds(db, session.employee_id, session.started_at)
     overtime_enabled = employee_overtime_enabled(db, session.employee_id)
-    sync_session_time_buckets(db, session)
     day_sessions = _sessions_for_workday(db, session)
     normal_seconds = sum(item.normal_seconds for item in day_sessions)
     extra_seconds = sum(item.extra_seconds for item in day_sessions)
@@ -693,7 +754,7 @@ def record_heartbeat(
         )
         session.active_seconds = max(session.active_seconds, next_active_seconds)
         finalize_due_pause(db, session, at=heartbeat_at)
-        sync_session_time_buckets(db, session)
+        sync_session_time_buckets(db, session, at=heartbeat_at)
 
     db.commit()
     db.refresh(session)
@@ -845,6 +906,7 @@ def end_session(
         session.active_seconds = max(session.active_seconds, payload.active_seconds)
     if payload.idle_seconds is not None:
         session.idle_seconds = max(session.idle_seconds, payload.idle_seconds)
+    sync_session_time_buckets(db, session, at=ended_at)
 
     create_activity_event(
         db,

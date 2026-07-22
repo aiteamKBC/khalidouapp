@@ -350,14 +350,18 @@ def test_heartbeat_splits_normal_and_overtime_when_employee_is_eligible(tracking
     profile = EmployeeWorkProfile(
         company_id=device.company_id,
         employee_id=device.employee_id,
+        shift_start=datetime.strptime("10:00", "%H:%M").time(),
+        shift_end=datetime.strptime("18:00", "%H:%M").time(),
         required_daily_minutes=8 * 60,
         overtime_enabled=True,
     )
     db.add(profile)
+    started_at = datetime(2026, 7, 21, 11, 0, tzinfo=UTC)
+    heartbeat_at = datetime(2026, 7, 21, 19, 0, tzinfo=UTC)
     started = start_or_get_session(
         db,
         device,
-        SessionStartRequest(started_at=datetime.now(UTC) - timedelta(hours=9)),
+        SessionStartRequest(started_at=started_at),
     )
     db.commit()
 
@@ -367,9 +371,9 @@ def test_heartbeat_splits_normal_and_overtime_when_employee_is_eligible(tracking
         session_id=UUID(started["session"]["id"]),
         payload=HeartbeatRequest(
             event_id=uuid4(),
-            timestamp=datetime.now(UTC),
+            timestamp=heartbeat_at,
             status="active",
-            active_seconds=9 * 60 * 60,
+            active_seconds=8 * 60 * 60,
             idle_seconds=0,
             agent_version="1.0.0",
         ),
@@ -380,7 +384,7 @@ def test_heartbeat_splits_normal_and_overtime_when_employee_is_eligible(tracking
             OvertimeRecord.work_session_id == UUID(started["session"]["id"])
         )
     )
-    assert heartbeat["workday"]["normal_seconds"] == 8 * 60 * 60
+    assert heartbeat["workday"]["normal_seconds"] == 7 * 60 * 60
     assert heartbeat["workday"]["extra_seconds"] == 60 * 60
     assert heartbeat["workday"]["extra_time_status"] == "pending_overtime"
     assert overtime is not None
@@ -393,30 +397,35 @@ def test_workday_totals_continue_across_restarted_sessions(tracking_context):
     profile = EmployeeWorkProfile(
         company_id=device.company_id,
         employee_id=device.employee_id,
+        shift_start=datetime.strptime("09:00", "%H:%M").time(),
+        shift_end=datetime.strptime("17:00", "%H:%M").time(),
         required_daily_minutes=8 * 60,
         overtime_enabled=False,
     )
     db.add(profile)
+    first_started_at = datetime(2026, 7, 21, 9, 0, tzinfo=UTC)
+    first_ended_at = datetime(2026, 7, 21, 11, 0, tzinfo=UTC)
     first = start_or_get_session(
         db,
         device,
-        SessionStartRequest(started_at=datetime.now(UTC) - timedelta(hours=3)),
+        SessionStartRequest(started_at=first_started_at),
     )
     end_session(
         db,
         device=device,
         session_id=UUID(first["session"]["id"]),
         payload=SessionEndRequest(
-            ended_at=datetime.now(UTC) - timedelta(hours=1),
+            ended_at=first_ended_at,
             active_seconds=2 * 60 * 60,
             idle_seconds=0,
             reason="Application restarted",
         ),
     )
+    second_started_at = datetime(2026, 7, 21, 12, 0, tzinfo=UTC)
     second = start_or_get_session(
         db,
         device,
-        SessionStartRequest(started_at=datetime.now(UTC)),
+        SessionStartRequest(started_at=second_started_at),
     )
 
     heartbeat = record_heartbeat(
@@ -425,7 +434,7 @@ def test_workday_totals_continue_across_restarted_sessions(tracking_context):
         session_id=UUID(second["session"]["id"]),
         payload=HeartbeatRequest(
             event_id=uuid4(),
-            timestamp=datetime.now(UTC),
+            timestamp=second_started_at + timedelta(minutes=30),
             status="active",
             active_seconds=30 * 60,
             idle_seconds=0,

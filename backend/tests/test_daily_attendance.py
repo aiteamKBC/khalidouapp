@@ -1,7 +1,7 @@
 from datetime import UTC, date, datetime, time
 
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -168,6 +168,65 @@ def test_multiple_sessions_keep_raw_lateness_and_unapproved_overtime_separate(
     )
     assert approved.approved_overtime_seconds == 3600
     assert approved.total_payable_seconds == 8 * 3600 + 40 * 60
+
+
+def test_shift_end_stops_normal_pay_even_when_late_employee_has_not_completed_target(
+    attendance_context,
+):
+    db, employee, device, _ = attendance_context
+    profile = db.scalar(
+        select(EmployeeWorkProfile).where(EmployeeWorkProfile.employee_id == employee.id)
+    )
+    profile.shift_start = time(10, 0)
+    profile.shift_end = time(18, 0)
+    profile.late_grace_minutes = 0
+    profile.overtime_enabled = False
+    session = _session(
+        db,
+        employee,
+        device,
+        datetime(2026, 7, 21, 11, 0, tzinfo=UTC),
+        datetime(2026, 7, 21, 19, 0, tzinfo=UTC),
+    )
+    overtime = OvertimeRecord(
+        company_id=employee.company_id,
+        employee_id=employee.id,
+        work_session_id=session.id,
+        work_date=date(2026, 7, 21),
+        overtime_enabled_snapshot=False,
+        recorded_extra_seconds=3600,
+        approved_seconds=0,
+        status="recorded_not_counted",
+    )
+    db.add(overtime)
+    db.commit()
+
+    recorded, _ = calculate_daily_attendance(
+        db,
+        employee=employee,
+        work_date=date(2026, 7, 21),
+        now=datetime(2026, 7, 22, tzinfo=UTC),
+    )
+    assert recorded.raw_late_seconds == 3600
+    assert recorded.normal_worked_seconds == 6 * 3600 + 30 * 60
+    assert recorded.paid_break_seconds == 30 * 60
+    assert recorded.recorded_overtime_seconds == 3600
+    assert recorded.approved_overtime_seconds == 0
+    assert recorded.total_payable_seconds == 7 * 3600
+
+    overtime.status = "approved"
+    overtime.approved_seconds = 3600
+    db.commit()
+    approved, _ = calculate_daily_attendance(
+        db,
+        employee=employee,
+        work_date=date(2026, 7, 21),
+        now=datetime(2026, 7, 22, tzinfo=UTC),
+    )
+    assert approved.normal_worked_seconds == 6 * 3600 + 30 * 60
+    assert approved.paid_break_seconds == 30 * 60
+    assert approved.approved_overtime_seconds == 3600
+    assert approved.total_payable_seconds == 8 * 3600
 
 
 def test_paid_break_is_not_idle_or_double_counted(attendance_context):
