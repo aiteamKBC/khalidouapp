@@ -195,6 +195,18 @@ def invite_person(
                 400,
             )
         work_profile_changes = payload.work_profile.model_dump(exclude_unset=True, mode="json")
+        # General admins may onboard staff and configure attendance/overtime
+        # eligibility, but only HR or the Super Admin may assign compensation.
+        # A zero salary is the neutral placeholder used until HR completes it.
+        protected_compensation_requested = (
+            "salary_amount" in work_profile_changes
+            and float(work_profile_changes["salary_amount"] or 0) != 0
+        ) or (
+            "overtime_rate_multiplier" in work_profile_changes
+            and float(work_profile_changes["overtime_rate_multiplier"] or 1) != 1
+        )
+        if protected_compensation_requested:
+            require_capability(current_admin, "payroll.manage")
         for time_field in ("shift_start", "shift_end"):
             if time_field in work_profile_changes:
                 work_profile_changes[time_field] = getattr(payload.work_profile, time_field)

@@ -137,6 +137,12 @@ PERMISSION_CATALOG: tuple[dict[str, str], ...] = (
         "description": "View employee break rules and usage.",
     },
     {
+        "key": "breaks.manage",
+        "label": "Manage work schedules",
+        "group": "Tracking",
+        "description": "Manage shifts and break rules inside the assigned data scope.",
+    },
+    {
         "key": "leave_requests.view",
         "label": "View holiday requests",
         "group": "Leave",
@@ -193,6 +199,7 @@ PERMISSION_CATALOG: tuple[dict[str, str], ...] = (
 )
 
 MANAGED_PERMISSION_KEYS = frozenset(item["key"] for item in PERMISSION_CATALOG)
+PAYROLL_PERMISSION_KEYS = frozenset({"payroll.view", "payroll.manage"})
 
 LEGACY_GENERAL_CAPABILITIES = frozenset(
     {
@@ -226,14 +233,21 @@ ROLE_CAPABILITIES: dict[str, frozenset[str]] = {
             "people.view",
             "live_activity.view",
             "screenshots.view",
+            "screenshots.manage",
             "timesheets.view",
+            "timesheets.manage",
             "time_requests.view",
             "time_requests.manage",
+            "breaks.view",
+            "breaks.manage",
+            "leave_requests.view",
+            "leave_requests.manage",
             "devices.view",
             "projects.view",
             "projects.manage",
             "notifications.view",
             "reports.view",
+            "reports.export",
         }
     )
     | LEGACY_TEAM_CAPABILITIES,
@@ -286,6 +300,10 @@ def capabilities_for_admin(admin: AdminUser) -> list[str]:
             effective.add(key)
         else:
             effective.discard(key)
+    # Salary and payroll data are restricted even if a custom permission was
+    # accidentally granted. Only HR and the protected Super Admin may access it.
+    if admin.role != HR_MANAGER and not bool(getattr(admin, "is_super_admin", False)):
+        effective.difference_update(PAYROLL_PERMISSION_KEYS)
     return sorted(effective)
 
 
@@ -377,11 +395,16 @@ def replace_permission_overrides(
 
 
 def permission_catalog_payload() -> dict:
+    role_presets = {
+        role: sorted(
+            (keys & MANAGED_PERMISSION_KEYS)
+            - (PAYROLL_PERMISSION_KEYS if role != HR_MANAGER else frozenset())
+        )
+        for role, keys in ROLE_CAPABILITIES.items()
+    }
     return {
         "permissions": list(PERMISSION_CATALOG),
-        "role_presets": {
-            role: sorted(keys & MANAGED_PERMISSION_KEYS) for role, keys in ROLE_CAPABILITIES.items()
-        },
+        "role_presets": role_presets,
         "permission_modes": ["role", "custom"],
         "data_scopes": ["company", "assigned_teams"],
     }

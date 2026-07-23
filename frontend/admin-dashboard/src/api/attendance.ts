@@ -22,6 +22,14 @@ export type DailyAttendance = {
   unpaidBreakSeconds: number;
   idleSeconds: number;
   approvedManualSeconds: number;
+  approvedEarlyLeaveSeconds: number;
+  attendanceAdjustmentSeconds: number;
+  attendanceCorrection?: {
+    id: string;
+    reason?: string | null;
+    rawFirstActivityAt?: string | null;
+    rawLastActivityAt?: string | null;
+  } | null;
   pendingManualSeconds: number;
   rejectedManualSeconds: number;
   rawLateSeconds: number;
@@ -36,6 +44,7 @@ export type DailyAttendance = {
   status: AnyStatus;
   leaveStatus?: string | null;
   issues: Array<{ code: string; seconds?: number }>;
+  screenshotCount: number;
   timeline?: WorkdayTimeline;
 };
 
@@ -58,6 +67,14 @@ type BackendAttendance = {
   unpaid_break_seconds: number;
   idle_seconds: number;
   approved_manual_seconds: number;
+  approved_early_leave_seconds?: number;
+  attendance_adjustment_seconds?: number;
+  attendance_correction?: {
+    id: string;
+    reason?: string | null;
+    raw_first_activity_at?: string | null;
+    raw_last_activity_at?: string | null;
+  } | null;
   pending_manual_seconds: number;
   rejected_manual_seconds: number;
   raw_late_seconds: number;
@@ -72,6 +89,7 @@ type BackendAttendance = {
   status: string;
   leave_status?: string | null;
   issues?: Array<{ code: string; seconds?: number }>;
+  screenshot_count?: number;
   timeline?: BackendWorkdayTimeline;
 };
 
@@ -95,6 +113,16 @@ function mapAttendance(row: BackendAttendance): DailyAttendance {
     unpaidBreakSeconds: row.unpaid_break_seconds,
     idleSeconds: row.idle_seconds,
     approvedManualSeconds: row.approved_manual_seconds,
+    approvedEarlyLeaveSeconds: row.approved_early_leave_seconds ?? 0,
+    attendanceAdjustmentSeconds: row.attendance_adjustment_seconds ?? 0,
+    attendanceCorrection: row.attendance_correction
+      ? {
+          id: row.attendance_correction.id,
+          reason: row.attendance_correction.reason,
+          rawFirstActivityAt: row.attendance_correction.raw_first_activity_at,
+          rawLastActivityAt: row.attendance_correction.raw_last_activity_at,
+        }
+      : null,
     pendingManualSeconds: row.pending_manual_seconds,
     rejectedManualSeconds: row.rejected_manual_seconds,
     rawLateSeconds: row.raw_late_seconds,
@@ -109,6 +137,7 @@ function mapAttendance(row: BackendAttendance): DailyAttendance {
     status: row.status as AnyStatus,
     leaveStatus: row.leave_status,
     issues: row.issues ?? [],
+    screenshotCount: row.screenshot_count ?? 0,
     timeline: row.timeline ? mapWorkdayTimeline(row.timeline) : undefined,
   };
 }
@@ -139,4 +168,103 @@ export async function getDailyAttendance(employeeId: string, day: string) {
   return mapAttendance(
     await apiFetch<BackendAttendance>(`/attendance/employee/${employeeId}/${day}`),
   );
+}
+
+export async function updateAttendanceCorrection(
+  employeeId: string,
+  day: string,
+  payload: {
+    startTime?: string | null;
+    endTime?: string | null;
+    payableMinutesDelta: number;
+    reason: string;
+  },
+) {
+  return mapAttendance(
+    await apiFetch<BackendAttendance>(`/attendance/employee/${employeeId}/${day}/correction`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        start_time: payload.startTime || null,
+        end_time: payload.endTime || null,
+        payable_minutes_delta: payload.payableMinutesDelta,
+        reason: payload.reason,
+      }),
+    }),
+  );
+}
+
+export async function deleteAttendanceCorrection(employeeId: string, day: string) {
+  return mapAttendance(
+    await apiFetch<BackendAttendance>(`/attendance/employee/${employeeId}/${day}/correction`, {
+      method: "DELETE",
+    }),
+  );
+}
+
+export type EmployeeAttendanceRange = {
+  employeeId: string;
+  employeeName: string;
+  startDate: string;
+  endDate: string;
+  summary: {
+    scheduledDays: number;
+    workedDays: number;
+    leaveDays: number;
+    normalSeconds: number;
+    payableSeconds: number;
+    idleSeconds: number;
+    lateSeconds: number;
+    approvedOvertimeSeconds: number;
+    screenshots: number;
+  };
+  rows: DailyAttendance[];
+};
+
+export async function getEmployeeAttendanceRange(
+  employeeId: string,
+  startDate: string,
+  endDate: string,
+): Promise<EmployeeAttendanceRange> {
+  const result = await apiFetch<{
+    employee_id: string;
+    employee_name: string;
+    start_date: string;
+    end_date: string;
+    summary: {
+      scheduled_days: number;
+      worked_days: number;
+      leave_days: number;
+      normal_seconds: number;
+      payable_seconds: number;
+      idle_seconds: number;
+      late_seconds: number;
+      approved_overtime_seconds: number;
+      screenshots: number;
+    };
+    rows: BackendAttendance[];
+  }>(
+    `/attendance/employee/${employeeId}?${new URLSearchParams({
+      start_date: startDate,
+      end_date: endDate,
+    }).toString()}`,
+  );
+  return {
+    employeeId: result.employee_id,
+    employeeName: result.employee_name,
+    startDate: result.start_date,
+    endDate: result.end_date,
+    summary: {
+      scheduledDays: result.summary.scheduled_days,
+      workedDays: result.summary.worked_days,
+      leaveDays: result.summary.leave_days,
+      normalSeconds: result.summary.normal_seconds,
+      payableSeconds: result.summary.payable_seconds,
+      idleSeconds: result.summary.idle_seconds,
+      lateSeconds: result.summary.late_seconds,
+      approvedOvertimeSeconds: result.summary.approved_overtime_seconds,
+      screenshots: result.summary.screenshots,
+    },
+    rows: result.rows.map(mapAttendance),
+  };
 }

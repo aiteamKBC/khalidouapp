@@ -16,6 +16,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database.base import Base
+from app.database.encrypted_types import EncryptedDecimal
 from app.models.mixins import TimestampMixin, UUIDPrimaryKeyMixin
 
 
@@ -41,7 +42,7 @@ class EmployeeWorkProfile(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     overtime_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     overtime_basis: Mapped[str | None] = mapped_column(String(40), nullable=True)
     overtime_rate_multiplier: Mapped[Decimal | None] = mapped_column(Numeric(8, 2), nullable=True)
-    salary_amount: Mapped[Decimal | None] = mapped_column(Numeric(14, 2), nullable=True)
+    salary_amount: Mapped[Decimal | None] = mapped_column(EncryptedDecimal(), nullable=True)
     salary_currency: Mapped[str | None] = mapped_column(String(3), nullable=True)
     salary_type: Mapped[str] = mapped_column(String(20), nullable=False, default="monthly")
     profile_completed_at: Mapped[datetime | None] = mapped_column(

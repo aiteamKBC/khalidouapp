@@ -25,12 +25,12 @@ export type PersonInvitationInput = {
       end_time: string;
     }>;
     lateGraceMinutes: number;
-    overtimeEnabled: boolean;
-    overtimeBasis: "outside_shift";
-    overtimeRateMultiplier: number;
-    salaryAmount: number;
-    salaryCurrency: string;
-    salaryType: "monthly" | "hourly";
+    overtimeEnabled?: boolean;
+    overtimeBasis?: "outside_shift";
+    overtimeRateMultiplier?: number;
+    salaryAmount?: number;
+    salaryCurrency?: string;
+    salaryType?: "monthly" | "hourly";
   };
 };
 

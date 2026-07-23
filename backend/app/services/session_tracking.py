@@ -254,10 +254,16 @@ def sync_session_time_buckets(
             day_session.extra_seconds = classified["extra"]
             unclassified = max(0, worked_seconds - classified_total)
             session_end = utc(day_session.ended_at) if day_session.ended_at else calculated_at
-            if shift_end and session_end > shift_end:
-                day_session.extra_seconds += unclassified
-            else:
+            if (
+                shift_start
+                and shift_end
+                and shift_start <= session_end <= shift_end
+            ):
                 day_session.normal_seconds += unclassified
+            else:
+                # Missing timeline seconds must never become paid shift time merely
+                # because the session happened before the configured shift ended.
+                day_session.extra_seconds += unclassified
         db.add(day_session)
         record = db.scalar(
             select(OvertimeRecord).where(OvertimeRecord.work_session_id == day_session.id)

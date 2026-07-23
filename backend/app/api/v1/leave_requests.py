@@ -130,16 +130,24 @@ def review_leave_request(
 ):
     require_capability(current_admin, "leave_requests.manage")
     row = db.scalar(
-        select(LeaveRequest).where(
+        select(LeaveRequest)
+        .where(
             LeaveRequest.id == request_id,
             LeaveRequest.company_id == current_admin.company_id,
         )
+        .with_for_update()
     )
     if row is None:
         raise ApiError("LEAVE_REQUEST_NOT_FOUND", "Holiday request was not found.", 404)
     employee = ensure_employee_access(db, current_admin, row.employee_id)
     if row.status != "pending":
         raise ApiError("LEAVE_REQUEST_REVIEWED", "This holiday request was already reviewed.", 409)
+    if current_admin.employee_id == row.employee_id:
+        raise ApiError(
+            "SELF_REVIEW_FORBIDDEN",
+            "You cannot review your own holiday request.",
+            403,
+        )
     if payload.status == "approved" and row.leave_type == "annual":
         balance = serialize_balance(db, row.employee, row.start_date.year)
         if balance["remaining_days"] < row.requested_days:

@@ -254,10 +254,12 @@ def get_time_adjustment_or_404(
     request_id: UUID,
 ) -> TimeAdjustmentRequest:
     row = db.scalar(
-        select(TimeAdjustmentRequest).where(
+        select(TimeAdjustmentRequest)
+        .where(
             TimeAdjustmentRequest.id == request_id,
             TimeAdjustmentRequest.company_id == company_id,
         )
+        .with_for_update()
     )
     if row is None:
         raise ApiError("TIME_ADJUSTMENT_NOT_FOUND", "Time adjustment request was not found.", 404)

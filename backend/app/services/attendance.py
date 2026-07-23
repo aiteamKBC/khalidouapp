@@ -6,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import (
+    AttendanceCorrection,
     DailyAttendance,
     Employee,
     LeaveRequest,
@@ -92,8 +93,25 @@ def calculate_daily_attendance(
             intervals.append((item, _utc(item_start), _utc(item_end)))
 
     activity_intervals = [item for item in intervals if item[0]["type"] in {"worked", "idle"}]
-    first_at = min((item[1] for item in activity_intervals), default=None)
-    last_at = max((item[2] for item in activity_intervals), default=None)
+    raw_first_at = min((item[1] for item in activity_intervals), default=None)
+    raw_last_at = max((item[2] for item in activity_intervals), default=None)
+    correction = db.scalar(
+        select(AttendanceCorrection).where(
+            AttendanceCorrection.company_id == employee.company_id,
+            AttendanceCorrection.employee_id == employee.id,
+            AttendanceCorrection.work_date == work_date,
+        )
+    )
+    first_at = (
+        _utc(correction.corrected_start_at)
+        if correction and correction.corrected_start_at
+        else raw_first_at
+    )
+    last_at = (
+        _utc(correction.corrected_end_at)
+        if correction and correction.corrected_end_at
+        else raw_last_at
+    )
     session_ids = {UUID(item[0]["session_id"]) for item in intervals if item[0].get("session_id")}
     actual_sign_out_at = None
     if session_ids:
@@ -168,6 +186,11 @@ def calculate_daily_attendance(
         ),
         None,
     )
+    approved_early_leave_seconds = (
+        int(approved_early_leave.approved_seconds or approved_early_leave.requested_seconds)
+        if approved_early_leave
+        else 0
+    )
 
     leave = db.scalar(
         select(LeaveRequest).where(
@@ -195,7 +218,7 @@ def calculate_daily_attendance(
                 paid_break += attended_break_seconds
             else:
                 unpaid_break += attended_break_seconds
-    attended = bool(activity_intervals or approved_manual)
+    attended = bool(activity_intervals or approved_manual or correction)
 
     raw_late = (
         max(0, int((first_at - start_at).total_seconds()))
@@ -259,9 +282,17 @@ def calculate_daily_attendance(
     else:
         normal_payable = min(
             expected_seconds,
-            normal_worked + paid_break + approved_manual,
+            normal_worked
+            + paid_break
+            + approved_manual
+            + approved_early_leave_seconds,
         )
-    total_payable = normal_payable + approved_overtime
+    attendance_adjustment_seconds = int(correction.payable_seconds_delta) if correction else 0
+    adjusted_normal_payable = max(
+        0,
+        min(expected_seconds, normal_payable + attendance_adjustment_seconds),
+    )
+    total_payable = adjusted_normal_payable + approved_overtime
 
     issues: list[dict] = []
     if deductible_late:
@@ -270,6 +301,13 @@ def calculate_daily_attendance(
         issues.append({"code": "unexplained_idle", "seconds": eligible_idle})
     if unapproved_overtime:
         issues.append({"code": "overtime_pending", "seconds": unapproved_overtime})
+    if correction:
+        issues.append(
+            {
+                "code": "attendance_corrected",
+                "seconds": attendance_adjustment_seconds,
+            }
+        )
     if schedule["scheduled_day"] and not attended and not leave:
         issues.append({"code": "missing_check_in", "seconds": expected_seconds})
 
@@ -332,7 +370,13 @@ def calculate_daily_attendance(
             "adjustment_ids": [str(item.id) for item in adjustments],
             "overtime_ids": [str(item.id) for item in overtime_rows],
             "leave_request_id": str(leave.id) if leave else None,
+            "approved_early_leave_seconds": approved_early_leave_seconds,
             "schedule_override_id": schedule["override_id"],
+            "attendance_correction_id": str(correction.id) if correction else None,
+            "attendance_adjustment_seconds": attendance_adjustment_seconds,
+            "attendance_correction_reason": correction.reason if correction else None,
+            "raw_first_activity_at": raw_first_at.isoformat() if raw_first_at else None,
+            "raw_last_activity_at": raw_last_at.isoformat() if raw_last_at else None,
         },
         "calculated_at": datetime.now(UTC),
     }
@@ -379,6 +423,28 @@ def serialize_daily_attendance(row: DailyAttendance, *, timeline: dict | None = 
         "total_payable_seconds": row.total_payable_seconds,
         "status": row.status,
         "leave_status": row.leave_status,
+        "approved_early_leave_seconds": int(
+            (row.calculation_sources or {}).get("approved_early_leave_seconds", 0)
+        ),
+        "attendance_adjustment_seconds": int(
+            (row.calculation_sources or {}).get("attendance_adjustment_seconds", 0)
+        ),
+        "attendance_correction": (
+            {
+                "id": (row.calculation_sources or {}).get("attendance_correction_id"),
+                "reason": (row.calculation_sources or {}).get(
+                    "attendance_correction_reason"
+                ),
+                "raw_first_activity_at": (row.calculation_sources or {}).get(
+                    "raw_first_activity_at"
+                ),
+                "raw_last_activity_at": (row.calculation_sources or {}).get(
+                    "raw_last_activity_at"
+                ),
+            }
+            if (row.calculation_sources or {}).get("attendance_correction_id")
+            else None
+        ),
         "issues": row.issues or [],
         "calculation_sources": row.calculation_sources or {},
         "calculated_at": row.calculated_at.isoformat(),

@@ -45,6 +45,12 @@ type BackendEmployeeStatus = {
   device?: BackendDevice | null;
   team_ids?: string[];
   team_role?: TeamMemberRole | null;
+  managers?: Array<{
+    id: string;
+    name: string;
+    email: string;
+    teams: Array<{ id: string; name: string }>;
+  }>;
 };
 
 export type EmployeeCreateInput = {
@@ -202,6 +208,7 @@ function mapEmployee(status: BackendEmployeeStatus, teamIds: string[]): Employee
     portalLastLoginIp: employee.portal_last_login_ip ?? undefined,
     portalLastUserAgent: employee.portal_last_user_agent ?? undefined,
     weeklyCapacityMinutes: employee.weekly_capacity_minutes ?? 2400,
+    managers: status.managers ?? [],
   };
 }
 
@@ -308,11 +315,11 @@ export type EmployeeBreakRules = {
   workingDays: number[];
   weeklyOffDays: number[];
   lateGraceMinutes: number;
-  overtimeEnabled: boolean;
-  overtimeRateMultiplier: number;
-  salaryAmount: number;
-  salaryCurrency: WorkProfile["salaryCurrency"];
-  salaryType: WorkProfile["salaryType"];
+  overtimeEnabled?: boolean;
+  overtimeRateMultiplier?: number;
+  salaryAmount?: number;
+  salaryCurrency?: WorkProfile["salaryCurrency"];
+  salaryType?: WorkProfile["salaryType"];
 };
 
 export async function listEmployeeBreakRules(
@@ -334,10 +341,10 @@ export async function listEmployeeBreakRules(
       weekly_off_days: number[];
       late_grace_minutes: number;
       overtime_enabled: boolean;
-      overtime_rate_multiplier: number;
-      salary_amount: number;
-      salary_currency: WorkProfile["salaryCurrency"];
-      salary_type: WorkProfile["salaryType"];
+      overtime_rate_multiplier?: number;
+      salary_amount?: number;
+      salary_currency?: WorkProfile["salaryCurrency"];
+      salary_type?: WorkProfile["salaryType"];
     }>
   >(withQuery("/employees/break-rules", { team_id: teamId }));
   return rows.map((row) => ({
@@ -397,4 +404,39 @@ export async function sendEmployeeInvitation(employeeId: string): Promise<void> 
 
 export async function getPayrollPreview(employeeId: string): Promise<PayrollPreview> {
   return apiFetch(`/employees/${employeeId}/payroll-preview`);
+}
+
+export type EmployeeChangeHistory = {
+  id: string;
+  at: string;
+  action: string;
+  entityType: string;
+  entityName?: string | null;
+  actorName: string;
+  details: Record<string, unknown>;
+};
+
+export async function getEmployeeChangeHistory(
+  employeeId: string,
+): Promise<EmployeeChangeHistory[]> {
+  const rows = await apiFetch<
+    Array<{
+      id: string;
+      at: string;
+      action: string;
+      entity_type: string;
+      entity_name?: string | null;
+      actor_name: string;
+      details: Record<string, unknown>;
+    }>
+  >(`/employees/${employeeId}/change-history`);
+  return rows.map((row) => ({
+    id: row.id,
+    at: row.at,
+    action: row.action,
+    entityType: row.entity_type,
+    entityName: row.entity_name,
+    actorName: row.actor_name,
+    details: row.details,
+  }));
 }

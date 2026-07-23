@@ -5,7 +5,7 @@ from uuid import UUID, uuid4
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from fastapi import APIRouter, Depends, File, Query, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Query, UploadFile
 from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -72,6 +72,7 @@ from app.services.leave_management import (
     serialize_balance,
     serialize_leave_request,
 )
+from app.services.request_notifications import enqueue_request_review_emails
 
 router = APIRouter(prefix="/employee-portal", tags=["employee-portal"])
 
@@ -970,6 +971,7 @@ def list_employee_leave_requests(
 @router.post("/leave-requests")
 def create_employee_leave_request(
     payload: EmployeePortalLeaveRequestCreate,
+    background_tasks: BackgroundTasks,
     current_employee: Annotated[Employee, Depends(get_current_employee)],
     db: Annotated[Session, Depends(get_db)],
 ):
@@ -1011,4 +1013,17 @@ def create_employee_leave_request(
     db.add(row)
     db.commit()
     db.refresh(row)
+    enqueue_request_review_emails(
+        db,
+        background_tasks,
+        employee=current_employee,
+        request_id=row.id,
+        request_type="annual_leave",
+        details=[
+            ("From", row.start_date.isoformat()),
+            ("To", row.end_date.isoformat()),
+            ("Working days", row.requested_days),
+            ("Reason", row.reason or "No note provided"),
+        ],
+    )
     return success_response(data=serialize_leave_request(row))

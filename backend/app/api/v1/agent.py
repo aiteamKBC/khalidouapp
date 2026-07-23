@@ -6,7 +6,7 @@ from uuid import UUID
 from datetime import UTC, datetime
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from fastapi import APIRouter, Body, Depends, Query, Request, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, Query, Request, UploadFile
 from fastapi.responses import FileResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -80,6 +80,7 @@ from app.services.screenshots import (
     record_screenshot_skip,
     upload_screenshot_content,
 )
+from app.services.request_notifications import enqueue_request_review_emails
 from app.services.projects import (
     ensure_general_work_project,
     list_employee_tasks,
@@ -1051,6 +1052,7 @@ def list_time_adjustment_requests(
 @router.post("/time-adjustment-requests")
 def create_time_adjustment_request(
     payload: AgentTimeAdjustmentRequestCreate,
+    background_tasks: BackgroundTasks,
     context: Annotated[DeviceAuthContext, Depends(get_current_device)],
     db: Annotated[Session, Depends(get_db)],
 ):
@@ -1069,6 +1071,19 @@ def create_time_adjustment_request(
         source_end_at=payload.source_end_at,
         requested_leave_time=payload.requested_leave_time,
     )
+    if row.request_type == "early_leave":
+        enqueue_request_review_emails(
+            db,
+            background_tasks,
+            employee=employee,
+            request_id=row.id,
+            request_type="early_leave",
+            details=[
+                ("Date", row.requested_date.isoformat()),
+                ("Requested time", f"{round(row.requested_seconds / 60)} minutes"),
+                ("Reason", row.reason),
+            ],
+        )
     return success_response(data=serialize_time_adjustment_request(row))
 
 
@@ -1100,6 +1115,7 @@ def list_leave_requests(
 @router.post("/leave-requests")
 def create_leave_request(
     payload: AgentLeaveRequestCreate,
+    background_tasks: BackgroundTasks,
     context: Annotated[DeviceAuthContext, Depends(get_current_device)],
     db: Annotated[Session, Depends(get_db)],
 ):
@@ -1144,4 +1160,17 @@ def create_leave_request(
     db.add(row)
     db.commit()
     db.refresh(row)
+    enqueue_request_review_emails(
+        db,
+        background_tasks,
+        employee=employee,
+        request_id=row.id,
+        request_type="annual_leave",
+        details=[
+            ("From", row.start_date.isoformat()),
+            ("To", row.end_date.isoformat()),
+            ("Working days", row.requested_days),
+            ("Reason", row.reason or "No note provided"),
+        ],
+    )
     return success_response(data=serialize_leave_request(row))

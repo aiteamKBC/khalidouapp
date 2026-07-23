@@ -487,6 +487,33 @@ textarea:focus {
   text-transform: uppercase;
 }
 
+.k-shift-context {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 7px;
+  margin-bottom: 9px;
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  color: var(--text-3);
+  background: var(--surface-2);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.k-shift-context strong {
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.k-app[data-tone="overtime"] .k-shift-context {
+  border-color: color-mix(in srgb, #f97316 34%, var(--border));
+}
+
 .k-app[data-tone="paused"] .k-hero-pill,
 .k-app[data-tone="stopped"] .k-hero-pill {
   color: var(--amber);
@@ -618,7 +645,8 @@ textarea:focus {
   border-radius: 50%;
   border: 1px solid color-mix(in srgb, var(--border-strong) 52%, transparent);
   background: var(--surface);
-  box-shadow: inset 0 0 0 10px color-mix(in srgb, var(--surface-2) 34%, transparent);
+  box-shadow: inset 0 0 0 10px
+    color-mix(in srgb, var(--surface-2) 34%, transparent);
 }
 
 .k-gauge-readout,
@@ -1646,10 +1674,9 @@ textarea:focus {
 
 .k-request-record-row {
   display: grid;
-  grid-template-columns: minmax(145px, 1fr) minmax(120px, 0.9fr) 100px minmax(
-      165px,
-      1.1fr
-    ) 82px 90px;
+  grid-template-columns:
+    minmax(145px, 1fr) minmax(120px, 0.9fr) 100px minmax(165px, 1.1fr)
+    82px 90px;
   gap: 10px;
   align-items: center;
   padding: 10px 13px;
@@ -2141,7 +2168,8 @@ textarea:focus {
 
   .k-ring::after {
     inset: 29px;
-    box-shadow: inset 0 0 0 7px color-mix(in srgb, var(--surface-2) 34%, transparent);
+    box-shadow: inset 0 0 0 7px
+      color-mix(in srgb, var(--surface-2) 34%, transparent);
   }
 
   .k-app[data-theme="dark"] .k-ring::after {

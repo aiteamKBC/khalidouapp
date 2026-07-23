@@ -79,12 +79,20 @@ contextBridge.exposeInMainWorld("khaliduo", {
     callback: (alert: {
       id: string;
       lostSeconds: number;
+      eligibleLostSeconds: number;
+      outsideScheduledShift: boolean;
       endedAt: string;
     }) => void,
   ) => {
     const listener = (
       _event: Electron.IpcRendererEvent,
-      alert: { id: string; lostSeconds: number; endedAt: string },
+      alert: {
+        id: string;
+        lostSeconds: number;
+        eligibleLostSeconds: number;
+        outsideScheduledShift: boolean;
+        endedAt: string;
+      },
     ) => callback(alert);
     ipcRenderer.on("agent:idle-alert", listener);
     return () => ipcRenderer.removeListener("agent:idle-alert", listener);

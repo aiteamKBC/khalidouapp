@@ -27,11 +27,17 @@ from app.database.session import get_db
 from app.models import (
     ActivityEvent,
     AdminUser,
+    AuditLog,
     Device,
     Employee,
     EmployeeWorkProfile,
+    LeaveRequest,
+    PayrollAdjustment,
+    PayrollEntry,
     Screenshot,
     TeamMember,
+    TimeAdjustmentRequest,
+    WorkScheduleOverride,
     WorkSession,
 )
 from app.schemas.admin import (
@@ -50,8 +56,9 @@ from app.services.employee_invitations import (
     latest_employee_invitations,
 )
 from app.schemas.admin import EmployeeWorkProfileUpdate
-from app.services.permissions import require_capability
+from app.services.permissions import has_capability, require_capability
 from app.services.person_access import disable_employee_tracking
+from app.services.request_notifications import employee_manager_summaries
 from app.services.work_profiles import (
     DEFAULT_BREAK_RULES,
     get_or_create_work_profile,
@@ -62,6 +69,27 @@ from app.services.work_profiles import (
 )
 
 router = APIRouter(tags=["employees"])
+
+
+FINANCIAL_WORK_PROFILE_FIELDS = {
+    "deduction_policy",
+    "overtime_rate_multiplier",
+    "salary_amount",
+    "salary_currency",
+    "salary_type",
+}
+FINANCIAL_WORK_PROFILE_UPDATE_FIELDS = FINANCIAL_WORK_PROFILE_FIELDS | {
+    "overtime_enabled",
+    "overtime_basis",
+}
+
+
+def serialize_work_profile_for_admin(profile: EmployeeWorkProfile, admin: AdminUser) -> dict:
+    data = serialize_work_profile(profile)
+    if not has_capability(admin, "payroll.view"):
+        for field in FINANCIAL_WORK_PROFILE_FIELDS:
+            data.pop(field, None)
+    return data
 
 
 @router.get("/employees")
@@ -123,7 +151,8 @@ def list_employee_break_rules(
     slow when the database has significant network latency.
     """
 
-    require_capability(current_admin, "payroll.view")
+    require_capability(current_admin, "breaks.view")
+    can_view_payroll = has_capability(current_admin, "payroll.view")
     statement = (
         select(
             Employee.id,
@@ -154,9 +183,27 @@ def list_employee_break_rules(
     statement = apply_employee_scope(statement, db, current_admin, Employee.id, team_id)
     statement = statement.order_by(Employee.name)
     rows = db.execute(statement).all()
-    return success_response(
-        data=[
-            {
+    data = []
+    for (
+        employee_id,
+        name,
+        email,
+        job_title,
+        timezone,
+        shift_start,
+        shift_end,
+        required_daily_minutes,
+        break_rules,
+        working_days,
+        weekly_off_days,
+        late_grace_minutes,
+        overtime_enabled,
+        overtime_rate_multiplier,
+        salary_amount,
+        salary_currency,
+        salary_type,
+    ) in rows:
+        item = {
                 "employee_id": str(employee_id),
                 "name": name,
                 "email": email,
@@ -172,32 +219,18 @@ def list_employee_break_rules(
                 "weekly_off_days": weekly_off_days or [5, 6],
                 "late_grace_minutes": late_grace_minutes or 15,
                 "overtime_enabled": bool(overtime_enabled),
-                "overtime_rate_multiplier": float(overtime_rate_multiplier or 1.5),
-                "salary_amount": float(salary_amount or 0),
-                "salary_currency": salary_currency or "EGP",
-                "salary_type": salary_type or "monthly",
-            }
-            for (
-                employee_id,
-                name,
-                email,
-                job_title,
-                timezone,
-                shift_start,
-                shift_end,
-                required_daily_minutes,
-                break_rules,
-                working_days,
-                weekly_off_days,
-                late_grace_minutes,
-                overtime_enabled,
-                overtime_rate_multiplier,
-                salary_amount,
-                salary_currency,
-                salary_type,
-            ) in rows
-        ]
-    )
+        }
+        if can_view_payroll:
+            item.update(
+                {
+                    "overtime_rate_multiplier": float(overtime_rate_multiplier or 1.5),
+                    "salary_amount": float(salary_amount or 0),
+                    "salary_currency": salary_currency or "EGP",
+                    "salary_type": salary_type or "monthly",
+                }
+            )
+        data.append(item)
+    return success_response(data=data)
 
 
 @router.get("/employees-overview")
@@ -294,6 +327,7 @@ def list_employee_overviews(
 
     employee_ids = [row[0].id for row in rows]
     invitations_by_employee = latest_employee_invitations(db, employee_ids)
+    managers_by_employee = employee_manager_summaries(db, employee_ids)
     teams_by_employee: dict[UUID, list[str]] = {item: [] for item in employee_ids}
     team_role_by_employee: dict[UUID, str] = {}
     if employee_ids:
@@ -363,6 +397,7 @@ def list_employee_overviews(
                 ),
                 "team_ids": teams_by_employee.get(employee.id, []),
                 "team_role": team_role_by_employee.get(employee.id),
+                "managers": managers_by_employee.get(employee.id, []),
             }
         )
     return success_response(data=data)
@@ -434,11 +469,12 @@ def get_employee(
     current_admin: Annotated[AdminUser, Depends(get_current_admin)],
     db: Annotated[Session, Depends(get_db)],
 ):
+    require_capability(current_admin, "people.view")
     employee = get_employee_or_404(db, current_admin, employee_id)
     invitation = latest_employee_invitations(db, [employee.id]).get(employee.id)
     profile = get_or_create_work_profile(db, employee)
     data = serialize_employee(employee, invitation)
-    data["work_profile"] = serialize_work_profile(profile)
+    data["work_profile"] = serialize_work_profile_for_admin(profile, current_admin)
     return success_response(data=data)
 
 
@@ -448,10 +484,99 @@ def get_employee_work_profile(
     current_admin: Annotated[AdminUser, Depends(get_current_admin)],
     db: Annotated[Session, Depends(get_db)],
 ):
-    require_capability(current_admin, "payroll.view")
+    require_capability(current_admin, "breaks.view")
     employee = get_employee_or_404(db, current_admin, employee_id)
     profile = get_or_create_work_profile(db, employee)
-    return success_response(data=serialize_work_profile(profile))
+    return success_response(data=serialize_work_profile_for_admin(profile, current_admin))
+
+
+@router.get("/employees/{employee_id}/change-history")
+def get_employee_change_history(
+    employee_id: UUID,
+    current_admin: Annotated[AdminUser, Depends(get_current_admin)],
+    db: Annotated[Session, Depends(get_db)],
+    limit: int = Query(default=100, ge=1, le=200),
+):
+    """Return auditable employee changes without exposing protected payroll values."""
+    require_capability(current_admin, "breaks.view")
+    employee = get_employee_or_404(db, current_admin, employee_id)
+    entity_ids: set[UUID] = {employee.id}
+    entity_ids.update(
+        db.scalars(
+            select(TimeAdjustmentRequest.id).where(
+                TimeAdjustmentRequest.employee_id == employee.id
+            )
+        ).all()
+    )
+    entity_ids.update(
+        db.scalars(select(LeaveRequest.id).where(LeaveRequest.employee_id == employee.id)).all()
+    )
+    entity_ids.update(
+        db.scalars(
+            select(WorkScheduleOverride.id).where(
+                WorkScheduleOverride.employee_id == employee.id
+            )
+        ).all()
+    )
+    if has_capability(current_admin, "payroll.view"):
+        payroll_entry_ids = db.scalars(
+            select(PayrollEntry.id).where(PayrollEntry.employee_id == employee.id)
+        ).all()
+        entity_ids.update(payroll_entry_ids)
+        if payroll_entry_ids:
+            entity_ids.update(
+                db.scalars(
+                    select(PayrollAdjustment.id).where(
+                        PayrollAdjustment.payroll_entry_id.in_(payroll_entry_ids)
+                    )
+                ).all()
+            )
+    rows = db.scalars(
+        select(AuditLog)
+        .where(
+            AuditLog.company_id == current_admin.company_id,
+            or_(
+                AuditLog.entity_id.in_(entity_ids),
+                AuditLog.entity_type == "work_schedule_override",
+            ),
+        )
+        .order_by(AuditLog.created_at.desc())
+        .limit(max(limit, 200))
+    ).all()
+    payroll_entities = {"payroll_entry", "payroll_adjustment", "payroll_run"}
+
+    def relates_to_employee(row: AuditLog) -> bool:
+        if row.entity_id in entity_ids:
+            return True
+        if row.entity_type != "work_schedule_override":
+            return False
+        details = row.details or {}
+        employee_key = str(employee.id)
+        return (
+            details.get("employee_id") == employee_key
+            or employee_key in (details.get("employee_ids") or [])
+            or employee_key in (details.get("affected_employee_ids") or [])
+        )
+
+    return success_response(
+        data=[
+            {
+                "id": str(row.id),
+                "at": row.created_at.isoformat(),
+                "action": row.action,
+                "entity_type": row.entity_type,
+                "entity_name": row.entity_name,
+                "actor_name": row.admin_user.name if row.admin_user else "System",
+                "details": row.details or {},
+            }
+            for row in rows
+            if relates_to_employee(row)
+            and (
+                has_capability(current_admin, "payroll.view")
+                or row.entity_type not in payroll_entities
+            )
+        ][:limit]
+    )
 
 
 @router.patch("/employees/{employee_id}/work-profile")
@@ -462,7 +587,11 @@ def update_employee_work_profile(
     current_admin: Annotated[AdminUser, Depends(get_current_admin)],
     db: Annotated[Session, Depends(get_db)],
 ):
-    require_capability(current_admin, "payroll.manage")
+    requested_fields = set(payload.model_fields_set)
+    if requested_fields & FINANCIAL_WORK_PROFILE_UPDATE_FIELDS:
+        require_capability(current_admin, "payroll.manage")
+    else:
+        require_capability(current_admin, "breaks.manage")
     employee = get_employee_or_404(db, current_admin, employee_id)
     profile = get_or_create_work_profile(db, employee)
     audit_changes = payload.model_dump(exclude_unset=True, mode="json")
@@ -505,7 +634,7 @@ def update_employee_work_profile(
     )
     db.commit()
     db.refresh(profile)
-    return success_response(data=serialize_work_profile(profile))
+    return success_response(data=serialize_work_profile_for_admin(profile, current_admin))
 
 
 @router.post("/employees/{employee_id}/send-invitation")

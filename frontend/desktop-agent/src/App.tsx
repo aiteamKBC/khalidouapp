@@ -31,6 +31,7 @@ const fallbackStatus: AgentStatus = {
   workedTodaySeconds: 0,
   activeSeconds: 0,
   idleSeconds: 0,
+  eligibleIdleSeconds: 0,
   paidPauseEndsAt: null,
   paidPauseRemainingSeconds: 0,
   paidPauseBalanceRemainingSeconds: null,
@@ -306,6 +307,29 @@ function weekdayIndex(dateKey: string) {
   return (day + 6) % 7;
 }
 
+function currentScheduleBucket(
+  policy: AgentStatus["requestPolicy"],
+  at = new Date(),
+): "normal" | "extra" {
+  if (!policy) return "normal";
+  const shiftStart = timeToMinutes(policy.shift_start);
+  const shiftEnd = timeToMinutes(policy.shift_end);
+  if (shiftStart === null || shiftEnd === null || shiftEnd <= shiftStart) {
+    return "extra";
+  }
+  const localDate = localDateAt(at.toISOString(), policy.timezone);
+  const minuteOfDay = localMinutesAt(at.toISOString(), policy.timezone);
+  const approvedEarlyLeave = timeToMinutes(policy.approved_early_leave_from);
+  const isScheduledDay = policy.working_days.includes(weekdayIndex(localDate));
+  const isInsideShift =
+    minuteOfDay >= shiftStart &&
+    minuteOfDay < shiftEnd &&
+    (approvedEarlyLeave === null || minuteOfDay < approvedEarlyLeave);
+  return isScheduledDay && !policy.approved_leave_today && isInsideShift
+    ? "normal"
+    : "extra";
+}
+
 function countWorkingDays(start: string, end: string, workingDays: number[]) {
   if (!start || !end || end < start) return 0;
   let count = 0;
@@ -498,7 +522,11 @@ function App() {
   }, [status.selectedTask?.projectId]);
 
   useEffect(() => {
-    if (projectFilterId || status.selectedTask || status.projects.length === 0) {
+    if (
+      projectFilterId ||
+      status.selectedTask ||
+      status.projects.length === 0
+    ) {
       return;
     }
     const defaultProject =
@@ -577,7 +605,7 @@ function App() {
       },
       {
         label: "Idle",
-        seconds: period?.idle_seconds ?? status.idleSeconds,
+        seconds: status.eligibleIdleSeconds,
         className: "idle",
         counted: false,
       },
@@ -609,7 +637,7 @@ function App() {
     };
   }, [
     status.extraSeconds,
-    status.idleSeconds,
+    status.eligibleIdleSeconds,
     status.normalSeconds,
     status.timeSummary,
   ]);
@@ -756,22 +784,33 @@ function App() {
     );
   const isRunning =
     isTracking && ["active", "starting"].includes(status.trackingStatus);
-  const isExtraTime = extraSeconds > 0;
+  const isExtraTime = currentScheduleBucket(status.requestPolicy) === "extra";
+  const isIdleState = ["idle", "locked", "sleeping"].includes(
+    status.trackingStatus,
+  );
   const timerTone = isPaused
     ? "paused"
-    : isRunning
-      ? isExtraTime
-        ? "overtime"
-        : "running"
-      : "stopped";
+    : isTracking && isExtraTime
+      ? "overtime"
+      : isRunning
+        ? "running"
+        : isIdleState
+          ? "paused"
+          : "stopped";
   const statusText = isPaused
     ? "Paused"
     : isTracking
       ? isExtraTime
-        ? "Overtime"
-        : "Running"
+        ? isIdleState
+          ? "Extra paused"
+          : "Extra time"
+        : isIdleState
+          ? "Shift idle"
+          : "Paid shift"
       : "No timer running";
-  const displayedTimerSeconds = isExtraTime ? extraSeconds : countedTodaySeconds;
+  const displayedTimerSeconds = isExtraTime
+    ? extraSeconds
+    : countedTodaySeconds;
 
   async function refreshStatusAfterEnrollment() {
     const nextStatus = await window.khaliduo?.getAgentStatus();
@@ -1254,15 +1293,27 @@ function App() {
     if (shownIdleAlertId.current === alert.id) return;
     shownIdleAlertId.current = alert.id;
     window.khaliduo?.setIdleAlertAttention(true);
-    const lostMinutes = Math.max(1, Math.round(alert.lostSeconds / 60));
+    const canRequestManualTime =
+      !alert.outsideScheduledShift && alert.eligibleLostSeconds > 0;
+    const lostMinutes = Math.max(
+      1,
+      Math.round(
+        (canRequestManualTime ? alert.eligibleLostSeconds : alert.lostSeconds) /
+          60,
+      ),
+    );
     let result: SweetAlertResult;
     try {
       result = await Swal.fire({
-        title: "Do you want to continue tracking?",
-        text: `Mouse activity returned after ${formatDuration(alert.lostSeconds)} of idle time. Continue tracking, stop now, or request the time manually if you were in an offline meeting or doing other work away from the computer.`,
+        title: canRequestManualTime
+          ? "Do you want to continue tracking?"
+          : "Extra time resumed",
+        text: canRequestManualTime
+          ? `Mouse activity returned after ${formatDuration(alert.lostSeconds)} away. ${formatDuration(alert.eligibleLostSeconds)} was inside your paid shift and is available to explain.`
+          : `Mouse activity returned after ${formatDuration(alert.lostSeconds)} away. The extra-time timer was paused, and this period was not recorded as idle because it was outside your paid shift.`,
         icon: "warning",
         showDenyButton: true,
-        showCancelButton: true,
+        showCancelButton: canRequestManualTime,
         confirmButtonText: "Continue tracking",
         denyButtonText: "Stop tracking",
         cancelButtonText: "Request manual time",
@@ -1280,7 +1331,10 @@ function App() {
       if (pauseResult?.message) setTrackingControlMessage(pauseResult.message);
       const nextStatus = await window.khaliduo?.getAgentStatus();
       if (nextStatus) setStatus(nextStatus);
-    } else if (result.dismiss === Swal.DismissReason.cancel) {
+    } else if (
+      canRequestManualTime &&
+      result.dismiss === Swal.DismissReason.cancel
+    ) {
       setExpandedRequest("idle");
       setActiveView("requests");
       setTimeRequestMinutes(lostMinutes);
@@ -1357,7 +1411,9 @@ function App() {
             }
           >
             <span aria-hidden="true">●</span>
-            {status.screenshotCaptureActive ? "Screenshots active" : "Screenshots paused"}
+            {status.screenshotCaptureActive
+              ? "Screenshots active"
+              : "Screenshots paused"}
           </span>
         )}
         <button
@@ -1814,8 +1870,7 @@ function HomeView({
   idleRequestOptions: IdleRequestOption[];
   onRequestManualTime: (option?: IdleRequestOption) => void;
 }) {
-  const todayIdleSeconds =
-    status.timeSummary?.today.idle_seconds ?? status.idleSeconds;
+  const todayIdleSeconds = status.eligibleIdleSeconds;
   const isPaused = status.trackingPaused || status.trackingStatus === "paused";
   const shouldResume =
     isPaused ||
@@ -1839,6 +1894,28 @@ function HomeView({
       : status.extraTimeStatus === "pending_overtime"
         ? "Pending approval"
         : "Recorded only";
+  const paidShiftLabel =
+    status.requestPolicy?.shift_start && status.requestPolicy.shift_end
+      ? `${formatScheduledTime(status.requestPolicy.shift_start)}–${formatScheduledTime(status.requestPolicy.shift_end)}`
+      : "Schedule not configured";
+  const hasRunningSession = [
+    "active",
+    "starting",
+    "idle",
+    "locked",
+    "sleeping",
+  ].includes(status.trackingStatus);
+  const heroStatusLabel = !hasRunningSession
+    ? statusLabel
+    : isPaused
+      ? "Paused"
+      : isExtraTime
+        ? ["idle", "locked", "sleeping"].includes(status.trackingStatus)
+          ? "Extra paused"
+          : "Extra time active"
+        : ["idle", "locked", "sleeping"].includes(status.trackingStatus)
+          ? "Paid shift idle"
+          : "Paid shift active";
   const arcDegrees = Math.round((targetProgress / 100) * 300);
   return (
     <section className="k-home">
@@ -1893,9 +1970,11 @@ function HomeView({
           <span className="k-hero-icon">
             <KIcon name="briefcase" />
           </span>
-          <span className="k-hero-pill">
-            {isPaused ? "Paused" : statusLabel}
-          </span>
+          <div className="k-shift-context">
+            <span>Paid shift</span>
+            <strong>{paidShiftLabel}</strong>
+          </div>
+          <span className="k-hero-pill">{heroStatusLabel}</span>
           {overtimeLabel && (
             <span className="k-overtime-pill">{overtimeLabel}</span>
           )}
@@ -1975,7 +2054,10 @@ function HomeView({
           </div>
         </div>
 
-        <section className="k-workday-time-strip" aria-label="Today's workday timing">
+        <section
+          className="k-workday-time-strip"
+          aria-label="Today's workday timing"
+        >
           <div>
             <span>Started at</span>
             <strong>
@@ -2014,10 +2096,7 @@ function HomeView({
         </section>
 
         <div className="k-stat-grid">
-          <Stat
-            label="Today"
-            value={formatDuration(countedTodaySeconds)}
-          />
+          <Stat label="Today" value={formatDuration(countedTodaySeconds)} />
           <Stat
             label="This week"
             value={formatDuration(
@@ -2201,7 +2280,9 @@ function Timeline({
               <b
                 title={
                   interval.type === "worked"
-                    ? interval.task_name ?? interval.project_name ?? labels[interval.type]
+                    ? (interval.task_name ??
+                      interval.project_name ??
+                      labels[interval.type])
                     : labels[interval.type]
                 }
               >
@@ -2793,7 +2874,10 @@ function RequestCentreView(props: RequestCentreProps) {
                 <header className="k-request-dialog-header">
                   <div>
                     <h2 id="idle-request-title">Explain Idle Time</h2>
-                    <p>Choose the detected period and explain the work you completed.</p>
+                    <p>
+                      Choose the detected period and explain the work you
+                      completed.
+                    </p>
                   </div>
                   <button
                     type="button"
@@ -2939,7 +3023,10 @@ function RequestCentreView(props: RequestCentreProps) {
                 <header className="k-request-dialog-header">
                   <div>
                     <h2 id="early-request-title">Early Leave Permission</h2>
-                    <p>Request permission to leave before your scheduled shift ends.</p>
+                    <p>
+                      Request permission to leave before your scheduled shift
+                      ends.
+                    </p>
                   </div>
                   <button
                     type="button"

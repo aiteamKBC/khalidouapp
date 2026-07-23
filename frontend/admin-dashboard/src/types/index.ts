@@ -125,6 +125,12 @@ export interface Employee {
   portalLastLoginIp?: string;
   portalLastUserAgent?: string;
   weeklyCapacityMinutes: number;
+  managers: Array<{
+    id: string;
+    name: string;
+    email: string;
+    teams: Array<{ id: string; name: string }>;
+  }>;
 }
 
 export interface Device {

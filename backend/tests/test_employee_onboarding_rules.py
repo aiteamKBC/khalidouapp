@@ -4,9 +4,9 @@ from decimal import Decimal
 import pytest
 
 from app.core.exceptions import ApiError
-from app.models import Employee, EmployeeWorkProfile
+from app.models import AdminPermissionOverride, AdminUser, Employee, EmployeeWorkProfile
 from app.services.leave_management import entitled_credit_days, requested_workdays
-from app.services.permissions import capabilities_for_role
+from app.services.permissions import capabilities_for_admin, capabilities_for_role
 from app.services.work_profiles import schedule_minutes, validate_work_profile
 
 
@@ -56,12 +56,43 @@ def test_break_must_be_inside_same_day_shift():
     assert error.value.code == "BREAK_OUTSIDE_SHIFT"
 
 
-def test_admin_inherits_team_leader_but_not_the_reverse():
+def test_team_manager_can_review_leave_without_inheriting_payroll():
     leader = capabilities_for_role("team_owner")
     admin = capabilities_for_role("general_admin")
     assert leader < admin
     assert "payroll.manage" not in leader
-    assert "leave_requests.manage" not in leader
+    assert "payroll.view" not in leader
+    assert "breaks.view" in leader
+    assert "breaks.manage" in leader
+    assert "leave_requests.manage" in leader
+
+
+def test_salary_access_is_limited_to_hr_and_the_protected_super_admin():
+    general_admin = AdminUser(role="general_admin", is_super_admin=False, permission_mode="role")
+    super_admin = AdminUser(role="general_admin", is_super_admin=True, permission_mode="role")
+    hr = AdminUser(role="hr", is_super_admin=False, permission_mode="role")
+
+    assert "payroll.view" not in capabilities_for_admin(general_admin)
+    assert "payroll.manage" not in capabilities_for_admin(general_admin)
+    assert "payroll.view" in capabilities_for_admin(super_admin)
+    assert "payroll.manage" in capabilities_for_admin(super_admin)
+    assert "payroll.view" in capabilities_for_admin(hr)
+    assert "payroll.manage" in capabilities_for_admin(hr)
+
+
+def test_custom_permissions_cannot_grant_salary_access_to_general_admin():
+    general_admin = AdminUser(
+        role="general_admin",
+        is_super_admin=False,
+        permission_mode="custom",
+        permission_overrides=[
+            AdminPermissionOverride(permission_key="payroll.view", allowed=True),
+            AdminPermissionOverride(permission_key="payroll.manage", allowed=True),
+        ],
+    )
+
+    assert "payroll.view" not in capabilities_for_admin(general_admin)
+    assert "payroll.manage" not in capabilities_for_admin(general_admin)
 
 
 def test_all_scheduled_breaks_stay_inside_salary_shift_hours():

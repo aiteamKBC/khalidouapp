@@ -9,6 +9,7 @@ from app.database.base import Base
 from app.models import (
     ActivityEvent,
     AdminUser,
+    AttendanceCorrection,
     Company,
     Device,
     Employee,
@@ -279,6 +280,55 @@ def test_paid_break_is_not_idle_or_double_counted(attendance_context):
     assert row.total_payable_seconds == 7 * 3600 + 40 * 60
 
 
+def test_attendance_correction_preserves_raw_evidence_and_adjusts_payable_time(
+    attendance_context,
+):
+    db, employee, device, admin = attendance_context
+    work_date = date(2026, 7, 21)
+    _session(
+        db,
+        employee,
+        device,
+        datetime(2026, 7, 21, 9, 30, tzinfo=UTC),
+        datetime(2026, 7, 21, 16, 30, tzinfo=UTC),
+    )
+    db.add(
+        AttendanceCorrection(
+            company_id=employee.company_id,
+            employee_id=employee.id,
+            work_date=work_date,
+            corrected_start_at=datetime(2026, 7, 21, 9, 0, tzinfo=UTC),
+            corrected_end_at=datetime(2026, 7, 21, 17, 0, tzinfo=UTC),
+            payable_seconds_delta=3600,
+            reason="Approved customer call from another device",
+            updated_by_admin_user_id=admin.id,
+        )
+    )
+    db.commit()
+
+    row, _ = calculate_daily_attendance(
+        db,
+        employee=employee,
+        work_date=work_date,
+        now=datetime(2026, 7, 22, tzinfo=UTC),
+    )
+
+    assert row.actual_first_activity_at.replace(tzinfo=UTC) == datetime(
+        2026, 7, 21, 9, 0, tzinfo=UTC
+    )
+    assert row.actual_last_activity_at.replace(tzinfo=UTC) == datetime(
+        2026, 7, 21, 17, 0, tzinfo=UTC
+    )
+    assert row.total_payable_seconds == 8 * 3600
+    assert row.calculation_sources["raw_first_activity_at"].startswith(
+        "2026-07-21T09:30:00"
+    )
+    assert row.calculation_sources["raw_last_activity_at"].startswith(
+        "2026-07-21T16:30:00"
+    )
+    assert row.calculation_sources["attendance_adjustment_seconds"] == 3600
+
+
 def test_one_day_employee_override_changes_only_selected_date(attendance_context):
     db, employee, device, admin = attendance_context
     work_date = date(2026, 7, 21)
@@ -370,6 +420,11 @@ def test_early_leave_is_stored_and_approved_permission_excuses_it(attendance_con
         now=datetime(2026, 7, 22, tzinfo=UTC),
     )
     assert excused.early_leave_seconds == 0
+    assert excused.total_payable_seconds == 8 * 3600
+    assert (
+        excused.calculation_sources["approved_early_leave_seconds"]
+        == 3600
+    )
 
 
 def test_locked_windows_time_is_not_worked_or_idle(attendance_context):

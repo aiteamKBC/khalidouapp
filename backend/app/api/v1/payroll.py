@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field, model_validator
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.api.deps import get_current_admin
@@ -19,6 +19,7 @@ from app.core.exceptions import ApiError
 from app.core.responses import success_response
 from app.api.v1.team_auth import (
     accessible_employee_ids_statement,
+    accessible_team_ids_statement,
     ensure_employee_access,
     ensure_team_access,
 )
@@ -706,7 +707,7 @@ def create_schedule_override(
     current_admin: Annotated[AdminUser, Depends(get_current_admin)],
     db: Annotated[Session, Depends(get_db)],
 ):
-    require_capability(current_admin, "payroll.manage")
+    require_capability(current_admin, "breaks.manage")
     if payload.scope == "company" and not has_company_data_scope(current_admin):
         raise ApiError(
             "COMPANY_SCOPE_REQUIRED", "Only company-wide HR/Admin can override all employees.", 403
@@ -889,8 +890,8 @@ def list_schedule_overrides(
     db: Annotated[Session, Depends(get_db)],
     upcoming_only: bool = Query(default=True),
 ):
-    """List temporary schedule exceptions that still affect (or recently affected) payroll."""
-    require_capability(current_admin, "payroll.manage")
+    """List temporary schedule exceptions inside the caller's data scope."""
+    require_capability(current_admin, "breaks.view")
     statement = select(WorkScheduleOverride).where(
         WorkScheduleOverride.company_id == current_admin.company_id,
         WorkScheduleOverride.permanent.is_(False),
@@ -899,7 +900,14 @@ def list_schedule_overrides(
         statement = statement.where(WorkScheduleOverride.effective_date >= date.today())
     employee_ids = accessible_employee_ids_statement(db, current_admin)
     if employee_ids is not None:
-        statement = statement.where(WorkScheduleOverride.employee_id.in_(employee_ids))
+        team_ids = accessible_team_ids_statement(current_admin)
+        statement = statement.where(
+            or_(
+                WorkScheduleOverride.employee_id.in_(employee_ids),
+                WorkScheduleOverride.team_id.in_(team_ids),
+                WorkScheduleOverride.scope == "company",
+            )
+        )
     items = db.scalars(
         statement.order_by(
             WorkScheduleOverride.effective_date.asc(),
@@ -953,7 +961,7 @@ def delete_schedule_override(
     current_admin: Annotated[AdminUser, Depends(get_current_admin)],
     db: Annotated[Session, Depends(get_db)],
 ):
-    require_capability(current_admin, "payroll.manage")
+    require_capability(current_admin, "breaks.manage")
     item = db.scalar(
         select(WorkScheduleOverride).where(
             WorkScheduleOverride.id == override_id,

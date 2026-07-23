@@ -19,6 +19,7 @@ export const permissions = {
   timeRequestsView: "time_requests.view",
   timeRequestsManage: "time_requests.manage",
   breaksView: "breaks.view",
+  breaksManage: "breaks.manage",
   leaveRequestsView: "leave_requests.view",
   leaveRequestsManage: "leave_requests.manage",
   devicesView: "devices.view",

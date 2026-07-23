@@ -106,6 +106,7 @@ type AgentRuntimeStatus = {
   workedTodaySeconds: number;
   activeSeconds: number;
   idleSeconds: number;
+  eligibleIdleSeconds: number;
   connectionStatus: "online" | "offline";
   lastScreenshotAt: string | null;
   screenshotMonitoringEnabled: boolean;
@@ -181,6 +182,8 @@ type RuntimeTask = {
 type IdleLossAlert = {
   id: string;
   lostSeconds: number;
+  eligibleLostSeconds: number;
+  outsideScheduledShift: boolean;
   endedAt: string;
 };
 
@@ -202,6 +205,8 @@ let syncTimer: ReturnType<typeof setInterval> | null = null;
 let automaticTrackingRetryTimer: ReturnType<typeof setTimeout> | null = null;
 let isStartingTrackingAutomatically = false;
 let idleSecondsBeforeCurrentIdle = 0;
+let eligibleIdleSecondsBeforeCurrentIdle = 0;
+let idleWallClockStartedAt: number | null = null;
 let lastDurationTickAt: number | null = null;
 let workedTodayBaseSeconds = 0;
 let trackingPausedByUser = false;
@@ -239,6 +244,7 @@ const runtimeStatus: AgentRuntimeStatus = {
   workedTodaySeconds: 0,
   activeSeconds: 0,
   idleSeconds: 0,
+  eligibleIdleSeconds: 0,
   connectionStatus: "offline",
   lastScreenshotAt: null,
   screenshotMonitoringEnabled: true,
@@ -411,7 +417,11 @@ function updateDisplaySleepBlocker() {
     log.info("Display sleep prevention enabled while tracking is running");
     return;
   }
-  if (!shouldKeepDisplayAwake && blockerIsRunning && displaySleepBlockerId !== null) {
+  if (
+    !shouldKeepDisplayAwake &&
+    blockerIsRunning &&
+    displaySleepBlockerId !== null
+  ) {
     powerSaveBlocker.stop(displaySleepBlockerId);
     displaySleepBlockerId = null;
     log.info("Display sleep prevention disabled");
@@ -712,6 +722,7 @@ function scheduledIdleIsCountable(at: Date) {
 function activeTimeBucket(at: Date): "normal" | "extra" {
   const policy = runtimeStatus.requestPolicy;
   if (!policy) return "normal";
+  if (policy.approved_leave_today) return "extra";
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone: policy.timezone || "UTC",
     weekday: "short",
@@ -739,7 +750,12 @@ function activeTimeBucket(at: Date): "normal" | "extra" {
     return "extra";
   }
   const minuteOfDay = Number(part("hour")) * 60 + Number(part("minute"));
-  return minuteOfDay >= shiftStart && minuteOfDay < shiftEnd
+  const approvedEarlyLeave = timeToMinuteOfDay(
+    policy.approved_early_leave_from,
+  );
+  return minuteOfDay >= shiftStart &&
+    minuteOfDay < shiftEnd &&
+    (approvedEarlyLeave === null || minuteOfDay < approvedEarlyLeave)
     ? "normal"
     : "extra";
 }
@@ -782,6 +798,7 @@ function recalculateWorkedTime() {
   if (runtimeStatus.trackingStatus === "idle") {
     if (scheduledIdleIsCountable(new Date(now))) {
       runtimeStatus.idleSeconds += elapsedSeconds;
+      runtimeStatus.eligibleIdleSeconds += elapsedSeconds;
     }
   } else if (
     runtimeStatus.trackingStatus === "active" ||
@@ -826,6 +843,7 @@ async function refreshWorkedTodayTotal() {
       week: summary.week,
       month: summary.month,
     };
+    runtimeStatus.eligibleIdleSeconds = summary.today.idle_seconds;
     runtimeStatus.dailyTargetSeconds =
       summary.daily_target_seconds ?? 8 * 60 * 60;
     runtimeStatus.dailyTargetProgressPercent =
@@ -853,7 +871,7 @@ async function refreshWorkedTodayTotal() {
   }
 }
 
-function showIdleLossAlert(lostSeconds: number) {
+function showIdleLossAlert(lostSeconds: number, eligibleLostSeconds: number) {
   if (lostSeconds <= 0) {
     return;
   }
@@ -861,6 +879,8 @@ function showIdleLossAlert(lostSeconds: number) {
   runtimeStatus.lastIdleAlert = {
     id: randomUUID(),
     lostSeconds,
+    eligibleLostSeconds,
+    outsideScheduledShift: eligibleLostSeconds <= 0,
     endedAt: new Date().toISOString(),
   };
   setIdleAlertAttention(true);
@@ -1001,6 +1021,8 @@ function startIdleMonitor() {
     ) {
       recalculateWorkedTime();
       idleSecondsBeforeCurrentIdle = runtimeStatus.idleSeconds;
+      eligibleIdleSecondsBeforeCurrentIdle = runtimeStatus.eligibleIdleSeconds;
+      idleWallClockStartedAt = Date.now();
       void sendStateEvent("idle_started", "idle");
     } else if (
       idleSeconds < thresholdSeconds &&
@@ -1009,10 +1031,19 @@ function startIdleMonitor() {
       recalculateWorkedTime();
       const lostSeconds = Math.max(
         0,
-        runtimeStatus.idleSeconds - idleSecondsBeforeCurrentIdle,
+        idleWallClockStartedAt === null
+          ? runtimeStatus.idleSeconds - idleSecondsBeforeCurrentIdle
+          : Math.floor((Date.now() - idleWallClockStartedAt) / 1000),
+      );
+      const eligibleLostSeconds = Math.max(
+        0,
+        runtimeStatus.eligibleIdleSeconds -
+          eligibleIdleSecondsBeforeCurrentIdle,
       );
       idleSecondsBeforeCurrentIdle = runtimeStatus.idleSeconds;
-      showIdleLossAlert(lostSeconds);
+      eligibleIdleSecondsBeforeCurrentIdle = runtimeStatus.eligibleIdleSeconds;
+      idleWallClockStartedAt = null;
+      showIdleLossAlert(lostSeconds, eligibleLostSeconds);
       void sendStateEvent("idle_ended", "active");
     }
   }, 1000);
@@ -1056,7 +1087,7 @@ async function heartbeatTick() {
       runtimeStatus.trackingStatus = latestLocalStatus;
     }
     applyPauseState(result.pause);
-    if (Date.now() - lastFullSummaryRefreshAt > 5 * 60 * 1000) {
+    if (Date.now() - lastFullSummaryRefreshAt > 60 * 1000) {
       lastFullSummaryRefreshAt = Date.now();
       await refreshWorkedTodayTotal();
     }
@@ -1073,7 +1104,7 @@ async function heartbeatTick() {
     });
     log.warn("Heartbeat failed", error);
   } finally {
-    if (Date.now() - lastMetadataRefreshAt > 5 * 60 * 1000) {
+    if (Date.now() - lastMetadataRefreshAt > 60 * 1000) {
       lastMetadataRefreshAt = Date.now();
       void refreshTrackingConfig();
       void refreshTasks();
@@ -1145,12 +1176,15 @@ function screenshotCaptureBlockReason(): string | null {
     runtimeStatus.trackingStatus === "locked" ||
     runtimeStatus.trackingStatus === "sleeping"
   ) {
-    return runtimeStatus.trackingStatus === "locked" ? "screen_locked" : "system_sleeping";
+    return runtimeStatus.trackingStatus === "locked"
+      ? "screen_locked"
+      : "system_sleeping";
   }
   const systemIdleSeconds = powerMonitor.getSystemIdleTime();
   if (
     runtimeStatus.trackingStatus === "idle" ||
-    systemIdleSeconds >= Math.max(60, trackingConfig.idle_threshold_minutes * 60)
+    systemIdleSeconds >=
+      Math.max(60, trackingConfig.idle_threshold_minutes * 60)
   ) {
     return "no_user_activity";
   }
@@ -1376,10 +1410,7 @@ function scheduleNextScreenshot() {
   if (screenshotTimer) {
     return;
   }
-  if (
-    !runtimeStatus.enrolled ||
-    !trackingConfig.screenshot_enabled
-  ) {
+  if (!runtimeStatus.enrolled || !trackingConfig.screenshot_enabled) {
     screenshotQueue = [];
     screenshotWindowEndsAt = null;
     saveScreenshotSchedule(null);
@@ -1692,6 +1723,8 @@ async function logoutDevice() {
   currentSessionId = null;
   workedTodayBaseSeconds = 0;
   idleSecondsBeforeCurrentIdle = 0;
+  eligibleIdleSecondsBeforeCurrentIdle = 0;
+  idleWallClockStartedAt = null;
   screenshotQueue = [];
   screenshotWindowEndsAt = null;
   saveScreenshotSchedule(null);
@@ -1706,6 +1739,7 @@ async function logoutDevice() {
     workedTodaySeconds: 0,
     activeSeconds: 0,
     idleSeconds: 0,
+    eligibleIdleSeconds: 0,
     connectionStatus: "offline",
     lastScreenshotAt: null,
     lastSuccessfulSyncAt: null,
@@ -1957,7 +1991,8 @@ function runtimeStatusPayload() {
   const screenshotBlockReason = screenshotCaptureBlockReason();
   return {
     ...runtimeStatus,
-    screenshotMonitoringEnabled: runtimeStatus.enrolled && trackingConfig.screenshot_enabled,
+    screenshotMonitoringEnabled:
+      runtimeStatus.enrolled && trackingConfig.screenshot_enabled,
     screenshotCaptureActive: screenshotBlockReason === null,
     powerSource: onAcPower ? "ac" : "battery",
     privacyNotice,

@@ -17,6 +17,7 @@ export type AgentStatus = {
   workedTodaySeconds: number;
   activeSeconds: number;
   idleSeconds: number;
+  eligibleIdleSeconds: number;
   connectionStatus: "online" | "offline";
   lastScreenshotAt: string | null;
   screenshotMonitoringEnabled: boolean;
@@ -136,6 +137,15 @@ export type RequestPolicy = {
   shift_start: string | null;
   shift_end: string | null;
   working_days: number[];
+  break_rules?: Array<{
+    name: string;
+    minutes: number;
+    paid: boolean;
+    start_time?: string | null;
+    end_time?: string | null;
+  }>;
+  approved_leave_today?: boolean;
+  approved_early_leave_from?: string | null;
   weekly_early_leave_minutes: number;
   weekly_early_leave_used_minutes: number;
   weekly_early_leave_remaining_minutes: number;
@@ -193,6 +203,8 @@ export type LeaveRequestsPayload = {
 export type IdleAlert = {
   id: string;
   lostSeconds: number;
+  eligibleLostSeconds: number;
+  outsideScheduledShift: boolean;
   endedAt: string;
 };
 
@@ -226,9 +238,7 @@ declare global {
         message?: string;
         screenshots: RecentScreenshot[];
       }>;
-      setCurrentTask: (
-        taskId: string | null,
-      ) => Promise<{
+      setCurrentTask: (taskId: string | null) => Promise<{
         success: boolean;
         message?: string;
         status?: AgentStatus;

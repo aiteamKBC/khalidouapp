@@ -7,6 +7,8 @@ import {
   CalendarDays,
   Clock3,
   Coffee,
+  Eye,
+  EyeOff,
   Pencil,
   Plus,
   RotateCcw,
@@ -30,6 +32,7 @@ import {
   type ScheduleOverride,
 } from "@/api/payroll";
 import { useAuth } from "@/lib/auth";
+import { permissions } from "@/lib/permissions";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -115,10 +118,13 @@ function formatMinutes(total: number) {
 }
 
 function BreaksPage() {
-  const { scopedTeamIds, can } = useAuth();
+  const { user, scopedTeamIds, can } = useAuth();
   const queryClient = useQueryClient();
   const scope = scopedTeamIds();
-  const canManage = can("payroll.manage");
+  const canManage = can(permissions.breaksManage);
+  const canManagePayroll = can(permissions.payrollManage);
+  const canManagePeople = can(permissions.peopleManage);
+  const canUseCompanyScope = user?.dataScope === "company";
   const [editor, setEditor] = useState<EditorIntent | null>(null);
 
   const rows = useQuery({
@@ -132,7 +138,7 @@ function BreaksPage() {
   const overrides = useQuery({
     queryKey: ["schedule-overrides", "upcoming"],
     queryFn: () => listScheduleOverrides(true),
-    enabled: canManage,
+    enabled: can(permissions.breaksView),
   });
   const cancelOverride = useMutation({
     mutationFn: deleteScheduleOverride,
@@ -161,16 +167,22 @@ function BreaksPage() {
     <div className="studio-page">
       <PageHeader
         title="Work Schedule & Attendance"
-        description="Manage employee shifts, working days, breaks, overtime eligibility, and payroll inputs from one place."
+        description={
+          canManagePayroll
+            ? "Manage employee shifts, working days, breaks, overtime eligibility, and payroll inputs from one place."
+            : "Manage shifts, working days, and breaks for employees in your assigned teams."
+        }
         actions={
           canManage ? (
             <>
               <Button variant="outline" onClick={() => setEditor({ kind: "day" })}>
                 <CalendarDays /> One-day exception
               </Button>
-              <Button onClick={() => setEditor({ kind: "company" })}>
-                <Users /> Set schedule for everyone
-              </Button>
+              {canUseCompanyScope && (
+                <Button onClick={() => setEditor({ kind: "company" })}>
+                  <Users /> Set schedule for everyone
+                </Button>
+              )}
             </>
           ) : undefined
         }
@@ -338,6 +350,9 @@ function BreaksPage() {
         intent={editor}
         people={people}
         teams={teams.data ?? []}
+        canManagePayroll={canManagePayroll}
+        canManagePeople={canManagePeople}
+        canUseCompanyScope={canUseCompanyScope}
         onOpenChange={(open) => !open && setEditor(null)}
         onSaved={saved}
       />
@@ -394,12 +409,18 @@ function BreakEditorDialog({
   intent,
   people,
   teams,
+  canManagePayroll,
+  canManagePeople,
+  canUseCompanyScope,
   onOpenChange,
   onSaved,
 }: {
   intent: EditorIntent | null;
   people: EmployeeBreakRules[];
   teams: Awaited<ReturnType<typeof listTeams>>;
+  canManagePayroll: boolean;
+  canManagePeople: boolean;
+  canUseCompanyScope: boolean;
   onOpenChange: (open: boolean) => void;
   onSaved: () => void;
 }) {
@@ -422,6 +443,7 @@ function BreakEditorDialog({
   const [salaryAmount, setSalaryAmount] = useState(0);
   const [salaryCurrency, setSalaryCurrency] = useState("EGP");
   const [salaryType, setSalaryType] = useState<"monthly" | "hourly">("monthly");
+  const [showSalary, setShowSalary] = useState(false);
 
   const selectedEmployee = people.find((person) => person.employeeId === employeeId);
   const permanent = intent?.kind !== "day";
@@ -434,7 +456,12 @@ function BreakEditorDialog({
 
   useEffect(() => {
     if (!intent) return;
-    const nextScope = intent.kind === "employee" ? "employee" : "company";
+    const nextScope =
+      intent.kind === "employee"
+        ? "employee"
+        : intent.kind === "company" || canUseCompanyScope
+          ? "company"
+          : "team";
     const nextEmployeeId = intent.kind === "employee" ? intent.employeeId : "";
     const source = people.find((person) => person.employeeId === nextEmployeeId) ?? people[0];
     setScope(nextScope);
@@ -455,6 +482,7 @@ function BreakEditorDialog({
     setSalaryAmount(source?.salaryAmount ?? 0);
     setSalaryCurrency(source?.salaryCurrency ?? "EGP");
     setSalaryType(source?.salaryType ?? "monthly");
+    setShowSalary(false);
     setReason(
       intent.kind === "company"
         ? "Company work schedule update"
@@ -462,7 +490,7 @@ function BreakEditorDialog({
           ? "Employee work schedule update"
           : "One-day work schedule exception",
     );
-  }, [intent, people]);
+  }, [canUseCompanyScope, intent, people]);
 
   const rules = useMemo(
     () =>
@@ -499,11 +527,13 @@ function BreakEditorDialog({
   const save = useMutation({
     mutationFn: async () => {
       if (permanent && intent?.kind === "employee") {
-        await updateEmployee(employeeId, {
-          name: employeeName.trim(),
-          jobTitle: jobTitle.trim(),
-          timezone,
-        });
+        if (canManagePeople) {
+          await updateEmployee(employeeId, {
+            name: employeeName.trim(),
+            jobTitle: jobTitle.trim(),
+            timezone,
+          });
+        }
         await updateWorkProfile(employeeId, {
           shiftStart,
           shiftEnd,
@@ -512,12 +542,16 @@ function BreakEditorDialog({
           weeklyOffDays: [0, 1, 2, 3, 4, 5, 6].filter((day) => !workingDays.includes(day)),
           breakRules: rules,
           lateGraceMinutes,
-          overtimeEnabled,
-          overtimeBasis: "outside_shift",
-          overtimeRateMultiplier: overtimeMultiplier,
-          salaryAmount,
-          salaryCurrency: salaryCurrency as WorkProfile["salaryCurrency"],
-          salaryType,
+          ...(canManagePayroll
+            ? {
+                overtimeEnabled,
+                overtimeBasis: "outside_shift" as const,
+                overtimeRateMultiplier: overtimeMultiplier,
+                salaryAmount,
+                salaryCurrency: salaryCurrency as WorkProfile["salaryCurrency"],
+                salaryType,
+              }
+            : {}),
         });
         return { affected_employees: 1 };
       }
@@ -558,11 +592,11 @@ function BreakEditorDialog({
       setTimezone(employee.timezone);
       setWorkingDays(employee.workingDays);
       setLateGraceMinutes(employee.lateGraceMinutes);
-      setOvertimeEnabled(employee.overtimeEnabled);
-      setOvertimeMultiplier(employee.overtimeRateMultiplier);
-      setSalaryAmount(employee.salaryAmount);
+      setOvertimeEnabled(employee.overtimeEnabled ?? false);
+      setOvertimeMultiplier(employee.overtimeRateMultiplier ?? 1.5);
+      setSalaryAmount(employee.salaryAmount ?? 0);
       setSalaryCurrency(employee.salaryCurrency ?? "EGP");
-      setSalaryType(employee.salaryType);
+      setSalaryType(employee.salaryType ?? "monthly");
     }
   };
 
@@ -599,7 +633,7 @@ function BreakEditorDialog({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="company">All employees</SelectItem>
+                  {canUseCompanyScope && <SelectItem value="company">All employees</SelectItem>}
                   <SelectItem value="employees">Selected employees</SelectItem>
                   <SelectItem value="team">One team</SelectItem>
                   <SelectItem value="employee">One employee</SelectItem>
@@ -686,18 +720,22 @@ function BreakEditorDialog({
 
         {permanent && intent?.kind === "employee" && (
           <div className="grid gap-3 rounded-2xl border bg-muted/10 p-4 sm:grid-cols-2">
-            <Field label="Employee name">
-              <Input
-                value={employeeName}
-                onChange={(event) => setEmployeeName(event.target.value)}
-              />
-            </Field>
-            <Field label="Job title">
-              <Input value={jobTitle} onChange={(event) => setJobTitle(event.target.value)} />
-            </Field>
-            <Field label="Timezone">
-              <Input value={timezone} onChange={(event) => setTimezone(event.target.value)} />
-            </Field>
+            {canManagePeople && (
+              <>
+                <Field label="Employee name">
+                  <Input
+                    value={employeeName}
+                    onChange={(event) => setEmployeeName(event.target.value)}
+                  />
+                </Field>
+                <Field label="Job title">
+                  <Input value={jobTitle} onChange={(event) => setJobTitle(event.target.value)} />
+                </Field>
+                <Field label="Timezone">
+                  <Input value={timezone} onChange={(event) => setTimezone(event.target.value)} />
+                </Field>
+              </>
+            )}
             <Field label="Late grace (minutes)">
               <Input
                 type="number"
@@ -730,73 +768,92 @@ function BreakEditorDialog({
                 ))}
               </div>
             </div>
-            <Field label="Salary type">
-              <Select
-                value={salaryType}
-                onValueChange={(value) => setSalaryType(value as typeof salaryType)}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="monthly">Monthly</SelectItem>
-                  <SelectItem value="hourly">Hourly</SelectItem>
-                </SelectContent>
-              </Select>
-            </Field>
-            <Field label={salaryType === "monthly" ? "Monthly salary" : "Hourly rate"}>
-              <Input
-                type="number"
-                min="0"
-                step="0.01"
-                value={salaryAmount}
-                onChange={(event) => setSalaryAmount(Number(event.target.value))}
-              />
-            </Field>
-            <Field label="Currency">
-              <Select value={salaryCurrency} onValueChange={setSalaryCurrency}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {["EGP", "GBP", "USD", "EUR", "SAR", "AED"].map((currency) => (
-                    <SelectItem key={currency} value={currency}>
-                      {currency}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </Field>
-            <Field label="Hourly rate preview">
-              <Input
-                readOnly
-                value={
-                  salaryType === "hourly"
-                    ? salaryAmount.toFixed(2)
-                    : (
-                        salaryAmount / Math.max(1, (minutesBetween(shiftStart, shiftEnd) / 60) * 30)
-                      ).toFixed(2)
-                }
-              />
-            </Field>
-            <label className="flex items-center gap-3 rounded-xl border bg-card p-3 sm:col-span-2">
-              <Switch checked={overtimeEnabled} onCheckedChange={setOvertimeEnabled} />
-              <span className="flex-1">
-                <span className="block text-sm font-bold">Overtime eligible</span>
-                <span className="text-xs text-muted-foreground">
-                  Extra time is always recorded; payment still requires approval.
-                </span>
-              </span>
-              <Input
-                className="w-24"
-                type="number"
-                min="1"
-                step="0.25"
-                disabled={!overtimeEnabled}
-                value={overtimeMultiplier}
-                onChange={(event) => setOvertimeMultiplier(Number(event.target.value))}
-              />
-            </label>
+            {canManagePayroll && (
+              <>
+                <Field label="Salary type">
+                  <Select
+                    value={salaryType}
+                    onValueChange={(value) => setSalaryType(value as typeof salaryType)}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="monthly">Monthly</SelectItem>
+                      <SelectItem value="hourly">Hourly</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </Field>
+                <Field label={salaryType === "monthly" ? "Monthly salary" : "Hourly rate"}>
+                  <div className="flex gap-2">
+                    <Input
+                      type={showSalary ? "number" : "password"}
+                      min="0"
+                      step="0.01"
+                      value={salaryAmount}
+                      onChange={(event) => setSalaryAmount(Number(event.target.value))}
+                      aria-label={showSalary ? "Salary amount" : "Salary amount hidden"}
+                    />
+                    <Button
+                      type="button"
+                      size="icon"
+                      variant="outline"
+                      onClick={() => setShowSalary((current) => !current)}
+                      aria-label={showSalary ? "Hide salary" : "Show salary"}
+                    >
+                      {showSalary ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </Button>
+                  </div>
+                </Field>
+                <Field label="Currency">
+                  <Select value={salaryCurrency} onValueChange={setSalaryCurrency}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {["EGP", "GBP", "USD", "EUR", "SAR", "AED"].map((currency) => (
+                        <SelectItem key={currency} value={currency}>
+                          {currency}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </Field>
+                <Field label="Hourly rate preview">
+                  <Input
+                    readOnly
+                    value={
+                      showSalary
+                        ? salaryType === "hourly"
+                          ? salaryAmount.toFixed(2)
+                          : (
+                              salaryAmount /
+                              Math.max(1, (minutesBetween(shiftStart, shiftEnd) / 60) * 30)
+                            ).toFixed(2)
+                        : "••••••"
+                    }
+                  />
+                </Field>
+                <label className="flex items-center gap-3 rounded-xl border bg-card p-3 sm:col-span-2">
+                  <Switch checked={overtimeEnabled} onCheckedChange={setOvertimeEnabled} />
+                  <span className="flex-1">
+                    <span className="block text-sm font-bold">Overtime eligible</span>
+                    <span className="text-xs text-muted-foreground">
+                      Extra time is always recorded; payment still requires approval.
+                    </span>
+                  </span>
+                  <Input
+                    className="w-24"
+                    type="number"
+                    min="1"
+                    step="0.25"
+                    disabled={!overtimeEnabled}
+                    value={overtimeMultiplier}
+                    onChange={(event) => setOvertimeMultiplier(Number(event.target.value))}
+                  />
+                </label>
+              </>
+            )}
           </div>
         )}
 

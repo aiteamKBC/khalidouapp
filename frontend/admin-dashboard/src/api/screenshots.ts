@@ -18,6 +18,30 @@ type BackendScreenshot = {
   power_source: "ac" | "battery" | "unknown";
 };
 
+type BackendScreenshotFolder = {
+  employee_id: string;
+  employee_name: string;
+  employee_email: string;
+  job_title?: string | null;
+  worked: boolean;
+  active_now: boolean;
+  screenshot_count: number;
+  latest_capture?: string | null;
+  previews: BackendScreenshot[];
+};
+
+export type ScreenshotFolder = {
+  employeeId: string;
+  employeeName: string;
+  employeeEmail: string;
+  jobTitle?: string;
+  worked: boolean;
+  activeNow: boolean;
+  screenshotCount: number;
+  latestCapture?: string;
+  previews: Screenshot[];
+};
+
 function mapScreenshot(screenshot: BackendScreenshot, teamId: string): Screenshot {
   return {
     id: screenshot.id,
@@ -63,6 +87,49 @@ export async function listScreenshotPage(options: {
     items: result.data.map((screenshot) =>
       mapScreenshot(screenshot, screenshot.team_id ?? teamId ?? ""),
     ),
+    page: Number(result.meta.page ?? options.page),
+    pages: Number(result.meta.total_pages ?? 1),
+    total: Number(result.meta.total ?? result.data.length),
+  };
+}
+
+export async function listScreenshotFolderPage(options: {
+  scopedTeamIds?: string[];
+  page: number;
+  pageSize?: number;
+  employeeId?: string;
+  teamId?: string;
+  day: string;
+  workCategory?: string;
+  folderStatus?: string;
+}): Promise<{ items: ScreenshotFolder[]; page: number; pages: number; total: number }> {
+  const scopedTeamId = options.scopedTeamIds?.length === 1 ? options.scopedTeamIds[0] : undefined;
+  const teamId = options.teamId && options.teamId !== "all" ? options.teamId : scopedTeamId;
+  const result = await apiFetchWithMeta<BackendScreenshotFolder[]>(
+    withQuery("/screenshots/folders", {
+      page: options.page,
+      page_size: options.pageSize ?? 8,
+      employee_id: options.employeeId === "all" ? undefined : options.employeeId,
+      team_id: teamId,
+      day: options.day,
+      work_category: options.workCategory === "all" ? undefined : options.workCategory,
+      folder_status: options.folderStatus === "all" ? undefined : options.folderStatus,
+    }),
+  );
+  return {
+    items: result.data.map((folder) => ({
+      employeeId: folder.employee_id,
+      employeeName: folder.employee_name,
+      employeeEmail: folder.employee_email,
+      jobTitle: folder.job_title ?? undefined,
+      worked: folder.worked,
+      activeNow: folder.active_now,
+      screenshotCount: folder.screenshot_count,
+      latestCapture: folder.latest_capture ?? undefined,
+      previews: folder.previews.map((screenshot) =>
+        mapScreenshot(screenshot, screenshot.team_id ?? teamId ?? ""),
+      ),
+    })),
     page: Number(result.meta.page ?? options.page),
     pages: Number(result.meta.total_pages ?? 1),
     total: Number(result.meta.total ?? result.data.length),

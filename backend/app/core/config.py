@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     )
     jwt_refresh_token_expire_days: int = Field(default=7, alias="JWT_REFRESH_TOKEN_EXPIRE_DAYS")
     device_token_secret: str = Field(default=INSECURE_DEFAULT_SECRET, alias="DEVICE_TOKEN_SECRET")
+    salary_encryption_key: str = Field(default="", alias="SALARY_ENCRYPTION_KEY")
     cors_origins: list[str] = Field(
         default=[
             "http://localhost:5173",
@@ -89,6 +90,8 @@ class Settings(BaseSettings):
         default=24, alias="EMPLOYEE_INVITATION_EXPIRE_HOURS"
     )
     email_allowed_recipients: str = Field(default="", alias="EMAIL_ALLOWED_RECIPIENTS")
+    email_logo_url: str = Field(default="", alias="EMAIL_LOGO_URL")
+    email_support_address: str = Field(default="", alias="EMAIL_SUPPORT_ADDRESS")
     app_public_url: str = Field(default="http://localhost:5174", alias="APP_PUBLIC_URL")
     trusted_proxy_ips: list[str] = Field(default=["127.0.0.1", "::1"], alias="TRUSTED_PROXY_IPS")
 
@@ -117,6 +120,8 @@ class Settings(BaseSettings):
                 raise ValueError("JWT_SECRET_KEY must be set to a real secret in production.")
             if self.device_token_secret == INSECURE_DEFAULT_SECRET:
                 raise ValueError("DEVICE_TOKEN_SECRET must be set to a real secret in production.")
+            if not self.salary_encryption_key:
+                raise ValueError("SALARY_ENCRYPTION_KEY must be set in production.")
         return self
 
 

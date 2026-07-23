@@ -15,6 +15,7 @@ from app.database.base import Base
 from app.database.session import get_db
 from app.main import app
 from app.services.activity_timeline import local_today
+from app.services.request_notifications import request_recipients
 from app.models import (
     AdminUser,
     ActivityEvent,
@@ -23,6 +24,7 @@ from app.models import (
     DeviceToken,
     DailyAttendance,
     Employee,
+    LeaveRequest,
     OvertimeRecord,
     Project,
     Screenshot,
@@ -70,6 +72,7 @@ def team_client():
         email="general@example.com",
         password_hash=hash_password("ExamplePassword123!"),
         role="general_admin",
+        is_super_admin=True,
         status="active",
     )
     owner = AdminUser(
@@ -368,6 +371,146 @@ def test_attendance_detail_enforces_team_and_company_isolation(team_client):
         headers=data["general_headers"],
     )
     assert other_company.status_code in {403, 404}
+
+
+def test_team_lead_manages_owned_team_schedule_without_salary_access(team_client):
+    client, data = team_client
+
+    scoped_rules = client.get(
+        "/api/v1/employees/break-rules",
+        headers=data["owner_headers"],
+    )
+    assert scoped_rules.status_code == 200
+    rows = scoped_rules.json()["data"]
+    assert {row["employee_id"] for row in rows} == {
+        str(data["employee_a"].id),
+        str(data["shared_employee"].id),
+    }
+    assert all("salary_amount" not in row for row in rows)
+    assert all("salary_currency" not in row for row in rows)
+    assert all("salary_type" not in row for row in rows)
+    assert all("overtime_rate_multiplier" not in row for row in rows)
+
+    schedule_update = client.patch(
+        f"/api/v1/employees/{data['employee_a'].id}/work-profile",
+        json={"shift_start": "10:00:00", "shift_end": "18:00:00"},
+        headers=data["owner_headers"],
+    )
+    assert schedule_update.status_code == 200
+    assert schedule_update.json()["data"]["shift_start"] == "10:00"
+
+    salary_update = client.patch(
+        f"/api/v1/employees/{data['employee_a'].id}/work-profile",
+        json={"salary_amount": 50000},
+        headers=data["owner_headers"],
+    )
+    assert salary_update.status_code == 403
+
+    other_team_update = client.patch(
+        f"/api/v1/employees/{data['employee_b'].id}/work-profile",
+        json={"shift_start": "10:00:00", "shift_end": "18:00:00"},
+        headers=data["owner_headers"],
+    )
+    assert other_team_update.status_code in {403, 404}
+
+    day = local_today("UTC") + timedelta(days=1)
+    team_exception = client.post(
+        "/api/v1/payroll/schedule-overrides",
+        json={
+            "scope": "team",
+            "team_id": str(data["team_a"].id),
+            "override_type": "shift",
+            "effective_date": day.isoformat(),
+            "permanent": False,
+            "shift_start": "11:00",
+            "shift_end": "19:00",
+            "reason": "Team coverage",
+        },
+        headers=data["owner_headers"],
+    )
+    assert team_exception.status_code == 200
+
+    company_exception = client.post(
+        "/api/v1/payroll/schedule-overrides",
+        json={
+            "scope": "company",
+            "override_type": "shift",
+            "effective_date": day.isoformat(),
+            "permanent": False,
+            "shift_start": "11:00",
+            "shift_end": "19:00",
+            "reason": "Forbidden company coverage",
+        },
+        headers=data["owner_headers"],
+    )
+    assert company_exception.status_code == 403
+
+
+def test_protected_super_admin_keeps_company_wide_schedule_and_payroll_access(team_client):
+    client, data = team_client
+    rules = client.get(
+        "/api/v1/employees/break-rules",
+        headers=data["general_headers"],
+    )
+    assert rules.status_code == 200
+    assert {row["employee_id"] for row in rules.json()["data"]} == {
+        str(data["employee_a"].id),
+        str(data["employee_b"].id),
+        str(data["shared_employee"].id),
+    }
+    assert all("salary_amount" in row for row in rules.json()["data"])
+
+    salary_update = client.patch(
+        f"/api/v1/employees/{data['employee_b'].id}/work-profile",
+        json={"salary_amount": 50000, "salary_currency": "EGP"},
+        headers=data["general_headers"],
+    )
+    assert salary_update.status_code == 200
+    assert salary_update.json()["data"]["salary_amount"] == 50000.0
+
+
+def test_plain_general_admin_cannot_read_or_change_salary_data(team_client):
+    client, data = team_client
+    db: Session = data["session_factory"]()
+    try:
+        plain_general = AdminUser(
+            company_id=data["general_admin"].company_id,
+            name="Operations Admin",
+            email="operations@example.com",
+            password_hash=hash_password("ExamplePassword123!"),
+            role="general_admin",
+            is_super_admin=False,
+            status="active",
+            permission_mode="role",
+            data_scope="company",
+        )
+        db.add(plain_general)
+        db.commit()
+        admin_id = plain_general.id
+        company_id = plain_general.company_id
+    finally:
+        db.close()
+    token = create_jwt_token(
+        subject=admin_id,
+        company_id=company_id,
+        token_type="access",
+        expires_delta=timedelta(minutes=30),
+        extra_claims={"role": "general_admin"},
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+
+    payroll = client.get("/api/v1/payroll/settings", headers=headers)
+    rules = client.get("/api/v1/employees/break-rules", headers=headers)
+    salary_update = client.patch(
+        f"/api/v1/employees/{data['employee_b'].id}/work-profile",
+        json={"salary_amount": 70000, "salary_currency": "EGP"},
+        headers=headers,
+    )
+
+    assert payroll.status_code == 403
+    assert rules.status_code == 200
+    assert all("salary_amount" not in row for row in rules.json()["data"])
+    assert salary_update.status_code == 403
 
 
 def test_group_schedule_override_validates_every_employee_company(team_client):
@@ -702,6 +845,69 @@ def test_team_owner_cannot_retrieve_screenshots_from_another_team(team_client):
 
     assert detail.status_code == 403
     assert filtered.status_code == 403
+
+
+def test_screenshot_folders_include_empty_employees_for_selected_day(team_client):
+    client, data = team_client
+    day = datetime.now(UTC).date().isoformat()
+
+    response = client.get(
+        f"/api/v1/screenshots/folders?day={day}&page_size=10",
+        headers=data["general_headers"],
+    )
+
+    assert response.status_code == 200
+    folders = {row["employee_name"]: row for row in response.json()["data"]}
+    assert set(folders) == {"Employee A", "Employee B", "Shared Employee"}
+    assert folders["Employee A"]["worked"] is True
+    assert folders["Employee A"]["screenshot_count"] == 1
+    assert len(folders["Employee A"]["previews"]) == 1
+    assert folders["Shared Employee"]["worked"] is False
+    assert folders["Shared Employee"]["screenshot_count"] == 0
+    assert folders["Shared Employee"]["previews"] == []
+
+
+def test_screenshot_folders_respect_team_owner_scope(team_client):
+    client, data = team_client
+    day = datetime.now(UTC).date().isoformat()
+
+    response = client.get(
+        f"/api/v1/screenshots/folders?day={day}&page_size=10",
+        headers=data["owner_headers"],
+    )
+
+    assert response.status_code == 200
+    names = {row["employee_name"] for row in response.json()["data"]}
+    assert names == {"Employee A", "Shared Employee"}
+
+
+def test_screenshot_folder_smart_filters_are_applied_before_pagination(team_client):
+    client, data = team_client
+    day = datetime.now(UTC).date().isoformat()
+
+    with_screenshots = client.get(
+        f"/api/v1/screenshots/folders?day={day}&folder_status=with_screenshots&page_size=1",
+        headers=data["general_headers"],
+    )
+    empty = client.get(
+        f"/api/v1/screenshots/folders?day={day}&folder_status=empty&page_size=10",
+        headers=data["general_headers"],
+    )
+    no_work = client.get(
+        f"/api/v1/screenshots/folders?day={day}&folder_status=no_work&page_size=10",
+        headers=data["general_headers"],
+    )
+
+    assert with_screenshots.status_code == 200
+    assert with_screenshots.json()["meta"]["total"] == 2
+    assert len(with_screenshots.json()["data"]) == 1
+    assert with_screenshots.json()["data"][0]["screenshot_count"] > 0
+    assert empty.status_code == 200
+    assert {row["employee_name"] for row in empty.json()["data"]} == {"Shared Employee"}
+    assert no_work.status_code == 200
+    assert {row["employee_name"] for row in no_work.json()["data"]} == {
+        "Shared Employee"
+    }
 
 
 def test_desktop_agent_can_only_load_its_own_recent_screenshots(team_client, tmp_path, monkeypatch):
@@ -1539,3 +1745,80 @@ def test_employee_time_adjustment_request_can_be_approved_and_added_to_timesheet
     assert row["adjustment_seconds"] == 1200
     assert row["active_seconds"] == 1320
     assert row["total_tracked_seconds"] == 1330
+
+    repeated_review = client.patch(
+        f"/api/v1/time-adjustment-requests/{request_id}",
+        headers=data["second_owner_headers"],
+        json={"status": "rejected", "admin_note": "Too late."},
+    )
+    assert repeated_review.status_code == 409
+
+
+def test_employee_overview_includes_all_assigned_team_managers(team_client):
+    client, data = team_client
+
+    response = client.get(
+        f"/api/v1/employees-overview?employee_id={data['shared_employee'].id}",
+        headers=data["general_headers"],
+    )
+
+    assert response.status_code == 200
+    managers = response.json()["data"][0]["managers"]
+    assert {manager["name"] for manager in managers} == {"Team Owner", "Second Owner"}
+    assert all(manager["teams"] == [{"id": str(data["team_a"].id), "name": "Team A"}] for manager in managers)
+
+
+def test_request_recipients_include_all_managers_and_company_hr(team_client):
+    _, data = team_client
+    with data["session_factory"]() as db:
+        hr = AdminUser(
+            company_id=data["shared_employee"].company_id,
+            name="HR Reviewer",
+            email="hr@company.co",
+            password_hash=hash_password("ExamplePassword123!"),
+            role="hr",
+            status="active",
+        )
+        db.add(hr)
+        db.commit()
+        employee = db.get(Employee, data["shared_employee"].id)
+        recipients = request_recipients(db, employee)
+
+    assert {recipient.name for recipient in recipients} == {
+        "Team Owner",
+        "Second Owner",
+        "HR Reviewer",
+    }
+
+
+def test_first_team_manager_to_review_leave_closes_request(team_client):
+    client, data = team_client
+    with data["session_factory"]() as db:
+        row = LeaveRequest(
+            company_id=data["shared_employee"].company_id,
+            employee_id=data["shared_employee"].id,
+            start_date=datetime.now(UTC).date() + timedelta(days=5),
+            end_date=datetime.now(UTC).date() + timedelta(days=5),
+            requested_days=1,
+            leave_type="unpaid",
+            reason="Personal appointment",
+            status="pending",
+        )
+        db.add(row)
+        db.commit()
+        request_id = row.id
+
+    first_review = client.patch(
+        f"/api/v1/leave-requests/{request_id}",
+        headers=data["owner_headers"],
+        json={"status": "approved", "review_note": "Approved."},
+    )
+    second_review = client.patch(
+        f"/api/v1/leave-requests/{request_id}",
+        headers=data["second_owner_headers"],
+        json={"status": "rejected", "review_note": "Rejected."},
+    )
+
+    assert first_review.status_code == 200
+    assert first_review.json()["data"]["status"] == "approved"
+    assert second_review.status_code == 409

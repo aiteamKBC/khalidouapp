@@ -558,6 +558,9 @@ def recalculate_entry(entry: PayrollEntry) -> None:
         ),
         Decimal(0),
     )
+    # The HR/Super-Admin payroll decision is itself an explicit authorization:
+    # use request-approved seconds when present, otherwise the recorded evidence
+    # that the payroll reviewer deliberately chose to pay.
     overtime_seconds = entry.approved_overtime_seconds or entry.recorded_overtime_seconds
     calculated_overtime = (
         Decimal(overtime_seconds)

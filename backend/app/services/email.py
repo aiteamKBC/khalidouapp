@@ -18,6 +18,11 @@ from app.core.config import settings
 from app.core.exceptions import ApiError
 from app.database.session import get_sessionmaker
 from app.models import EmailDelivery
+from app.services.email_templates import (
+    employee_invitation_email,
+    password_reset_email,
+    temporary_password_email,
+)
 
 logger = logging.getLogger("uvicorn.error")
 _graph_token_cache: dict = {"token": None, "expires_at": 0.0}
@@ -26,6 +31,8 @@ ALLOWED_EMAIL_CATEGORIES = {
     "admin_password_reset",
     "employee_invitation",
     "employee_portal_key",
+    "leave_request_submitted",
+    "early_leave_submitted",
 }
 BLOCKED_EMAIL_DOMAINS = {"example.com", "example.net", "example.org", "invalid", "localhost"}
 
@@ -69,14 +76,14 @@ def _get_graph_token() -> str:
     return _graph_token_cache["token"]
 
 
-def _send_via_graph(to: str, subject: str, body: str) -> None:
+def _send_via_graph(to: str, subject: str, body: str, html: str | None = None) -> None:
     response = httpx.post(
         f"https://graph.microsoft.com/v1.0/users/{settings.graph_sender}/sendMail",
         headers={"Authorization": f"Bearer {_get_graph_token()}"},
         json={
             "message": {
                 "subject": subject,
-                "body": {"contentType": "Text", "content": body},
+                "body": {"contentType": "HTML" if html else "Text", "content": html or body},
                 "toRecipients": [{"emailAddress": {"address": to}}],
             },
             "saveToSentItems": True,
@@ -86,12 +93,14 @@ def _send_via_graph(to: str, subject: str, body: str) -> None:
     response.raise_for_status()
 
 
-def _send_via_smtp(to: str, subject: str, body: str) -> None:
+def _send_via_smtp(to: str, subject: str, body: str, html: str | None = None) -> None:
     message = EmailMessage()
     message["From"] = settings.smtp_from or settings.smtp_user or "no-reply@khaliduo.local"
     message["To"] = to
     message["Subject"] = subject
     message.set_content(body)
+    if html:
+        message.add_alternative(html, subtype="html")
     with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=15) as smtp:
         if settings.smtp_use_tls:
             smtp.starttls()
@@ -100,7 +109,7 @@ def _send_via_smtp(to: str, subject: str, body: str) -> None:
         smtp.send_message(message)
 
 
-def send_email(to: str, subject: str, body: str) -> bool:
+def send_email(to: str, subject: str, body: str, html: str | None = None) -> bool:
     """Deliver one message and report transport success without raising."""
     if settings.app_env.lower() in {"test", "testing"}:
         logger.info("[email:test] suppressed delivery to %s | subject=%r", to, subject)
@@ -122,10 +131,10 @@ def send_email(to: str, subject: str, body: str) -> bool:
         return False
     try:
         if _graph_configured():
-            _send_via_graph(to, subject, body)
+            _send_via_graph(to, subject, body, html)
             logger.info("[email] sent via Graph to %s | subject=%r", to, subject)
         elif _smtp_configured():
-            _send_via_smtp(to, subject, body)
+            _send_via_smtp(to, subject, body, html)
             logger.info("[email] sent via SMTP to %s | subject=%r", to, subject)
         else:
             logger.info(
@@ -167,8 +176,14 @@ def ensure_email_allowed(db: Session, *, to: str, category: str) -> None:
         )
 
 
-def _deliver_reserved_email(delivery_id: UUID, to: str, subject: str, body: str) -> None:
-    delivered = send_email(to, subject, body)
+def _deliver_reserved_email(
+    delivery_id: UUID,
+    to: str,
+    subject: str,
+    body: str,
+    html: str | None,
+) -> None:
+    delivered = send_email(to, subject, body, html)
     with get_sessionmaker()() as db:
         delivery = db.get(EmailDelivery, delivery_id)
         if delivery is None:
@@ -188,6 +203,7 @@ def enqueue_email_once(
     category: str,
     subject: str,
     body: str,
+    html: str | None = None,
 ) -> bool:
     if _is_blocked_recipient(to):
         logger.warning("[email] refused to queue reserved/test recipient %s", to.lower())
@@ -196,7 +212,9 @@ def enqueue_email_once(
         logger.warning("[email] blocked disallowed category=%s recipient=%s", category, to.lower())
         return False
     recipient = to.lower()
-    fingerprint = sha256(f"{category}\0{recipient}\0{subject}\0{body}".encode()).hexdigest()
+    fingerprint = sha256(
+        f"{category}\0{recipient}\0{subject}\0{body}\0{html or ''}".encode()
+    ).hexdigest()
     delivery = EmailDelivery(
         company_id=company_id,
         recipient=recipient,
@@ -218,27 +236,15 @@ def enqueue_email_once(
             "[email:test] queued message suppressed for %s | category=%s", recipient, category
         )
         return True
-    background_tasks.add_task(_deliver_reserved_email, delivery.id, recipient, subject, body)
+    background_tasks.add_task(
+        _deliver_reserved_email,
+        delivery.id,
+        recipient,
+        subject,
+        body,
+        html,
+    )
     return True
-
-
-def _admin_message(*, to: str, name: str, password: str, is_reset: bool) -> tuple[str, str]:
-    subject = (
-        f"{settings.app_name}: your password was reset"
-        if is_reset
-        else f"You have been invited to {settings.app_name}"
-    )
-    lead = (
-        "Your dashboard password was reset by an administrator."
-        if is_reset
-        else "An administrator created a Khaliduo dashboard account for you."
-    )
-    body = (
-        f"Hi {name},\n\n{lead}\n\nSign in here: {settings.app_public_url.rstrip('/')}/login\n"
-        f"Email: {to}\nTemporary password: {password}\n\n"
-        f"Please sign in and change your password as soon as possible.\n\n— {settings.app_name}"
-    )
-    return subject, body
 
 
 def enqueue_admin_credentials_email(
@@ -251,15 +257,21 @@ def enqueue_admin_credentials_email(
     password: str,
     is_reset: bool,
 ) -> bool:
-    subject, body = _admin_message(to=to, name=name, password=password, is_reset=is_reset)
+    content = temporary_password_email(
+        name=name,
+        to=to,
+        password=password,
+        is_reset=is_reset,
+    )
     return enqueue_email_once(
         db,
         background_tasks,
         company_id=company_id,
         to=to,
         category="admin_password_reset" if is_reset else "admin_welcome",
-        subject=subject,
-        body=body,
+        subject=content.subject,
+        body=content.text,
+        html=content.html,
     )
 
 
@@ -274,13 +286,10 @@ def enqueue_admin_password_reset_link_email(
     expires_in_minutes: int,
 ) -> bool:
     reset_url = f"{settings.app_public_url.rstrip('/')}/login?resetToken={token}"
-    subject = f"{settings.app_name}: reset your password"
-    body = (
-        f"Hi {name},\n\nWe received a request to reset your dashboard password.\n\n"
-        f"Reset it here: {reset_url}\n\n"
-        f"This link expires in {expires_in_minutes} minutes and can be used once. "
-        "If you did not request this, you can ignore this message; your password has not changed.\n\n"
-        f"— {settings.app_name}"
+    content = password_reset_email(
+        name=name,
+        reset_url=reset_url,
+        expires_in_minutes=expires_in_minutes,
     )
     return enqueue_email_once(
         db,
@@ -288,8 +297,9 @@ def enqueue_admin_password_reset_link_email(
         company_id=company_id,
         to=to,
         category="admin_password_reset",
-        subject=subject,
-        body=body,
+        subject=content.subject,
+        body=content.text,
+        html=content.html,
     )
 
 
@@ -304,13 +314,11 @@ def enqueue_employee_invitation_email(
     expires_in_hours: int,
 ) -> bool:
     invitation_url = f"{settings.app_public_url.rstrip('/')}/accept-invitation?token={token}"
-    subject = f"You have been invited to {settings.app_name}"
-    body = (
-        f"Hi {name},\n\nYour Khaliduo employee account has been created.\n\n"
-        f"Accept your invitation and choose your password: {invitation_url}\n\n"
-        f"This one-time link expires in {expires_in_hours} hours. If you did not expect this "
-        "invitation, you can ignore this message.\n\n"
-        f"— {settings.app_name}"
+    content = employee_invitation_email(
+        name=name,
+        to=to,
+        invitation_url=invitation_url,
+        expires_in_hours=expires_in_hours,
     )
     return enqueue_email_once(
         db,
@@ -318,6 +326,7 @@ def enqueue_employee_invitation_email(
         company_id=company_id,
         to=to,
         category="employee_invitation",
-        subject=subject,
-        body=body,
+        subject=content.subject,
+        body=content.text,
+        html=content.html,
     )

@@ -26,6 +26,7 @@ import {
   Users,
   Clock3,
   Eye,
+  EyeOff,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { PageHeader } from "@/components/ui/page-header";
@@ -174,6 +175,7 @@ type PersonRow = {
   email: string;
   roleLabel: string;
   detail: string;
+  managerNames: string[];
   status: "active" | "invited" | "expired" | "archived";
   teamIds: string[];
   dashboardEmployeeId?: string;
@@ -338,10 +340,12 @@ function PeopleDirectory({
     "EGP" | "GBP" | "USD" | "EUR" | "SAR" | "AED"
   >("EGP");
   const [editSalaryType, setEditSalaryType] = useState<"monthly" | "hourly">("monthly");
+  const [showEditSalary, setShowEditSalary] = useState(false);
   const [editBreakRules, setEditBreakRules] = useState<NonNullable<WorkProfile["breakRules"]>>([]);
   const [showFullPermissions, setShowFullPermissions] = useState(false);
   const canManageAccess = can(permissions.accessManage);
   const canManageTeams = can(permissions.teamsManage);
+  const canManagePayroll = can(permissions.payrollManage);
   const editingSelf = Boolean(
     (editUser && currentUser?.id === editUser.id) ||
     (editPersonRow?.employee &&
@@ -374,6 +378,7 @@ function PeopleDirectory({
     setEditSalaryCurrency(profile.salaryCurrency ?? "EGP");
     setEditSalaryType(profile.salaryType ?? "monthly");
     setEditBreakRules(profile.breakRules ?? []);
+    setShowEditSalary(false);
   }, [managedWorkProfile.data]);
 
   const catalog = useQuery({
@@ -422,6 +427,7 @@ function PeopleDirectory({
       email: employee.email,
       roleLabel: "Employee",
       detail: employee.jobTitle || "—",
+      managerNames: employee.managers.map((manager) => manager.name),
       status: employeeDirectoryStatus(employee),
       teamIds: employee.teamIds,
       dashboardEmployeeId: employee.id,
@@ -429,38 +435,48 @@ function PeopleDirectory({
         currentUser?.employeeId === employee.id || currentUser?.trackedEmployeeId === employee.id,
       employee,
     }));
+    const employeeById = new Map((employees.data ?? []).map((employee) => [employee.id, employee]));
+    const employeeByEmail = new Map(
+      (employees.data ?? []).map((employee) => [employee.email.toLowerCase(), employee]),
+    );
     const adminJobTitle = (user: User) =>
       user.jobTitle && user.jobTitle !== "Management" ? user.jobTitle : "";
-    const adminRows: PersonRow[] = (users.data ?? []).map((user) => ({
-      id: user.id,
-      kind: "admin",
-      name: user.name,
-      email: user.email,
-      roleLabel: user.isSuperAdmin
-        ? "Super admin · General admin"
-        : user.role === "hr"
-          ? "HR"
-          : user.role === "general_admin"
-            ? user.teamLeadTeamIds.length
-              ? "General admin · Team lead"
-              : "General admin"
-            : "Team lead",
-      detail:
-        adminJobTitle(user) ||
-        (user.dataScope === "company"
-          ? "All teams"
-          : user.teamLeadTeamIds
-              .map((id) => teamNames.get(id))
-              .filter(Boolean)
-              .join(", ") || "—"),
-      status: user.status === "active" ? "active" : "archived",
-      teamIds:
-        user.dataScope === "company" ? activeTeams.map((team) => team.id) : user.teamLeadTeamIds,
-      dashboardEmployeeId: user.trackedEmployeeId,
-      isCurrentUser: currentUser?.id === user.id,
-      isSuperAdmin: user.isSuperAdmin,
-      user,
-    }));
+    const adminRows: PersonRow[] = (users.data ?? []).map((user) => {
+      const linkedEmployee =
+        employeeById.get(user.trackedEmployeeId ?? user.employeeId ?? "") ??
+        employeeByEmail.get(user.email.toLowerCase());
+      return {
+        id: user.id,
+        kind: "admin",
+        name: user.name,
+        email: user.email,
+        roleLabel: user.isSuperAdmin
+          ? "Super admin · General admin"
+          : user.role === "hr"
+            ? "HR"
+            : user.role === "general_admin"
+              ? user.teamLeadTeamIds.length
+                ? "General admin · Team lead"
+                : "General admin"
+              : "Team lead",
+        detail:
+          adminJobTitle(user) ||
+          (user.dataScope === "company"
+            ? "All teams"
+            : user.teamLeadTeamIds
+                .map((id) => teamNames.get(id))
+                .filter(Boolean)
+                .join(", ") || "—"),
+        managerNames: linkedEmployee?.managers.map((manager) => manager.name) ?? [],
+        status: user.status === "active" ? "active" : "archived",
+        teamIds:
+          user.dataScope === "company" ? activeTeams.map((team) => team.id) : user.teamLeadTeamIds,
+        dashboardEmployeeId: user.trackedEmployeeId,
+        isCurrentUser: currentUser?.id === user.id,
+        isSuperAdmin: user.isSuperAdmin,
+        user,
+      };
+    });
     const adminEmployeeIds = new Set(
       (users.data ?? []).map((user) => user.trackedEmployeeId ?? user.employeeId).filter(Boolean),
     );
@@ -536,15 +552,19 @@ function PeopleDirectory({
           ),
           requiredDailyMinutes: shiftMinutes(editShiftStart, editShiftEnd),
           lateGraceMinutes: editLateGraceMinutes,
-          overtimeEnabled: editOvertimeEnabled,
-          overtimeBasis: editOvertimeEnabled
-            ? (managedWorkProfile.data.overtimeBasis ?? "outside_shift")
-            : undefined,
-          overtimeRateMultiplier: editOvertimeMultiplier,
           breakRules: editBreakRules,
-          salaryAmount: editSalaryAmount,
-          salaryCurrency: editSalaryCurrency,
-          salaryType: editSalaryType,
+          ...(canManagePayroll
+            ? {
+                overtimeEnabled: editOvertimeEnabled,
+                overtimeBasis: editOvertimeEnabled
+                  ? (managedWorkProfile.data.overtimeBasis ?? "outside_shift")
+                  : undefined,
+                overtimeRateMultiplier: editOvertimeMultiplier,
+                salaryAmount: editSalaryAmount,
+                salaryCurrency: editSalaryCurrency,
+                salaryType: editSalaryType,
+              }
+            : {}),
         });
         if (canManageTeams) {
           const originalTeamIds = new Set(
@@ -740,9 +760,22 @@ function PeopleDirectory({
   const visiblePermissionKeys = useMemo(() => {
     if (!catalog.data) return [];
     if (editRole === "employee") return [];
-    if (editPermissionMode === "custom") return editPermissions;
-    return catalog.data.rolePresets?.[editRole] ?? [];
-  }, [catalog.data, editPermissionMode, editPermissions, editRole]);
+    const keys =
+      editPermissionMode === "custom"
+        ? editPermissions
+        : (catalog.data.rolePresets?.[editRole] ?? []);
+    return editRole === "hr" || isProtectedOwner
+      ? keys
+      : keys.filter((key) => !key.startsWith("payroll."));
+  }, [catalog.data, editPermissionMode, editPermissions, editRole, isProtectedOwner]);
+  const visiblePermissionDefinitions = useMemo(
+    () =>
+      (catalog.data?.permissions ?? []).filter(
+        (permission) =>
+          editRole === "hr" || isProtectedOwner || !permission.key.startsWith("payroll."),
+      ),
+    [catalog.data?.permissions, editRole, isProtectedOwner],
+  );
 
   function changeArchiveStatus(row: PersonRow, archived: boolean) {
     if (row.isCurrentUser) {
@@ -959,7 +992,14 @@ function PeopleDirectory({
                         )}
                       </div>
                     </TableCell>
-                    <TableCell className="text-sm">{row.detail}</TableCell>
+                    <TableCell className="text-sm">
+                      <div>{row.detail}</div>
+                      <div className="mt-1 text-xs text-muted-foreground">
+                        {row.managerNames.length
+                          ? `Managers: ${row.managerNames.join(", ")}`
+                          : "No manager assigned"}
+                      </div>
+                    </TableCell>
                     <TableCell className="text-xs text-muted-foreground">
                       {row.kind === "employee"
                         ? row.status === "invited" || row.status === "expired"
@@ -1107,6 +1147,7 @@ function PeopleDirectory({
         employees={employees.data ?? []}
         users={users.data ?? []}
         currentUser={currentUser}
+        canManagePayroll={canManagePayroll}
         onCreated={async () => {
           await Promise.all([
             queryClient.invalidateQueries({ queryKey: ["users"] }),
@@ -1234,7 +1275,7 @@ function PeopleDirectory({
                 </div>
               </div>
 
-              {managedEmployeeId && (
+              {managedEmployeeId && canManagePayroll && (
                 <div className="space-y-3 rounded-xl border p-3">
                   <div>
                     <Label>Team membership & team role</Label>
@@ -1352,30 +1393,34 @@ function PeopleDirectory({
                             }
                           />
                         </div>
-                        <div className="flex items-end">
-                          <label className="flex min-h-10 w-full items-center justify-between rounded-md border px-3 text-sm font-semibold">
-                            Overtime eligible
-                            <Switch
-                              checked={editOvertimeEnabled}
-                              onCheckedChange={setEditOvertimeEnabled}
+                        {canManagePayroll && (
+                          <div className="flex items-end">
+                            <label className="flex min-h-10 w-full items-center justify-between rounded-md border px-3 text-sm font-semibold">
+                              Overtime eligible
+                              <Switch
+                                checked={editOvertimeEnabled}
+                                onCheckedChange={setEditOvertimeEnabled}
+                              />
+                            </label>
+                          </div>
+                        )}
+                        {canManagePayroll && (
+                          <div className="space-y-1.5">
+                            <Label htmlFor="manage-overtime-multiplier">Overtime multiplier</Label>
+                            <Input
+                              id="manage-overtime-multiplier"
+                              type="number"
+                              min={1}
+                              max={5}
+                              step={0.25}
+                              value={editOvertimeMultiplier}
+                              disabled={!editOvertimeEnabled}
+                              onChange={(event) =>
+                                setEditOvertimeMultiplier(Number(event.target.value) || 1)
+                              }
                             />
-                          </label>
-                        </div>
-                        <div className="space-y-1.5">
-                          <Label htmlFor="manage-overtime-multiplier">Overtime multiplier</Label>
-                          <Input
-                            id="manage-overtime-multiplier"
-                            type="number"
-                            min={1}
-                            max={5}
-                            step={0.25}
-                            value={editOvertimeMultiplier}
-                            disabled={!editOvertimeEnabled}
-                            onChange={(event) =>
-                              setEditOvertimeMultiplier(Number(event.target.value) || 1)
-                            }
-                          />
-                        </div>
+                          </div>
+                        )}
                       </div>
                       <div className="space-y-2">
                         <p className="text-xs font-bold uppercase text-muted-foreground">
@@ -1555,13 +1600,28 @@ function PeopleDirectory({
                       <Label>
                         {editSalaryType === "monthly" ? "Monthly salary" : "Hourly rate"}
                       </Label>
-                      <Input
-                        type="number"
-                        min={0}
-                        step={0.01}
-                        value={editSalaryAmount}
-                        onChange={(event) => setEditSalaryAmount(Number(event.target.value) || 0)}
-                      />
+                      <div className="flex gap-2">
+                        <Input
+                          type={showEditSalary ? "number" : "password"}
+                          min={0}
+                          step={0.01}
+                          value={editSalaryAmount}
+                          onChange={(event) => setEditSalaryAmount(Number(event.target.value) || 0)}
+                        />
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="outline"
+                          onClick={() => setShowEditSalary((current) => !current)}
+                          aria-label={showEditSalary ? "Hide salary" : "Show salary"}
+                        >
+                          {showEditSalary ? (
+                            <EyeOff className="h-4 w-4" />
+                          ) : (
+                            <Eye className="h-4 w-4" />
+                          )}
+                        </Button>
+                      </div>
                     </div>
                     <div className="space-y-1.5">
                       <Label>Currency</Label>
@@ -1704,7 +1764,7 @@ function PeopleDirectory({
 
               {showFullPermissions && editPermissionMode === "custom" && catalog.data && (
                 <PermissionChecklist
-                  permissions={catalog.data.permissions}
+                  permissions={visiblePermissionDefinitions}
                   selected={editPermissions}
                   disabled={!canChangeRoles}
                   onToggle={(key, checked) =>
@@ -1719,7 +1779,7 @@ function PeopleDirectory({
                 <PermissionPreview
                   role={editRole}
                   mode={editPermissionMode}
-                  permissions={catalog.data.permissions}
+                  permissions={visiblePermissionDefinitions}
                   selectedKeys={visiblePermissionKeys}
                 />
               )}
@@ -1806,6 +1866,7 @@ function AddPersonWizard({
   employees,
   users,
   currentUser,
+  canManagePayroll,
   onCreated,
 }: {
   open: boolean;
@@ -1814,6 +1875,7 @@ function AddPersonWizard({
   employees: Employee[];
   users: User[];
   currentUser?: User | null;
+  canManagePayroll: boolean;
   onCreated: () => Promise<void>;
 }) {
   const navigate = useNavigate();
@@ -1832,6 +1894,7 @@ function AddPersonWizard({
   const [salaryAmount, setSalaryAmount] = useState("0");
   const [hourlyRate, setHourlyRate] = useState("0");
   const [salaryCurrency, setSalaryCurrency] = useState("EGP");
+  const [showSalary, setShowSalary] = useState(false);
   const [breaks, setBreaks] = useState([
     { name: "Lunch", start_time: "13:00", end_time: "13:30", minutes: 30, paid: true },
     { name: "Short break", start_time: "15:30", end_time: "15:45", minutes: 15, paid: true },
@@ -1861,6 +1924,7 @@ function AddPersonWizard({
     setSalaryAmount("0");
     setHourlyRate("0");
     setSalaryCurrency("EGP");
+    setShowSalary(false);
     setBreaks([
       { name: "Lunch", start_time: "13:00", end_time: "13:30", minutes: 30, paid: true },
       { name: "Short break", start_time: "15:30", end_time: "15:45", minutes: 15, paid: true },
@@ -1934,12 +1998,17 @@ function AddPersonWizard({
                 requiredDailyMinutes: Math.max(60, requiredDailyMinutes),
                 breakRules: breaks,
                 lateGraceMinutes: 15,
-                overtimeEnabled: true,
-                overtimeBasis: "outside_shift",
-                overtimeRateMultiplier: 1,
-                salaryAmount: salaryType === "monthly" ? Number(salaryAmount) : Number(hourlyRate),
-                salaryCurrency,
-                salaryType,
+                ...(canManagePayroll
+                  ? {
+                      overtimeEnabled: true,
+                      overtimeBasis: "outside_shift",
+                      overtimeRateMultiplier: 1,
+                      salaryAmount:
+                        salaryType === "monthly" ? Number(salaryAmount) : Number(hourlyRate),
+                      salaryCurrency,
+                      salaryType,
+                    }
+                  : {}),
               }
             : undefined,
       });
@@ -2465,7 +2534,13 @@ function AddPersonWizard({
                 </div>
               ))}
             </div>
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <div
+              className={
+                canManagePayroll
+                  ? "grid gap-3 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_1fr_1fr_auto]"
+                  : "hidden"
+              }
+            >
               <div>
                 <Label>Salary type</Label>
                 <Select
@@ -2484,7 +2559,7 @@ function AddPersonWizard({
               <div>
                 <Label>Monthly salary</Label>
                 <Input
-                  type="number"
+                  type={showSalary ? "number" : "password"}
                   min={0}
                   step="0.01"
                   value={
@@ -2504,7 +2579,7 @@ function AddPersonWizard({
               <div>
                 <Label>Hourly rate</Label>
                 <Input
-                  type="number"
+                  type={showSalary ? "number" : "password"}
                   min={0}
                   step="0.01"
                   value={salaryType === "monthly" ? calculatedHourlyRate.toFixed(2) : hourlyRate}
@@ -2540,8 +2615,19 @@ function AddPersonWizard({
                   </SelectContent>
                 </Select>
               </div>
+              <div className="flex items-end">
+                <Button
+                  type="button"
+                  size="icon"
+                  variant="outline"
+                  onClick={() => setShowSalary((current) => !current)}
+                  aria-label={showSalary ? "Hide salary" : "Show salary"}
+                >
+                  {showSalary ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </Button>
+              </div>
             </div>
-            <p className="text-xs text-muted-foreground">
+            <p className={canManagePayroll ? "text-xs text-muted-foreground" : "hidden"}>
               Calculated using 30 paid calendar days × shift hours ={" "}
               {estimatedMonthlyHours.toFixed(2)} paid hours/month. Weekly days off and scheduled
               breaks are paid and included.
@@ -2613,12 +2699,16 @@ function AddPersonWizard({
                       {shiftStart}–{shiftEnd}
                     </p>
                   </div>
-                  <div>
-                    <span className="text-xs text-muted-foreground">Salary</span>
-                    <p className="font-bold">
-                      {salaryAmount} {salaryCurrency} · {salaryType}
-                    </p>
-                  </div>
+                  {canManagePayroll && (
+                    <div>
+                      <span className="text-xs text-muted-foreground">Salary</span>
+                      <p className="font-bold">
+                        {showSalary
+                          ? `${salaryAmount} ${salaryCurrency} · ${salaryType}`
+                          : `•••••• ${salaryCurrency}`}
+                      </p>
+                    </div>
+                  )}
                   <div>
                     <span className="text-xs text-muted-foreground">Breaks</span>
                     <p className="font-bold">

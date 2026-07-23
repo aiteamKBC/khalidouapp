@@ -18,6 +18,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database.base import Base
+from app.database.encrypted_types import EncryptedDecimal, EncryptedJSON
 from app.models.mixins import TimestampMixin, UUIDPrimaryKeyMixin
 
 
@@ -69,8 +70,8 @@ class PayrollEntry(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     job_title: Mapped[str | None] = mapped_column(String(255), nullable=True)
     salary_type: Mapped[str] = mapped_column(String(20), nullable=False, default="monthly")
     currency: Mapped[str] = mapped_column(String(3), nullable=False, default="EGP")
-    salary_amount: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False, default=0)
-    hourly_rate: Mapped[Decimal] = mapped_column(Numeric(14, 4), nullable=False, default=0)
+    salary_amount: Mapped[Decimal] = mapped_column(EncryptedDecimal(), nullable=False, default=0)
+    hourly_rate: Mapped[Decimal] = mapped_column(EncryptedDecimal(), nullable=False, default=0)
     expected_work_days: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     worked_days: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     leave_days: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -95,36 +96,40 @@ class PayrollEntry(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     deduct_lateness: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     lateness_deduction_amount: Mapped[Decimal] = mapped_column(
-        Numeric(14, 2), nullable=False, default=0
+        EncryptedDecimal(), nullable=False, default=0
     )
     lateness_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     deduct_idle: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     idle_deduction_amount: Mapped[Decimal] = mapped_column(
-        Numeric(14, 2), nullable=False, default=0
+        EncryptedDecimal(), nullable=False, default=0
     )
     idle_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     pay_overtime: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     overtime_decision: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
     overtime_multiplier: Mapped[Decimal] = mapped_column(Numeric(8, 2), nullable=False, default=1)
-    custom_overtime_amount: Mapped[Decimal | None] = mapped_column(Numeric(14, 2), nullable=True)
+    custom_overtime_amount: Mapped[Decimal | None] = mapped_column(
+        EncryptedDecimal(), nullable=True
+    )
     overtime_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     deduct_unpaid_breaks: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     unpaid_break_deduction_amount: Mapped[Decimal] = mapped_column(
-        Numeric(14, 2), nullable=False, default=0
+        EncryptedDecimal(), nullable=False, default=0
     )
     unpaid_break_note: Mapped[str | None] = mapped_column(Text, nullable=True)
-    bonus_amount: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False, default=0)
+    bonus_amount: Mapped[Decimal] = mapped_column(EncryptedDecimal(), nullable=False, default=0)
     additional_deduction_amount: Mapped[Decimal] = mapped_column(
-        Numeric(14, 2), nullable=False, default=0
+        EncryptedDecimal(), nullable=False, default=0
     )
     adjustment_note: Mapped[str | None] = mapped_column(Text, nullable=True)
-    base_salary: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False, default=0)
-    overtime_amount: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False, default=0)
-    total_deductions: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False, default=0)
-    total_bonuses: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False, default=0)
-    final_salary: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False, default=0)
+    base_salary: Mapped[Decimal] = mapped_column(EncryptedDecimal(), nullable=False, default=0)
+    overtime_amount: Mapped[Decimal] = mapped_column(EncryptedDecimal(), nullable=False, default=0)
+    total_deductions: Mapped[Decimal] = mapped_column(
+        EncryptedDecimal(), nullable=False, default=0
+    )
+    total_bonuses: Mapped[Decimal] = mapped_column(EncryptedDecimal(), nullable=False, default=0)
+    final_salary: Mapped[Decimal] = mapped_column(EncryptedDecimal(), nullable=False, default=0)
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="draft", index=True)
-    calculation_snapshot: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    calculation_snapshot: Mapped[dict | None] = mapped_column(EncryptedJSON(), nullable=True)
 
     run = relationship("PayrollRun", back_populates="entries")
     employee = relationship("Employee")
@@ -141,7 +146,7 @@ class PayrollAdjustment(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         ForeignKey("payroll_entries.id", ondelete="CASCADE"), nullable=False, index=True
     )
     adjustment_type: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
-    amount: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
+    amount: Mapped[Decimal] = mapped_column(EncryptedDecimal(), nullable=False)
     reason: Mapped[str] = mapped_column(Text, nullable=False)
     created_by_admin_user_id: Mapped[UUID] = mapped_column(
         ForeignKey("admin_users.id"), nullable=False

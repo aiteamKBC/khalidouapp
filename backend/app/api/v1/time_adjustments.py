@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_admin
 from app.api.v1.admin_utils import apply_pagination, count_for, pagination_meta
 from app.api.v1.team_auth import apply_employee_scope, ensure_employee_access
+from app.core.exceptions import ApiError
 from app.core.responses import success_response
 from app.database.session import get_db
 from app.models import AdminUser, Employee, TimeAdjustmentRequest
@@ -34,6 +35,7 @@ def list_time_adjustment_requests(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=200),
 ):
+    require_capability(current_admin, "time_requests.view")
     statement = (
         select(TimeAdjustmentRequest)
         .join(Employee, Employee.id == TimeAdjustmentRequest.employee_id)
@@ -67,6 +69,18 @@ def review_time_adjustment_request(
     require_capability(current_admin, "time_requests.manage")
     row = get_time_adjustment_or_404(db, current_admin.company_id, request_id)
     employee = ensure_employee_access(db, current_admin, row.employee_id)
+    if row.status != "pending":
+        raise ApiError(
+            "TIME_REQUEST_REVIEWED",
+            "This time request was already reviewed.",
+            409,
+        )
+    if current_admin.employee_id == row.employee_id:
+        raise ApiError(
+            "SELF_REVIEW_FORBIDDEN",
+            "You cannot review your own time request.",
+            403,
+        )
     row.status = payload.status
     row.approved_seconds = (
         (payload.approved_minutes * 60)

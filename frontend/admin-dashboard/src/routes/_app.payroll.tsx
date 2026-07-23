@@ -7,6 +7,8 @@ import {
   CalendarClock,
   Clock3,
   Download,
+  Eye,
+  EyeOff,
   FileSpreadsheet,
   Filter,
   Lock,
@@ -104,6 +106,21 @@ function PayrollPage() {
   const [customRange, setCustomRange] = useState(false);
   const [customStart, setCustomStart] = useState("");
   const [customEnd, setCustomEnd] = useState("");
+  const [showAmounts, setShowAmounts] = useState(false);
+
+  useEffect(() => {
+    if (!showAmounts) return;
+    const hide = () => setShowAmounts(false);
+    const timeout = window.setTimeout(hide, 30_000);
+    const onVisibilityChange = () => document.hidden && hide();
+    window.addEventListener("blur", hide);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      window.clearTimeout(timeout);
+      window.removeEventListener("blur", hide);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [showAmounts]);
 
   const employees = useQuery({
     queryKey: ["employees", scopedTeamIds()],
@@ -160,6 +177,15 @@ function PayrollPage() {
         description="Review attendance signals, make payroll decisions, then approve and lock the monthly sheet."
         actions={
           <>
+            <Button
+              variant={showAmounts ? "secondary" : "outline"}
+              onClick={() => setShowAmounts((current) => !current)}
+              aria-pressed={showAmounts}
+              title={showAmounts ? "Hide all salary amounts" : "Reveal amounts for 30 seconds"}
+            >
+              {showAmounts ? <EyeOff className="mr-2 h-4 w-4" /> : <Eye className="mr-2 h-4 w-4" />}
+              {showAmounts ? "Hide amounts" : "Show amounts"}
+            </Button>
             <Button variant="outline" onClick={() => setOverrideOpen(true)} disabled={!canManage}>
               <CalendarClock className="mr-2 h-4 w-4" />
               Schedule override
@@ -205,14 +231,16 @@ function PayrollPage() {
           label="Net payroll"
           value={
             currencyTotals.length === 1
-              ? money(currencyTotals[0][1].final, currencyTotals[0][0])
+              ? privateMoney(showAmounts, currencyTotals[0][1].final, currencyTotals[0][0])
               : `${currencyTotals.length} currencies`
           }
           icon={Banknote}
           tone="success"
           hint={
             currencyTotals.length > 1
-              ? currencyTotals.map(([code, totals]) => money(totals.final, code)).join(" · ")
+              ? currencyTotals
+                  .map(([code, totals]) => privateMoney(showAmounts, totals.final, code))
+                  .join(" · ")
               : "After decisions"
           }
         />
@@ -380,6 +408,7 @@ function PayrollPage() {
           entries={sheet.data?.entries ?? []}
           loading={sheet.isLoading}
           onOpen={setSelectedEntryId}
+          showAmounts={showAmounts}
         />
       ) : (
         <ExceptionsView
@@ -395,6 +424,8 @@ function PayrollPage() {
         onOpenChange={(open) => !open && setSelectedEntryId(null)}
         canManage={canManage && !locked}
         month={month}
+        showAmounts={showAmounts}
+        onToggleAmounts={() => setShowAmounts((current) => !current)}
       />
       <ScheduleOverrideDialog
         open={overrideOpen}
@@ -416,10 +447,12 @@ function PayrollTable({
   entries,
   loading,
   onOpen,
+  showAmounts,
 }: {
   entries: PayrollEntry[];
   loading: boolean;
   onOpen: (id: string) => void;
+  showAmounts: boolean;
 }) {
   return (
     <Card className="overflow-hidden">
@@ -537,16 +570,22 @@ function PayrollTable({
                     }
                   />
                   <TableCell className="whitespace-nowrap font-medium">
-                    {money(entry.base_salary, entry.currency)}
+                    {privateMoney(showAmounts, entry.base_salary, entry.currency)}
                   </TableCell>
                   <TableCell className="whitespace-nowrap font-semibold text-destructive">
-                    -{money(entry.total_deductions, entry.currency)}
+                    {showAmounts ? "-" : ""}
+                    {privateMoney(showAmounts, entry.total_deductions, entry.currency)}
                   </TableCell>
                   <TableCell className="whitespace-nowrap font-semibold text-success">
-                    +{money(entry.total_bonuses + entry.overtime_amount, entry.currency)}
+                    {showAmounts ? "+" : ""}
+                    {privateMoney(
+                      showAmounts,
+                      entry.total_bonuses + entry.overtime_amount,
+                      entry.currency,
+                    )}
                   </TableCell>
                   <TableCell className="whitespace-nowrap text-base font-extrabold">
-                    {money(entry.final_salary, entry.currency)}
+                    {privateMoney(showAmounts, entry.final_salary, entry.currency)}
                   </TableCell>
                   <TableCell>
                     <StatusBadge status={entry.status as never} />
@@ -572,12 +611,16 @@ function PayrollReviewSheet({
   onOpenChange,
   canManage,
   month,
+  showAmounts,
+  onToggleAmounts,
 }: {
   entryId: string | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   canManage: boolean;
   month: string;
+  showAmounts: boolean;
+  onToggleAmounts: () => void;
 }) {
   const queryClient = useQueryClient();
   const [form, setForm] = useState<PayrollEntryUpdate>({});
@@ -625,7 +668,13 @@ function PayrollReviewSheet({
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent className="w-full overflow-y-auto sm:max-w-3xl">
         <SheetHeader className="border-b pb-4">
-          <SheetTitle>{entry?.employee_name ?? "Payroll review"}</SheetTitle>
+          <div className="flex items-center justify-between gap-3 pr-8">
+            <SheetTitle>{entry?.employee_name ?? "Payroll review"}</SheetTitle>
+            <Button type="button" size="sm" variant="outline" onClick={onToggleAmounts}>
+              {showAmounts ? <EyeOff className="mr-2 h-4 w-4" /> : <Eye className="mr-2 h-4 w-4" />}
+              {showAmounts ? "Hide amounts" : "Show amounts"}
+            </Button>
+          </div>
           <SheetDescription>
             {entry
               ? `${entry.team || "No team"} · ${entry.job_title || "No job title"} · ${month}`
@@ -635,16 +684,19 @@ function PayrollReviewSheet({
         {entry && (
           <div className="space-y-5 py-5">
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-              <MiniMetric label="Base salary" value={money(entry.base_salary, entry.currency)} />
+              <MiniMetric
+                label="Base salary"
+                value={privateMoney(showAmounts, entry.base_salary, entry.currency)}
+              />
               <MiniMetric label="Worked" value={shortTime(entry.worked_seconds)} />
               <MiniMetric
                 label="Deductions"
-                value={money(entry.total_deductions, entry.currency)}
+                value={privateMoney(showAmounts, entry.total_deductions, entry.currency)}
                 tone="danger"
               />
               <MiniMetric
                 label="Final salary"
-                value={money(entry.final_salary, entry.currency)}
+                value={privateMoney(showAmounts, entry.final_salary, entry.currency)}
                 tone="success"
               />
             </div>
@@ -681,6 +733,7 @@ function PayrollReviewSheet({
               note={form.lateness_note ?? ""}
               onNote={(value) => setForm({ ...form, lateness_note: value })}
               currency={entry.currency}
+              showAmount={showAmounts}
             />
             <DecisionBlock
               title="Idle decision"
@@ -692,6 +745,7 @@ function PayrollReviewSheet({
               note={form.idle_note ?? ""}
               onNote={(value) => setForm({ ...form, idle_note: value })}
               currency={entry.currency}
+              showAmount={showAmounts}
             />
             <DecisionBlock
               title="Unpaid break decision"
@@ -703,6 +757,7 @@ function PayrollReviewSheet({
               note={form.unpaid_break_note ?? ""}
               onNote={(value) => setForm({ ...form, unpaid_break_note: value })}
               currency={entry.currency}
+              showAmount={showAmounts}
             />
             <Section
               title="Overtime decision"
@@ -752,10 +807,10 @@ function PayrollReviewSheet({
                 </Field>
                 <Field label={`Custom amount (${entry.currency})`}>
                   <Input
-                    type="number"
+                    type={showAmounts ? "number" : "password"}
                     min="0"
                     step="0.01"
-                    disabled={!canManage || form.overtime_decision !== "paid"}
+                    disabled={!showAmounts || !canManage || form.overtime_decision !== "paid"}
                     value={form.custom_overtime_amount ?? ""}
                     placeholder="Auto calculate"
                     onChange={(event) =>
@@ -783,10 +838,10 @@ function PayrollReviewSheet({
               <div className="grid gap-3 sm:grid-cols-2">
                 <Field label={`Bonus (${entry.currency})`}>
                   <Input
-                    type="number"
+                    type={showAmounts ? "number" : "password"}
                     min="0"
                     step="0.01"
-                    disabled={!canManage}
+                    disabled={!showAmounts || !canManage}
                     value={form.bonus_amount ?? 0}
                     onChange={(event) =>
                       setForm({ ...form, bonus_amount: Number(event.target.value) })
@@ -795,10 +850,10 @@ function PayrollReviewSheet({
                 </Field>
                 <Field label={`Manual deduction (${entry.currency})`}>
                   <Input
-                    type="number"
+                    type={showAmounts ? "number" : "password"}
                     min="0"
                     step="0.01"
-                    disabled={!canManage}
+                    disabled={!showAmounts || !canManage}
                     value={form.additional_deduction_amount ?? 0}
                     onChange={(event) =>
                       setForm({ ...form, additional_deduction_amount: Number(event.target.value) })
@@ -841,7 +896,7 @@ function PayrollReviewSheet({
               title="Calculation breakdown"
               description="The exact components behind the final salary."
             >
-              <CalculationGrid entry={entry} />
+              <CalculationGrid entry={entry} showAmounts={showAmounts} />
             </Section>
             <Section
               title="Manual adjustments"
@@ -855,7 +910,8 @@ function PayrollReviewSheet({
                   >
                     <div>
                       <div className="text-sm font-semibold capitalize">
-                        {item.type.replaceAll("_", " ")} · {money(item.amount, entry.currency)}
+                        {item.type.replaceAll("_", " ")} ·{" "}
+                        {privateMoney(showAmounts, item.amount, entry.currency)}
                       </div>
                       <div className="text-xs text-muted-foreground">{item.reason}</div>
                     </div>
@@ -896,10 +952,18 @@ function PayrollReviewSheet({
             employeeId={entry.employee_id}
             open={profileOpen}
             onOpenChange={setProfileOpen}
+            showAmounts={showAmounts}
+            onToggleAmounts={onToggleAmounts}
           />
         )}
         {entry && (
-          <AdjustmentDialog entry={entry} open={adjustmentOpen} onOpenChange={setAdjustmentOpen} />
+          <AdjustmentDialog
+            entry={entry}
+            open={adjustmentOpen}
+            onOpenChange={setAdjustmentOpen}
+            showAmounts={showAmounts}
+            onToggleAmounts={onToggleAmounts}
+          />
         )}
       </SheetContent>
     </Sheet>
@@ -916,6 +980,7 @@ function DecisionBlock({
   note,
   onNote,
   currency,
+  showAmount,
 }: {
   title: string;
   checked: boolean;
@@ -926,6 +991,7 @@ function DecisionBlock({
   note: string;
   onNote: (value: string) => void;
   currency: string;
+  showAmount: boolean;
 }) {
   return (
     <Section
@@ -943,10 +1009,10 @@ function DecisionBlock({
       <div className="grid gap-3 sm:grid-cols-2">
         <Field label={`Deduction amount (${currency})`}>
           <Input
-            type="number"
+            type={showAmount ? "number" : "password"}
             min="0"
             step="0.01"
-            disabled={disabled || !checked}
+            disabled={!showAmount || disabled || !checked}
             value={amount}
             onChange={(event) => onAmount(Number(event.target.value))}
           />
@@ -967,10 +1033,14 @@ function EmployeeProfileDialog({
   employeeId,
   open,
   onOpenChange,
+  showAmounts,
+  onToggleAmounts,
 }: {
   employeeId: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  showAmounts: boolean;
+  onToggleAmounts: () => void;
 }) {
   const queryClient = useQueryClient();
   const profile = useQuery({
@@ -1011,7 +1081,13 @@ function EmployeeProfileDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Employee payroll profile</DialogTitle>
+          <div className="flex items-center justify-between gap-3 pr-8">
+            <DialogTitle>Employee payroll profile</DialogTitle>
+            <Button type="button" size="sm" variant="outline" onClick={onToggleAmounts}>
+              {showAmounts ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              <span className="sr-only">{showAmounts ? "Hide salary" : "Show salary"}</span>
+            </Button>
+          </div>
           <DialogDescription>
             Salary, shift, lateness grace, and overtime eligibility used for future calculations.
           </DialogDescription>
@@ -1035,10 +1111,11 @@ function EmployeeProfileDialog({
           </Field>
           <Field label="Salary / hourly rate">
             <Input
-              type="number"
+              type={showAmounts ? "number" : "password"}
               min="0"
               step="0.01"
               value={form.salaryAmount ?? 0}
+              disabled={!showAmounts}
               onChange={(event) => setForm({ ...form, salaryAmount: Number(event.target.value) })}
             />
           </Field>
@@ -1378,10 +1455,14 @@ function AdjustmentDialog({
   entry,
   open,
   onOpenChange,
+  showAmounts,
+  onToggleAmounts,
 }: {
   entry: PayrollEntry;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  showAmounts: boolean;
+  onToggleAmounts: () => void;
 }) {
   const queryClient = useQueryClient();
   const [type, setType] = useState("bonus");
@@ -1403,7 +1484,13 @@ function AdjustmentDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Add manual adjustment</DialogTitle>
+          <div className="flex items-center justify-between gap-3 pr-8">
+            <DialogTitle>Add manual adjustment</DialogTitle>
+            <Button type="button" size="sm" variant="outline" onClick={onToggleAmounts}>
+              {showAmounts ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              <span className="sr-only">{showAmounts ? "Hide amount" : "Show amount"}</span>
+            </Button>
+          </div>
           <DialogDescription>
             Every adjustment is saved with its author, time, amount, and reason.
           </DialogDescription>
@@ -1433,10 +1520,11 @@ function AdjustmentDialog({
         </Field>
         <Field label={`Amount (${entry.currency})`}>
           <Input
-            type="number"
+            type={showAmounts ? "number" : "password"}
             min="0.01"
             step="0.01"
             value={amount}
+            disabled={!showAmounts}
             onChange={(event) => setAmount(Number(event.target.value))}
           />
         </Field>
@@ -1448,7 +1536,7 @@ function AdjustmentDialog({
             Cancel
           </Button>
           <Button
-            disabled={save.isPending || amount <= 0 || reason.trim().length < 3}
+            disabled={!showAmounts || save.isPending || amount <= 0 || reason.trim().length < 3}
             onClick={() => save.mutate()}
           >
             Add adjustment
@@ -1706,10 +1794,10 @@ function ExportMenu({ filters }: { filters: PayrollFilters }) {
   );
 }
 
-function CalculationGrid({ entry }: { entry: PayrollEntry }) {
+function CalculationGrid({ entry, showAmounts }: { entry: PayrollEntry; showAmounts: boolean }) {
   const rows = [
-    ["Base salary", money(entry.base_salary, entry.currency)],
-    ["Hourly rate", money(entry.hourly_rate, entry.currency)],
+    ["Base salary", privateMoney(showAmounts, entry.base_salary, entry.currency)],
+    ["Hourly rate", privateMoney(showAmounts, entry.hourly_rate, entry.currency)],
     ["Expected hours", shortTime(entry.expected_seconds)],
     ["Worked hours", shortTime(entry.worked_seconds)],
     ["Normal payable hours", shortTime(entry.normal_seconds)],
@@ -1724,10 +1812,10 @@ function CalculationGrid({ entry }: { entry: PayrollEntry }) {
     ["Manual approved", shortTime(entry.approved_manual_seconds)],
     ["Overtime recorded", shortTime(entry.recorded_overtime_seconds)],
     ["Overtime approved", shortTime(entry.approved_overtime_seconds)],
-    ["Overtime paid", money(entry.overtime_amount, entry.currency)],
-    ["Deductions", money(entry.total_deductions, entry.currency)],
-    ["Bonuses", money(entry.total_bonuses, entry.currency)],
-    ["Final salary", money(entry.final_salary, entry.currency)],
+    ["Overtime paid", privateMoney(showAmounts, entry.overtime_amount, entry.currency)],
+    ["Deductions", privateMoney(showAmounts, entry.total_deductions, entry.currency)],
+    ["Bonuses", privateMoney(showAmounts, entry.total_bonuses, entry.currency)],
+    ["Final salary", privateMoney(showAmounts, entry.final_salary, entry.currency)],
   ];
   return (
     <div className="grid gap-px overflow-hidden rounded-xl border bg-border sm:grid-cols-2">
@@ -1815,6 +1903,9 @@ function minutesBetween(start: string, end: string) {
 }
 function money(value: number, currency: string) {
   return new Intl.NumberFormat("en", { maximumFractionDigits: 2 }).format(value) + ` ${currency}`;
+}
+function privateMoney(visible: boolean, value: number, currency: string) {
+  return visible ? money(value, currency) : `•••••• ${currency}`;
 }
 function showError(error: unknown) {
   toast.error(error instanceof Error ? error.message : "Something went wrong");

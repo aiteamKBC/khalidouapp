@@ -4,6 +4,7 @@ from app.models.admin_refresh_token import AdminRefreshToken
 from app.models.admin_password_reset_token import AdminPasswordResetToken
 from app.models.admin_user import AdminUser
 from app.models.admin_permission_override import AdminPermissionOverride
+from app.models.attendance_correction import AttendanceCorrection
 from app.models.company import Company
 from app.models.daily_attendance import DailyAttendance
 from app.models.device import Device
@@ -50,6 +51,7 @@ __all__ = [
     "AdminPasswordResetToken",
     "AdminUser",
     "AdminPermissionOverride",
+    "AttendanceCorrection",
     "Company",
     "CompanyPayrollSettings",
     "DailyAttendance",

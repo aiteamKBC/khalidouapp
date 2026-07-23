@@ -431,6 +431,48 @@ def test_time_before_and_after_shift_never_counts_as_normal_work(tracking_contex
     assert heartbeat["workday"]["extra_time_status"] == "recorded_not_counted"
 
 
+def test_active_time_before_shift_is_extra_even_without_completed_shift_time(
+    tracking_context,
+):
+    db, device = tracking_context
+    db.add(
+        EmployeeWorkProfile(
+            company_id=device.company_id,
+            employee_id=device.employee_id,
+            shift_start=datetime.strptime("10:00", "%H:%M").time(),
+            shift_end=datetime.strptime("18:00", "%H:%M").time(),
+            required_daily_minutes=8 * 60,
+            overtime_enabled=False,
+        )
+    )
+    started_at = datetime(2026, 7, 21, 1, 0, tzinfo=UTC)
+    heartbeat_at = datetime(2026, 7, 21, 2, 0, tzinfo=UTC)
+    started = start_or_get_session(
+        db,
+        device,
+        SessionStartRequest(started_at=started_at),
+    )
+    db.commit()
+
+    heartbeat = record_heartbeat(
+        db,
+        device=device,
+        session_id=UUID(started["session"]["id"]),
+        payload=HeartbeatRequest(
+            event_id=uuid4(),
+            timestamp=heartbeat_at,
+            status="active",
+            active_seconds=60 * 60,
+            idle_seconds=0,
+            agent_version="1.0.0",
+        ),
+    )
+
+    assert heartbeat["workday"]["normal_seconds"] == 0
+    assert heartbeat["workday"]["extra_seconds"] == 60 * 60
+    assert heartbeat["workday"]["extra_time_status"] == "recorded_not_counted"
+
+
 def test_workday_totals_continue_across_restarted_sessions(tracking_context):
     db, device = tracking_context
     profile = EmployeeWorkProfile(
