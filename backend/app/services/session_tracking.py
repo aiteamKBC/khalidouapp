@@ -693,6 +693,56 @@ def start_paid_pause(
     return response
 
 
+def resume_paid_pause(
+    db: Session,
+    *,
+    device: Device,
+    session_id: UUID,
+) -> dict[str, Any]:
+    session = get_owned_session(db, device, session_id)
+    if session.ended_at is not None:
+        raise ApiError("SESSION_ENDED", "This work session has already ended.", 409)
+
+    now = utc()
+    finalize_due_pause(db, session, at=now)
+    pause = active_pause_for_session(db, session)
+    if pause is not None:
+        ended_at = min(now, utc(pause.scheduled_end_at))
+        used_seconds = min(
+            pause.requested_seconds,
+            max(0, int((ended_at - utc(pause.started_at)).total_seconds())),
+        )
+        pause.ended_at = ended_at
+        pause.status = "completed"
+        pause.used_seconds = used_seconds
+
+        balance = db.get(PauseBalance, pause.pause_balance_id)
+        if balance is not None:
+            balance.used_seconds = max(balance.used_seconds, 0) + used_seconds
+            session.paid_pause_seconds = max(session.paid_pause_seconds, balance.used_seconds)
+            db.add(balance)
+
+        create_activity_event(
+            db,
+            device=device,
+            session=session,
+            event_type="paid_pause_resumed",
+            event_timestamp=ended_at,
+            idempotency_key=f"paid-pause-resumed:{pause.id}",
+            payload={
+                "pause_session_id": str(pause.id),
+                "used_seconds": used_seconds,
+            },
+        )
+        db.add_all([pause, session])
+
+    db.commit()
+    db.refresh(session)
+    response = session_response(db, session)
+    db.commit()
+    return response
+
+
 def record_heartbeat(
     db: Session,
     *,
@@ -868,9 +918,14 @@ def record_agent_event(
 
     if payload.event_type in {"screen_locked", "system_suspended"}:
         session.status = "locked" if payload.event_type == "screen_locked" else "sleeping"
-    elif payload.event_type in {"screen_unlocked", "system_resumed", "idle_ended"}:
+    elif payload.event_type in {
+        "screen_unlocked",
+        "system_resumed",
+        "idle_ended",
+        "manual_pause_ended",
+    }:
         session.status = "active"
-    elif payload.event_type == "idle_started":
+    elif payload.event_type in {"idle_started", "manual_pause_started"}:
         session.status = "idle"
     elif payload.event_type == "agent_stopped":
         close_open_session(

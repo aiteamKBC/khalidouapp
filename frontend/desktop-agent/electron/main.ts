@@ -20,6 +20,7 @@ import {
   downloadAgentScreenshot,
   createAgentTask,
   createAgentTaskChecklistItem,
+  deleteAgentTaskChecklistItem,
   createLeaveRequest,
   createTimeAdjustmentRequest,
   listAgentProjects,
@@ -32,7 +33,7 @@ import {
   sendQueuedRequest,
   sendActivityEvent,
   sendHeartbeat,
-  startPaidPause,
+  resumePaidPause,
   startSession,
   type ScreenshotMetadata,
   type AgentTask as ApiAgentTask,
@@ -210,6 +211,7 @@ let idleWallClockStartedAt: number | null = null;
 let lastDurationTickAt: number | null = null;
 let workedTodayBaseSeconds = 0;
 let trackingPausedByUser = false;
+let unpaidPauseActive = false;
 let isHandlingWindowClose = false;
 let hasShownMinimizeBalloon = false;
 let updateCheckTimer: ReturnType<typeof setInterval> | null = null;
@@ -353,6 +355,7 @@ async function activateEnrolledDevice(identity: StoredIdentity) {
   runtimeStatus.trackingStatus = "active";
   runtimeStatus.connectionStatus = "online";
   trackingPausedByUser = false;
+  unpaidPauseActive = false;
   runtimeStatus.trackingPaused = false;
   saveTrackingPreferences();
   configureAutoStart(true);
@@ -435,7 +438,10 @@ function rebuildTrayMenu() {
 
   updateDisplaySleepBlocker();
 
-  const trackingActive = Boolean(currentSessionId) && !trackingPausedByUser;
+  const trackingActive =
+    Boolean(currentSessionId) &&
+    !trackingPausedByUser &&
+    !runtimeStatus.trackingPaused;
   const normalTodaySeconds = Math.min(
     runtimeStatus.dailyTargetSeconds,
     runtimeStatus.normalSeconds +
@@ -473,9 +479,9 @@ function rebuildTrayMenu() {
     },
     { type: "separator" },
     {
-      label: trackingActive
-        ? "Screenshots: Random schedule"
-        : "Screenshots: Paused",
+      label: runtimeStatus.screenshotCaptureActive
+        ? "Screenshots: Active"
+        : "Screenshots: Waiting for next capture",
       enabled: false,
     },
     { type: "separator" },
@@ -483,7 +489,7 @@ function rebuildTrayMenu() {
     runtimeStatus.enrolled
       ? trackingActive
         ? {
-            label: "Pause Tracking & Screenshots",
+            label: "Pause",
             click: () => void pauseTracking("Paused from system tray"),
           }
         : { label: "Resume Tracking", click: () => void resumeTracking() }
@@ -534,17 +540,21 @@ function loadTrackingPreferences(resumeForWindowsStartup = false) {
       fs.readFileSync(getTrackingPreferencesPath(), "utf-8"),
     ) as {
       paused_by_user?: boolean;
+      unpaid_pause_active?: boolean;
     };
     trackingPausedByUser =
       !resumeForWindowsStartup && preferences.paused_by_user === true;
+    unpaidPauseActive =
+      !resumeForWindowsStartup && preferences.unpaid_pause_active === true;
   } catch {
     trackingPausedByUser = false;
+    unpaidPauseActive = false;
   }
-  runtimeStatus.trackingPaused = trackingPausedByUser;
+  runtimeStatus.trackingPaused = trackingPausedByUser || unpaidPauseActive;
   if (resumeForWindowsStartup) {
     saveTrackingPreferences();
   }
-  if (trackingPausedByUser && runtimeStatus.enrolled) {
+  if ((trackingPausedByUser || unpaidPauseActive) && runtimeStatus.enrolled) {
     runtimeStatus.trackingStatus = "paused";
   }
 }
@@ -553,7 +563,14 @@ function saveTrackingPreferences() {
   fs.mkdirSync(app.getPath("userData"), { recursive: true });
   fs.writeFileSync(
     getTrackingPreferencesPath(),
-    JSON.stringify({ paused_by_user: trackingPausedByUser }, null, 2),
+    JSON.stringify(
+      {
+        paused_by_user: trackingPausedByUser,
+        unpaid_pause_active: unpaidPauseActive,
+      },
+      null,
+      2,
+    ),
     "utf-8",
   );
 }
@@ -946,6 +963,7 @@ async function sendStateEvent(
   status: AgentRuntimeStatus["trackingStatus"],
 ) {
   runtimeStatus.trackingStatus = status;
+  notifyRendererStatus();
   rebuildTrayMenu();
   if (!currentSessionId || !runtimeStatus.enrolled) {
     return;
@@ -995,8 +1013,35 @@ async function sendStateEvent(
       void refreshTrackingConfig();
       void refreshTasks();
     }
+    notifyRendererStatus();
     rebuildTrayMenu();
   }
+}
+
+function finishAutomaticIdleImmediately() {
+  if (
+    unpaidPauseActive ||
+    runtimeStatus.trackingStatus !== "idle" ||
+    !currentSessionId
+  ) {
+    return;
+  }
+  recalculateWorkedTime();
+  const lostSeconds = Math.max(
+    0,
+    idleWallClockStartedAt === null
+      ? runtimeStatus.idleSeconds - idleSecondsBeforeCurrentIdle
+      : Math.floor((Date.now() - idleWallClockStartedAt) / 1000),
+  );
+  const eligibleLostSeconds = Math.max(
+    0,
+    runtimeStatus.eligibleIdleSeconds - eligibleIdleSecondsBeforeCurrentIdle,
+  );
+  idleSecondsBeforeCurrentIdle = runtimeStatus.idleSeconds;
+  eligibleIdleSecondsBeforeCurrentIdle = runtimeStatus.eligibleIdleSeconds;
+  idleWallClockStartedAt = null;
+  showIdleLossAlert(lostSeconds, eligibleLostSeconds);
+  void sendStateEvent("idle_ended", "active");
 }
 
 function startIdleMonitor() {
@@ -1007,6 +1052,7 @@ function startIdleMonitor() {
   idleTimer = setInterval(() => {
     if (
       !runtimeStatus.enrolled ||
+      unpaidPauseActive ||
       runtimeStatus.trackingStatus === "locked" ||
       runtimeStatus.trackingStatus === "sleeping"
     ) {
@@ -1028,25 +1074,9 @@ function startIdleMonitor() {
       idleSeconds < thresholdSeconds &&
       runtimeStatus.trackingStatus === "idle"
     ) {
-      recalculateWorkedTime();
-      const lostSeconds = Math.max(
-        0,
-        idleWallClockStartedAt === null
-          ? runtimeStatus.idleSeconds - idleSecondsBeforeCurrentIdle
-          : Math.floor((Date.now() - idleWallClockStartedAt) / 1000),
-      );
-      const eligibleLostSeconds = Math.max(
-        0,
-        runtimeStatus.eligibleIdleSeconds -
-          eligibleIdleSecondsBeforeCurrentIdle,
-      );
-      idleSecondsBeforeCurrentIdle = runtimeStatus.idleSeconds;
-      eligibleIdleSecondsBeforeCurrentIdle = runtimeStatus.eligibleIdleSeconds;
-      idleWallClockStartedAt = null;
-      showIdleLossAlert(lostSeconds, eligibleLostSeconds);
-      void sendStateEvent("idle_ended", "active");
+      finishAutomaticIdleImmediately();
     }
-  }, 1000);
+  }, 250);
 }
 
 async function heartbeatTick() {
@@ -1504,6 +1534,13 @@ async function startTrackingAutomatically() {
     runtimeStatus.connectionStatus = "online";
     runtimeStatus.lastSuccessfulSyncAt = new Date().toISOString();
     startTimers();
+    if (unpaidPauseActive) {
+      runtimeStatus.trackingPaused = true;
+      idleSecondsBeforeCurrentIdle = runtimeStatus.idleSeconds;
+      eligibleIdleSecondsBeforeCurrentIdle = runtimeStatus.eligibleIdleSeconds;
+      idleWallClockStartedAt = Date.now();
+      await sendStateEvent("idle_started", "idle");
+    }
     void heartbeatTick();
     void refreshTimeAdjustmentRequests();
     void refreshLeaveRequests();
@@ -1635,50 +1672,32 @@ async function stopTrackingSession(reason = "Stopped by employee") {
 }
 
 async function pauseTracking(
-  options?: string | { requestedMinutes?: number; reason?: string },
+  _options?: string | { requestedMinutes?: number; reason?: string },
 ) {
   if (!runtimeStatus.enrolled || !currentSessionId) {
     return {
       success: false,
-      message: "Start your shift before using paid pause.",
+      message: "Start your shift before using Pause.",
     };
   }
-  const requestedMinutes =
-    typeof options === "object" && options?.requestedMinutes
-      ? options.requestedMinutes
-      : 10;
-  const reason =
-    typeof options === "string"
-      ? options
-      : typeof options === "object"
-        ? options.reason
-        : undefined;
+  if (unpaidPauseActive || runtimeStatus.trackingPaused) {
+    return { success: true, message: "Pause is already active." };
+  }
 
-  try {
-    const result = await startPaidPause({
-      sessionId: currentSessionId,
-      requestedMinutes,
-      reason,
-    });
-    syncRuntimeFromSession(result.session);
-    applyWorkdayState(result.workday);
-    applyPauseState(result.pause);
-    runtimeStatus.connectionStatus = "online";
-    runtimeStatus.lastSuccessfulSyncAt = new Date().toISOString();
-    rebuildTrayMenu();
-    return {
-      success: true,
-      message: `Paid pause started for ${requestedMinutes} minute(s). Auto resume will happen when it ends.`,
-    };
-  } catch (error) {
-    const message = axios.isAxiosError(error)
-      ? (error.response?.data as { message?: string } | undefined)?.message
-      : undefined;
-    return {
-      success: false,
-      message: message ?? "Paid pause could not be started.",
-    };
-  }
+  recalculateWorkedTime();
+  unpaidPauseActive = true;
+  runtimeStatus.trackingPaused = true;
+  idleSecondsBeforeCurrentIdle = runtimeStatus.idleSeconds;
+  eligibleIdleSecondsBeforeCurrentIdle = runtimeStatus.eligibleIdleSeconds;
+  idleWallClockStartedAt = Date.now();
+  saveTrackingPreferences();
+  await sendStateEvent("manual_pause_started", "idle");
+  rebuildTrayMenu();
+  return {
+    success: true,
+    message:
+      "Paused. Resume when you return; screenshot monitoring remains active.",
+  };
 }
 
 async function resumeTracking() {
@@ -1688,12 +1707,53 @@ async function resumeTracking() {
       message: "Enroll this device before starting tracking.",
     };
   }
+  const isPaidPause =
+    Boolean(currentSessionId) &&
+    runtimeStatus.trackingPaused &&
+    Boolean(runtimeStatus.paidPauseEndsAt);
+  if (isPaidPause && currentSessionId) {
+    try {
+      const result = await resumePaidPause(currentSessionId);
+      syncRuntimeFromSession(result.session);
+      applyWorkdayState(result.workday);
+      applyPauseState(result.pause);
+      runtimeStatus.connectionStatus = "online";
+      runtimeStatus.lastSuccessfulSyncAt = new Date().toISOString();
+    } catch (error) {
+      const message = axios.isAxiosError(error)
+        ? (error.response?.data as { message?: string } | undefined)?.message
+        : undefined;
+      return {
+        success: false,
+        message:
+          message ??
+          "Pause could not be resumed. Check the connection and try again.",
+      };
+    }
+  }
+
+  if (unpaidPauseActive && currentSessionId) {
+    recalculateWorkedTime();
+    unpaidPauseActive = false;
+    runtimeStatus.trackingPaused = false;
+    idleSecondsBeforeCurrentIdle = runtimeStatus.idleSeconds;
+    eligibleIdleSecondsBeforeCurrentIdle = runtimeStatus.eligibleIdleSeconds;
+    idleWallClockStartedAt = null;
+    saveTrackingPreferences();
+    await sendStateEvent("manual_pause_ended", "active");
+    rebuildTrayMenu();
+    return {
+      success: true,
+      message: "Tracking resumed.",
+    };
+  }
+
   trackingPausedByUser = false;
   runtimeStatus.trackingPaused = false;
   runtimeStatus.paidPauseEndsAt = null;
   runtimeStatus.paidPauseRemainingSeconds = 0;
   clearPaidPauseTimer();
-  runtimeStatus.trackingStatus = "starting";
+  runtimeStatus.trackingStatus = currentSessionId ? "active" : "starting";
   saveTrackingPreferences();
   await startTrackingAutomatically();
   const success = Boolean(currentSessionId);
@@ -1719,6 +1779,7 @@ async function logoutDevice() {
   clearEnrollmentIdentity();
   configureAutoStart(false);
   trackingPausedByUser = false;
+  unpaidPauseActive = false;
   saveTrackingPreferences();
   currentSessionId = null;
   workedTodayBaseSeconds = 0;
@@ -1828,24 +1889,18 @@ async function createMainWindow() {
         title: "Close Khaliduo",
         message: trackingPausedByUser
           ? "Khaliduo is currently paused."
-          : runtimeStatus.trackingPaused
-            ? "Khaliduo is currently in paid pause."
-            : "Tracking and screenshots are currently active.",
+          : unpaidPauseActive
+            ? "Khaliduo is currently paused."
+            : runtimeStatus.trackingPaused
+              ? "Khaliduo is currently paused."
+              : "Tracking and screenshots are currently active.",
         detail:
           "Choose whether Khaliduo should keep tracking, hide, or quit completely.",
         buttons: trackingPausedByUser
           ? ["Hide (Keep Paused)", "Resume Tracking & Hide", "Quit Khaliduo"]
           : runtimeStatus.trackingPaused
-            ? [
-                "Hide (Keep Paid Pause)",
-                "Resume Tracking & Hide",
-                "Quit Khaliduo",
-              ]
-            : [
-                "Hide & Keep Tracking",
-                "Start 10m Paid Pause & Hide",
-                "Quit Khaliduo",
-              ],
+            ? ["Hide (Keep Paused)", "Resume Tracking & Hide", "Quit Khaliduo"]
+            : ["Hide & Keep Tracking", "Pause & Hide", "Quit Khaliduo"],
         defaultId: 0,
         cancelId: 0,
         noLink: true,
@@ -1997,6 +2052,13 @@ function runtimeStatusPayload() {
     powerSource: onAcPower ? "ac" : "battery",
     privacyNotice,
   };
+}
+
+function notifyRendererStatus() {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return;
+  }
+  mainWindow.webContents.send("agent:status-changed", runtimeStatusPayload());
 }
 
 function configureAutoStart(enabled = runtimeStatus.enrolled) {
@@ -2229,6 +2291,10 @@ function wireSystemEvents() {
     idleSecondsBeforeCurrentIdle = runtimeStatus.idleSeconds;
     void sendStateEvent("screen_unlocked", "active");
     log.info("Windows unlock detected");
+  });
+
+  powerMonitor.on("user-did-become-active", () => {
+    finishAutomaticIdleImmediately();
   });
 
   powerMonitor.on("suspend", () => {
@@ -2637,6 +2703,41 @@ ipcMain.handle(
       return {
         success: false,
         message: getUserFacingError(error, "Checklist update failed."),
+      };
+    }
+  },
+);
+
+ipcMain.handle(
+  "agent:delete-task-checklist-items",
+  async (_, taskId: string, itemIds: string[]) => {
+    try {
+      const task = runtimeStatus.tasks.find((item) => item.id === taskId);
+      if (!task?.canUpdateStage) {
+        return {
+          success: false,
+          message: "Only the primary assignee can edit this task checklist.",
+        };
+      }
+      const uniqueItemIds = [...new Set(itemIds)].filter((itemId) =>
+        task.checklist.some((item) => item.id === itemId),
+      );
+      if (uniqueItemIds.length === 0) {
+        return {
+          success: false,
+          message: "Select at least one checklist item.",
+        };
+      }
+      for (const itemId of uniqueItemIds) {
+        await deleteAgentTaskChecklistItem(taskId, itemId);
+      }
+      await refreshTasks();
+      return { success: true, status: runtimeStatusPayload() };
+    } catch (error) {
+      log.error("Task checklist deletion failed", error);
+      return {
+        success: false,
+        message: getUserFacingError(error, "Checklist deletion failed."),
       };
     }
   },

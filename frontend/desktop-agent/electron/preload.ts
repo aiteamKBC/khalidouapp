@@ -4,6 +4,12 @@ const { contextBridge, ipcRenderer } = electronRenderer;
 
 contextBridge.exposeInMainWorld("khaliduo", {
   getAgentStatus: () => ipcRenderer.invoke("agent:get-status"),
+  onStatusChanged: (callback: (status: unknown) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, status: unknown) =>
+      callback(status);
+    ipcRenderer.on("agent:status-changed", listener);
+    return () => ipcRenderer.removeListener("agent:status-changed", listener);
+  },
   enrollWithCredentials: (email: string, password: string) =>
     ipcRenderer.invoke("agent:enroll-with-credentials", email, password),
   pauseTracking: (options?: { requestedMinutes?: number; reason?: string }) =>
@@ -40,6 +46,8 @@ contextBridge.exposeInMainWorld("khaliduo", {
       itemId,
       completed,
     ),
+  deleteTaskChecklistItems: (taskId: string, itemIds: string[]) =>
+    ipcRenderer.invoke("agent:delete-task-checklist-items", taskId, itemIds),
   createTimeAdjustmentRequest: (input: {
     requestedMinutes: number;
     reason: string;

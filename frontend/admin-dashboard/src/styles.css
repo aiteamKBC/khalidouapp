@@ -148,6 +148,21 @@
 @layer base {
   * {
     border-color: var(--color-border);
+    -webkit-user-select: none;
+    user-select: none;
+    caret-color: transparent;
+  }
+  input:not([type="button"]):not([type="submit"]):not([type="reset"]):not(
+      [type="checkbox"]
+    ):not([type="radio"]),
+  textarea,
+  [contenteditable="true"],
+  [data-text-selectable="true"],
+  .select-text,
+  .select-all {
+    -webkit-user-select: text;
+    user-select: text;
+    caret-color: auto;
   }
   body {
     background-color: var(--color-background);

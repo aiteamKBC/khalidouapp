@@ -70,6 +70,7 @@ from app.services.session_tracking import (
     end_session,
     record_agent_event,
     record_heartbeat,
+    resume_paid_pause,
     start_paid_pause,
     start_or_get_session,
     update_session_task,
@@ -802,6 +803,47 @@ def update_own_task_checklist_item(
     return success_response(data=serialize_task(task, project, team))
 
 
+@router.delete("/tasks/{task_id}/checklist/{item_id}")
+def delete_own_task_checklist_item(
+    task_id: UUID,
+    item_id: UUID,
+    context: Annotated[DeviceAuthContext, Depends(get_current_device)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    task = db.scalar(
+        select(Task).where(
+            Task.id == task_id,
+            Task.company_id == context.device.company_id,
+            Task.assignee_employee_id == context.device.employee_id,
+            Task.status == "active",
+        )
+    )
+    if task is None:
+        raise ApiError("TASK_NOT_FOUND", "You can only update your own task.", 404)
+    if task.stage in {"completed", "rejected", "cancelled", "ready_for_review"}:
+        raise ApiError("TASK_STAGE_LOCKED", "Closed or submitted tasks cannot be changed.", 409)
+    item = db.scalar(
+        select(TaskChecklistItem).where(
+            TaskChecklistItem.id == item_id,
+            TaskChecklistItem.task_id == task.id,
+        )
+    )
+    if item is None:
+        raise ApiError("CHECKLIST_ITEM_NOT_FOUND", "Checklist item was not found.", 404)
+    title = item.title
+    db.delete(item)
+    employee = db.get(Employee, context.device.employee_id)
+    record_task_activity(
+        db,
+        task,
+        "checklist_item_deleted",
+        employee=employee,
+        details={"item": title},
+    )
+    db.commit()
+    return success_response(data={"deleted": True})
+
+
 @router.post("/refresh-token")
 def refresh_token(
     context: Annotated[DeviceAuthContext, Depends(get_current_device)],
@@ -888,6 +930,17 @@ def paid_pause(
 ):
     return success_response(
         data=start_paid_pause(db, device=context.device, session_id=session_id, payload=payload)
+    )
+
+
+@router.post("/sessions/{session_id}/resume")
+def resume_from_paid_pause(
+    session_id: UUID,
+    context: Annotated[DeviceAuthContext, Depends(get_current_device)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    return success_response(
+        data=resume_paid_pause(db, device=context.device, session_id=session_id)
     )
 
 

@@ -274,10 +274,58 @@ def test_paid_break_is_not_idle_or_double_counted(attendance_context):
         now=datetime(2026, 7, 22, tzinfo=UTC),
     )
 
-    assert row.idle_seconds == 20 * 60
+    assert row.idle_seconds == 5 * 60
     assert row.paid_break_seconds == 30 * 60
     assert row.normal_worked_seconds == 7 * 3600 + 10 * 60
-    assert row.total_payable_seconds == 7 * 3600 + 40 * 60
+    assert row.total_payable_seconds == 7 * 3600 + 55 * 60
+    assert row.calculation_sources["raw_idle_seconds"] == 20 * 60
+    assert row.calculation_sources["paid_idle_grace_seconds"] == 15 * 60
+
+
+def test_manual_pause_does_not_consume_paid_idle_grace(attendance_context):
+    db, employee, device, _ = attendance_context
+    work_date = date(2026, 7, 21)
+    session = _session(
+        db,
+        employee,
+        device,
+        datetime(2026, 7, 21, 9, 0, tzinfo=UTC),
+        datetime(2026, 7, 21, 17, 0, tzinfo=UTC),
+    )
+    db.add_all(
+        [
+            ActivityEvent(
+                company_id=employee.company_id,
+                employee_id=employee.id,
+                device_id=device.id,
+                session_id=session.id,
+                event_type="manual_pause_started",
+                event_timestamp=datetime(2026, 7, 21, 10, 0, tzinfo=UTC),
+                idempotency_key="manual-pause-start",
+            ),
+            ActivityEvent(
+                company_id=employee.company_id,
+                employee_id=employee.id,
+                device_id=device.id,
+                session_id=session.id,
+                event_type="manual_pause_ended",
+                event_timestamp=datetime(2026, 7, 21, 10, 10, tzinfo=UTC),
+                idempotency_key="manual-pause-end",
+            ),
+        ]
+    )
+    db.commit()
+
+    row, _ = calculate_daily_attendance(
+        db,
+        employee=employee,
+        work_date=work_date,
+        now=datetime(2026, 7, 22, tzinfo=UTC),
+    )
+
+    assert row.idle_seconds == 10 * 60
+    assert row.calculation_sources["manual_pause_seconds"] == 10 * 60
+    assert row.calculation_sources["paid_idle_grace_seconds"] == 0
 
 
 def test_attendance_correction_preserves_raw_evidence_and_adjusts_payable_time(

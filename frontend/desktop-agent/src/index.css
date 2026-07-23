@@ -13,6 +13,31 @@
   -moz-osx-font-smoothing: grayscale;
 }
 
+/*
+ * The desktop shell should behave like a native application: clicking labels,
+ * cards, buttons, and navigation must not place a text caret or select text.
+ * Restore normal selection only for real editing controls and explicit
+ * copyable content.
+ */
+* {
+  -webkit-user-select: none;
+  user-select: none;
+  caret-color: transparent;
+}
+
+input:not([type="button"]):not([type="submit"]):not([type="reset"]):not(
+    [type="checkbox"]
+  ):not([type="radio"]),
+textarea,
+[contenteditable="true"],
+[data-text-selectable="true"],
+.select-text,
+.select-all {
+  -webkit-user-select: text;
+  user-select: text;
+  caret-color: auto;
+}
+
 body {
   margin: 0;
 }

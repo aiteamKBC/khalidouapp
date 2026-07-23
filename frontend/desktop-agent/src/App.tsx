@@ -496,6 +496,10 @@ function App() {
       window.khaliduo.onIdleAlert?.((alert) => {
         void showIdleAlert(alert);
       }) ?? (() => undefined);
+    const removeStatusChangedListener =
+      window.khaliduo.onStatusChanged?.((nextStatus) => {
+        if (mounted) setStatus(nextStatus);
+      }) ?? (() => undefined);
     const removeRequiredUpdateListener =
       window.khaliduo.onRequiredUpdate?.((update) => {
         void showRequiredUpdate(update.version);
@@ -505,6 +509,7 @@ function App() {
     return () => {
       mounted = false;
       removeIdleAlertListener();
+      removeStatusChangedListener();
       removeRequiredUpdateListener();
       window.clearInterval(interval);
     };
@@ -1142,6 +1147,38 @@ function App() {
     }
   }
 
+  async function handleDeleteChecklistItems(itemIds: string[]) {
+    const task = status.selectedTask;
+    if (!window.khaliduo || !task || itemIds.length === 0) return false;
+    const confirmation = await Swal.fire({
+      title: `Delete ${itemIds.length} checklist ${itemIds.length === 1 ? "item" : "items"}?`,
+      text: "This removes the selected checklist items permanently.",
+      icon: "warning",
+      showCancelButton: true,
+      confirmButtonText: "Delete selected",
+      cancelButtonText: "Cancel",
+      confirmButtonColor: "#dc2626",
+    });
+    if (!confirmation.isConfirmed) return false;
+
+    setTaskError(null);
+    setIsSubmittingTask(true);
+    try {
+      const result = await window.khaliduo.deleteTaskChecklistItems(
+        task.id,
+        itemIds,
+      );
+      if (!result.success) {
+        setTaskError(result.message ?? "Checklist deletion failed.");
+        return false;
+      }
+      if (result.status) setStatus(result.status);
+      return true;
+    } finally {
+      setIsSubmittingTask(false);
+    }
+  }
+
   async function handleTrackingToggle() {
     if (!window.khaliduo || !status.enrolled) return;
     setTrackingControlMessage(null);
@@ -1152,53 +1189,9 @@ function App() {
         status.trackingStatus === "paused" ||
         status.trackingStatus === "offline" ||
         status.trackingStatus === "error";
-      let pauseOptions:
-        { requestedMinutes?: number; reason?: string } | undefined;
-      if (!shouldResume) {
-        const remainingSeconds = status.paidPauseBalanceRemainingSeconds ?? 600;
-        if (remainingSeconds < 60) {
-          await Swal.fire({
-            title: "Daily pause limit reached",
-            text: "You have used your paid pause allowance for today. Please request extra pause time from HR or admin.",
-            icon: "info",
-            confirmButtonText: "OK",
-            confirmButtonColor: "#2b1b67",
-          });
-          return;
-        }
-        const remainingMinutes = Math.floor(remainingSeconds / 60);
-        const pauseChoice = await Swal.fire({
-          title: "Start paid pause",
-          text: `You have ${remainingMinutes} minute(s) available today.`,
-          input: "number",
-          inputValue: Math.min(5, remainingMinutes),
-          inputAttributes: {
-            min: "1",
-            max: String(remainingMinutes),
-            step: "1",
-          },
-          showCancelButton: true,
-          confirmButtonText: "Start pause",
-          cancelButtonText: "Cancel",
-          confirmButtonColor: "#d28a00",
-          inputValidator: (value) => {
-            const minutes = Number(value);
-            if (
-              !Number.isFinite(minutes) ||
-              minutes < 1 ||
-              minutes > remainingMinutes
-            ) {
-              return `Choose between 1 and ${remainingMinutes} minute(s).`;
-            }
-            return null;
-          },
-        });
-        if (!pauseChoice.isConfirmed) return;
-        pauseOptions = { requestedMinutes: Number(pauseChoice.value) };
-      }
       const result = shouldResume
         ? await window.khaliduo.resumeTracking()
-        : await window.khaliduo.pauseTracking(pauseOptions);
+        : await window.khaliduo.pauseTracking();
       if (!result.success) {
         setTrackingControlMessage(
           result.message ?? "The tracking state could not be changed.",
@@ -1209,7 +1202,7 @@ function App() {
         result.message ??
           (shouldResume
             ? "Tracking resumed. Screenshots follow the company schedule."
-            : "Paid pause started. Tracking and screenshots continue under company policy."),
+            : "Paused. Resume when you return; screenshot monitoring remains active."),
       );
       setStatus(await window.khaliduo.getAgentStatus());
     } finally {
@@ -1577,6 +1570,7 @@ function App() {
               onChecklistToggle={(itemId, completed) =>
                 void handleToggleChecklistItem(itemId, completed)
               }
+              onDeleteChecklistItems={handleDeleteChecklistItems}
               onChecklistTitleChange={setNewChecklistTitle}
               onAddChecklistItem={() => void handleAddChecklistItem()}
               onTaskCompletionNoteChange={setTaskCompletionNote}
@@ -2341,6 +2335,7 @@ function TasksView({
   onTaskChange,
   onTaskStage,
   onChecklistToggle,
+  onDeleteChecklistItems,
   onChecklistTitleChange,
   onAddChecklistItem,
   onTaskCompletionNoteChange,
@@ -2373,6 +2368,7 @@ function TasksView({
     note?: string,
   ) => void;
   onChecklistToggle: (itemId: string, completed: boolean) => void;
+  onDeleteChecklistItems: (itemIds: string[]) => Promise<boolean>;
   onChecklistTitleChange: (value: string) => void;
   onAddChecklistItem: () => void;
   onTaskCompletionNoteChange: (value: string) => void;
@@ -2386,7 +2382,13 @@ function TasksView({
   onCreateTask: () => void;
 }) {
   const selectedTask = status.selectedTask;
-  const checklist = selectedTask?.checklist ?? [];
+  const checklist = useMemo(
+    () => selectedTask?.checklist ?? [],
+    [selectedTask?.checklist],
+  );
+  const [selectedChecklistItemIds, setSelectedChecklistItemIds] = useState<
+    string[]
+  >([]);
   const completedChecklistCount = checklist.filter(
     (item) => item.completed,
   ).length;
@@ -2395,6 +2397,30 @@ function TasksView({
     !["ready_for_review", "completed", "rejected", "cancelled"].includes(
       selectedTask?.stage ?? "",
     );
+
+  useEffect(() => {
+    setSelectedChecklistItemIds([]);
+  }, [selectedTask?.id]);
+
+  useEffect(() => {
+    const availableIds = new Set(checklist.map((item) => item.id));
+    setSelectedChecklistItemIds((current) =>
+      current.filter((itemId) => availableIds.has(itemId)),
+    );
+  }, [checklist]);
+
+  function toggleChecklistSelection(itemId: string) {
+    setSelectedChecklistItemIds((current) =>
+      current.includes(itemId)
+        ? current.filter((selectedId) => selectedId !== itemId)
+        : [...current, itemId],
+    );
+  }
+
+  async function deleteSelectedChecklistItems() {
+    const deleted = await onDeleteChecklistItems(selectedChecklistItemIds);
+    if (deleted) setSelectedChecklistItemIds([]);
+  }
 
   return (
     <section className="k-page">
@@ -2554,22 +2580,53 @@ function TasksView({
               </div>
               {checklist.length > 0 ? (
                 <div className="k-checklist-items">
-                  {checklist.map((item) => (
-                    <label
-                      key={item.id}
-                      className={item.completed ? "done" : ""}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={item.completed}
-                        disabled={!canEditSelectedTask || isSubmittingTask}
-                        onChange={(event) =>
-                          onChecklistToggle(item.id, event.target.checked)
-                        }
-                      />
-                      <span>{item.title}</span>
-                    </label>
-                  ))}
+                  {checklist.map((item) => {
+                    const selected = selectedChecklistItemIds.includes(item.id);
+                    return (
+                      <div
+                        key={item.id}
+                        className={`k-checklist-item${item.completed ? " done" : ""}${selected ? " selected" : ""}`}
+                      >
+                        <label>
+                          <input
+                            type="checkbox"
+                            checked={item.completed}
+                            disabled={!canEditSelectedTask || isSubmittingTask}
+                            onChange={(event) =>
+                              onChecklistToggle(item.id, event.target.checked)
+                            }
+                          />
+                          <span>{item.title}</span>
+                        </label>
+                        {canEditSelectedTask && (
+                          <button
+                            type="button"
+                            className="k-checklist-select"
+                            aria-pressed={selected}
+                            disabled={isSubmittingTask}
+                            onClick={() => toggleChecklistSelection(item.id)}
+                          >
+                            {selected ? "Selected" : "Select"}
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
+                  {canEditSelectedTask &&
+                    selectedChecklistItemIds.length > 0 && (
+                      <div className="k-checklist-delete-row">
+                        <span>{selectedChecklistItemIds.length} selected</span>
+                        <button
+                          type="button"
+                          disabled={isSubmittingTask}
+                          onClick={() => void deleteSelectedChecklistItems()}
+                        >
+                          {isSubmittingTask
+                            ? "Deleting..."
+                            : `Delete selected (${selectedChecklistItemIds.length})`}
+                        </button>
+                      </div>
+                    )}
                 </div>
               ) : (
                 <p className="k-muted">

@@ -15,6 +15,8 @@ EVENT_STATES = {
     "session_started": "worked",
     "idle_started": "idle",
     "idle_ended": "worked",
+    "manual_pause_started": "idle",
+    "manual_pause_ended": "worked",
     "screen_locked": "locked",
     "screen_unlocked": "worked",
     "system_suspended": "sleeping",
@@ -126,6 +128,7 @@ def build_workday_timeline(
             continue
 
         state = "worked"
+        state_source = "activity"
         cursor = visible_start
         terminated = False
         context = session_context[session.id]
@@ -139,6 +142,11 @@ def build_workday_timeline(
                     terminated = True
                     break
                 state = EVENT_STATES.get(event.event_type, state)
+                state_source = (
+                    "manual_pause"
+                    if event.event_type == "manual_pause_started"
+                    else "activity"
+                )
                 continue
             if event_at >= visible_end:
                 break
@@ -146,6 +154,7 @@ def build_workday_timeline(
             intervals.append(
                 {
                     "type": state,
+                    "source": state_source,
                     "started_at": cursor,
                     "ended_at": event_at,
                     "session_id": session.id,
@@ -157,11 +166,17 @@ def build_workday_timeline(
                 terminated = True
                 break
             state = EVENT_STATES.get(event.event_type, state)
+            state_source = (
+                "manual_pause"
+                if event.event_type == "manual_pause_started"
+                else "activity"
+            )
 
         if not terminated and cursor < visible_end:
             intervals.append(
                 {
                     "type": state,
+                    "source": state_source,
                     "started_at": cursor,
                     "ended_at": visible_end,
                     "session_id": session.id,
@@ -210,6 +225,7 @@ def build_workday_timeline(
         if (
             previous
             and previous["type"] == interval["type"]
+            and previous["source"] == interval["source"]
             and previous["ended_at"] == interval["started_at"]
             and previous["task_name"] == interval["task_name"]
             and previous["project_name"] == interval["project_name"]
@@ -232,6 +248,7 @@ def build_workday_timeline(
         serialized_intervals.append(
             {
                 "type": interval["type"],
+                "source": interval["source"],
                 "started_at": interval["started_at"].isoformat(),
                 "ended_at": None if is_current else interval["ended_at"].isoformat(),
                 "duration_seconds": duration_seconds,

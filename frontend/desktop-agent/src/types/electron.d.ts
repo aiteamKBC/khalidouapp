@@ -219,6 +219,7 @@ declare global {
   interface Window {
     khaliduo?: {
       getAgentStatus: () => Promise<AgentStatus>;
+      onStatusChanged: (callback: (status: AgentStatus) => void) => () => void;
       enrollWithCredentials: (
         email: string,
         password: string,
@@ -277,6 +278,14 @@ declare global {
         taskId: string,
         itemId: string,
         completed: boolean,
+      ) => Promise<{
+        success: boolean;
+        message?: string;
+        status?: AgentStatus;
+      }>;
+      deleteTaskChecklistItems: (
+        taskId: string,
+        itemIds: string[],
       ) => Promise<{
         success: boolean;
         message?: string;

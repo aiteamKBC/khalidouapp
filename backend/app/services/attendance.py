@@ -18,6 +18,8 @@ from app.services.activity_timeline import build_workday_timeline, local_today
 from app.services.schedules import effective_schedule, overlap_seconds
 from app.services.work_profiles import get_or_create_work_profile
 
+DAILY_PAID_IDLE_GRACE_SECONDS = 15 * 60
+
 
 def _utc(value: datetime) -> datetime:
     return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
@@ -125,6 +127,7 @@ def calculate_daily_attendance(
     pre_shift_extra = 0
     post_shift_extra = 0
     eligible_idle = 0
+    manual_pause_idle = 0
     for item, interval_start, interval_end in intervals:
         if item["type"] == "worked":
             if start_at and end_at:
@@ -158,7 +161,10 @@ def calculate_daily_attendance(
                     scheduled_break["start_at"],
                     scheduled_break["end_at"],
                 )
-            eligible_idle += max(0, idle_in_shift)
+            idle_in_shift = max(0, idle_in_shift)
+            eligible_idle += idle_in_shift
+            if item.get("source") == "manual_pause":
+                manual_pause_idle += idle_in_shift
 
     adjustments = db.scalars(
         select(TimeAdjustmentRequest).where(
@@ -234,6 +240,7 @@ def calculate_daily_attendance(
         # Approved early-leave time is outside the employee's attendance
         # obligation and therefore cannot remain eligible idle time.
         eligible_idle = 0
+        manual_pause_idle = 0
         if start_at and effective_expected_end:
             for item, interval_start, interval_end in intervals:
                 if item["type"] != "idle":
@@ -251,12 +258,19 @@ def calculate_daily_attendance(
                         scheduled_break["start_at"],
                         min(scheduled_break["end_at"], effective_expected_end),
                     )
-                eligible_idle += max(0, idle_in_shift)
+                idle_in_shift = max(0, idle_in_shift)
+                eligible_idle += idle_in_shift
+                if item.get("source") == "manual_pause":
+                    manual_pause_idle += idle_in_shift
     early_leave = (
         max(0, int((effective_expected_end - last_at).total_seconds()))
         if last_at and effective_expected_end and not leave
         else 0
     )
+    raw_eligible_idle = eligible_idle
+    automatic_idle = max(0, raw_eligible_idle - manual_pause_idle)
+    paid_idle_grace = min(automatic_idle, DAILY_PAID_IDLE_GRACE_SECONDS)
+    deductible_idle = manual_pause_idle + max(0, automatic_idle - paid_idle_grace)
 
     overtime_rows = db.scalars(
         select(OvertimeRecord).where(
@@ -284,6 +298,7 @@ def calculate_daily_attendance(
             expected_seconds,
             normal_worked
             + paid_break
+            + paid_idle_grace
             + approved_manual
             + approved_early_leave_seconds,
         )
@@ -297,8 +312,8 @@ def calculate_daily_attendance(
     issues: list[dict] = []
     if deductible_late:
         issues.append({"code": "late", "seconds": deductible_late})
-    if eligible_idle:
-        issues.append({"code": "unexplained_idle", "seconds": eligible_idle})
+    if deductible_idle:
+        issues.append({"code": "unexplained_idle", "seconds": deductible_idle})
     if unapproved_overtime:
         issues.append({"code": "overtime_pending", "seconds": unapproved_overtime})
     if correction:
@@ -349,7 +364,7 @@ def calculate_daily_attendance(
         "normal_worked_seconds": normal_worked,
         "paid_break_seconds": paid_break,
         "unpaid_break_seconds": unpaid_break,
-        "idle_seconds": eligible_idle,
+        "idle_seconds": deductible_idle,
         "approved_manual_seconds": approved_manual,
         "pending_manual_seconds": pending_manual,
         "rejected_manual_seconds": rejected_manual,
@@ -375,6 +390,9 @@ def calculate_daily_attendance(
             "attendance_correction_id": str(correction.id) if correction else None,
             "attendance_adjustment_seconds": attendance_adjustment_seconds,
             "attendance_correction_reason": correction.reason if correction else None,
+            "raw_idle_seconds": raw_eligible_idle,
+            "manual_pause_seconds": manual_pause_idle,
+            "paid_idle_grace_seconds": paid_idle_grace,
             "raw_first_activity_at": raw_first_at.isoformat() if raw_first_at else None,
             "raw_last_activity_at": raw_last_at.isoformat() if raw_last_at else None,
         },

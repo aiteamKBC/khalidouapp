@@ -1265,28 +1265,88 @@ textarea:focus {
   gap: 8px;
 }
 
-.k-checklist-items label {
+.k-checklist-item {
   display: flex;
   align-items: center;
-  gap: 9px;
-  padding: 9px 10px;
+  gap: 8px;
+  padding: 6px 7px 6px 10px;
   border: 1px solid var(--border);
   border-radius: 10px;
   background: var(--surface);
+  transition:
+    border-color 140ms ease,
+    background 140ms ease;
+}
+
+.k-checklist-item.selected {
+  border-color: color-mix(in srgb, var(--red) 55%, var(--border));
+  background: color-mix(in srgb, var(--red) 7%, var(--surface));
+}
+
+.k-checklist-item label {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 9px;
   color: var(--text);
   font-size: 12.5px;
   font-weight: 800;
 }
 
-.k-checklist-items label.done span {
+.k-checklist-item.done label span {
   color: var(--text-3);
   text-decoration: line-through;
 }
 
-.k-checklist-items input {
+.k-checklist-item input {
   width: 16px;
   height: 16px;
+  flex: 0 0 auto;
   accent-color: var(--green);
+}
+
+.k-checklist-select {
+  flex: 0 0 auto;
+  padding: 6px 9px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.k-checklist-select[aria-pressed="true"] {
+  border-color: color-mix(in srgb, var(--red) 55%, var(--border));
+  color: var(--red);
+}
+
+.k-checklist-delete-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--red) 36%, var(--border));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--red) 7%, var(--surface));
+}
+
+.k-checklist-delete-row span {
+  color: var(--text-2);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.k-checklist-delete-row button {
+  padding: 7px 11px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--red);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 900;
 }
 
 .k-checklist-add {

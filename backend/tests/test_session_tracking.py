@@ -29,6 +29,7 @@ from app.services.session_tracking import (
     end_session,
     get_current_session,
     record_heartbeat,
+    resume_paid_pause,
     start_paid_pause,
     start_or_get_session,
 )
@@ -343,6 +344,59 @@ def test_paid_pause_rejects_requests_after_daily_balance_is_used(tracking_contex
         )
 
     assert error.value.code == "PAUSE_BALANCE_EXHAUSTED"
+
+
+def test_paid_pause_manual_resume_stays_resumed_and_uses_elapsed_time(tracking_context):
+    db, device = tracking_context
+    started = start_or_get_session(
+        db,
+        device,
+        SessionStartRequest(started_at=datetime.now(UTC) - timedelta(minutes=5)),
+    )
+    session_id = UUID(started["session"]["id"])
+    paused = start_paid_pause(
+        db,
+        device=device,
+        session_id=session_id,
+        payload=PauseStartRequest(requested_minutes=10, idempotency_key="manual-resume-test"),
+    )
+    pause_id = UUID(paused["pause"]["active_pause"]["id"])
+    pause = db.get(PauseSession, pause_id)
+    assert pause is not None
+    pause.started_at = datetime.now(UTC) - timedelta(minutes=2)
+    db.commit()
+
+    resumed = resume_paid_pause(db, device=device, session_id=session_id)
+    heartbeat = record_heartbeat(
+        db,
+        device=device,
+        session_id=session_id,
+        payload=HeartbeatRequest(
+            event_id=uuid4(),
+            timestamp=datetime.now(UTC),
+            status="active",
+            active_seconds=5 * 60,
+            idle_seconds=0,
+            agent_version="1.0.0",
+        ),
+    )
+    db.refresh(pause)
+
+    assert resumed["pause"]["active_pause"] is None
+    assert heartbeat["pause"]["active_pause"] is None
+    assert 119 <= pause.used_seconds <= 121
+    assert resumed["pause"]["used_seconds"] == pause.used_seconds
+    assert (
+        db.scalar(
+            select(func.count())
+            .select_from(ActivityEvent)
+            .where(
+                ActivityEvent.session_id == session_id,
+                ActivityEvent.event_type == "paid_pause_resumed",
+            )
+        )
+        == 1
+    )
 
 
 def test_heartbeat_splits_normal_and_overtime_when_employee_is_eligible(tracking_context):

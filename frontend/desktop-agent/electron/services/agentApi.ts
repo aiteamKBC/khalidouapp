@@ -228,6 +228,7 @@ export type AgentWorkdayTimeline = {
   sleeping_seconds: number;
   intervals: Array<{
     type: "worked" | "idle" | "locked" | "sleeping";
+    source?: "activity" | "manual_pause";
     started_at: string;
     ended_at: string | null;
     duration_seconds: number;
@@ -481,6 +482,17 @@ export async function updateAgentTaskChecklistItem(
   return response.data.data;
 }
 
+export async function deleteAgentTaskChecklistItem(
+  taskId: string,
+  itemId: string,
+) {
+  const response = await axios.delete<ApiSuccess<{ deleted: boolean }>>(
+    `${getApiBaseUrl()}/agent/tasks/${taskId}/checklist/${itemId}`,
+    { headers: getAuthHeaders() },
+  );
+  return response.data.data;
+}
+
 export async function startSession() {
   const response = await axios.post<
     ApiSuccess<SessionPayload & { created: boolean }>
@@ -529,6 +541,17 @@ export async function startPaidPause(options: {
       reason: options.reason ?? null,
       idempotency_key: options.idempotencyKey ?? randomUUID(),
     },
+    { headers: getAuthHeaders() },
+  );
+  return response.data.data;
+}
+
+export async function resumePaidPause(sessionId: string) {
+  const response = await axios.post<
+    ApiSuccess<SessionPayload & { pause: PauseState }>
+  >(
+    `${getApiBaseUrl()}/agent/sessions/${sessionId}/resume`,
+    {},
     { headers: getAuthHeaders() },
   );
   return response.data.data;

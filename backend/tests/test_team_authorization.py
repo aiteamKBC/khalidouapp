@@ -1144,6 +1144,52 @@ def test_employee_picker_only_allows_tasks_assigned_to_employee(team_client):
     assert forbidden_response.status_code == 403
 
 
+def test_employee_can_delete_selected_items_from_own_task_checklist(team_client):
+    client, data = team_client
+    task_id = add_fixture_task(
+        data,
+        name="Checklist deletion task",
+        stage="assigned",
+        assignee_key="employee_a",
+    )
+
+    first_response = client.post(
+        f"/api/v1/agent/tasks/{task_id}/checklist",
+        headers=data["device_headers"],
+        json={"title": "Delete this item"},
+    )
+    second_response = client.post(
+        f"/api/v1/agent/tasks/{task_id}/checklist",
+        headers=data["device_headers"],
+        json={"title": "Keep this item"},
+    )
+
+    assert first_response.status_code == 200
+    assert second_response.status_code == 200
+    first_item = next(
+        item
+        for item in first_response.json()["data"]["checklist"]
+        if item["title"] == "Delete this item"
+    )
+
+    deleted_response = client.delete(
+        f"/api/v1/agent/tasks/{task_id}/checklist/{first_item['id']}",
+        headers=data["device_headers"],
+    )
+    listed_response = client.get(
+        "/api/v1/agent/tasks",
+        headers=data["device_headers"],
+    )
+
+    assert deleted_response.status_code == 200
+    assert deleted_response.json()["data"]["deleted"] is True
+    assert listed_response.status_code == 200
+    task = next(row for row in listed_response.json()["data"] if row["id"] == task_id)
+    titles = {item["title"] for item in task["checklist"]}
+    assert "Delete this item" not in titles
+    assert "Keep this item" in titles
+
+
 def test_employee_task_requires_request_approval_then_non_self_completion_review(team_client):
     client, data = team_client
     created = client.post(
