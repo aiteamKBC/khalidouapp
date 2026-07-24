@@ -1402,10 +1402,18 @@ function App() {
         <span className="k-spacer" />
         {status.screenshotMonitoringEnabled && (
           <span
-            className={`k-capture-indicator ${status.screenshotCaptureActive ? "is-active" : "is-paused"}`}
-            title={
+            className={`k-capture-indicator ${
               status.screenshotCaptureActive
-                ? "Workplace screenshots are active"
+                ? status.connectionStatus === "online"
+                  ? "is-active"
+                  : "is-queued"
+                : "is-paused"
+            }`}
+            title={
+              status.screenshotCaptureActive && status.connectionStatus === "offline"
+                ? "Screenshots are captured locally and queued until the API connection returns"
+                : status.screenshotCaptureActive
+                  ? "Workplace screenshots are active and syncing"
                 : status.powerSource === "battery"
                   ? "Screenshots pause while this device is on battery"
                   : "Screenshot monitoring is temporarily paused"
@@ -1413,7 +1421,9 @@ function App() {
           >
             <span aria-hidden="true">●</span>
             {status.screenshotCaptureActive
-              ? "Screenshots active"
+              ? status.connectionStatus === "online"
+                ? "Screenshots active"
+                : "Screenshots queued"
               : "Screenshots paused"}
           </span>
         )}
@@ -1421,7 +1431,11 @@ function App() {
           type="button"
           className={`k-sync k-sync-${status.connectionStatus}`}
           onClick={() => void refreshStatusAfterEnrollment()}
-          title="Refresh status"
+          title={
+            status.connectionStatus === "online"
+              ? "API connection is healthy"
+              : "API sync is offline; click to retry. Local tracking and queued screenshots are preserved."
+          }
         >
           {status.connectionStatus === "online" ? "Synced" : "Offline"}
         </button>

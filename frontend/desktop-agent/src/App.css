@@ -2295,6 +2295,11 @@ textarea:focus {
   background: #ecfdf3;
 }
 
+.k-capture-indicator.is-queued {
+  color: #b45309;
+  background: #fffbeb;
+}
+
 .k-capture-indicator.is-paused {
   color: #a16207;
   background: #fffbeb;
@@ -2303,6 +2308,11 @@ textarea:focus {
 [data-theme="dark"] .k-capture-indicator.is-active {
   color: #86efac;
   background: rgb(20 83 45 / 35%);
+}
+
+[data-theme="dark"] .k-capture-indicator.is-queued {
+  color: #fcd34d;
+  background: rgb(113 63 18 / 35%);
 }
 
 [data-theme="dark"] .k-capture-indicator.is-paused {
