@@ -19,6 +19,7 @@ from app.core.exceptions import ApiError
 from app.models import (
     AdminUser,
     AttendanceCorrection,
+    DailyAttendance,
     Employee,
     PayrollRun,
     Screenshot,
@@ -437,17 +438,39 @@ def employee_attendance_range(
         local_day = captured_at.astimezone(timezone).date()
         screenshot_days[local_day] = screenshot_days.get(local_day, 0) + 1
 
+    now = datetime.now(UTC)
+    employee_today = now.astimezone(timezone).date()
+    # A monthly ledger is historical evidence, not a forward schedule. Rebuilding
+    # every future date on each request made the current month progressively
+    # slower and produced rows that could not contain attendance yet.
+    ledger_end_date = min(end_date, employee_today)
+    existing_by_day = {
+        row.work_date: row
+        for row in db.scalars(
+            select(DailyAttendance).where(
+                DailyAttendance.company_id == current_admin.company_id,
+                DailyAttendance.employee_id == employee.id,
+                DailyAttendance.work_date >= start_date,
+                DailyAttendance.work_date <= ledger_end_date,
+            )
+        ).all()
+    }
+
     rows: list[dict] = []
     cursor = start_date
-    now = datetime.now(UTC)
-    while cursor <= end_date:
-        attendance, _ = cached_daily_attendance(
-            db,
-            employee=employee,
-            work_date=cursor,
-            now=now,
-            max_age_seconds=20,
-        )
+    while cursor <= ledger_end_date:
+        attendance = existing_by_day.get(cursor)
+        # Closed days are immutable until an approval, correction, or schedule
+        # workflow explicitly refreshes them. The live day is the only row that
+        # needs recalculation here.
+        if attendance is None or cursor == employee_today:
+            attendance, _ = cached_daily_attendance(
+                db,
+                employee=employee,
+                work_date=cursor,
+                now=now,
+                max_age_seconds=5,
+            )
         item = serialize_daily_attendance(attendance)
         item["screenshot_count"] = screenshot_days.get(cursor, 0)
         rows.append(item)

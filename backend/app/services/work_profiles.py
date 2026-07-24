@@ -8,6 +8,8 @@ from sqlalchemy.orm import Session
 from app.core.exceptions import ApiError
 from app.models import Employee, EmployeeWorkProfile, WorkScheduleOverride, WorkSession
 
+STANDARD_MONTH_DAYS = 30
+
 REQUIRED_PROFILE_FIELDS = (
     "shift_start",
     "shift_end",
@@ -258,6 +260,8 @@ def serialize_work_profile(profile: EmployeeWorkProfile) -> dict:
         else None,
         "salary_currency": profile.salary_currency,
         "salary_type": profile.salary_type,
+        "bank_account_number": profile.bank_account_number,
+        "bank_employee_id": profile.bank_employee_id,
         "completeness": profile_completeness(profile),
         "created_at": profile.created_at.isoformat(),
         "updated_at": profile.updated_at.isoformat(),
@@ -301,7 +305,9 @@ def payroll_preview(
     unpaid_break_seconds = required_days * break_minutes["unpaid_break"] * 60
     overtime_seconds = max(0, active_seconds - required_seconds) if profile.overtime_enabled else 0
     configured_salary = Decimal(profile.salary_amount or 0)
-    monthly_paid_hours = Decimal(required_daily * 30) / Decimal(60)
+    # Keep salary/hourly conversion on a fixed 30-day payroll month. Calendar
+    # months and custom payroll ranges must not change the monthly salary basis.
+    monthly_paid_hours = Decimal(required_daily * STANDARD_MONTH_DAYS) / Decimal(60)
     hourly_rate = (
         configured_salary
         if profile.salary_type == "hourly"

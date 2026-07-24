@@ -25,7 +25,7 @@ from app.models import (
     WorkSession,
 )
 from app.services.attendance import calculate_daily_attendance
-from app.services.work_profiles import get_or_create_work_profile
+from app.services.work_profiles import STANDARD_MONTH_DAYS, get_or_create_work_profile
 
 
 MONEY = Decimal("0.01")
@@ -484,7 +484,11 @@ def calculate_employee_metrics(
         canonical_total_payable_seconds = canonical_regular_seconds + approved_overtime
         canonical_worked_days = len(sessions_by_day)
     configured = decimal(profile.salary_amount)
-    monthly_paid_hours = Decimal(int(profile.required_daily_minutes or 480) * 30) / Decimal(60)
+    # Salary/hourly conversion always uses a 30-day payroll month. A 31-day
+    # calendar month or a 31-day 26→25 cycle must not increase the salary basis.
+    monthly_paid_hours = (
+        Decimal(int(profile.required_daily_minutes or 480) * STANDARD_MONTH_DAYS) / Decimal(60)
+    )
     hourly_rate = (
         configured
         if profile.salary_type == "hourly"

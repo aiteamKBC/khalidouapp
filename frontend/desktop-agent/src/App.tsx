@@ -420,6 +420,7 @@ function App() {
   const updateStatusRef = useRef(status.updateStatus);
   updateStatusRef.current = status.updateStatus;
   const screenshotsLoadedForEnrollment = useRef(false);
+  const lastLoadedScreenshotAt = useRef<string | null>(null);
   const isDesktopRuntime = Boolean(window.khaliduo);
   const desktopRuntimeMessage =
     "Open Khaliduo desktop app to enroll this device. The browser preview cannot access the secure desktop identity store.";
@@ -1244,10 +1245,17 @@ function App() {
   }, [isLoadingScreenshots]);
 
   useEffect(() => {
-    if (!status.enrolled || screenshotsLoadedForEnrollment.current) return;
+    if (!status.enrolled) return;
+    if (
+      screenshotsLoadedForEnrollment.current &&
+      status.lastScreenshotAt === lastLoadedScreenshotAt.current
+    ) {
+      return;
+    }
     screenshotsLoadedForEnrollment.current = true;
+    lastLoadedScreenshotAt.current = status.lastScreenshotAt;
     void handleLoadRecentScreenshots();
-  }, [handleLoadRecentScreenshots, status.enrolled]);
+  }, [handleLoadRecentScreenshots, status.enrolled, status.lastScreenshotAt]);
 
   async function handleLogout() {
     if (!window.khaliduo || isLoggingOut) return;
@@ -2244,6 +2252,8 @@ function Timeline({
     idle: "Idle",
     locked: "Locked",
     sleeping: "Sleeping",
+    extra: "Overtime",
+    leave: "Leave",
   } as const;
   const idleOptionsByKey = new Map(
     idleRequestOptions.map((option) => [option.key, option]),
@@ -2252,15 +2262,30 @@ function Timeline({
     <section className="k-side-section">
       <strong>Today's timeline</strong>
       <div className="k-timeline">
+        {timeline.intervals.length === 0 && timeline.approved_leave ? (
+          <div className="k-line-leave">
+            <i className="k-timeline-icon">
+              <KIcon name="idle" />
+            </i>
+            <span>Today</span>
+            <b>Leave</b>
+            <small>Approved</small>
+          </div>
+        ) : null}
         {timeline.intervals.slice(-6).map((interval, index) => {
+          const displayType = timeline.approved_leave
+            ? interval.type === "worked"
+              ? "extra"
+              : "leave"
+            : interval.type;
           const idleOption =
-            interval.type === "idle"
+            !timeline.approved_leave && interval.type === "idle"
               ? idleOptionsByKey.get(idleRequestKey(interval))
               : undefined;
           return (
             <div
               key={`${interval.session_id}-${interval.started_at}-${index}`}
-              className={`k-line-${interval.type}`}
+              className={`k-line-${displayType}`}
             >
               <i className="k-timeline-icon">
                 <KIcon name={interval.type} />
@@ -2273,15 +2298,15 @@ function Timeline({
               </span>
               <b
                 title={
-                  interval.type === "worked"
+                  displayType === "worked" || displayType === "extra"
                     ? (interval.task_name ??
                       interval.project_name ??
-                      labels[interval.type])
-                    : labels[interval.type]
+                      labels[displayType])
+                    : labels[displayType]
                 }
               >
-                {labels[interval.type]}
-                {interval.type === "worked" &&
+                {labels[displayType]}
+                {(displayType === "worked" || displayType === "extra") &&
                 (interval.task_name || interval.project_name)
                   ? ` · ${interval.task_name ?? interval.project_name}`
                   : ""}

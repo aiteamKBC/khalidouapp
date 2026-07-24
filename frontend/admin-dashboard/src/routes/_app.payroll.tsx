@@ -1066,6 +1066,8 @@ function EmployeeProfileDialog({
         salaryAmount: profile.data.salaryAmount ?? 0,
         salaryCurrency: profile.data.salaryCurrency ?? "EGP",
         salaryType: profile.data.salaryType,
+        bankAccountNumber: profile.data.bankAccountNumber ?? "",
+        bankEmployeeId: profile.data.bankEmployeeId ?? "",
       });
   }, [profile.data]);
   const save = useMutation({
@@ -1138,6 +1140,34 @@ function EmployeeProfileDialog({
               </SelectContent>
             </Select>
           </Field>
+          <Field label="Bank account number (11 or 13 digits)">
+            <Input
+              type="text"
+              inputMode="numeric"
+              maxLength={13}
+              placeholder="Required for Visa export"
+              value={form.bankAccountNumber ?? ""}
+              onChange={(event) =>
+                setForm({ ...form, bankAccountNumber: event.target.value.replace(/\D/g, "") })
+              }
+            />
+          </Field>
+          <Field label="Bank employee ID (10 digits)">
+            <Input
+              type="text"
+              inputMode="numeric"
+              maxLength={10}
+              placeholder="Required for Visa export"
+              value={form.bankEmployeeId ?? ""}
+              onChange={(event) =>
+                setForm({ ...form, bankEmployeeId: event.target.value.replace(/\D/g, "") })
+              }
+            />
+          </Field>
+          <p className="text-xs text-muted-foreground sm:col-span-2">
+            These two protected fields are used only for the Visa bank payroll upload. They are
+            encrypted at rest and visible to payroll-authorized administrators.
+          </p>
           <Field label="Late grace minutes">
             <Input
               type="number"
@@ -1711,8 +1741,9 @@ function PayrollCycleDialog({
         <DialogHeader>
           <DialogTitle>Payroll cycle settings</DialogTitle>
           <DialogDescription>
-            This company default is used by payroll totals, exceptions, and exports. Short months
-            use their last valid day.
+            Default is day 26 to day 25. Salary conversion always uses a fixed 30-day month. A
+            31-day calendar period does not add another paid day. Custom ranges remain available in
+            the payroll filters.
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-4 sm:grid-cols-2">
@@ -1765,11 +1796,15 @@ function PayrollCycleDialog({
 
 function ExportMenu({ filters }: { filters: PayrollFilters }) {
   const [pending, setPending] = useState(false);
-  const run = async (format: "csv" | "excel" | "pdf") => {
+  const run = async (format: "csv" | "excel" | "pdf" | "visa") => {
     setPending(true);
     try {
       await downloadPayroll(filters, format);
-      toast.success(`${format.toUpperCase()} export downloaded`);
+      toast.success(
+        format === "visa"
+          ? "Visa bank file downloaded"
+          : `${format.toUpperCase()} export downloaded`,
+      );
     } catch (error) {
       showError(error);
     } finally {
@@ -1779,9 +1814,9 @@ function ExportMenu({ filters }: { filters: PayrollFilters }) {
   return (
     <Select
       disabled={pending}
-      onValueChange={(value) => void run(value as "csv" | "excel" | "pdf")}
+      onValueChange={(value) => void run(value as "csv" | "excel" | "pdf" | "visa")}
     >
-      <SelectTrigger className="w-[150px]">
+      <SelectTrigger className="w-[190px]">
         <Download className="mr-2 h-4 w-4" />
         <SelectValue placeholder={pending ? "Exporting…" : "Export"} />
       </SelectTrigger>
@@ -1789,6 +1824,7 @@ function ExportMenu({ filters }: { filters: PayrollFilters }) {
         <SelectItem value="excel">Excel</SelectItem>
         <SelectItem value="csv">CSV</SelectItem>
         <SelectItem value="pdf">PDF</SelectItem>
+        <SelectItem value="visa">Visa bank file</SelectItem>
       </SelectContent>
     </Select>
   );

@@ -130,6 +130,12 @@ def calculate_daily_attendance(
     manual_pause_idle = 0
     for item, interval_start, interval_end in intervals:
         if item["type"] == "worked":
+            # Work performed on an approved leave day is extra/overtime work.
+            # It must never consume the paid leave entitlement or appear as
+            # normal shift time, even when it falls inside the configured shift.
+            if item.get("work_category") == "extra":
+                post_shift_extra += int((interval_end - interval_start).total_seconds())
+                continue
             if start_at and end_at:
                 worked_in_shift = overlap_seconds(interval_start, interval_end, start_at, end_at)
                 # Breaks are reported separately. Active input during a scheduled break

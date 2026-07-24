@@ -373,6 +373,41 @@ def test_attendance_detail_enforces_team_and_company_isolation(team_client):
     assert other_company.status_code in {403, 404}
 
 
+def test_attendance_range_stops_at_employee_today(team_client):
+    client, data = team_client
+    today = local_today("UTC")
+    start_date = today - timedelta(days=1)
+    end_date = today + timedelta(days=7)
+
+    response = client.get(
+        f"/api/v1/attendance/employee/{data['employee_a'].id}",
+        params={
+            "start_date": start_date.isoformat(),
+            "end_date": end_date.isoformat(),
+        },
+        headers=data["general_headers"],
+    )
+
+    assert response.status_code == 200
+    rows = response.json()["data"]["rows"]
+    assert [row["date"] for row in rows] == [
+        start_date.isoformat(),
+        today.isoformat(),
+    ]
+
+    db: Session = data["session_factory"]()
+    try:
+        future_rows = db.scalars(
+            select(DailyAttendance).where(
+                DailyAttendance.employee_id == data["employee_a"].id,
+                DailyAttendance.work_date > today,
+            )
+        ).all()
+        assert future_rows == []
+    finally:
+        db.close()
+
+
 def test_team_lead_manages_owned_team_schedule_without_salary_access(team_client):
     client, data = team_client
 
@@ -1757,6 +1792,40 @@ def test_payroll_cycle_settings_custom_range_and_xlsx_export_are_consistent(team
     assert exported.content.startswith(b"PK")
     assert 'filename="payroll-2026-07.xlsx"' in exported.headers["content-disposition"]
     assert any(row["entity_type"] == "payroll_cycle_settings" for row in audit.json()["data"])
+
+
+def test_visa_bank_export_matches_upload_template_and_requires_bank_details(team_client):
+    client, data = team_client
+    missing = client.get(
+        "/api/v1/payroll/export?month=2026-07&start_date=2026-07-01&end_date=2026-07-03&format=visa",
+        headers=data["general_headers"],
+    )
+    assert missing.status_code == 409
+    assert missing.json()["error"]["code"] == "BANK_DETAILS_REQUIRED"
+
+    for index, employee in enumerate(
+        (data["employee_a"], data["employee_b"], data["shared_employee"]), start=1
+    ):
+        response = client.patch(
+            f"/api/v1/employees/{employee.id}/work-profile",
+            headers=data["general_headers"],
+            json={
+                "bank_account_number": f"1234567890{index}",
+                "bank_employee_id": f"000000000{index}",
+            },
+        )
+        assert response.status_code == 200
+
+    exported = client.get(
+        "/api/v1/payroll/export?month=2026-07&start_date=2026-07-01&end_date=2026-07-03&format=visa",
+        headers=data["general_headers"],
+    )
+    assert exported.status_code == 200
+    assert exported.headers["content-type"].startswith("application/vnd.ms-excel")
+    assert 'filename="visa-payroll-2026-07.xls"' in exported.headers["content-disposition"]
+    assert b"Beneficiary Account No." in exported.content
+    assert b"Employee ID (Mandatory Field)" in exported.content
+    assert b"12345678901" in exported.content
 
 
 def test_employee_time_adjustment_request_can_be_approved_and_added_to_timesheet(team_client):

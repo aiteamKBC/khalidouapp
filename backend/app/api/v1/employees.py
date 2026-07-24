@@ -77,6 +77,8 @@ FINANCIAL_WORK_PROFILE_FIELDS = {
     "salary_amount",
     "salary_currency",
     "salary_type",
+    "bank_account_number",
+    "bank_employee_id",
 }
 FINANCIAL_WORK_PROFILE_UPDATE_FIELDS = FINANCIAL_WORK_PROFILE_FIELDS | {
     "overtime_enabled",

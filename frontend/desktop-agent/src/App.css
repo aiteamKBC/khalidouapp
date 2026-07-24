@@ -1138,6 +1138,15 @@ textarea:focus {
   background: var(--green-weak);
 }
 
+.k-line-extra b {
+  color: var(--orange, #f97316);
+}
+
+.k-line-extra .k-timeline-icon {
+  color: var(--orange, #f97316);
+  background: color-mix(in srgb, var(--orange, #f97316) 14%, transparent);
+}
+
 .k-line-idle b {
   color: var(--amber);
 }
@@ -1145,6 +1154,15 @@ textarea:focus {
 .k-line-idle .k-timeline-icon {
   color: var(--amber);
   background: var(--amber-weak);
+}
+
+.k-line-leave b {
+  color: var(--blue, #38bdf8);
+}
+
+.k-line-leave .k-timeline-icon {
+  color: var(--blue, #38bdf8);
+  background: color-mix(in srgb, var(--blue, #38bdf8) 14%, transparent);
 }
 
 .k-line-locked .k-timeline-icon,

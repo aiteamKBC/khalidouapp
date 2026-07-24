@@ -1,15 +1,23 @@
-import { Activity, Coffee, LockKeyhole, Moon } from "lucide-react";
+import { Activity, CalendarDays, Coffee, LockKeyhole, Moon } from "lucide-react";
 
 import type { WorkdayIntervalType, WorkdayTimeline as WorkdayTimelineData } from "@/types";
 
+type DisplayIntervalType = WorkdayIntervalType | "extra" | "leave";
+
 const intervalStyles: Record<
-  WorkdayIntervalType,
+  DisplayIntervalType,
   { label: string; bar: string; badge: string; icon: typeof Activity }
 > = {
   worked: {
     label: "Worked",
     bar: "bg-emerald-500",
     badge: "bg-emerald-500/10 text-emerald-700",
+    icon: Activity,
+  },
+  extra: {
+    label: "Overtime",
+    bar: "bg-orange-500",
+    badge: "bg-orange-500/15 text-orange-800",
     icon: Activity,
   },
   idle: {
@@ -29,6 +37,12 @@ const intervalStyles: Record<
     bar: "bg-indigo-400",
     badge: "bg-indigo-500/10 text-indigo-700",
     icon: Moon,
+  },
+  leave: {
+    label: "Leave",
+    bar: "bg-sky-400",
+    badge: "bg-sky-500/10 text-sky-700",
+    icon: CalendarDays,
   },
 };
 
@@ -50,6 +64,13 @@ function formatDuration(totalSeconds: number) {
 
 export function WorkdayTimeline({ timeline }: { timeline?: WorkdayTimelineData }) {
   if (!timeline || timeline.intervals.length === 0) {
+    if (timeline?.approvedLeave) {
+      return (
+        <div className="rounded-md border border-sky-200 bg-sky-50 px-3 py-3 text-sm text-sky-800">
+          Approved leave · no tracked activity for this day.
+        </div>
+      );
+    }
     return (
       <p className="py-8 text-center text-sm text-muted-foreground">
         No tracked activity for this day.
@@ -82,26 +103,43 @@ export function WorkdayTimeline({ timeline }: { timeline?: WorkdayTimelineData }
           }
         />
         <Metric label="Worked" value={formatDuration(timeline.workedSeconds)} />
-        <Metric label="Idle" value={formatDuration(timeline.idleSeconds)} />
+        <Metric
+          label={timeline.approvedLeave ? "Leave" : "Idle"}
+          value={formatDuration(
+            timeline.approvedLeave ? timeline.leaveSeconds : timeline.idleSeconds,
+          )}
+        />
       </div>
 
       <div
         className="flex h-3 overflow-hidden rounded-sm bg-muted"
         aria-label="Workday activity bar"
       >
-        {timeline.intervals.map((interval, index) => (
-          <span
-            key={`${interval.sessionId}-${interval.startedAt}-${index}`}
-            className={intervalStyles[interval.type].bar}
-            style={{ width: `${(interval.durationSeconds / visibleSeconds) * 100}%` }}
-            title={`${intervalStyles[interval.type].label}: ${formatDuration(interval.durationSeconds)}`}
-          />
-        ))}
+        {timeline.intervals.map((interval, index) => {
+          const displayType: DisplayIntervalType = timeline.approvedLeave
+            ? interval.type === "worked"
+              ? "extra"
+              : "leave"
+            : interval.type;
+          return (
+            <span
+              key={`${interval.sessionId}-${interval.startedAt}-${index}`}
+              className={intervalStyles[displayType].bar}
+              style={{ width: `${(interval.durationSeconds / visibleSeconds) * 100}%` }}
+              title={`${intervalStyles[displayType].label}: ${formatDuration(interval.durationSeconds)}`}
+            />
+          );
+        })}
       </div>
 
       <div className="divide-y rounded-md border">
         {timeline.intervals.map((interval, index) => {
-          const style = intervalStyles[interval.type];
+          const displayType: DisplayIntervalType = timeline.approvedLeave
+            ? interval.type === "worked"
+              ? "extra"
+              : "leave"
+            : interval.type;
+          const style = intervalStyles[displayType];
           const Icon = style.icon;
           return (
             <div
@@ -119,7 +157,9 @@ export function WorkdayTimeline({ timeline }: { timeline?: WorkdayTimelineData }
                 {style.label}
               </span>
               <span className="min-w-0 truncate text-muted-foreground">
-                {interval.taskName ?? interval.projectName ?? "-"}
+                {displayType === "worked" || displayType === "extra"
+                  ? (interval.taskName ?? interval.projectName ?? "-")
+                  : "-"}
               </span>
               <strong className="text-right text-xs">
                 {formatDuration(interval.durationSeconds)}

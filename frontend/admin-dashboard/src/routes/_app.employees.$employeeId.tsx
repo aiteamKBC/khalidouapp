@@ -182,6 +182,10 @@ function EmployeeDetailPage() {
     queryFn: () =>
       getEmployeeAttendanceRange(employeeId, attendanceBounds.start, attendanceBounds.end),
     enabled: activeTab === "attendance",
+    staleTime: 30_000,
+    placeholderData: (previous) => previous,
+    refetchOnWindowFocus: false,
+    refetchInterval: activeTab === "attendance" ? 10_000 : false,
   });
   const attendanceDetail = useQuery({
     queryKey: ["employee-attendance-day", employeeId, selectedAttendanceDay],

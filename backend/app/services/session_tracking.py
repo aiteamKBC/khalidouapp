@@ -231,7 +231,7 @@ def sync_session_time_buckets(
         if interval_end <= interval_start:
             continue
         interval_seconds = int((interval_end - interval_start).total_seconds())
-        normal_seconds = (
+        normal_seconds = 0 if interval.get("work_category") == "extra" else (
             overlap_seconds(interval_start, interval_end, shift_start, shift_end)
             if shift_start and shift_end
             else 0

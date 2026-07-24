@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
-from app.models import ActivityEvent, Project, Task, TrackingSettings, WorkSession
+from app.models import ActivityEvent, LeaveRequest, Project, Task, TrackingSettings, WorkSession
 
 
 EVENT_STATES = {
@@ -65,6 +65,15 @@ def build_workday_timeline(
     zone = _timezone(timezone_name)
     selected_date = target_date or now_utc.astimezone(zone).date()
     day_start, day_end, zone = _day_bounds(selected_date, timezone_name)
+    approved_leave = db.scalar(
+        select(LeaveRequest.id).where(
+            LeaveRequest.company_id == company_id,
+            LeaveRequest.employee_id == employee_id,
+            LeaveRequest.status == "approved",
+            LeaveRequest.start_date <= selected_date,
+            LeaveRequest.end_date >= selected_date,
+        )
+    ) is not None
 
     rows = db.execute(
         select(WorkSession, Project.name, Task.name)
@@ -256,9 +265,15 @@ def build_workday_timeline(
                 "project_name": interval["project_name"],
                 "task_name": interval["task_name"],
                 "is_current": is_current,
+                "work_category": (
+                    "extra" if approved_leave and interval["type"] == "worked" else None
+                ),
             }
         )
 
+    leave_seconds = (
+        totals["idle"] + totals["locked"] + totals["sleeping"] if approved_leave else 0
+    )
     first_started_at = min((_utc(session.started_at) for session in sessions), default=None)
     last_visible_end = max((interval["ended_at"] for interval in merged), default=None)
     return {
@@ -275,8 +290,10 @@ def build_workday_timeline(
         "last_activity_at": last_visible_end.isoformat() if last_visible_end else None,
         "is_running": has_open_session,
         "worked_seconds": totals["worked"],
-        "idle_seconds": totals["idle"],
+        "idle_seconds": 0 if approved_leave else totals["idle"],
         "locked_seconds": totals["locked"],
         "sleeping_seconds": totals["sleeping"],
+        "approved_leave": approved_leave,
+        "leave_seconds": leave_seconds,
         "intervals": serialized_intervals,
     }

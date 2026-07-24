@@ -11,6 +11,8 @@ export type BackendWorkdayTimeline = {
   idle_seconds: number;
   locked_seconds: number;
   sleeping_seconds: number;
+  approved_leave?: boolean;
+  leave_seconds?: number;
   intervals: Array<{
     type: "worked" | "idle" | "locked" | "sleeping";
     started_at: string;
@@ -20,6 +22,7 @@ export type BackendWorkdayTimeline = {
     project_name?: string | null;
     task_name?: string | null;
     is_current: boolean;
+    work_category?: "extra" | null;
   }>;
 };
 
@@ -35,6 +38,8 @@ export function mapWorkdayTimeline(row: BackendWorkdayTimeline): WorkdayTimeline
     idleSeconds: row.idle_seconds,
     lockedSeconds: row.locked_seconds,
     sleepingSeconds: row.sleeping_seconds,
+    approvedLeave: row.approved_leave ?? false,
+    leaveSeconds: row.leave_seconds ?? 0,
     intervals: row.intervals.map((interval) => ({
       type: interval.type,
       startedAt: interval.started_at,
@@ -44,6 +49,7 @@ export function mapWorkdayTimeline(row: BackendWorkdayTimeline): WorkdayTimeline
       projectName: interval.project_name ?? undefined,
       taskName: interval.task_name ?? undefined,
       isCurrent: interval.is_current,
+      workCategory: interval.work_category ?? null,
     })),
   };
 }

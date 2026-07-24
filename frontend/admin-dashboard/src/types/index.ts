@@ -180,6 +180,7 @@ export interface WorkdayInterval {
   projectName?: string;
   taskName?: string;
   isCurrent: boolean;
+  workCategory?: "extra" | null;
 }
 
 export interface WorkdayTimeline {
@@ -193,6 +194,8 @@ export interface WorkdayTimeline {
   idleSeconds: number;
   lockedSeconds: number;
   sleepingSeconds: number;
+  approvedLeave: boolean;
+  leaveSeconds: number;
   intervals: WorkdayInterval[];
 }
 

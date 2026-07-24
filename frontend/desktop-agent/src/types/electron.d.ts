@@ -87,6 +87,8 @@ export type WorkdayTimeline = {
   idle_seconds: number;
   locked_seconds: number;
   sleeping_seconds: number;
+  approved_leave?: boolean;
+  leave_seconds?: number;
   intervals: Array<{
     type: "worked" | "idle" | "locked" | "sleeping";
     started_at: string;
@@ -96,6 +98,7 @@ export type WorkdayTimeline = {
     project_name: string | null;
     task_name: string | null;
     is_current: boolean;
+    work_category?: "extra" | null;
   }>;
 };
 

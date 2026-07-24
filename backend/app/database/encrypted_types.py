@@ -10,9 +10,28 @@ from sqlalchemy.types import TypeDecorator
 from app.core.field_encryption import (
     decrypt_decimal,
     decrypt_json,
+    decrypt_text,
     encrypt_decimal,
     encrypt_json,
+    encrypt_text,
 )
+
+
+class EncryptedString(TypeDecorator[str]):
+    """Encrypt short sensitive strings (for example bank account numbers)."""
+
+    impl = Text
+    cache_ok = True
+
+    def process_bind_param(self, value: Any, dialect: Dialect) -> str | None:
+        if value is None:
+            return None
+        return encrypt_text(str(value))
+
+    def process_result_value(self, value: Any, dialect: Dialect) -> str | None:
+        if value is None:
+            return None
+        return decrypt_text(str(value))
 
 
 class EncryptedDecimal(TypeDecorator[Decimal]):

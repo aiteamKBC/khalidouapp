@@ -226,6 +226,8 @@ export type AgentWorkdayTimeline = {
   idle_seconds: number;
   locked_seconds: number;
   sleeping_seconds: number;
+  approved_leave?: boolean;
+  leave_seconds?: number;
   intervals: Array<{
     type: "worked" | "idle" | "locked" | "sleeping";
     source?: "activity" | "manual_pause";
@@ -236,6 +238,7 @@ export type AgentWorkdayTimeline = {
     project_name: string | null;
     task_name: string | null;
     is_current: boolean;
+    work_category?: "extra" | null;
   }>;
 };
 

@@ -161,6 +161,12 @@ def create_employee_time_adjustment_request(
             timezone_name=employee.timezone,
             target_date=requested_date,
         )
+        if timeline.get("approved_leave"):
+            raise ApiError(
+                "IDLE_NOT_AVAILABLE_ON_LEAVE",
+                "Idle time cannot be requested on an approved leave day.",
+                422,
+            )
         matched_interval = None
         for interval in timeline["intervals"]:
             if interval["type"] != "idle" or interval["ended_at"] is None:

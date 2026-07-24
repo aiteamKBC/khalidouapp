@@ -14,6 +14,7 @@ from app.models import (
     Device,
     Employee,
     EmployeeWorkProfile,
+    LeaveRequest,
     TimeAdjustmentRequest,
     OvertimeRecord,
     WorkScheduleOverride,
@@ -232,6 +233,49 @@ def test_shift_end_stops_normal_pay_even_when_late_employee_has_not_completed_ta
     assert approved.approved_overtime_seconds == 3600
     assert approved.total_payable_seconds == 8 * 3600
 
+
+def test_approved_leave_counts_real_work_as_overtime_and_other_time_as_leave(
+    attendance_context,
+):
+    db, employee, device, _ = attendance_context
+    work_date = date(2026, 7, 21)
+    session = _session(
+        db,
+        employee,
+        device,
+        datetime(2026, 7, 21, 10, 0, tzinfo=UTC),
+        datetime(2026, 7, 21, 12, 0, tzinfo=UTC),
+    )
+    db.add(
+        LeaveRequest(
+            company_id=employee.company_id,
+            employee_id=employee.id,
+            start_date=work_date,
+            end_date=work_date,
+            requested_days=1,
+            leave_type="annual",
+            status="approved",
+        )
+    )
+    db.commit()
+
+    row, timeline = calculate_daily_attendance(
+        db,
+        employee=employee,
+        work_date=work_date,
+        now=datetime(2026, 7, 22, tzinfo=UTC),
+    )
+
+    assert row.status == "approved_leave"
+    assert row.normal_worked_seconds == 0
+    assert row.idle_seconds == 0
+    assert row.recorded_overtime_seconds == 2 * 3600
+    assert row.approved_overtime_seconds == 0
+    assert row.total_payable_seconds == 8 * 3600
+    assert timeline["approved_leave"] is True
+    assert timeline["idle_seconds"] == 0
+    assert timeline["leave_seconds"] == 0
+    assert timeline["intervals"][0]["work_category"] == "extra"
 
 def test_paid_break_is_not_idle_or_double_counted(attendance_context):
     db, employee, device, _ = attendance_context

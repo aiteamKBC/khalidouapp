@@ -260,13 +260,16 @@ export function deleteScheduleOverride(overrideId: string) {
   });
 }
 
-export async function downloadPayroll(filters: PayrollFilters, format: "csv" | "excel" | "pdf") {
+export async function downloadPayroll(
+  filters: PayrollFilters,
+  format: "csv" | "excel" | "pdf" | "visa",
+) {
   const blob = await apiFile(withQuery("/payroll/export", { ...filters, format }));
-  const extension = format === "excel" ? "xlsx" : format;
+  const extension = format === "excel" ? "xlsx" : format === "visa" ? "xls" : format;
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;
-  anchor.download = `payroll-${filters.month}.${extension}`;
+  anchor.download = `${format === "visa" ? "visa-payroll" : "payroll"}-${filters.month}.${extension}`;
   document.body.appendChild(anchor);
   anchor.click();
   anchor.remove();

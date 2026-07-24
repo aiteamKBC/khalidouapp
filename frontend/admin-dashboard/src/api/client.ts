@@ -125,6 +125,12 @@ async function parseBody<T>(res: Response): Promise<ApiEnvelope<T> | null> {
 
 function apiErrorMessage<T>(res: Response, body: ApiEnvelope<T> | null): string {
   if (body?.error?.message) {
+    if (body.error.code === "BANK_DETAILS_REQUIRED") {
+      const employees = body.error.details?.employees;
+      if (Array.isArray(employees) && employees.length > 0) {
+        return `${body.error.message} Missing: ${employees.join(", ")}`;
+      }
+    }
     return body.error.message;
   }
 
@@ -275,7 +281,12 @@ export async function apiFile(path: string): Promise<Blob> {
     res = await fetchFile(tokens.access_token);
   }
   if (!res.ok) {
-    throw new Error(`File ${res.status}: ${res.statusText}`);
+    const body = await parseBody<unknown>(res);
+    throw new ApiClientError(
+      apiErrorMessage(res, body),
+      body?.error?.code ?? "API_ERROR",
+      res.status,
+    );
   }
   return res.blob();
 }

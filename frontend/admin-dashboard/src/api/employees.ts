@@ -96,6 +96,8 @@ export type WorkProfile = {
   salaryAmount?: number | null;
   salaryCurrency?: "EGP" | "GBP" | "USD" | "EUR" | "SAR" | "AED" | null;
   salaryType: "monthly" | "hourly";
+  bankAccountNumber?: string | null;
+  bankEmployeeId?: string | null;
   completeness: { complete: boolean; missing_fields: string[]; completed_at?: string | null };
 };
 
@@ -117,6 +119,8 @@ export type WorkProfileInput = {
   salaryAmount?: number;
   salaryCurrency?: WorkProfile["salaryCurrency"];
   salaryType?: WorkProfile["salaryType"];
+  bankAccountNumber?: string;
+  bankEmployeeId?: string;
 };
 
 type BackendWorkProfile = {
@@ -139,6 +143,8 @@ type BackendWorkProfile = {
   salary_amount?: number | null;
   salary_currency?: WorkProfile["salaryCurrency"];
   salary_type?: WorkProfile["salaryType"];
+  bank_account_number?: string | null;
+  bank_employee_id?: string | null;
   completeness: WorkProfile["completeness"];
 };
 
@@ -233,6 +239,8 @@ function mapWorkProfile(row: BackendWorkProfile): WorkProfile {
     salaryAmount: row.salary_amount,
     salaryCurrency: row.salary_currency,
     salaryType: row.salary_type ?? "monthly",
+    bankAccountNumber: row.bank_account_number,
+    bankEmployeeId: row.bank_employee_id,
     completeness: row.completeness,
   };
 }
@@ -393,6 +401,8 @@ export async function updateWorkProfile(
         salary_amount: input.salaryAmount,
         salary_currency: input.salaryCurrency,
         salary_type: input.salaryType,
+        bank_account_number: input.bankAccountNumber?.trim() || undefined,
+        bank_employee_id: input.bankEmployeeId?.trim() || undefined,
       }),
     }),
   );

@@ -16,7 +16,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database.base import Base
-from app.database.encrypted_types import EncryptedDecimal
+from app.database.encrypted_types import EncryptedDecimal, EncryptedString
 from app.models.mixins import TimestampMixin, UUIDPrimaryKeyMixin
 
 
@@ -45,6 +45,8 @@ class EmployeeWorkProfile(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     salary_amount: Mapped[Decimal | None] = mapped_column(EncryptedDecimal(), nullable=True)
     salary_currency: Mapped[str | None] = mapped_column(String(3), nullable=True)
     salary_type: Mapped[str] = mapped_column(String(20), nullable=False, default="monthly")
+    bank_account_number: Mapped[str | None] = mapped_column(EncryptedString(), nullable=True)
+    bank_employee_id: Mapped[str | None] = mapped_column(EncryptedString(), nullable=True)
     profile_completed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )

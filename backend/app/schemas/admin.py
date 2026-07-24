@@ -2,7 +2,7 @@ from datetime import date, time
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 
 class EmployeeCreate(BaseModel):
@@ -66,6 +66,32 @@ class EmployeeWorkProfileUpdate(BaseModel):
     salary_amount: float | None = Field(default=None, ge=0)
     salary_currency: Literal["EGP", "GBP", "USD", "EUR", "SAR", "AED"] | None = None
     salary_type: Literal["monthly", "hourly"] | None = None
+    bank_account_number: str | None = None
+    bank_employee_id: str | None = None
+
+    @field_validator("bank_account_number", "bank_employee_id", mode="before")
+    @classmethod
+    def normalize_bank_identifier(cls, value: object) -> str | None:
+        if value is None or value == "":
+            return None
+        normalized = str(value).strip()
+        if not normalized.isdigit():
+            raise ValueError("Bank identifiers must contain digits only.")
+        return normalized
+
+    @field_validator("bank_account_number")
+    @classmethod
+    def validate_bank_account_number(cls, value: str | None) -> str | None:
+        if value is not None and len(value) not in {11, 13}:
+            raise ValueError("Bank account number must be 11 or 13 digits.")
+        return value
+
+    @field_validator("bank_employee_id")
+    @classmethod
+    def validate_bank_employee_id(cls, value: str | None) -> str | None:
+        if value is not None and len(value) != 10:
+            raise ValueError("Bank employee ID must be exactly 10 digits.")
+        return value
 
 
 class DeviceUpdate(BaseModel):

@@ -2,7 +2,7 @@ from datetime import date
 from decimal import Decimal
 
 from app.models import PayrollAdjustment, PayrollEntry
-from app.services.payroll import month_bounds, payroll_period_bounds, recalculate_entry
+from app.services.payroll import STANDARD_MONTH_DAYS, month_bounds, payroll_period_bounds, recalculate_entry
 
 
 def test_month_bounds_accepts_payroll_month():
@@ -15,6 +15,10 @@ def test_default_payroll_cycle_runs_from_26_to_25():
         date(2026, 6, 26),
         date(2026, 7, 25),
     )
+
+
+def test_salary_basis_uses_fixed_30_day_month():
+    assert STANDARD_MONTH_DAYS == 30
 
 
 def test_payroll_cycle_clamps_short_month_days_safely():

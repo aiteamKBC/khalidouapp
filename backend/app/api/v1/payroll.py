@@ -1103,7 +1103,7 @@ def _export_rows(
     db.commit()
     entries = db.scalars(
         select(PayrollEntry)
-        .options(selectinload(PayrollEntry.employee))
+        .options(selectinload(PayrollEntry.employee).selectinload(Employee.work_profile))
         .where(PayrollEntry.payroll_run_id == run.id)
     ).all()
     entries = _scope_entries(db, admin, entries)
@@ -1127,6 +1127,11 @@ def _export_rows(
             f"{adjustment['type']}: {adjustment['amount']} ({adjustment['reason']})"
             for adjustment in row.get("adjustments", [])
         )
+        # Kept as private export metadata. It is never included in the normal
+        # CSV/XLSX/PDF column list, but is used by the bank upload formatter.
+        profile = item.employee.work_profile
+        row["_bank_account_number"] = profile.bank_account_number if profile else None
+        row["_bank_employee_id"] = profile.bank_employee_id if profile else None
         rows.append(row)
     totals: dict[str, dict[str, Decimal]] = {}
     for item in entries:
@@ -1155,6 +1160,95 @@ def _export_rows(
             }
         )
     return rows, run
+
+
+VISA_BANK_COLUMNS = [
+    "Beneficiary Account No. (Mandatory Field) (Length 11 or 13 Digit)",
+    "Beneficiary Name",
+    "Transaction Currency (Mandatory Field) (EGP,USD in Capital Letter)",
+    "Payment Amount (Mandatory Field) (Example: 1000.55)",
+    "Employee ID (Mandatory Field) (Length 10 Digit)",
+]
+
+
+def _visa_bank_document(rows: list[dict]) -> bytes:
+    """Create the Visa bank upload template as Excel-compatible SpreadsheetML."""
+
+    def xml(value: object) -> str:
+        return html.escape(str(value if value is not None else ""), quote=True)
+
+    data_rows: list[dict] = []
+    missing: list[str] = []
+    for row in rows:
+        employee_name = str(row.get("employee_name") or "")
+        if not employee_name or employee_name.startswith("COMPANY TOTAL"):
+            continue
+        account = str(row.get("_bank_account_number") or "").strip()
+        employee_id = str(row.get("_bank_employee_id") or "").strip()
+        valid_account = account.isdigit() and len(account) in {11, 13}
+        valid_employee_id = employee_id.isdigit() and len(employee_id) == 10
+        if not valid_account or not valid_employee_id:
+            missing.append(employee_name)
+            continue
+        amount = Decimal(str(row.get("final_salary") or 0)).quantize(Decimal("0.01"))
+        data_rows.append(
+            {
+                "account": account,
+                "name": employee_name,
+                "currency": str(row.get("currency") or "EGP").upper(),
+                "amount": format(amount, "f"),
+                "employee_id": employee_id,
+            }
+        )
+    if missing:
+        raise ApiError(
+            "BANK_DETAILS_REQUIRED",
+            "Complete the bank account number and 10-digit employee ID before exporting the Visa file.",
+            409,
+            details={"employees": missing},
+        )
+    if not data_rows:
+        raise ApiError("BANK_EXPORT_EMPTY", "There are no employee payroll rows for this period.", 409)
+
+    widths = ("400", "180", "420", "340", "300")
+    styles = (
+        '<Styles>'
+        '<Style ss:ID="Default" ss:Name="Normal"><Font ss:FontName="Arial" ss:Size="10"/></Style>'
+        '<Style ss:ID="Header"><Font ss:FontName="Arial" ss:Size="10" ss:Bold="1"/><Interior ss:Color="#D9EAF7" ss:Pattern="Solid"/><Alignment ss:Horizontal="Center" ss:Vertical="Center" ss:WrapText="1"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#808080"/></Borders></Style>'
+        '<Style ss:ID="Text"><Alignment ss:Vertical="Center"/></Style>'
+        '<Style ss:ID="Amount"><NumberFormat ss:Format="0.00"/><Alignment ss:Horizontal="Right" ss:Vertical="Center"/></Style>'
+        '</Styles>'
+    )
+    header_cells = "".join(
+        f'<Cell ss:StyleID="Header"><Data ss:Type="String">{xml(label)}</Data></Cell>'
+        for label in VISA_BANK_COLUMNS
+    )
+    body_rows = []
+    for row in data_rows:
+        body_rows.append(
+            "<Row>"
+            f'<Cell ss:StyleID="Text"><Data ss:Type="String">{xml(row["account"])}</Data></Cell>'
+            f'<Cell ss:StyleID="Text"><Data ss:Type="String">{xml(row["name"])}</Data></Cell>'
+            f'<Cell ss:StyleID="Text"><Data ss:Type="String">{xml(row["currency"])}</Data></Cell>'
+            f'<Cell ss:StyleID="Amount"><Data ss:Type="Number">{xml(row["amount"])}</Data></Cell>'
+            f'<Cell ss:StyleID="Text"><Data ss:Type="String">{xml(row["employee_id"])}</Data></Cell>'
+            "</Row>"
+        )
+    document = (
+        '<?xml version="1.0"?><?mso-application progid="Excel.Sheet"?>'
+        '<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" '
+        'xmlns:o="urn:schemas-microsoft-com:office:office" '
+        'xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet" '
+        'xmlns:x="urn:schemas-microsoft-com:office:excel">'
+        '<DocumentProperties xmlns="urn:schemas-microsoft-com:office:office"><Author>Khaliduo</Author></DocumentProperties>'
+        f"{styles}<Worksheet ss:Name=\"Template\"><Table ss:ExpandedColumnCount=\"5\" ss:ExpandedRowCount=\"{len(data_rows) + 1}\">"
+        + "".join(f'<Column ss:Width="{width}"/>' for width in widths)
+        + f"<Row ss:AutoFitHeight=\"0\">{header_cells}</Row>"
+        + "".join(body_rows)
+        + "</Table><WorksheetOptions xmlns="
+        '"urn:schemas-microsoft-com:office:excel"><FreezePanes/><FrozenNoSplit/><SplitHorizontal>1</SplitHorizontal><TopRowBottomPane>1</TopRowBottomPane></WorksheetOptions></Worksheet></Workbook>'
+    )
+    return document.encode("utf-8")
 
 
 def _xlsx_document(rows: list[dict], run: PayrollRun) -> bytes:
@@ -1263,7 +1357,7 @@ def export_payroll(
     current_admin: Annotated[AdminUser, Depends(get_current_admin)],
     db: Annotated[Session, Depends(get_db)],
     month: str = Query(pattern=r"^\d{4}-\d{2}$"),
-    format: Literal["csv", "excel", "pdf"] = "csv",
+    format: Literal["csv", "excel", "pdf", "visa"] = "csv",
     team: str | None = None,
     employee_id: UUID | None = None,
     status: str | None = None,
@@ -1283,6 +1377,12 @@ def export_payroll(
         start_date=start_date,
         end_date=end_date,
     )
+    if format == "visa":
+        return Response(
+            content=_visa_bank_document(rows),
+            media_type="application/vnd.ms-excel",
+            headers={"Content-Disposition": f'attachment; filename="visa-payroll-{month}.xls"'},
+        )
     if format == "pdf":
         lines = ["Khaliduo Payroll " + month, " | ".join(label for label, _ in EXPORT_COLUMNS)]
         lines.extend(
