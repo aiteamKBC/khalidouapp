@@ -23,8 +23,12 @@ import "./App.css";
 const fallbackStatus: AgentStatus = {
   enrolled: false,
   employeeName: "Not enrolled",
+  employeeEmail: null,
   employeeAvatarUrl: null,
   deviceName: "Windows device",
+  deviceId: null,
+  macAddress: null,
+  localIpAddress: null,
   trackingStatus: "starting",
   trackingPaused: false,
   sessionStartedAt: null,
@@ -3469,6 +3473,45 @@ function SettingsView({
         </dl>
       </details>
       <section className="k-panel k-device-account">
+        <div className="k-device-account-heading">
+          <div>
+            <h2>Signed-in account</h2>
+            <p className="k-muted">
+              This employee account is linked to this Windows device.
+            </p>
+          </div>
+          <span className={`k-connection-badge ${status.enrolled ? "online" : "offline"}`}>
+            {status.enrolled ? "Enrolled" : "Not enrolled"}
+          </span>
+        </div>
+        <dl className="k-details k-identity-details">
+          <div>
+            <dt>Employee</dt>
+            <dd>{status.employeeName || "—"}</dd>
+          </div>
+          <div>
+            <dt>Work email</dt>
+            <dd>{status.employeeEmail || "—"}</dd>
+          </div>
+          <div>
+            <dt>Device</dt>
+            <dd>{status.deviceName || "—"}</dd>
+          </div>
+          <div>
+            <dt>Device ID</dt>
+            <dd className="k-mono">{status.deviceId || "—"}</dd>
+          </div>
+          <div>
+            <dt>MAC address</dt>
+            <dd className="k-mono">{status.macAddress || "—"}</dd>
+          </div>
+          <div>
+            <dt>Local IP</dt>
+            <dd className="k-mono">{status.localIpAddress || "—"}</dd>
+          </div>
+        </dl>
+      </section>
+      <section className="k-panel k-device-account k-device-actions">
         <h2>Device account</h2>
         <p className="k-muted">
           Sign out only when this computer should stop tracking this employee.

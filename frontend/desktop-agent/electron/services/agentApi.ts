@@ -257,13 +257,22 @@ export function getApiBaseUrl() {
   return process.env.VITE_API_BASE_URL ?? "http://localhost:8000/api/v1";
 }
 
-function getDeviceInfo(agentVersion: string) {
-  const identity = loadIdentity();
+export function getLocalNetworkInfo() {
   const interfaces = os.networkInterfaces();
-  const macAddress = Object.values(interfaces)
-    .flatMap((entries) => entries ?? [])
+  const entries = Object.values(interfaces).flatMap((items) => items ?? []);
+  const macAddress = entries
     .map((entry) => entry.mac?.toUpperCase() ?? "")
     .find((mac) => mac && mac !== "00:00:00:00:00:00") ?? null;
+  const ipAddress =
+    entries.find((entry) => !entry.internal && entry.family === "IPv4")?.address ??
+    entries.find((entry) => !entry.internal)?.address ??
+    null;
+  return { macAddress, ipAddress };
+}
+
+function getDeviceInfo(agentVersion: string) {
+  const identity = loadIdentity();
+  const { macAddress } = getLocalNetworkInfo();
   return {
     installation_id: identity.installationId,
     device_name: os.hostname(),
@@ -322,6 +331,7 @@ export async function enrollDeviceWithCredentials(
     companyId: data.company_id,
     employeeId: data.employee.id,
     employeeName: data.employee.name,
+    employeeEmail: data.employee.email,
     deviceId: data.device.id,
     deviceName: data.device.name,
     deviceToken: data.device_token,

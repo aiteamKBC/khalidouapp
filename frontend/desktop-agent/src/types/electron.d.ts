@@ -1,8 +1,12 @@
 export type AgentStatus = {
   enrolled: boolean;
   employeeName: string;
+  employeeEmail: string | null;
   employeeAvatarUrl: string | null;
   deviceName: string;
+  deviceId: string | null;
+  macAddress: string | null;
+  localIpAddress: string | null;
   trackingStatus:
     | "starting"
     | "active"

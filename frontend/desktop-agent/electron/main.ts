@@ -11,6 +11,7 @@ import { fileURLToPath } from "node:url";
 
 import {
   enrollDeviceWithCredentials,
+  getLocalNetworkInfo,
   endSession,
   getAgentConfig,
   getAgentSummary,
@@ -91,8 +92,12 @@ const __dirname = path.dirname(__filename);
 type AgentRuntimeStatus = {
   enrolled: boolean;
   employeeName: string;
+  employeeEmail: string | null;
   employeeAvatarUrl: string | null;
   deviceName: string;
+  deviceId: string | null;
+  macAddress: string | null;
+  localIpAddress: string | null;
   trackingStatus:
     | "starting"
     | "active"
@@ -238,8 +243,12 @@ let trackingConfig: TrackingConfig = {
 const runtimeStatus: AgentRuntimeStatus = {
   enrolled: false,
   employeeName: "Not enrolled",
+  employeeEmail: null,
   employeeAvatarUrl: null,
   deviceName: process.env.COMPUTERNAME ?? "Windows device",
+  deviceId: null,
+  macAddress: null,
+  localIpAddress: null,
   trackingStatus: "starting",
   trackingPaused: false,
   sessionStartedAt: null,
@@ -367,8 +376,12 @@ function resetForDeviceReenrollment() {
   Object.assign(runtimeStatus, {
     enrolled: false,
     employeeName: "Not enrolled",
+    employeeEmail: null,
     employeeAvatarUrl: null,
     deviceName: process.env.COMPUTERNAME ?? "Windows device",
+    deviceId: null,
+    macAddress: null,
+    localIpAddress: null,
     trackingStatus: "starting",
     trackingPaused: false,
     sessionStartedAt: null,
@@ -397,14 +410,24 @@ function hydrateIdentityStatus() {
   const identity = loadIdentity();
   runtimeStatus.enrolled = isEnrolled(identity);
   runtimeStatus.employeeName = identity.employeeName ?? "Not enrolled";
+  runtimeStatus.employeeEmail = identity.employeeEmail ?? null;
   runtimeStatus.deviceName =
     identity.deviceName ?? process.env.COMPUTERNAME ?? "Windows device";
+  runtimeStatus.deviceId = identity.deviceId ?? null;
+  const network = getLocalNetworkInfo();
+  runtimeStatus.macAddress = network.macAddress;
+  runtimeStatus.localIpAddress = network.ipAddress;
 }
 
 async function activateEnrolledDevice(identity: StoredIdentity) {
   runtimeStatus.enrolled = true;
   runtimeStatus.employeeName = identity.employeeName ?? "Enrolled employee";
+  runtimeStatus.employeeEmail = identity.employeeEmail ?? null;
   runtimeStatus.deviceName = identity.deviceName ?? runtimeStatus.deviceName;
+  runtimeStatus.deviceId = identity.deviceId ?? null;
+  const network = getLocalNetworkInfo();
+  runtimeStatus.macAddress = network.macAddress;
+  runtimeStatus.localIpAddress = network.ipAddress;
   runtimeStatus.trackingStatus = "active";
   runtimeStatus.connectionStatus = "online";
   trackingPausedByUser = false;
@@ -1879,8 +1902,12 @@ async function logoutDevice() {
   Object.assign(runtimeStatus, {
     enrolled: false,
     employeeName: "Not enrolled",
+    employeeEmail: null,
     employeeAvatarUrl: null,
     deviceName: process.env.COMPUTERNAME ?? "Windows device",
+    deviceId: null,
+    macAddress: null,
+    localIpAddress: null,
     trackingStatus: "starting",
     trackingPaused: false,
     sessionStartedAt: null,

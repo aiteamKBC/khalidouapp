@@ -10,6 +10,7 @@ export type StoredIdentity = {
   companyId?: string;
   employeeId?: string;
   employeeName?: string;
+  employeeEmail?: string;
   deviceId?: string;
   deviceName?: string;
   encryptedDeviceToken?: string;
@@ -19,6 +20,7 @@ export type EnrollmentIdentity = {
   companyId: string;
   employeeId: string;
   employeeName: string;
+  employeeEmail: string;
   deviceId: string;
   deviceName: string;
   deviceToken: string;
@@ -111,6 +113,7 @@ export function saveEnrollmentIdentity(enrollment: EnrollmentIdentity): StoredId
     companyId: enrollment.companyId,
     employeeId: enrollment.employeeId,
     employeeName: enrollment.employeeName,
+    employeeEmail: enrollment.employeeEmail,
     deviceId: enrollment.deviceId,
     deviceName: enrollment.deviceName,
     encryptedDeviceToken,
