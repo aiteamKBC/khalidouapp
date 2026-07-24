@@ -340,6 +340,59 @@ function getUserFacingError(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
 }
 
+function isDeviceIdentityMismatch(error: unknown) {
+  if (!axios.isAxiosError(error) || error.response?.status !== 401) {
+    return false;
+  }
+  const data = error.response.data as
+    | { error?: { message?: string }; detail?: string }
+    | undefined;
+  const message = String(data?.error?.message ?? data?.detail ?? "").toLowerCase();
+  return message.includes("device token identity does not match");
+}
+
+function resetForDeviceReenrollment() {
+  // Keep pending local screenshots/events on disk. They can be retried after
+  // the employee signs in again; only the invalid local credential is cleared.
+  clearRuntimeTimers();
+  clearEnrollmentIdentity();
+  configureAutoStart(false);
+  trackingPausedByUser = false;
+  unpaidPauseActive = false;
+  currentSessionId = null;
+  workedTodayBaseSeconds = 0;
+  idleSecondsBeforeCurrentIdle = 0;
+  eligibleIdleSecondsBeforeCurrentIdle = 0;
+  idleWallClockStartedAt = null;
+  Object.assign(runtimeStatus, {
+    enrolled: false,
+    employeeName: "Not enrolled",
+    employeeAvatarUrl: null,
+    deviceName: process.env.COMPUTERNAME ?? "Windows device",
+    trackingStatus: "starting",
+    trackingPaused: false,
+    sessionStartedAt: null,
+    workedTodaySeconds: 0,
+    activeSeconds: 0,
+    idleSeconds: 0,
+    eligibleIdleSeconds: 0,
+    connectionStatus: "offline",
+    lastScreenshotAt: null,
+    lastSuccessfulSyncAt: null,
+    tasks: [],
+    projects: [],
+    selectedTask: null,
+    timeAdjustmentRequests: [],
+    timeSummary: null,
+    todayTimeline: null,
+    lastIdleAlert: null,
+  } satisfies Partial<AgentRuntimeStatus>);
+  tray?.setImage(createTrayImage("#b7791f"));
+  rebuildTrayMenu();
+  showMainWindow({ forceForeground: true });
+  notifyRendererStatus();
+}
+
 function hydrateIdentityStatus() {
   const identity = loadIdentity();
   runtimeStatus.enrolled = isEnrolled(identity);
@@ -1125,6 +1178,11 @@ async function heartbeatTick() {
     runtimeStatus.lastSuccessfulSyncAt = new Date().toISOString();
   } catch (error) {
     runtimeStatus.connectionStatus = "offline";
+    if (isDeviceIdentityMismatch(error)) {
+      resetForDeviceReenrollment();
+      log.warn("Device identity mismatch; local enrollment was cleared", error);
+      return;
+    }
     const sessionNotFound =
       axios.isAxiosError(error) && error.response?.status === 404;
     if (sessionNotFound) {
@@ -1573,6 +1631,10 @@ async function startTrackingAutomatically() {
     runtimeStatus.connectionStatus = "offline";
     runtimeStatus.trackingStatus = "offline";
     log.error("Automatic tracking start failed", error);
+    if (isDeviceIdentityMismatch(error)) {
+      resetForDeviceReenrollment();
+      return;
+    }
     if (!isQuitting && runtimeStatus.enrolled && !trackingPausedByUser) {
       automaticTrackingRetryTimer = setTimeout(() => {
         automaticTrackingRetryTimer = null;
