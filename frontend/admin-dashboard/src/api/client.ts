@@ -52,6 +52,21 @@ const AUTH_EXPIRED_EVENT = "khaliduo:auth-expired";
 
 let refreshInFlight: Promise<RefreshedTokens> | null = null;
 
+function accessTokenExpiresAt(token: string) {
+  try {
+    const payload = token.split(".")[1];
+    if (!payload) return null;
+    const normalized = payload.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
+    const decoded = JSON.parse(atob(padded)) as {
+      exp?: number;
+    };
+    return typeof decoded.exp === "number" ? decoded.exp * 1000 : null;
+  } catch {
+    return null;
+  }
+}
+
 async function fetchWithTimeout(
   input: RequestInfo | URL,
   init: RequestInit = {},
@@ -190,6 +205,17 @@ async function refreshAuthTokens(authLocation: PersistedAuthLocation): Promise<R
   } finally {
     refreshInFlight = null;
   }
+}
+
+/** Refresh an expiring dashboard session without waiting for a user action. */
+export async function refreshAuthIfNeeded(force = false) {
+  const authLocation = readAuth();
+  if (!authLocation) return false;
+  const expiresAt = accessTokenExpiresAt(authLocation.auth.accessToken);
+  const shouldRefresh = force || (expiresAt !== null && expiresAt - Date.now() <= 120_000);
+  if (!shouldRefresh) return false;
+  await refreshAuthTokens(authLocation);
+  return true;
 }
 
 async function request<T>(

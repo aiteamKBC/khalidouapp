@@ -15,6 +15,7 @@ import {
   me as apiMe,
   updateProfile as apiUpdateProfile,
 } from "@/api/auth";
+import { refreshAuthIfNeeded } from "@/api/client";
 
 interface AuthState {
   user: User | null;
@@ -104,6 +105,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (!state.accessToken) return;
+    let cancelled = false;
+    const refreshInBackground = () => {
+      if (cancelled || document.visibilityState === "hidden") return;
+      void refreshAuthIfNeeded().catch(() => {
+        // The regular API request path remains the final recovery mechanism.
+      });
+    };
+    refreshInBackground();
+    const timer = window.setInterval(refreshInBackground, 60_000);
+    const onVisible = () => refreshInBackground();
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [state.accessToken]);
 
   useEffect(() => {
     const onTokensRefreshed = (event: Event) => {
