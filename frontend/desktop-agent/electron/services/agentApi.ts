@@ -597,6 +597,7 @@ export async function sendHeartbeat(options: {
       idle_seconds: options.idleSeconds,
       active_seconds: options.activeSeconds,
       agent_version: options.agentVersion,
+      mac_address: getDeviceInfo(options.agentVersion).mac_address,
     },
     { headers: getAuthHeaders() },
   );
