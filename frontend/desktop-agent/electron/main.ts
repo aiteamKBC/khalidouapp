@@ -1633,13 +1633,26 @@ async function startTrackingAutomatically() {
     runtimeStatus.requestPolicy = rawConfig.request_policy ?? null;
     await refreshTasks();
     const current = await getCurrentSession();
-    if (current.session) {
-      await endSession({
-        sessionId: current.session.id,
-        activeSeconds: current.session.active_seconds,
-        idleSeconds: current.session.idle_seconds,
-        reason: "Previous Khaliduo run closed before automatic restart",
-      });
+    if (
+      current.session &&
+      !current.session.ended_at &&
+      current.session.status !== "ended" &&
+      current.session.status !== "offline"
+    ) {
+      // Keep the server session open across app restarts. Ending it here
+      // made the employee's current-session counter jump back to zero even
+      // though the workday and overtime totals were still continuing.
+      syncRuntimeFromSession(current.session);
+      applyWorkdayState(current.workday);
+      applyPauseState(current.pause);
+      await refreshWorkedTodayTotal();
+      runtimeStatus.connectionStatus = "online";
+      runtimeStatus.lastSuccessfulSyncAt = new Date().toISOString();
+      startTimers();
+      void heartbeatTick();
+      void refreshTimeAdjustmentRequests();
+      void refreshLeaveRequests();
+      return;
     }
     const started = await startSession();
     syncRuntimeFromSession(started.session);
