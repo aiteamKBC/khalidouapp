@@ -98,7 +98,24 @@ def get_current_device(
     if device is None:
         raise ApiError("UNAUTHORIZED", "Device is not active.", 401)
     if device.employee_id != token_employee_id:
-        raise ApiError("UNAUTHORIZED", "Device token identity does not match this device.", 401)
+        # A valid, non-revoked device token is the durable identity for the
+        # installation. Repair a stale employee foreign key so an app update
+        # or an old data repair does not force every employee to sign in again.
+        # Reassignment flows revoke the old token before changing ownership,
+        # so this branch only heals an inconsistent active record.
+        token_employee = db.scalar(
+            select(Employee).where(
+                Employee.id == token_employee_id,
+                Employee.company_id == company_id,
+                Employee.status == "active",
+            )
+        )
+        if token_employee is None:
+            raise ApiError("UNAUTHORIZED", "Device token identity does not match this device.", 401)
+        device.employee_id = token_employee_id
+        db.add(device)
+        db.commit()
+        db.refresh(device)
 
     employee = db.scalar(
         select(Employee).where(

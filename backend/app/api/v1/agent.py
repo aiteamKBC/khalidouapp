@@ -896,6 +896,8 @@ def heartbeat(
     context.device.last_ip_address = (
         request.client.host if request.client else context.device.last_ip_address
     )
+    if payload.mac_address:
+        context.device.mac_address = payload.mac_address
     response = record_heartbeat(
         db,
         device=context.device,

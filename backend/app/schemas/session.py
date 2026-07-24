@@ -17,6 +17,7 @@ class HeartbeatRequest(BaseModel):
     idle_seconds: int = Field(ge=0)
     active_seconds: int | None = Field(default=None, ge=0)
     agent_version: str = Field(min_length=1, max_length=50)
+    mac_address: str | None = Field(default=None, max_length=32)
 
 
 class ActivityEventRequest(BaseModel):
