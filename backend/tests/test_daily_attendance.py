@@ -239,7 +239,7 @@ def test_approved_leave_counts_real_work_as_overtime_and_other_time_as_leave(
 ):
     db, employee, device, _ = attendance_context
     work_date = date(2026, 7, 21)
-    session = _session(
+    _session(
         db,
         employee,
         device,
@@ -324,6 +324,52 @@ def test_paid_break_is_not_idle_or_double_counted(attendance_context):
     assert row.total_payable_seconds == 7 * 3600 + 55 * 60
     assert row.calculation_sources["raw_idle_seconds"] == 20 * 60
     assert row.calculation_sources["paid_idle_grace_seconds"] == 15 * 60
+
+
+def test_idle_outside_shift_is_not_deductible_or_paid_idle(attendance_context):
+    db, employee, device, _ = attendance_context
+    work_date = date(2026, 7, 21)
+    session = _session(
+        db,
+        employee,
+        device,
+        datetime(2026, 7, 21, 18, 0, tzinfo=UTC),
+        datetime(2026, 7, 21, 22, 0, tzinfo=UTC),
+    )
+    db.add_all(
+        [
+            ActivityEvent(
+                company_id=employee.company_id,
+                employee_id=employee.id,
+                device_id=device.id,
+                session_id=session.id,
+                event_type="idle_started",
+                event_timestamp=datetime(2026, 7, 21, 19, 0, tzinfo=UTC),
+                idempotency_key="outside-shift-idle-start",
+            ),
+            ActivityEvent(
+                company_id=employee.company_id,
+                employee_id=employee.id,
+                device_id=device.id,
+                session_id=session.id,
+                event_type="idle_ended",
+                event_timestamp=datetime(2026, 7, 21, 20, 0, tzinfo=UTC),
+                idempotency_key="outside-shift-idle-end",
+            ),
+        ]
+    )
+    db.commit()
+
+    row, _ = calculate_daily_attendance(
+        db,
+        employee=employee,
+        work_date=work_date,
+        now=datetime(2026, 7, 22, tzinfo=UTC),
+    )
+
+    assert row.idle_seconds == 0
+    assert row.calculation_sources["raw_idle_seconds"] == 0
+    assert row.recorded_overtime_seconds == 3 * 3600
 
 
 def test_manual_pause_does_not_consume_paid_idle_grace(attendance_context):
