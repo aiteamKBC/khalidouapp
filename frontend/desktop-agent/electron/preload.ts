@@ -4,6 +4,7 @@ const { contextBridge, ipcRenderer } = electronRenderer;
 
 contextBridge.exposeInMainWorld("khaliduo", {
   getAgentStatus: () => ipcRenderer.invoke("agent:get-status"),
+  syncNow: () => ipcRenderer.invoke("agent:sync-now"),
   onStatusChanged: (callback: (status: unknown) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, status: unknown) =>
       callback(status);

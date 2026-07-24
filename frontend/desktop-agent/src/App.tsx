@@ -819,6 +819,9 @@ function App() {
     : countedTodaySeconds;
 
   async function refreshStatusAfterEnrollment() {
+    if (status.enrolled) {
+      await window.khaliduo?.syncNow();
+    }
     const nextStatus = await window.khaliduo?.getAgentStatus();
     if (nextStatus) setStatus(nextStatus);
   }

@@ -2415,6 +2415,12 @@ app.on("window-all-closed", () => undefined);
 
 ipcMain.handle("agent:get-status", () => runtimeStatusPayload());
 
+ipcMain.handle("agent:sync-now", async () => {
+  await syncNow();
+  notifyRendererStatus();
+  return { success: runtimeStatus.connectionStatus === "online" };
+});
+
 ipcMain.on("agent:set-idle-alert-attention", (_, active: boolean) => {
   setIdleAlertAttention(Boolean(active));
 });

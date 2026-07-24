@@ -222,6 +222,7 @@ declare global {
   interface Window {
     khaliduo?: {
       getAgentStatus: () => Promise<AgentStatus>;
+      syncNow: () => Promise<{ success: boolean }>;
       onStatusChanged: (callback: (status: AgentStatus) => void) => () => void;
       enrollWithCredentials: (
         email: string,
