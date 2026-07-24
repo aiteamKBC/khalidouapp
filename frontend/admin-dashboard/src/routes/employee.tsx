@@ -51,9 +51,11 @@ import {
   employeeLeaveRequests,
   createEmployeeLeaveRequest,
   type PortalPeriod,
+  type PortalScreenshot,
 } from "@/api/employee-portal";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { WorkdayTimeline } from "@/components/workday-timeline";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 
 export const Route = createFileRoute("/employee")({ component: EmployeePortalPage });
 
@@ -266,6 +268,7 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
     refetchInterval: 30_000,
   });
   const [minutes, setMinutes] = useState(30);
+  const [previewScreenshot, setPreviewScreenshot] = useState<PortalScreenshot | null>(null);
   const [requestedDate, setRequestedDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [reason, setReason] = useState("");
   const [leaveStart, setLeaveStart] = useState("");
@@ -1029,11 +1032,18 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {(screenshots.data ?? []).map((shot) => (
                 <figure key={shot.id} className="overflow-hidden rounded-lg border">
-                  <img
-                    src={shot.imageUrl}
-                    alt="Work screenshot"
-                    className="aspect-video w-full object-cover"
-                  />
+                  <button
+                    type="button"
+                    className="block w-full cursor-zoom-in"
+                    onClick={() => setPreviewScreenshot(shot)}
+                    aria-label="Preview screenshot"
+                  >
+                    <img
+                      src={shot.imageUrl}
+                      alt="Work screenshot"
+                      className="aspect-video w-full object-cover transition hover:opacity-90"
+                    />
+                  </button>
                   <figcaption className="p-2 text-xs text-muted-foreground">
                     {new Date(shot.captured_at).toLocaleString()}
                   </figcaption>
@@ -1049,6 +1059,26 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
           </CardContent>
         </Card>
       </div>
+      <Dialog
+        open={previewScreenshot !== null}
+        onOpenChange={(open) => !open && setPreviewScreenshot(null)}
+      >
+        <DialogContent className="max-w-6xl">
+          <DialogTitle className="sr-only">Screenshot preview</DialogTitle>
+          {previewScreenshot && (
+            <div className="space-y-3">
+              <img
+                src={previewScreenshot.imageUrl}
+                alt="Full work screenshot preview"
+                className="max-h-[78vh] w-full rounded-lg object-contain ring-1 ring-border"
+              />
+              <p className="text-xs text-muted-foreground">
+                {new Date(previewScreenshot.captured_at).toLocaleString()}
+              </p>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
       {notePromptDialog}
     </main>
   );
