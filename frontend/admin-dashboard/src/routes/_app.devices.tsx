@@ -99,6 +99,8 @@ function DevicesList() {
               <TableHead>Device</TableHead>
               <TableHead>Employee</TableHead>
               <TableHead>OS</TableHead>
+              <TableHead>IP address</TableHead>
+              <TableHead>MAC address</TableHead>
               <TableHead>Agent</TableHead>
               <TableHead>Status</TableHead>
               <TableHead>Last seen</TableHead>
@@ -115,6 +117,8 @@ function DevicesList() {
                   <TableCell className="font-medium">{device.name}</TableCell>
                   <TableCell>{emp?.name ?? "-"}</TableCell>
                   <TableCell className="text-sm">{device.os}</TableCell>
+                  <TableCell className="font-mono text-xs">{device.lastIpAddress ?? "-"}</TableCell>
+                  <TableCell className="font-mono text-xs">{device.macAddress ?? "-"}</TableCell>
                   <TableCell className="font-mono text-xs">v{device.agentVersion}</TableCell>
                   <TableCell>
                     <StatusBadge status={device.status} />

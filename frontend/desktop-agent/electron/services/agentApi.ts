@@ -259,12 +259,18 @@ export function getApiBaseUrl() {
 
 function getDeviceInfo(agentVersion: string) {
   const identity = loadIdentity();
+  const interfaces = os.networkInterfaces();
+  const macAddress = Object.values(interfaces)
+    .flatMap((entries) => entries ?? [])
+    .map((entry) => entry.mac?.toUpperCase() ?? "")
+    .find((mac) => mac && mac !== "00:00:00:00:00:00") ?? null;
   return {
     installation_id: identity.installationId,
     device_name: os.hostname(),
     operating_system: `Windows ${os.release()}`,
     agent_version: agentVersion,
     windows_username: os.userInfo().username,
+    mac_address: macAddress,
   };
 }
 

@@ -46,6 +46,7 @@ function DeviceDetailPage() {
           <Row k="Last seen" v={formatRelative(device.data.lastSeen)} />
           <Row k="Windows user" v={device.data.windowsUsername ?? "-"} />
           <Row k="Last IP address" v={device.data.lastIpAddress ?? "-"} />
+          <Row k="MAC address" v={device.data.macAddress ?? "-"} />
           <Row
             k="Token"
             v={<StatusBadge status={device.data.tokenStatus === "valid" ? "active" : "revoked"} />}

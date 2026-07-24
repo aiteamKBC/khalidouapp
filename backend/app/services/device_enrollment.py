@@ -84,6 +84,7 @@ def enroll_employee_device(
             operating_system=device_info.operating_system,
             agent_version=device_info.agent_version,
             windows_username=device_info.windows_username,
+            mac_address=device_info.mac_address,
             last_ip_address=ip_address,
             status="active",
             last_seen_at=datetime.now(UTC),
@@ -104,6 +105,7 @@ def enroll_employee_device(
         device.operating_system = device_info.operating_system
         device.agent_version = device_info.agent_version
         device.windows_username = device_info.windows_username
+        device.mac_address = device_info.mac_address or device.mac_address
         device.last_ip_address = ip_address or device.last_ip_address
         device.status = "active"
         device.last_seen_at = datetime.now(UTC)

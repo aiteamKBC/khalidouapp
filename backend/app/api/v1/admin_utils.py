@@ -77,6 +77,7 @@ def serialize_device(device: Device) -> dict[str, Any]:
         "operating_system": device.operating_system,
         "agent_version": device.agent_version,
         "windows_username": device.windows_username,
+        "mac_address": device.mac_address,
         "last_ip_address": device.last_ip_address,
         "status": device.status,
         "last_seen_at": device.last_seen_at.isoformat() if device.last_seen_at else None,

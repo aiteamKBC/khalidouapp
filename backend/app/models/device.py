@@ -23,6 +23,7 @@ class Device(UUIDPrimaryKeyMixin, Base):
     operating_system: Mapped[str] = mapped_column(String(255), nullable=False)
     agent_version: Mapped[str] = mapped_column(String(50), nullable=False)
     windows_username: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    mac_address: Mapped[str | None] = mapped_column(String(32), nullable=True)
     last_ip_address: Mapped[str | None] = mapped_column(String(64), nullable=True)
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="active")
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

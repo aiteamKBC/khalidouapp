@@ -13,6 +13,7 @@ type BackendDevice = {
   revoked_at?: string | null;
   windows_username?: string | null;
   last_ip_address?: string | null;
+  mac_address?: string | null;
 };
 
 function mapDevice(device: BackendDevice): Device {
@@ -32,6 +33,7 @@ function mapDevice(device: BackendDevice): Device {
     tokenStatus: status === "revoked" ? "revoked" : "valid",
     windowsUsername: device.windows_username ?? undefined,
     lastIpAddress: device.last_ip_address ?? undefined,
+    macAddress: device.mac_address ?? undefined,
   };
 }
 

@@ -145,6 +145,7 @@ export interface Device {
   tokenStatus: "valid" | "revoked";
   windowsUsername?: string;
   lastIpAddress?: string;
+  macAddress?: string;
 }
 
 export interface WorkSession {
