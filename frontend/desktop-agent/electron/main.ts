@@ -1125,13 +1125,37 @@ async function heartbeatTick() {
     runtimeStatus.lastSuccessfulSyncAt = new Date().toISOString();
   } catch (error) {
     runtimeStatus.connectionStatus = "offline";
-    enqueuePendingEvent({
-      id: eventId,
-      method: "POST",
-      endpoint: `/agent/sessions/${currentSessionId}/heartbeat`,
-      payload,
-      idempotencyKey: eventId,
-    });
+    const sessionNotFound =
+      axios.isAxiosError(error) && error.response?.status === 404;
+    if (sessionNotFound) {
+      // The server no longer knows this session (for example after a restart
+      // or an administrative close). Do not keep retrying a dead heartbeat
+      // forever; clear it and let the automatic-start flow create a fresh
+      // session while preserving the local tracking state.
+      currentSessionId = null;
+      runtimeStatus.sessionStartedAt = null;
+      runtimeStatus.trackingStatus = "starting";
+      lastDurationTickAt = null;
+      if (
+        !automaticTrackingRetryTimer &&
+        !isStartingTrackingAutomatically &&
+        !trackingPausedByUser &&
+        !isQuitting
+      ) {
+        automaticTrackingRetryTimer = setTimeout(() => {
+          automaticTrackingRetryTimer = null;
+          void startTrackingAutomatically();
+        }, 1000);
+      }
+    } else {
+      enqueuePendingEvent({
+        id: eventId,
+        method: "POST",
+        endpoint: `/agent/sessions/${currentSessionId}/heartbeat`,
+        payload,
+        idempotencyKey: eventId,
+      });
+    }
     log.warn("Heartbeat failed", error);
   } finally {
     if (Date.now() - lastMetadataRefreshAt > 60 * 1000) {
@@ -1200,6 +1224,7 @@ function clearRuntimeTimers() {
 
 function screenshotCaptureBlockReason(): string | null {
   if (!runtimeStatus.enrolled) return "device_not_enrolled";
+  if (!currentSessionId) return "session_not_active";
   if (!trackingConfig.screenshot_enabled) return "capture_disabled";
   if (!onAcPower) return "battery_power";
   if (
