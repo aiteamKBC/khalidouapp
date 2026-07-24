@@ -130,6 +130,7 @@ export type AgentRecentScreenshot = {
 };
 
 export type TrackingConfig = {
+  employee?: { id: string; name: string; email: string };
   screenshot_enabled: boolean;
   screenshot_interval_minutes: number;
   screenshots_per_interval: number;

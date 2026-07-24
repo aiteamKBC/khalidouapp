@@ -339,6 +339,11 @@ def config(
     db.commit()
     return success_response(
         data={
+            "employee": {
+                "id": str(employee.id),
+                "name": employee.name,
+                "email": employee.email,
+            },
             **serialize_tracking_settings(settings_row),
             "request_policy": {
                 "timezone": employee.timezone,

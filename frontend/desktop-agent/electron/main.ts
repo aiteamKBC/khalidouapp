@@ -1334,6 +1334,10 @@ async function refreshTrackingConfig() {
   try {
     const rawConfig = await getAgentConfig();
     const nextConfig = normalizeTrackingConfig(rawConfig);
+    if (rawConfig.employee) {
+      runtimeStatus.employeeName = rawConfig.employee.name;
+      runtimeStatus.employeeEmail = rawConfig.employee.email;
+    }
     runtimeStatus.requestPolicy = rawConfig.request_policy ?? null;
     const scheduleChanged =
       nextConfig.screenshot_enabled !== trackingConfig.screenshot_enabled ||
@@ -1622,6 +1626,10 @@ async function startTrackingAutomatically() {
     await syncPendingQueues(true);
     const rawConfig = await getAgentConfig();
     trackingConfig = normalizeTrackingConfig(rawConfig);
+    if (rawConfig.employee) {
+      runtimeStatus.employeeName = rawConfig.employee.name;
+      runtimeStatus.employeeEmail = rawConfig.employee.email;
+    }
     runtimeStatus.requestPolicy = rawConfig.request_policy ?? null;
     await refreshTasks();
     const current = await getCurrentSession();
