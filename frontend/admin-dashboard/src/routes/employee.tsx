@@ -537,9 +537,9 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
                 </p>
               </div>
               <div className="rounded-lg border p-3">
-                <p className="text-xs text-muted-foreground">Late / overtime</p>
+                <p className="text-xs text-muted-foreground">Late after grace / overtime</p>
                 <p className="mt-1 font-semibold">
-                  {formatDuration(summary.data?.daily_attendance.raw_late_seconds ?? 0)} /{" "}
+                  {formatDuration(summary.data?.daily_attendance.deductible_late_seconds ?? 0)} /{" "}
                   {formatDuration(summary.data?.daily_attendance.recorded_overtime_seconds ?? 0)}
                 </p>
               </div>

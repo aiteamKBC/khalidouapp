@@ -181,7 +181,7 @@ def calculate_daily_attendance(
     )
     session_ids = {UUID(item[0]["session_id"]) for item in intervals if item[0].get("session_id")}
     actual_sign_out_at = None
-    if session_ids:
+    if session_ids and not timeline["is_running"]:
         actual_sign_out_at = db.scalar(
             select(WorkSession.ended_at)
             .where(WorkSession.id.in_(session_ids), WorkSession.ended_at.is_not(None))
