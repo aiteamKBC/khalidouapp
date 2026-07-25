@@ -46,9 +46,14 @@ import {
   type PayrollEntry,
   type PayrollEntryUpdate,
 } from "@/api/payroll";
-import { getEmployeeAttendanceRange, type DailyAttendance } from "@/api/attendance";
+import {
+  getDailyAttendance,
+  getEmployeeAttendanceRange,
+  type DailyAttendance,
+} from "@/api/attendance";
 import { useAuth } from "@/lib/auth";
 import { formatMinutes } from "@/lib/format";
+import { WorkdayTimeline } from "@/components/workday-timeline";
 import { PageHeader } from "@/components/ui/page-header";
 import { StatCard } from "@/components/ui/stat-card";
 import { Button } from "@/components/ui/button";
@@ -674,95 +679,218 @@ function MonthlyAttendanceDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
+  const [selectedDay, setSelectedDay] = useState<string | null>(null);
   const history = useQuery({
     queryKey: ["employee-attendance-range", employeeId, startDate, endDate],
     queryFn: () => getEmployeeAttendanceRange(employeeId!, startDate, endDate),
     enabled: open && Boolean(employeeId),
+    refetchInterval: open ? 30_000 : false,
+  });
+  const dayDetail = useQuery({
+    queryKey: ["employee-attendance-day", employeeId, selectedDay],
+    queryFn: () => getDailyAttendance(employeeId!, selectedDay!),
+    enabled: open && Boolean(employeeId) && Boolean(selectedDay),
+    refetchInterval: selectedDay ? 15_000 : false,
   });
   const rows = history.data?.rows ?? [];
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[90vh] max-w-7xl overflow-y-auto">
-        <DialogHeader>
-          <div className="flex flex-wrap items-start justify-between gap-3 pr-7">
-            <div>
-              <DialogTitle>
-                {employeeName ?? history.data?.employeeName ?? "Attendance history"}
-              </DialogTitle>
-              <DialogDescription>
-                Daily attendance from {startDate} through {endDate}.
-              </DialogDescription>
+    <>
+      <Dialog
+        open={open}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen) setSelectedDay(null);
+          onOpenChange(nextOpen);
+        }}
+      >
+        <DialogContent className="max-h-[90vh] max-w-7xl overflow-y-auto">
+          <DialogHeader>
+            <div className="flex flex-wrap items-start justify-between gap-3 pr-7">
+              <div>
+                <DialogTitle>
+                  {employeeName ?? history.data?.employeeName ?? "Attendance history"}
+                </DialogTitle>
+                <DialogDescription>
+                  Daily attendance from {startDate} through {endDate}. Select a date to inspect its
+                  full activity timeline.
+                </DialogDescription>
+              </div>
+              {employeeId && (
+                <Button type="button" variant="outline" size="sm" asChild>
+                  <Link to="/screenshots" search={{ employeeId, startDate, endDate }}>
+                    <Images className="mr-1 h-4 w-4" />
+                    View period screenshots
+                  </Link>
+                </Button>
+              )}
             </div>
-            {employeeId && (
-              <Button type="button" variant="outline" size="sm" asChild>
-                <Link to="/screenshots" search={{ employeeId, startDate, endDate }}>
-                  <Images className="mr-1 h-4 w-4" />
-                  View period screenshots
-                </Link>
-              </Button>
-            )}
-          </div>
-        </DialogHeader>
+          </DialogHeader>
 
-        {history.isLoading ? (
-          <div className="h-64 animate-pulse rounded-xl bg-muted" />
-        ) : history.isError ? (
-          <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-5 text-sm text-destructive">
-            Attendance history could not be loaded.
-          </div>
-        ) : history.data ? (
-          <div className="space-y-4">
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              <MiniMetric
-                label="Scheduled days"
-                value={String(history.data.summary.scheduledDays)}
-              />
-              <MiniMetric label="Worked days" value={String(history.data.summary.workedDays)} />
-              <MiniMetric label="Total late" value={shortTime(history.data.summary.lateSeconds)} />
-              <MiniMetric label="Screenshots" value={String(history.data.summary.screenshots)} />
+          {history.isLoading ? (
+            <div className="h-64 animate-pulse rounded-xl bg-muted" />
+          ) : history.isError ? (
+            <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-5 text-sm text-destructive">
+              Attendance history could not be loaded.
             </div>
+          ) : history.data ? (
+            <div className="space-y-4">
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                <MiniMetric
+                  label="Scheduled days"
+                  value={String(history.data.summary.scheduledDays)}
+                />
+                <MiniMetric label="Worked days" value={String(history.data.summary.workedDays)} />
+                <MiniMetric
+                  label="Total late"
+                  value={shortTime(history.data.summary.lateSeconds)}
+                />
+                <MiniMetric label="Screenshots" value={String(history.data.summary.screenshots)} />
+              </div>
 
-            <div className="overflow-x-auto rounded-xl border">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Date</TableHead>
-                    <TableHead>Schedule</TableHead>
-                    <TableHead>First / last / sign-out</TableHead>
-                    <TableHead>Normal</TableHead>
-                    <TableHead>Idle</TableHead>
-                    <TableHead>Late</TableHead>
-                    <TableHead>Payable</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead className="text-right">Evidence</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {rows.map((row) => (
-                    <MonthlyAttendanceRow key={row.id} row={row} />
-                  ))}
-                  {rows.length === 0 && (
+              <div className="overflow-hidden rounded-xl border [&>div]:max-h-[54vh] [&>div]:overflow-auto">
+                <Table>
+                  <TableHeader className="sticky top-0 z-20 bg-card shadow-sm [&_th]:bg-card">
                     <TableRow>
-                      <TableCell colSpan={9} className="py-10 text-center text-muted-foreground">
-                        No attendance days were found in this payroll period.
-                      </TableCell>
+                      <TableHead>Date</TableHead>
+                      <TableHead>Schedule</TableHead>
+                      <TableHead>First / last / sign-out</TableHead>
+                      <TableHead>Normal</TableHead>
+                      <TableHead>Idle</TableHead>
+                      <TableHead>Late</TableHead>
+                      <TableHead>Payable</TableHead>
+                      <TableHead>Extra / overtime</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead className="text-right">Evidence</TableHead>
                     </TableRow>
-                  )}
-                </TableBody>
-              </Table>
+                  </TableHeader>
+                  <TableBody>
+                    {rows.map((row) => (
+                      <MonthlyAttendanceRow key={row.id} row={row} onSelectDay={setSelectedDay} />
+                    ))}
+                    {rows.length === 0 && (
+                      <TableRow>
+                        <TableCell colSpan={10} className="py-10 text-center text-muted-foreground">
+                          No attendance days were found in this payroll period.
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
             </div>
-          </div>
-        ) : null}
-      </DialogContent>
-    </Dialog>
+          ) : null}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={Boolean(selectedDay)}
+        onOpenChange={(nextOpen) => !nextOpen && setSelectedDay(null)}
+      >
+        <DialogContent className="max-h-[90vh] max-w-5xl overflow-y-auto">
+          <DialogHeader>
+            <div className="flex flex-wrap items-start justify-between gap-3 pr-7">
+              <div>
+                <DialogTitle>
+                  {employeeName ?? history.data?.employeeName ?? "Attendance detail"} ·{" "}
+                  {selectedDay}
+                </DialogTitle>
+                <DialogDescription>
+                  Full tracked activity, idle, breaks and overtime for this day.
+                </DialogDescription>
+              </div>
+              {employeeId && selectedDay && (
+                <Button type="button" variant="outline" size="sm" asChild>
+                  <Link to="/screenshots" search={{ employeeId, day: selectedDay }}>
+                    <Images className="mr-1 h-4 w-4" />
+                    View day screenshots
+                  </Link>
+                </Button>
+              )}
+            </div>
+          </DialogHeader>
+
+          {dayDetail.isLoading ? (
+            <div className="h-64 animate-pulse rounded-xl bg-muted" />
+          ) : dayDetail.isError ? (
+            <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-5 text-sm text-destructive">
+              Attendance detail could not be loaded.
+            </div>
+          ) : dayDetail.data ? (
+            <div className="space-y-5">
+              <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-5">
+                <MiniMetric
+                  label="Started"
+                  value={attendanceClock(
+                    dayDetail.data.actualFirstActivityAt,
+                    dayDetail.data.timezone,
+                  )}
+                />
+                <MiniMetric
+                  label="Last activity"
+                  value={attendanceClock(
+                    dayDetail.data.actualLastActivityAt,
+                    dayDetail.data.timezone,
+                  )}
+                />
+                <MiniMetric
+                  label="Signed out"
+                  value={
+                    dayDetail.data.isRunning
+                      ? "In progress"
+                      : attendanceClock(dayDetail.data.actualSignOutAt, dayDetail.data.timezone)
+                  }
+                />
+                <MiniMetric label="Normal" value={shortTime(dayDetail.data.normalWorkedSeconds)} />
+                <MiniMetric label="Idle" value={shortTime(dayDetail.data.idleSeconds)} />
+                <MiniMetric
+                  label="Paid breaks"
+                  value={shortTime(dayDetail.data.paidBreakSeconds)}
+                />
+                <MiniMetric
+                  label="Unpaid breaks"
+                  value={shortTime(dayDetail.data.unpaidBreakSeconds)}
+                />
+                <MiniMetric
+                  label="Before shift"
+                  value={shortTime(dayDetail.data.preShiftExtraSeconds)}
+                />
+                <MiniMetric
+                  label="After shift"
+                  value={shortTime(dayDetail.data.postShiftExtraSeconds)}
+                />
+                <MiniMetric
+                  label="Overtime"
+                  value={shortTime(dayDetail.data.recordedOvertimeSeconds)}
+                />
+                <MiniMetric label="Payable" value={shortTime(dayDetail.data.totalPayableSeconds)} />
+              </div>
+              <WorkdayTimeline timeline={dayDetail.data.timeline} />
+            </div>
+          ) : null}
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 
-function MonthlyAttendanceRow({ row }: { row: DailyAttendance }) {
+function MonthlyAttendanceRow({
+  row,
+  onSelectDay,
+}: {
+  row: DailyAttendance;
+  onSelectDay: (day: string) => void;
+}) {
   return (
     <TableRow>
-      <TableCell className="whitespace-nowrap font-semibold">{row.date}</TableCell>
+      <TableCell className="whitespace-nowrap font-semibold">
+        <button
+          type="button"
+          className="rounded text-left text-info underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          onClick={() => onSelectDay(row.date)}
+        >
+          {row.date}
+        </button>
+      </TableCell>
       <TableCell className="whitespace-nowrap text-xs">
         {attendanceClock(row.scheduledStartAt, row.timezone)} –{" "}
         {attendanceClock(row.scheduledEndAt, row.timezone)}
@@ -770,8 +898,13 @@ function MonthlyAttendanceRow({ row }: { row: DailyAttendance }) {
       <TableCell className="whitespace-nowrap text-xs">
         {attendanceClock(row.actualFirstActivityAt, row.timezone)} –{" "}
         {attendanceClock(row.actualLastActivityAt, row.timezone)}
-        <span className="block text-[10px] text-muted-foreground">
-          Sign-out {attendanceClock(row.actualSignOutAt, row.timezone)}
+        <span
+          className={`block text-[10px] ${
+            row.isRunning ? "font-semibold text-emerald-700" : "text-muted-foreground"
+          }`}
+        >
+          Sign-out{" "}
+          {row.isRunning ? "In progress" : attendanceClock(row.actualSignOutAt, row.timezone)}
         </span>
       </TableCell>
       <TableCell>{shortTime(row.normalWorkedSeconds)}</TableCell>
@@ -783,6 +916,7 @@ function MonthlyAttendanceRow({ row }: { row: DailyAttendance }) {
         </span>
       </TableCell>
       <TableCell className="font-semibold">{shortTime(row.totalPayableSeconds)}</TableCell>
+      <AttendanceOvertimeCell row={row} />
       <TableCell>
         <StatusBadge status={row.status} />
       </TableCell>
@@ -795,6 +929,31 @@ function MonthlyAttendanceRow({ row }: { row: DailyAttendance }) {
         </Button>
       </TableCell>
     </TableRow>
+  );
+}
+
+function AttendanceOvertimeCell({ row }: { row: DailyAttendance }) {
+  const notes = [
+    row.status === "worked_off_day" ? "Extra day" : null,
+    row.approvedOvertimeSeconds > 0 ? `${shortTime(row.approvedOvertimeSeconds)} approved` : null,
+    row.unapprovedOvertimeSeconds > 0
+      ? `${shortTime(row.unapprovedOvertimeSeconds)} pending`
+      : null,
+  ].filter(Boolean);
+
+  return (
+    <TableCell className="whitespace-nowrap">
+      <span
+        className={
+          row.recordedOvertimeSeconds > 0 ? "font-semibold text-info" : "text-muted-foreground"
+        }
+      >
+        {shortTime(row.recordedOvertimeSeconds)}
+      </span>
+      <span className="block text-[10px] text-muted-foreground">
+        {notes.length ? notes.join(" · ") : "No extra time"}
+      </span>
+    </TableCell>
   );
 }
 

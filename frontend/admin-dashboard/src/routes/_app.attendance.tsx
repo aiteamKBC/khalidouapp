@@ -207,8 +207,13 @@ function AttendancePage() {
                     <TableCell className="text-xs">
                       {clock(row.actualFirstActivityAt, row.timezone)} –{" "}
                       {clock(row.actualLastActivityAt, row.timezone)}
-                      <span className="block text-[10px] text-muted-foreground">
-                        Sign-out {clock(row.actualSignOutAt, row.timezone)}
+                      <span
+                        className={`block text-[10px] ${
+                          row.isRunning ? "font-semibold text-emerald-700" : "text-muted-foreground"
+                        }`}
+                      >
+                        Sign-out{" "}
+                        {row.isRunning ? "In progress" : clock(row.actualSignOutAt, row.timezone)}
                       </span>
                     </TableCell>
                     <TableCell>{duration(row.normalWorkedSeconds)}</TableCell>
@@ -302,7 +307,11 @@ function AttendancePage() {
                 />
                 <Small
                   label="Signed out"
-                  value={clock(detail.data.actualSignOutAt, detail.data.timezone)}
+                  value={
+                    detail.data.isRunning
+                      ? "In progress"
+                      : clock(detail.data.actualSignOutAt, detail.data.timezone)
+                  }
                 />
                 <Small label="Paid breaks" value={duration(detail.data.paidBreakSeconds)} />
                 <Small label="Unpaid breaks" value={duration(detail.data.unpaidBreakSeconds)} />

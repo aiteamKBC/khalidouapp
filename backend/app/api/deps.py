@@ -13,6 +13,8 @@ from app.core.security import decode_device_token, decode_jwt_token, hash_token
 from app.database.session import get_db
 from app.models import AdminUser, Device, DeviceToken, Employee
 
+DEVICE_REENROLLMENT_REQUIRED = "Device token identity does not match this device."
+
 
 @dataclass(frozen=True)
 class DeviceAuthContext:
@@ -83,9 +85,9 @@ def get_current_device(
         )
     )
     if token_record is None:
-        raise ApiError("UNAUTHORIZED", "Device token has been revoked.", 401)
+        raise ApiError("DEVICE_REENROLLMENT_REQUIRED", DEVICE_REENROLLMENT_REQUIRED, 401)
     if token_record.expires_at is not None and token_record.expires_at <= datetime.now(UTC):
-        raise ApiError("UNAUTHORIZED", "Device token has expired.", 401)
+        raise ApiError("DEVICE_REENROLLMENT_REQUIRED", DEVICE_REENROLLMENT_REQUIRED, 401)
 
     device = db.scalar(
         select(Device).where(
@@ -96,7 +98,7 @@ def get_current_device(
         )
     )
     if device is None:
-        raise ApiError("UNAUTHORIZED", "Device is not active.", 401)
+        raise ApiError("DEVICE_REENROLLMENT_REQUIRED", DEVICE_REENROLLMENT_REQUIRED, 401)
     if device.employee_id != token_employee_id:
         # A valid, non-revoked device token is the durable identity for the
         # installation. Repair a stale employee foreign key so an app update
@@ -111,7 +113,7 @@ def get_current_device(
             )
         )
         if token_employee is None:
-            raise ApiError("UNAUTHORIZED", "Device token identity does not match this device.", 401)
+            raise ApiError("DEVICE_REENROLLMENT_REQUIRED", DEVICE_REENROLLMENT_REQUIRED, 401)
         device.employee_id = token_employee_id
         db.add(device)
         db.commit()
@@ -125,7 +127,7 @@ def get_current_device(
         )
     )
     if employee is None:
-        raise ApiError("UNAUTHORIZED", "Employee account is not active.", 401)
+        raise ApiError("DEVICE_REENROLLMENT_REQUIRED", DEVICE_REENROLLMENT_REQUIRED, 401)
 
     return DeviceAuthContext(device=device, token_record=token_record)
 

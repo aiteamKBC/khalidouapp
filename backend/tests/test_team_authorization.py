@@ -3,11 +3,12 @@ from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, delete, event, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from app.api.v1 import attendance as attendance_api
 from app.core.config import settings
 from app.core.security import create_device_token, create_employee_access_token, hash_token
 from app.core.security import create_jwt_token, hash_password
@@ -425,6 +426,81 @@ def test_attendance_range_stops_at_employee_today(team_client):
         assert future_rows == []
     finally:
         db.close()
+
+
+def test_attendance_range_does_not_rebuild_empty_historical_days(team_client, monkeypatch):
+    client, data = team_client
+    today = local_today("UTC")
+    start_date = today - timedelta(days=29)
+    leave_day = next(
+        start_date + timedelta(days=offset)
+        for offset in range(29)
+        if (start_date + timedelta(days=offset)).weekday() < 5
+    )
+    db: Session = data["session_factory"]()
+    try:
+        engine = db.get_bind()
+        db.add(
+            LeaveRequest(
+                company_id=data["employee_a"].company_id,
+                employee_id=data["employee_a"].id,
+                start_date=leave_day,
+                end_date=leave_day,
+                requested_days=1,
+                leave_type="annual",
+                status="approved",
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    original_cached_attendance = attendance_api.cached_daily_attendance
+    recalculated_dates = []
+
+    def counted_cached_attendance(*args, **kwargs):
+        recalculated_dates.append(kwargs["work_date"])
+        return original_cached_attendance(*args, **kwargs)
+
+    monkeypatch.setattr(
+        attendance_api,
+        "cached_daily_attendance",
+        counted_cached_attendance,
+    )
+    statements = []
+
+    def count_statement(*_args):
+        statements.append(1)
+
+    event.listen(engine, "before_cursor_execute", count_statement)
+    try:
+        response = client.get(
+            f"/api/v1/attendance/employee/{data['employee_a'].id}",
+            params={
+                "start_date": start_date.isoformat(),
+                "end_date": today.isoformat(),
+            },
+            headers=data["general_headers"],
+        )
+    finally:
+        event.remove(engine, "before_cursor_execute", count_statement)
+
+    assert response.status_code == 200
+    rows = response.json()["data"]["rows"]
+    assert len(rows) == 30
+    assert len(statements) <= 35
+    assert recalculated_dates == [today]
+    leave_row = next(row for row in rows if row["date"] == leave_day.isoformat())
+    assert leave_row["status"] == "approved_leave"
+    assert leave_row["total_payable_seconds"] == 8 * 60 * 60
+    historical_weekday = next(
+        row
+        for row in rows[:-1]
+        if datetime.fromisoformat(row["date"]).weekday() < 5
+        and row["date"] != leave_day.isoformat()
+    )
+    assert historical_weekday["status"] == "absent"
+    assert historical_weekday["issues"][0]["code"] == "missing_check_in"
 
 
 def test_team_lead_manages_owned_team_schedule_without_salary_access(team_client):
@@ -1083,6 +1159,25 @@ def test_team_owner_cannot_retrieve_employees_from_another_team(team_client):
     assert filtered.status_code == 403
 
 
+def test_revoked_device_token_requires_desktop_reenrollment(team_client):
+    client, data = team_client
+    db: Session = data["session_factory"]()
+    try:
+        db.execute(delete(DeviceToken).where(DeviceToken.device_id == data["session_a"].device_id))
+        db.commit()
+    finally:
+        db.close()
+
+    response = client.get("/api/v1/agent/summary", headers=data["device_headers"])
+
+    assert response.status_code == 401
+    assert response.json()["error"] == {
+        "code": "DEVICE_REENROLLMENT_REQUIRED",
+        "message": "Device token identity does not match this device.",
+        "details": {},
+    }
+
+
 def test_team_owner_cannot_retrieve_reports_from_another_team(team_client):
     client, data = team_client
 
@@ -1682,9 +1777,7 @@ def test_desktop_today_shows_actual_idle_on_an_off_day(team_client):
     assert summary["today"]["idle_seconds"] == 15 * 60
     assert summary["today"]["eligible_idle_seconds"] == 0
     timesheet_row = next(
-        row
-        for row in timesheet.json()["data"]
-        if row["employee_id"] == str(data["employee_a"].id)
+        row for row in timesheet.json()["data"] if row["employee_id"] == str(data["employee_a"].id)
     )
     assert timesheet_row["idle_seconds"] == 15 * 60
 
@@ -2106,9 +2199,7 @@ def test_early_leave_is_separated_from_time_requests_and_worked_time(team_client
     assert time_requests.status_code == 200
     assert {row["request_type"] for row in time_requests.json()["data"]} == {"manual_time"}
     assert early_leave_requests.status_code == 200
-    assert {row["request_type"] for row in early_leave_requests.json()["data"]} == {
-        "early_leave"
-    }
+    assert {row["request_type"] for row in early_leave_requests.json()["data"]} == {"early_leave"}
     row = next(
         item
         for item in timesheet.json()["data"]
@@ -2162,9 +2253,7 @@ def test_employee_start_date_and_leave_balance_overview_are_editable(team_client
     assert updated.json()["data"]["start_date"] == "2025-01-15"
     assert balances.status_code == 200
     balance = next(
-        item
-        for item in balances.json()["data"]
-        if item["employee_id"] == str(employee_id)
+        item for item in balances.json()["data"] if item["employee_id"] == str(employee_id)
     )
     assert balance["used_days"] == 1
     assert balance["remaining_days"] == balance["credit_days"] - 1

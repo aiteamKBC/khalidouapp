@@ -447,6 +447,7 @@ def calculate_daily_attendance(
         "issues": issues,
         "calculation_sources": {
             "session_ids": sorted({item[0]["session_id"] for item in intervals}),
+            "is_running": bool(timeline["is_running"]),
             "adjustment_ids": [str(item.id) for item in adjustments],
             "overtime_ids": [str(item.id) for item in overtime_rows],
             "leave_request_id": str(leave.id) if leave else None,
@@ -472,6 +473,7 @@ def calculate_daily_attendance(
 
 
 def serialize_daily_attendance(row: DailyAttendance, *, timeline: dict | None = None) -> dict:
+    calculation_sources = row.calculation_sources or {}
     result = {
         "id": str(row.id),
         "employee_id": str(row.employee_id),
@@ -487,7 +489,14 @@ def serialize_daily_attendance(row: DailyAttendance, *, timeline: dict | None = 
         "actual_last_activity_at": row.actual_last_activity_at.isoformat()
         if row.actual_last_activity_at
         else None,
-        "actual_sign_out_at": row.actual_sign_out_at.isoformat() if row.actual_sign_out_at else None,
+        "actual_sign_out_at": row.actual_sign_out_at.isoformat()
+        if row.actual_sign_out_at
+        else None,
+        "is_running": bool(
+            timeline["is_running"]
+            if timeline is not None
+            else calculation_sources.get("is_running", False)
+        ),
         "normal_worked_seconds": row.normal_worked_seconds,
         "paid_break_seconds": row.paid_break_seconds,
         "unpaid_break_seconds": row.unpaid_break_seconds,
@@ -507,25 +516,19 @@ def serialize_daily_attendance(row: DailyAttendance, *, timeline: dict | None = 
         "status": row.status,
         "leave_status": row.leave_status,
         "approved_early_leave_seconds": int(
-            (row.calculation_sources or {}).get("approved_early_leave_seconds", 0)
+            calculation_sources.get("approved_early_leave_seconds", 0)
         ),
         "attendance_adjustment_seconds": int(
-            (row.calculation_sources or {}).get("attendance_adjustment_seconds", 0)
+            calculation_sources.get("attendance_adjustment_seconds", 0)
         ),
         "attendance_correction": (
             {
-                "id": (row.calculation_sources or {}).get("attendance_correction_id"),
-                "reason": (row.calculation_sources or {}).get(
-                    "attendance_correction_reason"
-                ),
-                "raw_first_activity_at": (row.calculation_sources or {}).get(
-                    "raw_first_activity_at"
-                ),
-                "raw_last_activity_at": (row.calculation_sources or {}).get(
-                    "raw_last_activity_at"
-                ),
+                "id": calculation_sources.get("attendance_correction_id"),
+                "reason": calculation_sources.get("attendance_correction_reason"),
+                "raw_first_activity_at": calculation_sources.get("raw_first_activity_at"),
+                "raw_last_activity_at": calculation_sources.get("raw_last_activity_at"),
             }
-            if (row.calculation_sources or {}).get("attendance_correction_id")
+            if calculation_sources.get("attendance_correction_id")
             else None
         ),
         "issues": row.issues or [],
