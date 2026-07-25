@@ -71,6 +71,7 @@ def create_employee_time_adjustment_request(
     if employee is None:
         raise ApiError("EMPLOYEE_NOT_FOUND", "Employee profile was not found.", 404)
     reason = reason.strip()
+    timezone_name = device.timezone or employee.timezone or "UTC"
     if request_type == IDLE_TIME_REQUEST and len(reason) < 10:
         raise ApiError(
             "IDLE_DESCRIPTION_REQUIRED",
@@ -124,7 +125,7 @@ def create_employee_time_adjustment_request(
                 - requested_leave_time.minute * 60
             )
             try:
-                timezone = ZoneInfo(employee.timezone)
+                timezone = ZoneInfo(timezone_name)
             except ZoneInfoNotFoundError:
                 timezone = UTC
             source_start_at = datetime.combine(
@@ -158,8 +159,10 @@ def create_employee_time_adjustment_request(
             db,
             company_id=device.company_id,
             employee_id=device.employee_id,
-            timezone_name=employee.timezone,
+            timezone_name=timezone_name,
             target_date=requested_date,
+            device_id=device.id,
+            session_timezone_name=timezone_name,
         )
         if timeline.get("approved_leave"):
             raise ApiError(
@@ -192,7 +195,7 @@ def create_employee_time_adjustment_request(
         profile = get_or_create_work_profile(db, employee)
         working_days = profile.working_days or [0, 1, 2, 3, 4]
         try:
-            timezone = ZoneInfo(employee.timezone)
+            timezone = ZoneInfo(timezone_name)
         except ZoneInfoNotFoundError:
             timezone = UTC
         local_start = source_start_at.astimezone(timezone)

@@ -21,7 +21,9 @@ class Employee(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     email: Mapped[str] = mapped_column(String(320), nullable=False, index=True)
     employee_code: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
     job_title: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    timezone: Mapped[str] = mapped_column(String(80), nullable=False, default="UTC")
+    # Khaliduo's workspace is operated in Egypt by default.  Employees can
+    # still choose another IANA timezone from their profile when needed.
+    timezone: Mapped[str] = mapped_column(String(80), nullable=False, default="Africa/Cairo")
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="active")
     weekly_capacity_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=2400)
     portal_password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)

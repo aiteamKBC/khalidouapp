@@ -25,6 +25,13 @@ class Device(UUIDPrimaryKeyMixin, Base):
     windows_username: Mapped[str | None] = mapped_column(String(255), nullable=True)
     mac_address: Mapped[str | None] = mapped_column(String(32), nullable=True)
     last_ip_address: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    timezone: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    reported_timezone: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    country_code: Mapped[str | None] = mapped_column(String(2), nullable=True)
+    timezone_source: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    timezone_checked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="active")
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     registered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)

@@ -10,6 +10,7 @@ class AgentDeviceInfo(BaseModel):
     agent_version: str = Field(min_length=1, max_length=50)
     windows_username: str | None = Field(default=None, max_length=255)
     mac_address: str | None = Field(default=None, max_length=32)
+    timezone: str | None = Field(default=None, min_length=1, max_length=80)
 
 
 class AuthenticatedEnrollmentRequest(BaseModel):

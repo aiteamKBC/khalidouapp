@@ -234,6 +234,42 @@ def test_shift_end_stops_normal_pay_even_when_late_employee_has_not_completed_ta
     assert approved.total_payable_seconds == 8 * 3600
 
 
+def test_attendance_uses_session_timezone_instead_of_stale_employee_profile(
+    attendance_context,
+):
+    db, employee, device, _ = attendance_context
+    employee.timezone = "Africa/Cairo"
+    profile = db.scalar(
+        select(EmployeeWorkProfile).where(EmployeeWorkProfile.employee_id == employee.id)
+    )
+    profile.shift_start = time(10, 0)
+    profile.shift_end = time(18, 0)
+    session = _session(
+        db,
+        employee,
+        device,
+        datetime(2026, 7, 21, 9, 0, tzinfo=UTC),
+        datetime(2026, 7, 21, 17, 0, tzinfo=UTC),
+    )
+    session.timezone = "Europe/London"
+    db.commit()
+
+    row, _ = calculate_daily_attendance(
+        db,
+        employee=employee,
+        work_date=date(2026, 7, 21),
+        now=datetime(2026, 7, 22, tzinfo=UTC),
+    )
+
+    assert row.timezone == "Europe/London"
+    assert row.scheduled_start_at.replace(tzinfo=UTC) == datetime(
+        2026, 7, 21, 9, 0, tzinfo=UTC
+    )
+    assert row.scheduled_end_at.replace(tzinfo=UTC) == datetime(
+        2026, 7, 21, 17, 0, tzinfo=UTC
+    )
+
+
 def test_approved_leave_counts_real_work_as_overtime_and_other_time_as_leave(
     attendance_context,
 ):

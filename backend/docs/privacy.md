@@ -5,3 +5,9 @@ Khaliduo is a transparent employee tracking application used with employee knowl
 It records working time, online status, idle status, and periodic screenshots during work sessions.
 
 It does not record typed text, passwords, webcam, microphone, clipboard, personal files, or browser passwords.
+
+The server uses the device's public IP address to determine its country-level
+timezone for shift calculations. The effective timezone and two-letter country
+code are stored with the enrolled device; precise GPS coordinates are not
+requested or stored. The desktop also reports the Windows IANA timezone as a
+fallback when country lookup is unavailable.

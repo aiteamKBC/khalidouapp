@@ -18,6 +18,7 @@ class HeartbeatRequest(BaseModel):
     active_seconds: int | None = Field(default=None, ge=0)
     agent_version: str = Field(min_length=1, max_length=50)
     mac_address: str | None = Field(default=None, max_length=32)
+    timezone: str | None = Field(default=None, min_length=1, max_length=80)
 
 
 class ActivityEventRequest(BaseModel):

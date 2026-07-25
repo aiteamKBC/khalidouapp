@@ -31,6 +31,9 @@ type EnrollmentResponse = {
     name: string;
     installation_id: string;
     status: string;
+    timezone: string | null;
+    country_code: string | null;
+    timezone_source: string | null;
   };
   device_token: string;
   token_type: "bearer";
@@ -51,6 +54,7 @@ export type WorkSession = {
   team_id: string | null;
   project_id: string | null;
   task_id: string | null;
+  timezone: string | null;
   started_at: string;
   ended_at: string | null;
   status: "active" | "idle" | "locked" | "sleeping" | "offline" | "ended";
@@ -281,6 +285,7 @@ function getDeviceInfo(agentVersion: string) {
     agent_version: agentVersion,
     windows_username: os.userInfo().username,
     mac_address: macAddress,
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || null,
   };
 }
 
@@ -609,6 +614,7 @@ export async function sendHeartbeat(options: {
       active_seconds: options.activeSeconds,
       agent_version: options.agentVersion,
       mac_address: getDeviceInfo(options.agentVersion).mac_address,
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || null,
     },
     { headers: getAuthHeaders() },
   );

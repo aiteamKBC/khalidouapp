@@ -3,6 +3,7 @@ from uuid import uuid4
 
 from starlette.requests import Request
 
+from app.core.config import settings
 from app.core.security import (
     create_employee_access_token,
     create_employee_handoff_token,
@@ -113,3 +114,16 @@ def test_rate_limit_ip_trusts_forwarded_header_only_from_known_proxy() -> None:
 
     assert request_client_ip(proxied) == "203.0.113.10"
     assert request_client_ip(direct) == "203.0.113.20"
+
+
+def test_forwarded_client_ip_supports_trusted_proxy_networks(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "trusted_proxy_ips", ["172.16.0.0/12"])
+    proxied = Request(
+        {
+            "type": "http",
+            "client": ("172.20.0.4", 1234),
+            "headers": [(b"x-forwarded-for", b"41.33.10.25")],
+        }
+    )
+
+    assert request_client_ip(proxied) == "41.33.10.25"

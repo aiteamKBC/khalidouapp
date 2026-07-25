@@ -21,6 +21,7 @@ class WorkSession(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         ForeignKey("projects.id"), nullable=True, index=True
     )
     task_id: Mapped[UUID | None] = mapped_column(ForeignKey("tasks.id"), nullable=True, index=True)
+    timezone: Mapped[str | None] = mapped_column(String(80), nullable=True)
     started_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, index=True
     )

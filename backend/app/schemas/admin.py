@@ -10,7 +10,7 @@ class EmployeeCreate(BaseModel):
     email: EmailStr
     employee_code: str | None = Field(default=None, max_length=80)
     job_title: str | None = Field(default=None, max_length=255)
-    timezone: str = Field(default="UTC", max_length=80)
+    timezone: str = Field(default="Africa/Cairo", max_length=80)
     weekly_capacity_minutes: int = Field(default=2400, ge=60, le=10080)
 
 

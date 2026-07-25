@@ -1,5 +1,5 @@
 from collections import defaultdict, deque
-from ipaddress import ip_address
+from ipaddress import ip_address, ip_network
 from threading import Lock
 from time import monotonic
 
@@ -54,7 +54,15 @@ limiter = InMemoryRateLimiter()
 
 def request_client_ip(request: Request) -> str:
     peer = request.client.host if request.client else "unknown"
-    if peer not in settings.trusted_proxy_ips:
+    try:
+        peer_address = ip_address(peer)
+        trusted = any(
+            peer_address in ip_network(configured, strict=False)
+            for configured in settings.trusted_proxy_ips
+        )
+    except ValueError:
+        trusted = False
+    if not trusted:
         return peer
     forwarded = request.headers.get("x-forwarded-for", "").split(",", 1)[0].strip()
     if not forwarded:

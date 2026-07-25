@@ -9,9 +9,9 @@ from sqlalchemy.orm import Session
 from app.models import Employee, EmployeeWorkProfile, TeamMember, WorkScheduleOverride
 
 
-def timezone_for(employee: Employee) -> ZoneInfo:
+def timezone_for(employee: Employee, timezone_name: str | None = None) -> ZoneInfo:
     try:
-        return ZoneInfo(employee.timezone or "UTC")
+        return ZoneInfo(timezone_name or employee.timezone or "UTC")
     except (ZoneInfoNotFoundError, ValueError):
         return ZoneInfo("UTC")
 
@@ -71,6 +71,8 @@ def effective_schedule(
     employee: Employee,
     profile: EmployeeWorkProfile,
     work_date: date,
+    *,
+    timezone_name: str | None = None,
 ) -> dict:
     override = _latest_day_override(db, employee, work_date)
     shift_start = profile.shift_start
@@ -86,7 +88,7 @@ def effective_schedule(
     scheduled_day = work_date.weekday() in set(profile.working_days or [0, 1, 2, 3, 4])
     if override and override.override_type in {"shift", "both"}:
         scheduled_day = True
-    zone = timezone_for(employee)
+    zone = timezone_for(employee, timezone_name)
     start_at = (
         datetime.combine(work_date, shift_start, tzinfo=zone).astimezone(UTC)
         if scheduled_day and shift_start

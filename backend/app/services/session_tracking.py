@@ -3,7 +3,7 @@ from typing import Any
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import ApiError
@@ -48,8 +48,26 @@ def utc(value: datetime | None = None) -> datetime:
 
 def employee_zone(db: Session, device: Device) -> ZoneInfo:
     timezone_name = (
-        db.scalar(select(Employee.timezone).where(Employee.id == device.employee_id)) or "UTC"
+        device.timezone
+        or db.scalar(select(Employee.timezone).where(Employee.id == device.employee_id))
+        or "UTC"
     )
+    try:
+        return ZoneInfo(timezone_name)
+    except (ZoneInfoNotFoundError, ValueError):
+        return ZoneInfo("UTC")
+
+
+def session_zone(db: Session, session: WorkSession) -> ZoneInfo:
+    timezone_name = session.timezone
+    if not timezone_name:
+        device = db.get(Device, session.device_id)
+        if device is not None:
+            return employee_zone(db, device)
+        timezone_name = (
+            db.scalar(select(Employee.timezone).where(Employee.id == session.employee_id))
+            or "UTC"
+        )
     try:
         return ZoneInfo(timezone_name)
     except (ZoneInfoNotFoundError, ValueError):
@@ -103,6 +121,7 @@ def serialize_session(session: WorkSession) -> dict[str, Any]:
         "team_id": str(session.team_id) if session.team_id else None,
         "project_id": str(session.project_id) if session.project_id else None,
         "task_id": str(session.task_id) if session.task_id else None,
+        "timezone": session.timezone,
         "started_at": utc(session.started_at).isoformat(),
         "ended_at": utc(session.ended_at).isoformat() if session.ended_at else None,
         "status": session.status,
@@ -116,8 +135,17 @@ def serialize_session(session: WorkSession) -> dict[str, Any]:
     }
 
 
-def local_work_date(db: Session, employee_id: UUID, at: datetime) -> tuple[Any, ZoneInfo]:
-    timezone_name = db.scalar(select(Employee.timezone).where(Employee.id == employee_id)) or "UTC"
+def local_work_date(
+    db: Session,
+    employee_id: UUID,
+    at: datetime,
+    timezone_name: str | None = None,
+) -> tuple[Any, ZoneInfo]:
+    timezone_name = (
+        timezone_name
+        or db.scalar(select(Employee.timezone).where(Employee.id == employee_id))
+        or "UTC"
+    )
     try:
         zone = ZoneInfo(timezone_name)
     except (ZoneInfoNotFoundError, ValueError):
@@ -126,7 +154,10 @@ def local_work_date(db: Session, employee_id: UUID, at: datetime) -> tuple[Any, 
 
 
 def employee_required_daily_seconds(
-    db: Session, employee_id: UUID, at: datetime | None = None
+    db: Session,
+    employee_id: UUID,
+    at: datetime | None = None,
+    timezone_name: str | None = None,
 ) -> int:
     required_minutes = db.scalar(
         select(EmployeeWorkProfile.required_daily_minutes).where(
@@ -134,7 +165,7 @@ def employee_required_daily_seconds(
         )
     )
     if at is not None:
-        work_date, _ = local_work_date(db, employee_id, at)
+        work_date, _ = local_work_date(db, employee_id, at, timezone_name)
         company_id = db.scalar(select(Employee.company_id).where(Employee.id == employee_id))
         common = (
             WorkScheduleOverride.company_id == company_id,
@@ -177,7 +208,13 @@ def employee_overtime_enabled(db: Session, employee_id: UUID) -> bool:
 
 
 def _sessions_for_workday(db: Session, session: WorkSession) -> list[WorkSession]:
-    work_date, zone = local_work_date(db, session.employee_id, session.started_at)
+    zone = session_zone(db, session)
+    work_date, zone = local_work_date(
+        db,
+        session.employee_id,
+        session.started_at,
+        zone.key,
+    )
     start = datetime.combine(work_date, time.min, tzinfo=zone).astimezone(UTC)
     end = datetime.combine(work_date + timedelta(days=1), time.min, tzinfo=zone).astimezone(UTC)
     return list(
@@ -186,8 +223,13 @@ def _sessions_for_workday(db: Session, session: WorkSession) -> list[WorkSession
             .where(
                 WorkSession.company_id == session.company_id,
                 WorkSession.employee_id == session.employee_id,
+                WorkSession.device_id == session.device_id,
                 WorkSession.started_at >= start,
                 WorkSession.started_at < end,
+                or_(
+                    WorkSession.timezone == zone.key,
+                    WorkSession.timezone.is_(None),
+                ),
             )
             .order_by(WorkSession.started_at, WorkSession.created_at)
         ).all()
@@ -205,9 +247,21 @@ def sync_session_time_buckets(
     if employee is None:
         return
     calculated_at = utc(at)
-    work_date, _ = local_work_date(db, session.employee_id, session.started_at)
+    zone = session_zone(db, session)
+    work_date, _ = local_work_date(
+        db,
+        session.employee_id,
+        session.started_at,
+        zone.key,
+    )
     profile = get_or_create_work_profile(db, employee)
-    schedule = effective_schedule(db, employee, profile, work_date)
+    schedule = effective_schedule(
+        db,
+        employee,
+        profile,
+        work_date,
+        timezone_name=zone.key,
+    )
     shift_start = schedule["start_at"]
     shift_end = schedule["end_at"]
     timeline = build_workday_timeline(
@@ -217,6 +271,8 @@ def sync_session_time_buckets(
         timezone_name=schedule["timezone"],
         target_date=work_date,
         now=calculated_at,
+        device_id=session.device_id,
+        session_timezone_name=zone.key,
     )
     buckets: dict[UUID, dict[str, int]] = {}
     for interval in timeline["intervals"]:
@@ -304,8 +360,9 @@ def get_or_create_pause_balance(
     company_id: UUID,
     employee_id: UUID,
     at: datetime,
+    timezone_name: str | None = None,
 ) -> PauseBalance:
-    work_date, _ = local_work_date(db, employee_id, at)
+    work_date, _ = local_work_date(db, employee_id, at, timezone_name)
     balance = db.scalar(
         select(PauseBalance).where(
             PauseBalance.employee_id == employee_id,
@@ -373,6 +430,7 @@ def pause_state_payload(
         company_id=session.company_id,
         employee_id=session.employee_id,
         at=now,
+        timezone_name=session_zone(db, session).key,
     )
     active_pause = active_pause_for_session(db, session)
     total = balance.base_seconds + balance.extra_approved_seconds
@@ -401,7 +459,12 @@ def pause_state_payload(
 
 
 def workday_state_payload(db: Session, session: WorkSession) -> dict[str, Any]:
-    required_seconds = employee_required_daily_seconds(db, session.employee_id, session.started_at)
+    required_seconds = employee_required_daily_seconds(
+        db,
+        session.employee_id,
+        session.started_at,
+        session_zone(db, session).key,
+    )
     overtime_enabled = employee_overtime_enabled(db, session.employee_id)
     day_sessions = _sessions_for_workday(db, session)
     normal_seconds = sum(item.normal_seconds for item in day_sessions)
@@ -515,12 +578,22 @@ def start_or_get_session(
     zone = employee_zone(db, device)
     current = get_current_session(db, device)
     if current is not None:
-        if not same_local_day(current.started_at, now, zone):
+        current_zone = session_zone(db, current)
+        if current_zone.key != zone.key:
             close_open_session(
                 db,
                 device=device,
                 session=current,
-                ended_at=min(now, next_local_midnight(current.started_at, zone)),
+                ended_at=now,
+                reason="Device timezone changed",
+            )
+            current = None
+        elif not same_local_day(current.started_at, now, current_zone):
+            close_open_session(
+                db,
+                device=device,
+                session=current,
+                ended_at=min(now, next_local_midnight(current.started_at, current_zone)),
                 reason="New local workday started",
             )
             current = None
@@ -569,6 +642,7 @@ def start_or_get_session(
         company_id=device.company_id,
         employee_id=device.employee_id,
         device_id=device.id,
+        timezone=zone.key,
         started_at=started_at,
         status="active",
         active_seconds=0,
@@ -645,6 +719,7 @@ def start_paid_pause(
         company_id=session.company_id,
         employee_id=session.employee_id,
         at=now,
+        timezone_name=session_zone(db, session).key,
     )
     remaining = balance.base_seconds + balance.extra_approved_seconds - balance.used_seconds
     if requested_seconds > remaining:
@@ -767,14 +842,28 @@ def record_heartbeat(
             "restarted": True,
         }
     heartbeat_at = utc(payload.timestamp)
-    zone = employee_zone(db, device)
-    if session.status == "offline" or not same_local_day(session.started_at, heartbeat_at, zone):
+    zone = session_zone(db, session)
+    current_device_zone = employee_zone(db, device)
+    timezone_changed = zone.key != current_device_zone.key
+    if (
+        session.status == "offline"
+        or timezone_changed
+        or not same_local_day(session.started_at, heartbeat_at, zone)
+    ):
         close_open_session(
             db,
             device=device,
             session=session,
-            ended_at=min(heartbeat_at, next_local_midnight(session.started_at, zone)),
-            reason="Heartbeat arrived after the local workday changed",
+            ended_at=(
+                heartbeat_at
+                if timezone_changed
+                else min(heartbeat_at, next_local_midnight(session.started_at, zone))
+            ),
+            reason=(
+                "Device timezone changed"
+                if timezone_changed
+                else "Heartbeat arrived after the local workday changed"
+            ),
         )
         db.commit()
         restarted = start_or_get_session(

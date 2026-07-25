@@ -485,6 +485,91 @@ def test_time_before_and_after_shift_never_counts_as_normal_work(tracking_contex
     assert heartbeat["workday"]["extra_time_status"] == "recorded_not_counted"
 
 
+def test_device_timezone_controls_shift_even_when_employee_profile_differs(
+    tracking_context,
+):
+    db, device = tracking_context
+    employee = db.get(Employee, device.employee_id)
+    assert employee is not None
+    employee.timezone = "Africa/Cairo"
+    device.timezone = "Europe/London"
+    device.timezone_source = "ip_geolocation"
+    db.add(
+        EmployeeWorkProfile(
+            company_id=device.company_id,
+            employee_id=device.employee_id,
+            shift_start=datetime.strptime("10:00", "%H:%M").time(),
+            shift_end=datetime.strptime("18:00", "%H:%M").time(),
+            required_daily_minutes=8 * 60,
+            overtime_enabled=False,
+        )
+    )
+    # London is UTC+1 in July, so a 10:00-18:00 London shift is 09:00-17:00 UTC.
+    started_at = datetime(2026, 7, 21, 9, 0, tzinfo=UTC)
+    heartbeat_at = datetime(2026, 7, 21, 17, 0, tzinfo=UTC)
+    started = start_or_get_session(
+        db,
+        device,
+        SessionStartRequest(started_at=started_at),
+    )
+
+    heartbeat = record_heartbeat(
+        db,
+        device=device,
+        session_id=UUID(started["session"]["id"]),
+        payload=HeartbeatRequest(
+            event_id=uuid4(),
+            timestamp=heartbeat_at,
+            status="active",
+            active_seconds=8 * 60 * 60,
+            idle_seconds=0,
+            agent_version="1.0.0",
+        ),
+    )
+
+    assert heartbeat["session"]["timezone"] == "Europe/London"
+    assert heartbeat["workday"]["normal_seconds"] == 8 * 60 * 60
+    assert heartbeat["workday"]["extra_seconds"] == 0
+
+
+def test_active_session_restarts_when_device_moves_to_another_timezone(
+    tracking_context,
+):
+    db, device = tracking_context
+    device.timezone = "Africa/Cairo"
+    started_at = datetime(2026, 7, 21, 8, 0, tzinfo=UTC)
+    started = start_or_get_session(
+        db,
+        device,
+        SessionStartRequest(started_at=started_at),
+    )
+    old_session_id = UUID(started["session"]["id"])
+
+    device.timezone = "Europe/London"
+    heartbeat_at = started_at + timedelta(hours=1)
+    restarted = record_heartbeat(
+        db,
+        device=device,
+        session_id=old_session_id,
+        payload=HeartbeatRequest(
+            event_id=uuid4(),
+            timestamp=heartbeat_at,
+            status="active",
+            active_seconds=60 * 60,
+            idle_seconds=0,
+            agent_version="1.0.0",
+        ),
+    )
+
+    old_session = db.get(WorkSession, old_session_id)
+    assert old_session is not None
+    assert restarted["restarted"] is True
+    assert restarted["session"]["id"] != str(old_session_id)
+    assert restarted["session"]["timezone"] == "Europe/London"
+    assert old_session.timezone == "Africa/Cairo"
+    assert old_session.ended_at is not None
+
+
 def test_active_time_before_shift_is_extra_even_without_completed_shift_time(
     tracking_context,
 ):
