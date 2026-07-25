@@ -31,6 +31,8 @@ from app.services.work_profiles import STANDARD_MONTH_DAYS, get_or_create_work_p
 MONEY = Decimal("0.01")
 DEDUCTION_ADJUSTMENTS = {"deduction", "late_deduction", "idle_deduction", "unpaid_leave"}
 BONUS_ADJUSTMENTS = {"bonus", "overtime_exception", "salary_correction"}
+# Matches cached_daily_attendance's dashboard-polling window in app.services.attendance.
+TODAY_ATTENDANCE_REFRESH_SECONDS = 30
 
 
 def month_bounds(value: str | date) -> tuple[date, date]:
@@ -428,19 +430,27 @@ def calculate_employee_metrics(
         source_updates[day] = max(source_updates[day], updated_at)
 
     attendance_rows: list[DailyAttendance] = []
+    now = datetime.now(UTC)
     for work_date in sorted(day for day in relevant_days if first <= day <= last):
         stored = stored_rows.get(work_date)
-        stale = (
-            stored is None
-            or work_date == employee_today
-            or _as_utc(stored.calculated_at) < source_updates[work_date]
+        source_changed = stored is not None and _as_utc(stored.calculated_at) < source_updates[work_date]
+        # "Today" is never immutable, but re-running the full timeline build on
+        # every payroll poll (every employee, every request) is what made the
+        # sheet slow to load. Bound it the same way cached_daily_attendance
+        # bounds dashboard polling, instead of forcing a rebuild every time.
+        today_expired = (
+            stored is not None
+            and work_date == employee_today
+            and (now - _as_utc(stored.calculated_at)).total_seconds()
+            >= TODAY_ATTENDANCE_REFRESH_SECONDS
         )
+        stale = stored is None or source_changed or today_expired
         if stale:
             stored, _ = calculate_daily_attendance(
                 db,
                 employee=employee,
                 work_date=work_date,
-                now=datetime.now(UTC),
+                now=now,
             )
         attendance_rows.append(stored)
 

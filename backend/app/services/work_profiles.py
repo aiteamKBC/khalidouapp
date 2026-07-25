@@ -1,4 +1,4 @@
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from uuid import UUID
 
@@ -150,6 +150,48 @@ def profile_completeness(profile: EmployeeWorkProfile) -> dict:
     }
 
 
+def validate_break_rules(
+    break_rules: list[dict] | None,
+    *,
+    shift_start: time | None = None,
+    shift_end: time | None = None,
+) -> None:
+    parsed_breaks: list[tuple[time, time]] = []
+    for rule in break_rules or []:
+        start = rule.get("start_time")
+        end = rule.get("end_time")
+        if not start or not end:
+            raise ApiError("INVALID_BREAK", "Every break needs a start and end time.", 400)
+        try:
+            start_time = (
+                start
+                if isinstance(start, time)
+                else datetime.strptime(str(start)[:5], "%H:%M").time()
+            )
+            end_time = (
+                end if isinstance(end, time) else datetime.strptime(str(end)[:5], "%H:%M").time()
+            )
+        except (TypeError, ValueError) as exc:
+            raise ApiError("INVALID_BREAK", "Break time must use HH:MM.", 400) from exc
+        if end_time <= start_time:
+            raise ApiError("INVALID_BREAK", "Break end must be later than break start.", 400)
+        actual_minutes = (
+            end_time.hour * 60 + end_time.minute - start_time.hour * 60 - start_time.minute
+        )
+        if int(rule.get("minutes", 0)) != actual_minutes:
+            raise ApiError(
+                "INVALID_BREAK_DURATION", "Break duration must match its start and end time.", 400
+            )
+        if shift_start and shift_end and not (shift_start <= start_time < end_time <= shift_end):
+            raise ApiError(
+                "BREAK_OUTSIDE_SHIFT", "Every break must be fully inside the employee shift.", 400
+            )
+        parsed_breaks.append((start_time, end_time))
+    parsed_breaks.sort(key=lambda item: item[0])
+    if any(previous[1] > current[0] for previous, current in zip(parsed_breaks, parsed_breaks[1:])):
+        raise ApiError("OVERLAPPING_BREAKS", "Break periods cannot overlap.", 400)
+
+
 def validate_work_profile(profile: EmployeeWorkProfile) -> None:
     for values_name in ("working_days", "weekly_off_days"):
         values = getattr(profile, values_name)
@@ -167,35 +209,11 @@ def validate_work_profile(profile: EmployeeWorkProfile) -> None:
         raise ApiError(
             "INVALID_SHIFT", "Shift end must be later than shift start on the same day.", 400
         )
-    parsed_breaks = []
-    for rule in profile.break_rules or []:
-        start = rule.get("start_time")
-        end = rule.get("end_time")
-        if not start or not end:
-            raise ApiError("INVALID_BREAK", "Every break needs a start and end time.", 400)
-        start_time = datetime.strptime(str(start)[:5], "%H:%M").time()
-        end_time = datetime.strptime(str(end)[:5], "%H:%M").time()
-        if end_time <= start_time:
-            raise ApiError("INVALID_BREAK", "Break end must be later than break start.", 400)
-        actual_minutes = (
-            end_time.hour * 60 + end_time.minute - start_time.hour * 60 - start_time.minute
-        )
-        if int(rule.get("minutes", 0)) != actual_minutes:
-            raise ApiError(
-                "INVALID_BREAK_DURATION", "Break duration must match its start and end time.", 400
-            )
-        if (
-            profile.shift_start
-            and profile.shift_end
-            and not (profile.shift_start <= start_time < end_time <= profile.shift_end)
-        ):
-            raise ApiError(
-                "BREAK_OUTSIDE_SHIFT", "Every break must be fully inside the employee shift.", 400
-            )
-        parsed_breaks.append((start_time, end_time))
-    parsed_breaks.sort(key=lambda item: item[0])
-    if any(previous[1] > current[0] for previous, current in zip(parsed_breaks, parsed_breaks[1:])):
-        raise ApiError("OVERLAPPING_BREAKS", "Break periods cannot overlap.", 400)
+    validate_break_rules(
+        profile.break_rules,
+        shift_start=profile.shift_start,
+        shift_end=profile.shift_end,
+    )
 
 
 def schedule_minutes(profile: EmployeeWorkProfile) -> dict[str, int]:

@@ -16,6 +16,7 @@ from app.database.session import get_db
 from app.main import app
 from app.services.activity_timeline import local_today
 from app.services.request_notifications import request_recipients
+from app.services.work_profiles import get_or_create_work_profile
 from app.models import (
     AdminUser,
     ActivityEvent,
@@ -34,6 +35,7 @@ from app.models import (
     Team,
     TeamMember,
     TeamOwner,
+    TimeAdjustmentRequest,
     TrackingSettings,
     WorkSession,
 )
@@ -373,6 +375,23 @@ def test_attendance_detail_enforces_team_and_company_isolation(team_client):
     assert other_company.status_code in {403, 404}
 
 
+def test_daily_attendance_includes_start_grace_for_dashboard_alerts(team_client):
+    client, data = team_client
+    response = client.get(
+        "/api/v1/attendance/daily",
+        params={"day": local_today("UTC").isoformat()},
+        headers=data["general_headers"],
+    )
+
+    assert response.status_code == 200
+    employee_row = next(
+        row
+        for row in response.json()["data"]["rows"]
+        if row["employee_id"] == str(data["employee_a"].id)
+    )
+    assert employee_row["late_grace_minutes"] == 15
+
+
 def test_attendance_range_stops_at_employee_today(team_client):
     client, data = team_client
     today = local_today("UTC")
@@ -577,6 +596,41 @@ def test_group_schedule_override_validates_every_employee_company(team_client):
     assert isolated.status_code in {403, 404}
 
 
+def test_schedule_override_rejects_overlapping_breaks(team_client):
+    client, data = team_client
+    response = client.post(
+        "/api/v1/payroll/schedule-overrides",
+        json={
+            "scope": "employee",
+            "override_type": "breaks",
+            "employee_id": str(data["employee_a"].id),
+            "effective_date": (local_today("UTC") + timedelta(days=1)).isoformat(),
+            "permanent": False,
+            "break_rules": [
+                {
+                    "name": "Lunch",
+                    "start_time": "13:00",
+                    "end_time": "13:30",
+                    "minutes": 30,
+                    "paid": True,
+                },
+                {
+                    "name": "Short break",
+                    "start_time": "13:00",
+                    "end_time": "13:30",
+                    "minutes": 30,
+                    "paid": True,
+                },
+            ],
+            "reason": "Overlapping break regression check",
+        },
+        headers=data["general_headers"],
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "OVERLAPPING_BREAKS"
+
+
 def test_team_day_override_applies_to_members_and_employee_override_wins(team_client):
     client, data = team_client
     day = local_today("UTC") + timedelta(days=1)
@@ -629,6 +683,16 @@ def test_team_day_override_applies_to_members_and_employee_override_wins(team_cl
 def test_cancelling_today_override_restores_normal_schedule_immediately(team_client):
     client, data = team_client
     today = local_today("UTC")
+    db: Session = data["session_factory"]()
+    try:
+        profile = get_or_create_work_profile(db, data["employee_a"])
+        profile.working_days = sorted(set(profile.working_days or []) | {today.weekday()})
+        profile.weekly_off_days = [
+            weekday for weekday in (profile.weekly_off_days or []) if weekday != today.weekday()
+        ]
+        db.commit()
+    finally:
+        db.close()
     created = client.post(
         "/api/v1/payroll/schedule-overrides",
         json={
@@ -940,9 +1004,7 @@ def test_screenshot_folder_smart_filters_are_applied_before_pagination(team_clie
     assert empty.status_code == 200
     assert {row["employee_name"] for row in empty.json()["data"]} == {"Shared Employee"}
     assert no_work.status_code == 200
-    assert {row["employee_name"] for row in no_work.json()["data"]} == {
-        "Shared Employee"
-    }
+    assert {row["employee_name"] for row in no_work.json()["data"]} == {"Shared Employee"}
 
 
 def test_desktop_agent_can_only_load_its_own_recent_screenshots(team_client, tmp_path, monkeypatch):
@@ -1571,6 +1633,62 @@ def test_desktop_summary_recovers_elapsed_work_when_an_update_started_a_new_sess
     assert timeline["last_activity_at"] is not None
 
 
+def test_desktop_today_shows_actual_idle_on_an_off_day(team_client):
+    client, data = team_client
+    now = datetime.now(UTC)
+    with data["session_factory"]() as db:
+        session = db.get(WorkSession, data["session_a"].id)
+        employee = db.get(Employee, data["employee_a"].id)
+        session.started_at = now - timedelta(minutes=30)
+        profile = get_or_create_work_profile(db, employee)
+        profile.shift_start = datetime.min.time().replace(hour=9)
+        profile.shift_end = datetime.min.time().replace(hour=17)
+        profile.working_days = [(now.weekday() + 1) % 7]
+        db.add_all(
+            [
+                ActivityEvent(
+                    company_id=session.company_id,
+                    employee_id=session.employee_id,
+                    device_id=session.device_id,
+                    session_id=session.id,
+                    event_type="idle_started",
+                    event_timestamp=now - timedelta(minutes=20),
+                    payload=None,
+                    idempotency_key=str(uuid4()),
+                ),
+                ActivityEvent(
+                    company_id=session.company_id,
+                    employee_id=session.employee_id,
+                    device_id=session.device_id,
+                    session_id=session.id,
+                    event_type="idle_ended",
+                    event_timestamp=now - timedelta(minutes=5),
+                    payload=None,
+                    idempotency_key=str(uuid4()),
+                ),
+            ]
+        )
+        db.commit()
+
+    response = client.get("/api/v1/agent/summary", headers=data["device_headers"])
+    timesheet = client.get(
+        f"/api/v1/timesheets/daily?day={local_today('UTC').isoformat()}",
+        headers=data["general_headers"],
+    )
+
+    assert response.status_code == 200
+    summary = response.json()["data"]
+    assert summary["today_timeline"]["idle_seconds"] == 15 * 60
+    assert summary["today"]["idle_seconds"] == 15 * 60
+    assert summary["today"]["eligible_idle_seconds"] == 0
+    timesheet_row = next(
+        row
+        for row in timesheet.json()["data"]
+        if row["employee_id"] == str(data["employee_a"].id)
+    )
+    assert timesheet_row["idle_seconds"] == 15 * 60
+
+
 def test_workday_timeline_splits_work_idle_and_locked_periods(team_client):
     client, data = team_client
     work_day = local_today(data["employee_a"].timezone)
@@ -1880,7 +1998,10 @@ def test_employee_overview_includes_all_assigned_team_managers(team_client):
     assert response.status_code == 200
     managers = response.json()["data"][0]["managers"]
     assert {manager["name"] for manager in managers} == {"Team Owner", "Second Owner"}
-    assert all(manager["teams"] == [{"id": str(data["team_a"].id), "name": "Team A"}] for manager in managers)
+    assert all(
+        manager["teams"] == [{"id": str(data["team_a"].id), "name": "Team A"}]
+        for manager in managers
+    )
 
 
 def test_request_recipients_include_all_managers_and_company_hr(team_client):
@@ -1937,3 +2058,125 @@ def test_first_team_manager_to_review_leave_closes_request(team_client):
     assert first_review.status_code == 200
     assert first_review.json()["data"]["status"] == "approved"
     assert second_review.status_code == 409
+
+
+def test_early_leave_is_separated_from_time_requests_and_worked_time(team_client):
+    client, data = team_client
+    work_date = data["session_a"].started_at.date()
+    with data["session_factory"]() as db:
+        db.add_all(
+            [
+                TimeAdjustmentRequest(
+                    company_id=data["employee_a"].company_id,
+                    employee_id=data["employee_a"].id,
+                    request_type="manual_time",
+                    requested_date=work_date,
+                    requested_seconds=5 * 60,
+                    approved_seconds=5 * 60,
+                    reason="Approved missing tracked time",
+                    status="approved",
+                ),
+                TimeAdjustmentRequest(
+                    company_id=data["employee_a"].company_id,
+                    employee_id=data["employee_a"].id,
+                    request_type="early_leave",
+                    requested_date=work_date,
+                    requested_seconds=30 * 60,
+                    approved_seconds=30 * 60,
+                    reason="Approved early departure",
+                    status="approved",
+                ),
+            ]
+        )
+        db.commit()
+
+    time_requests = client.get(
+        "/api/v1/time-adjustment-requests?request_group=time&status=approved",
+        headers=data["general_headers"],
+    )
+    early_leave_requests = client.get(
+        "/api/v1/time-adjustment-requests?request_group=early_leave&status=approved",
+        headers=data["general_headers"],
+    )
+    timesheet = client.get(
+        f"/api/v1/timesheets/daily?day={work_date.isoformat()}",
+        headers=data["general_headers"],
+    )
+
+    assert time_requests.status_code == 200
+    assert {row["request_type"] for row in time_requests.json()["data"]} == {"manual_time"}
+    assert early_leave_requests.status_code == 200
+    assert {row["request_type"] for row in early_leave_requests.json()["data"]} == {
+        "early_leave"
+    }
+    row = next(
+        item
+        for item in timesheet.json()["data"]
+        if item["employee_id"] == str(data["employee_a"].id)
+    )
+    assert row["adjustment_seconds"] == 5 * 60
+
+
+def test_employee_start_date_and_leave_balance_overview_are_editable(team_client):
+    client, data = team_client
+    employee_id = data["employee_a"].id
+    updated = client.patch(
+        f"/api/v1/employees/{employee_id}",
+        headers=data["general_headers"],
+        json={"start_date": "2025-01-15"},
+    )
+    with data["session_factory"]() as db:
+        employee = db.get(Employee, employee_id)
+        db.add_all(
+            [
+                LeaveRequest(
+                    company_id=employee.company_id,
+                    employee_id=employee.id,
+                    start_date=datetime(2026, 7, 27).date(),
+                    end_date=datetime(2026, 7, 27).date(),
+                    requested_days=1,
+                    leave_type="annual",
+                    reason="Annual holiday",
+                    status="approved",
+                ),
+                LeaveRequest(
+                    company_id=employee.company_id,
+                    employee_id=employee.id,
+                    start_date=datetime(2026, 7, 28).date(),
+                    end_date=datetime(2026, 7, 28).date(),
+                    requested_days=1,
+                    leave_type="sick",
+                    reason="Sick leave",
+                    status="approved",
+                ),
+            ]
+        )
+        db.commit()
+
+    balances = client.get(
+        "/api/v1/leave-requests/balances?year=2026",
+        headers=data["general_headers"],
+    )
+
+    assert updated.status_code == 200
+    assert updated.json()["data"]["start_date"] == "2025-01-15"
+    assert balances.status_code == 200
+    balance = next(
+        item
+        for item in balances.json()["data"]
+        if item["employee_id"] == str(employee_id)
+    )
+    assert balance["used_days"] == 1
+    assert balance["remaining_days"] == balance["credit_days"] - 1
+    assert balance["taken_dates"] == [
+        {
+            "date": "2026-07-27",
+            "leave_type": "annual",
+            "request_id": balance["taken_dates"][0]["request_id"],
+        },
+        {
+            "date": "2026-07-28",
+            "leave_type": "sick",
+            "request_id": balance["taken_dates"][1]["request_id"],
+        },
+    ]

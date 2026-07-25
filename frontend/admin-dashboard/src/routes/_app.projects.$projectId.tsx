@@ -47,6 +47,7 @@ import {
 } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
 import { formatMinutes } from "@/lib/format";
+import { projectProgressTasks, projectWorkflowProgress } from "@/lib/project-progress";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/_app/projects/$projectId")({
@@ -111,7 +112,8 @@ function ProjectDetailPage() {
   });
   const projectTasks = useMemo(() => tasks.data ?? [], [tasks.data]);
   const completed = projectTasks.filter((task) => task.stage === "completed").length;
-  const progress = projectTasks.length ? Math.round((completed / projectTasks.length) * 100) : 0;
+  const progressTasks = projectProgressTasks(projectTasks);
+  const progress = projectWorkflowProgress(projectTasks);
   const projectMetrics = (metrics.data ?? []).filter((metric) =>
     projectTasks.some((task) => task.id === metric.taskId),
   );
@@ -188,7 +190,7 @@ function ProjectDetailPage() {
         </MetricCard>
         <MetricCard icon={Users} label="Members" value={(employees.data ?? []).length} />
         <MetricCard icon={ListTodo} label="Tasks" value={projectTasks.length} />
-        <MetricCard icon={CheckCircle2} label="Completed" value={`${progress}%`} />
+        <MetricCard icon={CheckCircle2} label="Progress" value={`${progress}%`} />
         <MetricCard icon={Clock3} label="Tracked" value={formatMinutes(tracked)} />
       </div>
 
@@ -222,7 +224,8 @@ function ProjectDetailPage() {
               <div>
                 <div className="mb-2 flex justify-between text-sm">
                   <span>
-                    {completed} of {projectTasks.length} tasks completed
+                    Average stage across {progressTasks.length} active task
+                    {progressTasks.length === 1 ? "" : "s"} ({completed} completed)
                   </span>
                   <strong>{progress}%</strong>
                 </div>

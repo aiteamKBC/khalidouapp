@@ -70,6 +70,7 @@ export type AgentPeriodSummary = {
   active_seconds: number;
   tracked_active_seconds: number;
   idle_seconds: number;
+  eligible_idle_seconds?: number;
   tracked_seconds: number;
   adjustment_seconds: number;
   manual_approved_seconds: number;

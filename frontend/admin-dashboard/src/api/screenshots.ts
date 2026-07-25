@@ -69,6 +69,8 @@ export async function listScreenshotPage(options: {
   employeeId?: string;
   teamId?: string;
   day?: string;
+  startDate?: string;
+  endDate?: string;
   workCategory?: string;
 }): Promise<{ items: Screenshot[]; page: number; pages: number; total: number }> {
   const scopedTeamId = options.scopedTeamIds?.length === 1 ? options.scopedTeamIds[0] : undefined;
@@ -80,6 +82,8 @@ export async function listScreenshotPage(options: {
       employee_id: options.employeeId === "all" ? undefined : options.employeeId,
       team_id: teamId,
       day: options.day,
+      start_time: options.startDate,
+      end_time: options.endDate,
       work_category: options.workCategory === "all" ? undefined : options.workCategory,
     }),
   );

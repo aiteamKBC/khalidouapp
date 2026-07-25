@@ -99,6 +99,8 @@ export interface Employee {
   email: string;
   jobTitle: string;
   timezone: string;
+  startDate?: string;
+  annualLeaveDays: number;
   teamRole?: TeamMemberRole;
   teamIds: string[];
   status: EmployeeStatus;

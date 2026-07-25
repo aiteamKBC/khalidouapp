@@ -12,6 +12,7 @@ export type DailyAttendance = {
   teamNames: string[];
   date: string;
   timezone: string;
+  lateGraceMinutes: number;
   scheduledStartAt?: string | null;
   scheduledEndAt?: string | null;
   actualFirstActivityAt?: string | null;
@@ -57,6 +58,7 @@ type BackendAttendance = {
   team_names?: string[];
   date: string;
   timezone: string;
+  late_grace_minutes?: number;
   scheduled_start_at?: string | null;
   scheduled_end_at?: string | null;
   actual_first_activity_at?: string | null;
@@ -103,6 +105,7 @@ function mapAttendance(row: BackendAttendance): DailyAttendance {
     teamNames: row.team_names ?? [],
     date: row.date,
     timezone: row.timezone,
+    lateGraceMinutes: row.late_grace_minutes ?? 15,
     scheduledStartAt: row.scheduled_start_at,
     scheduledEndAt: row.scheduled_end_at,
     actualFirstActivityAt: row.actual_first_activity_at,

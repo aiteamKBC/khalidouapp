@@ -752,7 +752,7 @@ def update_employee(
         "employee",
         entity_id=employee.id,
         entity_name=employee.email,
-        details=payload.model_dump(exclude_unset=True),
+        details=payload.model_dump(exclude_unset=True, mode="json"),
         request=request,
     )
     db.commit()

@@ -45,11 +45,7 @@ class AttendanceCorrectionUpdate(BaseModel):
 
     @model_validator(mode="after")
     def require_a_change(self):
-        if (
-            self.start_time is None
-            and self.end_time is None
-            and self.payable_minutes_delta == 0
-        ):
+        if self.start_time is None and self.end_time is None and self.payable_minutes_delta == 0:
             raise ValueError("Enter a corrected time or a payable-time adjustment.")
         return self
 
@@ -190,6 +186,12 @@ def daily_attendance(
                 "employee_email": employee.email,
                 "job_title": employee.job_title,
                 "team_names": team_names.get(employee.id, []),
+                "late_grace_minutes": int(
+                    employee.work_profile.late_grace_minutes
+                    if employee.work_profile
+                    and employee.work_profile.late_grace_minutes is not None
+                    else 15
+                ),
             }
         )
         rows.append(data)
@@ -247,9 +249,7 @@ def update_employee_day_correction(
     except ZoneInfoNotFoundError:
         timezone = ZoneInfo("UTC")
     next_day_end = bool(
-        payload.start_time
-        and payload.end_time
-        and payload.end_time <= payload.start_time
+        payload.start_time and payload.end_time and payload.end_time <= payload.start_time
     )
     corrected_start = _local_correction_at(work_date, payload.start_time, timezone)
     corrected_end = _local_correction_at(
@@ -361,9 +361,7 @@ def delete_employee_day_correction(
         "start_at": correction.corrected_start_at.isoformat()
         if correction.corrected_start_at
         else None,
-        "end_at": correction.corrected_end_at.isoformat()
-        if correction.corrected_end_at
-        else None,
+        "end_at": correction.corrected_end_at.isoformat() if correction.corrected_end_at else None,
         "payable_minutes_delta": int(correction.payable_seconds_delta / 60),
         "reason": correction.reason,
     }
@@ -496,9 +494,7 @@ def employee_attendance_range(
                 "payable_seconds": sum(row["total_payable_seconds"] for row in rows),
                 "idle_seconds": sum(row["idle_seconds"] for row in rows),
                 "late_seconds": sum(row["deductible_late_seconds"] for row in rows),
-                "approved_overtime_seconds": sum(
-                    row["approved_overtime_seconds"] for row in rows
-                ),
+                "approved_overtime_seconds": sum(row["approved_overtime_seconds"] for row in rows),
                 "screenshots": sum(row["screenshot_count"] for row in rows),
             },
             "rows": rows,

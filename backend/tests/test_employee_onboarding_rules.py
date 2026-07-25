@@ -56,6 +56,34 @@ def test_break_must_be_inside_same_day_shift():
     assert error.value.code == "BREAK_OUTSIDE_SHIFT"
 
 
+def test_breaks_cannot_overlap():
+    profile = EmployeeWorkProfile(
+        shift_start=time(9, 0),
+        shift_end=time(17, 0),
+        break_rules=[
+            {
+                "name": "Lunch",
+                "start_time": "13:00",
+                "end_time": "13:30",
+                "minutes": 30,
+                "paid": True,
+            },
+            {
+                "name": "Short break",
+                "start_time": "13:00",
+                "end_time": "13:30",
+                "minutes": 30,
+                "paid": True,
+            },
+        ],
+    )
+
+    with pytest.raises(ApiError) as error:
+        validate_work_profile(profile)
+
+    assert error.value.code == "OVERLAPPING_BREAKS"
+
+
 def test_team_manager_can_review_leave_without_inheriting_payroll():
     leader = capabilities_for_role("team_owner")
     admin = capabilities_for_role("general_admin")

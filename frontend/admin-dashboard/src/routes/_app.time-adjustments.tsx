@@ -61,6 +61,7 @@ function TimeAdjustmentsPage() {
         teamId,
         employeeId,
         status,
+        requestGroup: "time",
       }),
   });
 
@@ -101,7 +102,7 @@ function TimeAdjustmentsPage() {
     <div className="studio-page">
       <PageHeader
         title="Time Requests"
-        description="Review employee requests for approved manual time adjustments."
+        description="Review requests to add missing tracked time or approve explained idle time."
       />
 
       <Card className="p-4 mb-4">

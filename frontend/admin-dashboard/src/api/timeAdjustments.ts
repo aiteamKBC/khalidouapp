@@ -48,6 +48,7 @@ export async function listTimeAdjustmentRequests(options?: {
   teamId?: string;
   employeeId?: string;
   status?: TimeAdjustmentStatus | "all";
+  requestGroup?: "time" | "early_leave";
 }): Promise<TimeAdjustmentRequest[]> {
   const scopedTeamIds = options?.scopedTeamIds;
   const teamId =
@@ -63,6 +64,7 @@ export async function listTimeAdjustmentRequests(options?: {
       employee_id:
         options?.employeeId && options.employeeId !== "all" ? options.employeeId : undefined,
       status: options?.status && options.status !== "all" ? options.status : undefined,
+      request_group: options?.requestGroup,
     }),
   );
   return rows.map(mapRequest);
