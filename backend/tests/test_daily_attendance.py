@@ -20,7 +20,7 @@ from app.models import (
     WorkScheduleOverride,
     WorkSession,
 )
-from app.services.attendance import calculate_daily_attendance
+from app.services.attendance import calculate_daily_attendance, serialize_daily_attendance
 from app.services.activity_timeline import build_workday_timeline
 from app.services.payroll import calculate_employee_metrics
 
@@ -319,6 +319,8 @@ def test_active_reconnected_session_clears_an_earlier_sign_out(
 
     assert timeline["is_running"] is True
     assert row.actual_sign_out_at is None
+    assert serialize_daily_attendance(row, timeline=timeline)["is_running"] is True
+    assert serialize_daily_attendance(row)["is_running"] is True
 
 
 def test_late_grace_only_counts_time_after_the_first_fifteen_minutes(

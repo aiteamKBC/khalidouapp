@@ -684,11 +684,13 @@ function MonthlyAttendanceDialog({
     queryKey: ["employee-attendance-range", employeeId, startDate, endDate],
     queryFn: () => getEmployeeAttendanceRange(employeeId!, startDate, endDate),
     enabled: open && Boolean(employeeId),
+    refetchInterval: open ? 30_000 : false,
   });
   const dayDetail = useQuery({
     queryKey: ["employee-attendance-day", employeeId, selectedDay],
     queryFn: () => getDailyAttendance(employeeId!, selectedDay!),
     enabled: open && Boolean(employeeId) && Boolean(selectedDay),
+    refetchInterval: selectedDay ? 15_000 : false,
   });
   const rows = history.data?.rows ?? [];
 
@@ -832,7 +834,11 @@ function MonthlyAttendanceDialog({
                 />
                 <MiniMetric
                   label="Signed out"
-                  value={attendanceClock(dayDetail.data.actualSignOutAt, dayDetail.data.timezone)}
+                  value={
+                    dayDetail.data.isRunning
+                      ? "In progress"
+                      : attendanceClock(dayDetail.data.actualSignOutAt, dayDetail.data.timezone)
+                  }
                 />
                 <MiniMetric label="Normal" value={shortTime(dayDetail.data.normalWorkedSeconds)} />
                 <MiniMetric label="Idle" value={shortTime(dayDetail.data.idleSeconds)} />
@@ -892,8 +898,13 @@ function MonthlyAttendanceRow({
       <TableCell className="whitespace-nowrap text-xs">
         {attendanceClock(row.actualFirstActivityAt, row.timezone)} –{" "}
         {attendanceClock(row.actualLastActivityAt, row.timezone)}
-        <span className="block text-[10px] text-muted-foreground">
-          Sign-out {attendanceClock(row.actualSignOutAt, row.timezone)}
+        <span
+          className={`block text-[10px] ${
+            row.isRunning ? "font-semibold text-emerald-700" : "text-muted-foreground"
+          }`}
+        >
+          Sign-out{" "}
+          {row.isRunning ? "In progress" : attendanceClock(row.actualSignOutAt, row.timezone)}
         </span>
       </TableCell>
       <TableCell>{shortTime(row.normalWorkedSeconds)}</TableCell>

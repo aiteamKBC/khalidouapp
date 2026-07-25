@@ -135,6 +135,7 @@ def _empty_attendance_item(
         "actual_first_activity_at": None,
         "actual_last_activity_at": None,
         "actual_sign_out_at": None,
+        "is_running": False,
         "normal_worked_seconds": 0,
         "paid_break_seconds": 0,
         "unpaid_break_seconds": 0,
