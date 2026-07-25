@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import UTC, date, datetime, time, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from sqlalchemy import select
+from sqlalchemy import false, or_, select
 from sqlalchemy.orm import Session
 
 from app.models import Employee, EmployeeWorkProfile, TeamMember, WorkScheduleOverride
@@ -75,6 +75,23 @@ def effective_schedule(
     timezone_name: str | None = None,
 ) -> dict:
     override = _latest_day_override(db, employee, work_date)
+    return _schedule_from_override(
+        employee,
+        profile,
+        work_date,
+        override,
+        timezone_name=timezone_name,
+    )
+
+
+def _schedule_from_override(
+    employee: Employee,
+    profile: EmployeeWorkProfile,
+    work_date: date,
+    override: WorkScheduleOverride | None,
+    *,
+    timezone_name: str | None = None,
+) -> dict:
     shift_start = profile.shift_start
     shift_end = profile.shift_end
     break_rules = list(profile.break_rules or [])
@@ -144,6 +161,81 @@ def effective_schedule(
             else "employee_profile"
         ),
     }
+
+
+def effective_schedules_for_range(
+    db: Session,
+    employee: Employee,
+    profile: EmployeeWorkProfile,
+    start_date: date,
+    end_date: date,
+    *,
+    timezone_name: str | None = None,
+) -> dict[date, dict]:
+    """Resolve a bounded period with one override query instead of three per day."""
+    if end_date < start_date:
+        return {}
+
+    team_ids = list(
+        db.scalars(
+            select(TeamMember.team_id).where(
+                TeamMember.employee_id == employee.id,
+                TeamMember.status == "active",
+            )
+        ).all()
+    )
+    scope_conditions = [
+        WorkScheduleOverride.employee_id == employee.id,
+        (WorkScheduleOverride.team_id.in_(team_ids) if team_ids else false()),
+        (
+            (WorkScheduleOverride.scope == "company")
+            & WorkScheduleOverride.employee_id.is_(None)
+            & WorkScheduleOverride.team_id.is_(None)
+        ),
+    ]
+    overrides = db.scalars(
+        select(WorkScheduleOverride)
+        .where(
+            WorkScheduleOverride.company_id == employee.company_id,
+            WorkScheduleOverride.permanent.is_(False),
+            WorkScheduleOverride.effective_date >= start_date,
+            WorkScheduleOverride.effective_date <= end_date,
+            or_(*scope_conditions),
+        )
+        .order_by(
+            WorkScheduleOverride.effective_date.asc(),
+            WorkScheduleOverride.created_at.desc(),
+        )
+    ).all()
+
+    overrides_by_day: dict[date, dict[str, WorkScheduleOverride]] = {}
+    for override in overrides:
+        if override.effective_date is None:
+            continue
+        by_scope = overrides_by_day.setdefault(override.effective_date, {})
+        scope = (
+            "employee"
+            if override.employee_id == employee.id
+            else "team"
+            if override.team_id in team_ids
+            else "company"
+        )
+        by_scope.setdefault(scope, override)
+
+    schedules: dict[date, dict] = {}
+    cursor = start_date
+    while cursor <= end_date:
+        by_scope = overrides_by_day.get(cursor, {})
+        override = by_scope.get("employee") or by_scope.get("team") or by_scope.get("company")
+        schedules[cursor] = _schedule_from_override(
+            employee,
+            profile,
+            cursor,
+            override,
+            timezone_name=timezone_name,
+        )
+        cursor += timedelta(days=1)
+    return schedules
 
 
 def overlap_seconds(

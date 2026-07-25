@@ -5,7 +5,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, Field, model_validator
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.api.deps import get_current_admin
@@ -21,10 +21,14 @@ from app.models import (
     AttendanceCorrection,
     DailyAttendance,
     Employee,
+    LeaveRequest,
+    OvertimeRecord,
     PayrollRun,
     Screenshot,
     Team,
     TeamMember,
+    TimeAdjustmentRequest,
+    WorkSession,
 )
 from app.services.audit import record_audit_log
 from app.services.attendance import (
@@ -33,6 +37,8 @@ from app.services.attendance import (
     serialize_daily_attendance,
 )
 from app.services.permissions import require_capability
+from app.services.schedules import effective_schedules_for_range
+from app.services.work_profiles import get_or_create_work_profile
 
 router = APIRouter(prefix="/attendance", tags=["attendance"])
 
@@ -83,6 +89,81 @@ def _local_correction_at(
         return None
     selected_date = work_date + timedelta(days=1) if next_day else work_date
     return datetime.combine(selected_date, value, tzinfo=timezone).astimezone(UTC)
+
+
+def _empty_attendance_item(
+    *,
+    employee: Employee,
+    work_date: date,
+    schedule: dict,
+    leave: LeaveRequest | None,
+    employee_today: date,
+    calculated_at: datetime,
+) -> dict:
+    """Serialize a day with no attendance sources without rebuilding a timeline."""
+    scheduled_start_at = schedule["start_at"]
+    scheduled_end_at = schedule["end_at"]
+    expected_seconds = (
+        int((scheduled_end_at - scheduled_start_at).total_seconds())
+        if scheduled_start_at and scheduled_end_at
+        else 0
+    )
+    if leave is not None:
+        status = "approved_leave"
+        payable_seconds = expected_seconds if leave.leave_type != "unpaid" else 0
+        issues: list[dict] = []
+    elif not schedule["scheduled_day"]:
+        status = "off_day"
+        payable_seconds = 0
+        issues = []
+    else:
+        status = "not_started" if work_date >= employee_today else "absent"
+        payable_seconds = 0
+        issues = [{"code": "missing_check_in", "seconds": expected_seconds}]
+
+    return {
+        "id": f"empty:{employee.id}:{work_date.isoformat()}",
+        "employee_id": str(employee.id),
+        "date": work_date.isoformat(),
+        "timezone": schedule["timezone"],
+        "scheduled_start_at": (
+            scheduled_start_at.isoformat() if scheduled_start_at is not None else None
+        ),
+        "scheduled_end_at": (
+            scheduled_end_at.isoformat() if scheduled_end_at is not None else None
+        ),
+        "actual_first_activity_at": None,
+        "actual_last_activity_at": None,
+        "actual_sign_out_at": None,
+        "normal_worked_seconds": 0,
+        "paid_break_seconds": 0,
+        "unpaid_break_seconds": 0,
+        "idle_seconds": 0,
+        "approved_manual_seconds": 0,
+        "pending_manual_seconds": 0,
+        "rejected_manual_seconds": 0,
+        "raw_late_seconds": 0,
+        "deductible_late_seconds": 0,
+        "early_leave_seconds": 0,
+        "pre_shift_extra_seconds": 0,
+        "post_shift_extra_seconds": 0,
+        "recorded_overtime_seconds": 0,
+        "approved_overtime_seconds": 0,
+        "unapproved_overtime_seconds": 0,
+        "total_payable_seconds": payable_seconds,
+        "status": status,
+        "leave_status": leave.leave_type if leave is not None else None,
+        "approved_early_leave_seconds": 0,
+        "attendance_adjustment_seconds": 0,
+        "attendance_correction": None,
+        "issues": issues,
+        "calculation_sources": {
+            "schedule_override_id": schedule["override_id"],
+            "leave_request_id": str(leave.id) if leave is not None else None,
+            "fast_empty_day": True,
+        },
+        "calculated_at": calculated_at.isoformat(),
+    }
 
 
 def _employee_statement(
@@ -454,14 +535,94 @@ def employee_attendance_range(
         ).all()
     }
 
+    schedules_by_day: dict[date, dict] = {}
+    leave_by_day: dict[date, LeaveRequest] = {}
+    evidence_days = set(screenshot_days)
+    if ledger_end_date >= start_date:
+        profile = get_or_create_work_profile(db, employee)
+        schedules_by_day = effective_schedules_for_range(
+            db,
+            employee,
+            profile,
+            start_date,
+            ledger_end_date,
+            timezone_name=timezone.key,
+        )
+        approved_leaves = db.scalars(
+            select(LeaveRequest).where(
+                LeaveRequest.company_id == current_admin.company_id,
+                LeaveRequest.employee_id == employee.id,
+                LeaveRequest.status == "approved",
+                LeaveRequest.start_date <= ledger_end_date,
+                LeaveRequest.end_date >= start_date,
+            )
+        ).all()
+        for leave in approved_leaves:
+            leave_cursor = max(start_date, leave.start_date)
+            leave_end = min(ledger_end_date, leave.end_date)
+            while leave_cursor <= leave_end:
+                leave_by_day.setdefault(leave_cursor, leave)
+                leave_cursor += timedelta(days=1)
+
+        session_rows = db.execute(
+            select(WorkSession.started_at, WorkSession.ended_at).where(
+                WorkSession.company_id == current_admin.company_id,
+                WorkSession.employee_id == employee.id,
+                WorkSession.started_at < range_end,
+                or_(WorkSession.ended_at.is_(None), WorkSession.ended_at > range_start),
+            )
+        ).all()
+        for started_at, ended_at in session_rows:
+            session_start = (
+                started_at.replace(tzinfo=UTC) if started_at.tzinfo is None else started_at
+            )
+            start_day = session_start.astimezone(timezone).date()
+            if start_date <= start_day <= ledger_end_date:
+                evidence_days.add(start_day)
+            if ended_at is not None:
+                session_end = ended_at.replace(tzinfo=UTC) if ended_at.tzinfo is None else ended_at
+                end_day = session_end.astimezone(timezone).date()
+                if start_date <= end_day <= ledger_end_date:
+                    evidence_days.add(end_day)
+
+        evidence_days.update(
+            db.scalars(
+                select(TimeAdjustmentRequest.requested_date).where(
+                    TimeAdjustmentRequest.company_id == current_admin.company_id,
+                    TimeAdjustmentRequest.employee_id == employee.id,
+                    TimeAdjustmentRequest.requested_date >= start_date,
+                    TimeAdjustmentRequest.requested_date <= ledger_end_date,
+                )
+            ).all()
+        )
+        evidence_days.update(
+            db.scalars(
+                select(OvertimeRecord.work_date).where(
+                    OvertimeRecord.company_id == current_admin.company_id,
+                    OvertimeRecord.employee_id == employee.id,
+                    OvertimeRecord.work_date >= start_date,
+                    OvertimeRecord.work_date <= ledger_end_date,
+                )
+            ).all()
+        )
+        evidence_days.update(
+            db.scalars(
+                select(AttendanceCorrection.work_date).where(
+                    AttendanceCorrection.company_id == current_admin.company_id,
+                    AttendanceCorrection.employee_id == employee.id,
+                    AttendanceCorrection.work_date >= start_date,
+                    AttendanceCorrection.work_date <= ledger_end_date,
+                )
+            ).all()
+        )
+
     rows: list[dict] = []
     cursor = start_date
     while cursor <= ledger_end_date:
         attendance = existing_by_day.get(cursor)
-        # Closed days are immutable until an approval, correction, or schedule
-        # workflow explicitly refreshes them. The live day is the only row that
-        # needs recalculation here.
-        if attendance is None or cursor == employee_today:
+        if attendance is not None and cursor != employee_today:
+            item = serialize_daily_attendance(attendance)
+        elif cursor == employee_today or cursor in evidence_days:
             attendance, _ = cached_daily_attendance(
                 db,
                 employee=employee,
@@ -469,7 +630,16 @@ def employee_attendance_range(
                 now=now,
                 max_age_seconds=5,
             )
-        item = serialize_daily_attendance(attendance)
+            item = serialize_daily_attendance(attendance)
+        else:
+            item = _empty_attendance_item(
+                employee=employee,
+                work_date=cursor,
+                schedule=schedules_by_day[cursor],
+                leave=leave_by_day.get(cursor),
+                employee_today=employee_today,
+                calculated_at=now,
+            )
         item["screenshot_count"] = screenshot_days.get(cursor, 0)
         rows.append(item)
         cursor += timedelta(days=1)
