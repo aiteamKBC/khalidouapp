@@ -16,6 +16,7 @@ contextBridge.exposeInMainWorld("khaliduo", {
   pauseTracking: (options?: { requestedMinutes?: number; reason?: string }) =>
     ipcRenderer.invoke("agent:pause-tracking", options),
   resumeTracking: () => ipcRenderer.invoke("agent:resume-tracking"),
+  resumeAutomaticIdle: () => ipcRenderer.invoke("agent:resume-automatic-idle"),
   logout: () => ipcRenderer.invoke("agent:logout"),
   openEmployeeDashboard: (section?: "screenshots") =>
     ipcRenderer.invoke("agent:open-employee-dashboard", section),

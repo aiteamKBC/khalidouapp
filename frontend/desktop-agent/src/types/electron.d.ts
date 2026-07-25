@@ -237,6 +237,10 @@ declare global {
         reason?: string;
       }) => Promise<{ success: boolean; message?: string }>;
       resumeTracking: () => Promise<{ success: boolean; message?: string }>;
+      resumeAutomaticIdle: () => Promise<{
+        success: boolean;
+        message?: string;
+      }>;
       logout: () => Promise<{ success: boolean; message?: string }>;
       openEmployeeDashboard: (section?: "screenshots") => Promise<{
         success: boolean;

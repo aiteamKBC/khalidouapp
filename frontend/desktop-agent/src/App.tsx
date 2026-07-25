@@ -1348,7 +1348,12 @@ function App() {
       window.khaliduo?.setIdleAlertAttention(false);
     }
 
-    if (result.isDenied) {
+    if (result.isConfirmed) {
+      const resumeResult = await window.khaliduo?.resumeAutomaticIdle();
+      if (resumeResult?.message) setTrackingControlMessage(resumeResult.message);
+      const nextStatus = await window.khaliduo?.getAgentStatus();
+      if (nextStatus) setStatus(nextStatus);
+    } else if (result.isDenied) {
       const pauseResult = await window.khaliduo?.pauseTracking();
       if (pauseResult?.message) setTrackingControlMessage(pauseResult.message);
       const nextStatus = await window.khaliduo?.getAgentStatus();
@@ -1357,6 +1362,8 @@ function App() {
       canRequestManualTime &&
       result.dismiss === Swal.DismissReason.cancel
     ) {
+      const resumeResult = await window.khaliduo?.resumeAutomaticIdle();
+      if (resumeResult?.message) setTrackingControlMessage(resumeResult.message);
       setExpandedRequest("idle");
       setActiveView("requests");
       setTimeRequestMinutes(lostMinutes);
