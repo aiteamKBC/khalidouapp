@@ -61,7 +61,7 @@ def ensure_tracked_employee(db: Session, admin: AdminUser) -> Employee:
             email=admin.email.lower(),
             employee_code=f"EMP-{uuid4().hex[:8].upper()}",
             job_title=default_admin_job_title(admin),
-            timezone="UTC",
+            timezone="Africa/Cairo",
             status="active",
         )
         db.add(employee)
