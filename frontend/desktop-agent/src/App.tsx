@@ -503,7 +503,14 @@ function App() {
       }) ?? (() => undefined);
     const removeStatusChangedListener =
       window.khaliduo.onStatusChanged?.((nextStatus) => {
-        if (mounted) setStatus(nextStatus);
+        if (!mounted) return;
+        setStatus(nextStatus);
+        // The native event and the status snapshot can race when the mouse
+        // becomes active again. Re-open the mandatory idle review from either
+        // source so it cannot be missed or appear behind another window.
+        if (nextStatus.lastIdleAlert) {
+          void showIdleAlert(nextStatus.lastIdleAlert);
+        }
       }) ?? (() => undefined);
     const removeRequiredUpdateListener =
       window.khaliduo.onRequiredUpdate?.((update) => {
