@@ -21,6 +21,7 @@ from app.models import (
     WorkSession,
 )
 from app.services.attendance import calculate_daily_attendance
+from app.services.activity_timeline import build_workday_timeline
 from app.services.payroll import calculate_employee_metrics
 
 
@@ -173,6 +174,168 @@ def test_multiple_sessions_keep_raw_lateness_and_unapproved_overtime_separate(
     )
     assert approved.approved_overtime_seconds == 3600
     assert approved.total_payable_seconds == 8 * 3600 + 40 * 60
+
+
+def test_stale_session_closed_days_later_does_not_fill_the_offline_gap(
+    attendance_context,
+):
+    db, employee, device, _ = attendance_context
+    stale = WorkSession(
+        company_id=employee.company_id,
+        employee_id=employee.id,
+        device_id=device.id,
+        started_at=datetime(2026, 7, 23, 8, 2, tzinfo=UTC),
+        ended_at=datetime(2026, 7, 25, 10, 6, tzinfo=UTC),
+        status="ended",
+        active_seconds=5 * 3600,
+        idle_seconds=0,
+    )
+    db.add(stale)
+    db.flush()
+    db.add_all(
+        [
+            ActivityEvent(
+                company_id=employee.company_id,
+                employee_id=employee.id,
+                device_id=device.id,
+                session_id=stale.id,
+                event_type="session_started",
+                event_timestamp=datetime(2026, 7, 23, 8, 2, tzinfo=UTC),
+                idempotency_key="stale-session-started",
+            ),
+            ActivityEvent(
+                company_id=employee.company_id,
+                employee_id=employee.id,
+                device_id=device.id,
+                session_id=stale.id,
+                event_type="heartbeat",
+                event_timestamp=datetime(2026, 7, 23, 13, 2, tzinfo=UTC),
+                idempotency_key="stale-session-last-heartbeat",
+            ),
+            ActivityEvent(
+                company_id=employee.company_id,
+                employee_id=employee.id,
+                device_id=device.id,
+                session_id=stale.id,
+                event_type="session_ended",
+                event_timestamp=datetime(2026, 7, 25, 10, 6, tzinfo=UTC),
+                idempotency_key="stale-session-ended",
+            ),
+        ]
+    )
+    _session(
+        db,
+        employee,
+        device,
+        datetime(2026, 7, 25, 10, 6, tzinfo=UTC),
+        datetime(2026, 7, 25, 11, 44, tzinfo=UTC),
+    )
+    db.commit()
+
+    timeline = build_workday_timeline(
+        db,
+        company_id=employee.company_id,
+        employee_id=employee.id,
+        timezone_name="UTC",
+        target_date=date(2026, 7, 25),
+        now=datetime(2026, 7, 25, 12, 0, tzinfo=UTC),
+    )
+
+    assert timeline["first_started_at"] == datetime(
+        2026, 7, 25, 10, 6, tzinfo=UTC
+    ).isoformat()
+    assert timeline["worked_seconds"] == 98 * 60
+    assert len(timeline["intervals"]) == 1
+    assert timeline["intervals"][0]["started_at"] == timeline["first_started_at"]
+
+
+def test_active_reconnected_session_clears_an_earlier_sign_out(
+    attendance_context,
+):
+    db, employee, device, _ = attendance_context
+    work_date = date(2026, 7, 21)
+    _session(
+        db,
+        employee,
+        device,
+        datetime(2026, 7, 21, 9, 0, tzinfo=UTC),
+        datetime(2026, 7, 21, 10, 0, tzinfo=UTC),
+    )
+    active = WorkSession(
+        company_id=employee.company_id,
+        employee_id=employee.id,
+        device_id=device.id,
+        started_at=datetime(2026, 7, 21, 10, 5, tzinfo=UTC),
+        status="active",
+        active_seconds=55 * 60,
+        idle_seconds=0,
+    )
+    db.add(active)
+    db.flush()
+    db.add_all(
+        [
+            ActivityEvent(
+                company_id=employee.company_id,
+                employee_id=employee.id,
+                device_id=device.id,
+                session_id=active.id,
+                event_type="session_started",
+                event_timestamp=datetime(2026, 7, 21, 10, 5, tzinfo=UTC),
+                idempotency_key="reconnected-session-started",
+            ),
+            ActivityEvent(
+                company_id=employee.company_id,
+                employee_id=employee.id,
+                device_id=device.id,
+                session_id=active.id,
+                event_type="heartbeat",
+                event_timestamp=datetime(2026, 7, 21, 11, 0, tzinfo=UTC),
+                idempotency_key="reconnected-session-heartbeat",
+            ),
+        ]
+    )
+    db.commit()
+
+    row, timeline = calculate_daily_attendance(
+        db,
+        employee=employee,
+        work_date=work_date,
+        now=datetime(2026, 7, 21, 11, 0, tzinfo=UTC),
+    )
+
+    assert timeline["is_running"] is True
+    assert row.actual_sign_out_at is None
+
+
+def test_late_grace_only_counts_time_after_the_first_fifteen_minutes(
+    attendance_context,
+):
+    db, employee, device, _ = attendance_context
+    profile = db.scalar(
+        select(EmployeeWorkProfile).where(EmployeeWorkProfile.employee_id == employee.id)
+    )
+    profile.shift_start = time(10, 0)
+    profile.shift_end = time(18, 0)
+    profile.late_grace_minutes = 15
+    _session(
+        db,
+        employee,
+        device,
+        datetime(2026, 7, 21, 10, 16, tzinfo=UTC),
+        datetime(2026, 7, 21, 18, 0, tzinfo=UTC),
+    )
+    db.commit()
+
+    row, _ = calculate_daily_attendance(
+        db,
+        employee=employee,
+        work_date=date(2026, 7, 21),
+        now=datetime(2026, 7, 22, tzinfo=UTC),
+    )
+
+    assert row.raw_late_seconds == 16 * 60
+    assert row.deductible_late_seconds == 60
+    assert row.status == "late"
 
 
 def test_shift_end_stops_normal_pay_even_when_late_employee_has_not_completed_target(

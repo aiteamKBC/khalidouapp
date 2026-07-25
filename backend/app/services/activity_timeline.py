@@ -136,15 +136,45 @@ def build_workday_timeline(
     for session in sessions:
         session_start = _utc(session.started_at)
         session_events = events_by_session[session.id]
-        last_signal_at = max(
-            [_utc(session.started_at), _utc(session.updated_at)]
-            + [_utc(event.event_timestamp) for event in session_events],
-        )
+        heartbeat_times = [
+            _utc(event.event_timestamp)
+            for event in session_events
+            if event.event_type == "heartbeat"
+        ]
+        if heartbeat_times:
+            # A terminal event can arrive hours or days after the desktop's
+            # last heartbeat when a stale session is closed on the next app
+            # launch.  It proves when the row was closed, not that the employee
+            # worked through the offline gap.
+            live_signal_times = [
+                _utc(event.event_timestamp)
+                for event in session_events
+                if event.event_type not in TERMINAL_EVENTS
+            ]
+            last_signal_at = max([session_start, *live_signal_times])
+        else:
+            recorded_end = _utc(session.ended_at) if session.ended_at else now_utc
+            last_signal_at = (
+                recorded_end
+                if session.ended_at is not None
+                else max(
+                    session_start,
+                    min(_utc(session.updated_at), recorded_end, now_utc),
+                )
+            )
         is_fresh = session.ended_at is None and now_utc - last_signal_at <= freshness_limit
-        open_session_end = now_utc if is_fresh else min(last_signal_at, now_utc)
-        session_end = _utc(session.ended_at) if session.ended_at else min(open_session_end, day_end)
+        if session.ended_at is not None:
+            recorded_end = _utc(session.ended_at)
+            session_end = (
+                last_signal_at
+                if recorded_end - last_signal_at > freshness_limit
+                else recorded_end
+            )
+        else:
+            session_end = now_utc if is_fresh else min(last_signal_at, now_utc)
+        session_end = min(session_end, day_end)
         visible_start = max(session_start, day_start)
-        visible_end = min(session_end, day_end)
+        visible_end = session_end
         if visible_end <= visible_start:
             continue
 
@@ -286,7 +316,10 @@ def build_workday_timeline(
     leave_seconds = (
         totals["idle"] + totals["locked"] + totals["sleeping"] if approved_leave else 0
     )
-    first_started_at = min((_utc(session.started_at) for session in sessions), default=None)
+    first_started_at = min(
+        (interval["started_at"] for interval in merged),
+        default=None,
+    )
     last_visible_end = max((interval["ended_at"] for interval in merged), default=None)
     return {
         "date": selected_date.isoformat(),

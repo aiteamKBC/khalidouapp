@@ -218,9 +218,9 @@ function AttendancePage() {
                     <TableCell>{duration(row.paidBreakSeconds)}</TableCell>
                     <TableCell>{duration(row.idleSeconds)}</TableCell>
                     <TableCell>
-                      {duration(row.rawLateSeconds)}
+                      {duration(row.deductibleLateSeconds)}
                       <span className="block text-[10px] text-muted-foreground">
-                        {duration(row.deductibleLateSeconds)} deductible
+                        {duration(row.rawLateSeconds)} from shift start
                       </span>
                     </TableCell>
                     <TableCell>{duration(row.earlyLeaveSeconds)}</TableCell>
