@@ -237,7 +237,8 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
   const summary = useQuery({
     queryKey: [...employeePortalQueryKey, "summary"],
     queryFn: () => employeeSummary(token),
-    refetchInterval: 60_000,
+    refetchInterval: 15_000,
+    refetchOnWindowFocus: true,
   });
   const workProfile = useQuery({
     queryKey: [...employeePortalQueryKey, "work-profile"],
@@ -246,6 +247,8 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
   const tasks = useQuery({
     queryKey: [...employeePortalQueryKey, "tasks"],
     queryFn: () => employeeTasks(token),
+    refetchInterval: 15_000,
+    refetchOnWindowFocus: true,
   });
   const projects = useQuery({
     queryKey: [...employeePortalQueryKey, "projects"],
@@ -401,14 +404,14 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
   }
 
   return (
-    <main className="min-h-screen bg-muted/30">
-      <header className="border-b bg-background">
+    <main className="min-h-screen bg-[#f7f4fa] text-[#17133e] dark:bg-[#121022] dark:text-white">
+      <header className="border-b border-[#342862] bg-[#21194b] text-white shadow-[0_8px_30px_-20px_rgba(23,19,62,.8)]">
         <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-5 py-4">
           <div className="flex items-center gap-3">
             <BrandLogo className="h-12 w-12 rounded-xl" />
             <div>
-              <strong>Khaliduo</strong>
-              <p className="text-xs text-muted-foreground">Employee dashboard</p>
+              <strong className="tracking-wide">Khaliduo</strong>
+              <p className="text-xs text-white/65">Employee dashboard</p>
             </div>
           </div>
           <div className="flex items-center gap-3">
@@ -416,26 +419,35 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
               <AvatarImage src={me.data?.avatar_url ?? undefined} />
               <AvatarFallback>{me.data?.name.slice(0, 2).toUpperCase()}</AvatarFallback>
             </Avatar>
-            <span className="hidden text-sm sm:block">{me.data?.name}</span>
-            <Button variant="outline" size="sm" asChild>
+            <span className="hidden text-sm text-white/85 sm:block">{me.data?.name}</span>
+            <Button className="border-white/20 bg-white/10 text-white hover:bg-white/20" variant="outline" size="sm" asChild>
               <a href="/download">
                 <Download className="mr-2 h-4 w-4" /> Download app
               </a>
             </Button>
-            <Button variant="outline" size="sm" onClick={handleLogout}>
+            <Button className="border-white/20 bg-white/10 text-white hover:bg-white/20" variant="outline" size="sm" onClick={handleLogout}>
               <LogOut className="mr-2 h-4 w-4" /> Logout
             </Button>
           </div>
         </div>
       </header>
-      <div className="mx-auto max-w-7xl space-y-6 p-5">
-        <section>
-          <h1 className="text-2xl font-semibold">Welcome, {me.data?.name ?? "employee"}</h1>
-          <p className="text-sm text-muted-foreground">
-            Your time, screenshots, tasks, manual requests and points.
-          </p>
+      <div className="mx-auto max-w-7xl space-y-5 p-4 md:p-6">
+        <section className="overflow-hidden rounded-2xl border border-[#342862] bg-[#21194b] p-6 text-white shadow-[0_14px_32px_-24px_rgba(23,19,62,.9)]">
+          <div className="flex flex-wrap items-end justify-between gap-5">
+            <div>
+              <p className="text-[11px] font-black uppercase tracking-[0.24em] text-[#ff3f86]">Khaliduo workspace</p>
+              <h1 className="mt-2 text-3xl font-black tracking-tight">Welcome, {me.data?.name ?? "employee"}</h1>
+              <p className="mt-1 text-sm text-white/65">Your workday, tasks, requests, and screenshots in one place.</p>
+            </div>
+            <div className="rounded-xl border border-white/15 bg-white/10 px-4 py-3 text-right">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-white/55">Today&apos;s shift</p>
+              <p className="mt-1 font-mono text-lg font-black">
+                {workProfile.data?.shift_start?.slice(0, 5) ?? "--:--"} – {workProfile.data?.shift_end?.slice(0, 5) ?? "--:--"}
+              </p>
+            </div>
+          </div>
         </section>
-        <Card>
+        <Card className="border-[#e7e1f1] bg-white shadow-[0_10px_28px_-24px_rgba(23,19,62,.7)] dark:border-[#3a3156] dark:bg-[#1e1832]">
           <CardHeader>
             <CardTitle>My profile</CardTitle>
           </CardHeader>
@@ -483,7 +495,8 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
           <PeriodCard title="This week" period={summary.data?.week} icon={CalendarClock} />
           <PeriodCard title="This month" period={summary.data?.month} icon={Star} />
         </div>
-        <Card>
+        <div className="grid gap-5 lg:grid-cols-[1.1fr_.9fr]">
+        <Card className="border-[#e7e1f1] bg-white shadow-[0_10px_28px_-24px_rgba(23,19,62,.7)] dark:border-[#3a3156] dark:bg-[#1e1832]">
           <CardHeader className="pb-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <CardTitle>Today&apos;s schedule & attendance</CardTitle>
@@ -533,7 +546,7 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
             </div>
           </CardContent>
         </Card>
-        <Card>
+        <Card className="border-[#e7e1f1] bg-white shadow-[0_10px_28px_-24px_rgba(23,19,62,.7)] dark:border-[#3a3156] dark:bg-[#1e1832]">
           <CardHeader>
             <CardTitle>Today's activity</CardTitle>
           </CardHeader>
@@ -541,8 +554,9 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
             <WorkdayTimeline timeline={summary.data?.todayTimeline} />
           </CardContent>
         </Card>
+        </div>
         <div className="grid gap-6 lg:grid-cols-2">
-          <Card>
+          <Card className="border-[#e7e1f1] bg-white shadow-[0_10px_28px_-24px_rgba(23,19,62,.7)] dark:border-[#3a3156] dark:bg-[#1e1832]">
             <CardHeader>
               <CardTitle>Assigned tasks</CardTitle>
             </CardHeader>
@@ -844,7 +858,7 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
               )}
             </CardContent>
           </Card>
-          <Card>
+          <Card className="border-[#e7e1f1] bg-white shadow-[0_10px_28px_-24px_rgba(23,19,62,.7)] dark:border-[#3a3156] dark:bg-[#1e1832]">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Bell className="h-5 w-5" /> Notifications
@@ -871,7 +885,7 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
               )}
             </CardContent>
           </Card>
-          <Card>
+          <Card className="border-[#e7e1f1] bg-white shadow-[0_10px_28px_-24px_rgba(23,19,62,.7)] dark:border-[#3a3156] dark:bg-[#1e1832]">
             <CardHeader>
               <CardTitle>Request manual time</CardTitle>
               <p className="text-sm text-muted-foreground">
@@ -928,7 +942,7 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
             </CardContent>
           </Card>
         </div>
-        <Card>
+        <Card className="border-[#e7e1f1] bg-white shadow-[0_10px_28px_-24px_rgba(23,19,62,.7)] dark:border-[#3a3156] dark:bg-[#1e1832]">
           <CardHeader>
             <CardTitle>Request holiday</CardTitle>
             <p className="text-sm text-muted-foreground">
@@ -996,7 +1010,7 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
             </div>
           </CardContent>
         </Card>
-        <Card>
+        <Card className="border-[#e7e1f1] bg-white shadow-[0_10px_28px_-24px_rgba(23,19,62,.7)] dark:border-[#3a3156] dark:bg-[#1e1832]">
           <CardHeader>
             <CardTitle>Manual time requests</CardTitle>
           </CardHeader>
@@ -1017,7 +1031,7 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
             ))}
           </CardContent>
         </Card>
-        <Card id="my-screenshots">
+        <Card id="my-screenshots" className="border-[#e7e1f1] bg-white shadow-[0_10px_28px_-24px_rgba(23,19,62,.7)] dark:border-[#3a3156] dark:bg-[#1e1832]">
           <CardHeader>
             <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
               <div>
@@ -1140,14 +1154,16 @@ function PeriodCard({
   );
 
   return (
-    <Card>
+    <Card className="border-[#e7e1f1] bg-white shadow-[0_10px_28px_-24px_rgba(23,19,62,.7)] dark:border-[#3a3156] dark:bg-[#1e1832]">
       <CardContent className="p-5">
         <div className="flex items-center justify-between">
           <div>
             <p className="text-sm text-muted-foreground">{title}</p>
-            <strong className="text-2xl">{formatDuration(period?.active_seconds ?? 0)}</strong>
+            <strong className="text-2xl text-[#21194b] dark:text-white">
+              {formatDuration(period?.active_seconds ?? period?.tracked_active_seconds ?? 0)}
+            </strong>
           </div>
-          <Icon className="h-7 w-7 text-primary" />
+          <Icon className="h-7 w-7 text-[#ff1764]" />
         </div>
         <div className="mt-4 flex justify-between text-sm">
           <span>
