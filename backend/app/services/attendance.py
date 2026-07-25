@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, time, timedelta
 from uuid import UUID
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -29,6 +30,42 @@ def _parsed(value: str | None) -> datetime | None:
     return datetime.fromisoformat(value) if value else None
 
 
+def attendance_timezone(
+    db: Session,
+    *,
+    employee: Employee,
+    work_date: date,
+    timezone_name: str | None = None,
+    device_id: UUID | None = None,
+) -> str:
+    """Prefer the timezone snapshotted by a session on this work date."""
+    if timezone_name:
+        return timezone_name
+    window_start = datetime.combine(work_date - timedelta(days=1), time.min, tzinfo=UTC)
+    window_end = datetime.combine(work_date + timedelta(days=2), time.min, tzinfo=UTC)
+    statement = (
+        select(WorkSession.timezone, WorkSession.started_at)
+        .where(
+            WorkSession.company_id == employee.company_id,
+            WorkSession.employee_id == employee.id,
+            WorkSession.timezone.is_not(None),
+            WorkSession.started_at >= window_start,
+            WorkSession.started_at < window_end,
+        )
+        .order_by(WorkSession.started_at.desc())
+    )
+    if device_id is not None:
+        statement = statement.where(WorkSession.device_id == device_id)
+    for candidate, started_at in db.execute(statement).all():
+        try:
+            zone = ZoneInfo(candidate)
+        except (ZoneInfoNotFoundError, ValueError):
+            continue
+        if _utc(started_at).astimezone(zone).date() == work_date:
+            return zone.key
+    return employee.timezone or "UTC"
+
+
 def cached_daily_attendance(
     db: Session,
     *,
@@ -36,6 +73,8 @@ def cached_daily_attendance(
     work_date: date,
     now: datetime | None = None,
     max_age_seconds: int = 30,
+    timezone_name: str | None = None,
+    device_id: UUID | None = None,
 ) -> tuple[DailyAttendance, dict | None]:
     """Return a recent materialized day, recalculating only when needed.
 
@@ -52,7 +91,14 @@ def cached_daily_attendance(
             DailyAttendance.work_date == work_date,
         )
     )
-    employee_today = local_today(employee.timezone or "UTC", at)
+    effective_timezone = attendance_timezone(
+        db,
+        employee=employee,
+        work_date=work_date,
+        timezone_name=timezone_name,
+        device_id=device_id,
+    )
+    employee_today = local_today(effective_timezone, at)
     if row is not None and work_date < employee_today:
         return row, None
     if row is not None and row.calculated_at is not None:
@@ -64,6 +110,8 @@ def cached_daily_attendance(
         employee=employee,
         work_date=work_date,
         now=at,
+        timezone_name=effective_timezone,
+        device_id=device_id,
     )
 
 
@@ -74,9 +122,24 @@ def calculate_daily_attendance(
     work_date: date,
     now: datetime | None = None,
     persist: bool = True,
+    timezone_name: str | None = None,
+    device_id: UUID | None = None,
 ) -> tuple[DailyAttendance, dict]:
+    effective_timezone = attendance_timezone(
+        db,
+        employee=employee,
+        work_date=work_date,
+        timezone_name=timezone_name,
+        device_id=device_id,
+    )
     profile = get_or_create_work_profile(db, employee)
-    schedule = effective_schedule(db, employee, profile, work_date)
+    schedule = effective_schedule(
+        db,
+        employee,
+        profile,
+        work_date,
+        timezone_name=effective_timezone,
+    )
     timeline = build_workday_timeline(
         db,
         company_id=employee.company_id,
@@ -84,6 +147,8 @@ def calculate_daily_attendance(
         timezone_name=schedule["timezone"],
         target_date=work_date,
         now=now,
+        device_id=device_id,
+        session_timezone_name=effective_timezone if device_id is not None else None,
     )
     start_at = schedule["start_at"]
     end_at = schedule["end_at"]

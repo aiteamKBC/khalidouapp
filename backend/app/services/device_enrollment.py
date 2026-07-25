@@ -9,6 +9,7 @@ from app.core.exceptions import ApiError
 from app.core.security import create_device_token, hash_token
 from app.models import Device, DeviceToken, Employee, TrackingSettings
 from app.schemas.agent import AgentDeviceInfo
+from app.services.device_location import refresh_device_location
 
 
 def serialize_tracking_settings(settings_row: TrackingSettings) -> dict[str, Any]:
@@ -110,6 +111,12 @@ def enroll_employee_device(
         device.status = "active"
         device.last_seen_at = datetime.now(UTC)
 
+    refresh_device_location(
+        device,
+        client_ip=ip_address,
+        reported_timezone=device_info.timezone,
+        employee_timezone=employee.timezone,
+    )
     token = issue_device_token(db, device)
     settings_row = get_or_create_tracking_settings(db, employee.company_id)
     db.commit()
@@ -127,6 +134,9 @@ def enroll_employee_device(
             "name": device.device_name,
             "installation_id": device.installation_id,
             "status": device.status,
+            "timezone": device.timezone,
+            "country_code": device.country_code,
+            "timezone_source": device.timezone_source,
         },
         "device_token": token,
         "token_type": "bearer",

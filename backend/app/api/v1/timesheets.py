@@ -32,6 +32,7 @@ def timesheet_rows(
     employee_id: UUID | None = None,
     team_id: UUID | None = None,
     current_admin: AdminUser | None = None,
+    device_id: UUID | None = None,
 ):
     start, _ = day_bounds(start_day)
     _, end = day_bounds(end_day)
@@ -59,6 +60,8 @@ def timesheet_rows(
         if current_admin is not None:
             ensure_employee_access(db, current_admin, employee_id, team_id)
         session_statement = session_statement.where(Employee.id == employee_id)
+    if device_id:
+        session_statement = session_statement.where(WorkSession.device_id == device_id)
 
     result_by_key: dict[tuple[UUID, date], dict] = {}
     for row in db.execute(session_statement).all():
@@ -131,7 +134,7 @@ def timesheet_rows(
 
     screenshot_counts: dict[tuple[UUID, date], int] = {}
     if employee_ids:
-        screenshot_rows = db.execute(
+        screenshot_statement = (
             select(
                 Screenshot.employee_id,
                 func.date(Screenshot.captured_at),
@@ -144,7 +147,10 @@ def timesheet_rows(
                 Screenshot.deleted_at.is_(None),
             )
             .group_by(Screenshot.employee_id, func.date(Screenshot.captured_at))
-        ).all()
+        )
+        if device_id:
+            screenshot_statement = screenshot_statement.where(Screenshot.device_id == device_id)
+        screenshot_rows = db.execute(screenshot_statement).all()
         for screenshot_employee_id, screenshot_date, screenshot_count in screenshot_rows:
             normalized_date = (
                 screenshot_date

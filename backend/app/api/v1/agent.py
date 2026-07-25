@@ -108,8 +108,9 @@ from app.services.time_adjustments import (
     serialize_time_adjustment_request,
 )
 from app.services.work_profiles import get_or_create_work_profile
-from app.services.rate_limit import enforce_rate_limit
+from app.services.rate_limit import enforce_rate_limit, request_client_ip
 from app.services.attendance import cached_daily_attendance
+from app.services.device_location import refresh_device_location
 
 router = APIRouter(prefix="/agent", tags=["desktop-agent"])
 logger = logging.getLogger(__name__)
@@ -117,9 +118,9 @@ logger = logging.getLogger(__name__)
 DEFAULT_DAILY_TARGET_SECONDS = 8 * 60 * 60
 
 
-def _employee_zone(employee: Employee) -> ZoneInfo:
+def _employee_zone(employee: Employee, timezone_name: str | None = None) -> ZoneInfo:
     try:
-        return ZoneInfo(employee.timezone or "UTC")
+        return ZoneInfo(timezone_name or employee.timezone or "UTC")
     except ZoneInfoNotFoundError:
         return ZoneInfo("UTC")
 
@@ -227,6 +228,8 @@ def _eligible_idle_seconds(
     profile,
     work_date: date,
     timeline: dict,
+    *,
+    timezone_name: str | None = None,
 ) -> int:
     policy = _resolved_day_policy(db, employee, profile, work_date)
     working_days = profile.working_days or [0, 1, 2, 3, 4]
@@ -240,7 +243,7 @@ def _eligible_idle_seconds(
     ):
         return 0
 
-    zone = _employee_zone(employee)
+    zone = _employee_zone(employee, timezone_name)
     shift_start = datetime.combine(work_date, policy["shift_start"], tzinfo=zone).astimezone(UTC)
     shift_end = datetime.combine(work_date, policy["shift_end"], tzinfo=zone).astimezone(UTC)
     if shift_end <= shift_start:
@@ -302,7 +305,7 @@ def enroll_authenticated(
 ):
     """Link the desktop after employee email/password authentication."""
     enforce_rate_limit(request, action="device-enroll-authenticated", limit=15, window_seconds=300)
-    ip_address = request.client.host if request.client else None
+    ip_address = request_client_ip(request)
     return success_response(
         data=enroll_employee_device(db, current_employee, payload.device, ip_address)
     )
@@ -310,6 +313,7 @@ def enroll_authenticated(
 
 @router.get("/config")
 def config(
+    request: Request,
     context: Annotated[DeviceAuthContext, Depends(get_current_device)],
     db: Annotated[Session, Depends(get_db)],
 ):
@@ -317,8 +321,15 @@ def config(
     employee = db.get(Employee, context.device.employee_id)
     if employee is None:
         raise ApiError("EMPLOYEE_NOT_FOUND", "Employee profile was not found.", 404)
+    refresh_device_location(
+        context.device,
+        client_ip=request_client_ip(request),
+        reported_timezone=None,
+        employee_timezone=employee.timezone,
+    )
+    device_timezone = context.device.timezone or employee.timezone or "UTC"
     profile = get_or_create_work_profile(db, employee)
-    today = local_today(employee.timezone)
+    today = local_today(device_timezone)
     day_policy = _resolved_day_policy(db, employee, profile, today)
     week_start = today - timedelta(days=today.weekday())
     week_end = week_start + timedelta(days=6)
@@ -346,7 +357,7 @@ def config(
             },
             **serialize_tracking_settings(settings_row),
             "request_policy": {
-                "timezone": employee.timezone,
+                "timezone": device_timezone,
                 "shift_start": day_policy["shift_start"].isoformat(timespec="minutes")
                 if day_policy["shift_start"]
                 else None,
@@ -358,7 +369,7 @@ def config(
                 "approved_leave_today": day_policy["approved_leave"],
                 "approved_early_leave_from": (
                     _as_utc(day_policy["approved_early_leave_from"])
-                    .astimezone(_employee_zone(employee))
+                    .astimezone(_employee_zone(employee, device_timezone))
                     .strftime("%H:%M")
                     if day_policy["approved_early_leave_from"]
                     else None
@@ -414,7 +425,8 @@ def projects(
 
 def agent_period_summary(context: DeviceAuthContext, db: Session) -> dict:
     employee = db.get(Employee, context.device.employee_id)
-    today = local_today(employee.timezone if employee else None)
+    device_timezone = context.device.timezone or (employee.timezone if employee else None) or "UTC"
+    today = local_today(device_timezone)
     week_start = today - timedelta(days=today.weekday())
     month_start = today.replace(day=1)
     month_end = today.replace(day=monthrange(today.year, today.month)[1])
@@ -428,6 +440,7 @@ def agent_period_summary(context: DeviceAuthContext, db: Session) -> dict:
             start,
             end,
             context.device.employee_id,
+            device_id=context.device.id,
         )
         return period_summary(
             rows,
@@ -438,10 +451,19 @@ def agent_period_summary(context: DeviceAuthContext, db: Session) -> dict:
         db,
         company_id=context.device.company_id,
         employee_id=context.device.employee_id,
-        timezone_name=employee.timezone,
+        timezone_name=device_timezone,
+        device_id=context.device.id,
+        session_timezone_name=device_timezone,
     )
     today_summary = reconcile_today_summary_with_timeline(summarize(today, today), timeline)
-    today_summary["idle_seconds"] = _eligible_idle_seconds(db, employee, profile, today, timeline)
+    today_summary["idle_seconds"] = _eligible_idle_seconds(
+        db,
+        employee,
+        profile,
+        today,
+        timeline,
+        timezone_name=device_timezone,
+    )
     today_summary["tracked_seconds"] = (
         today_summary["active_seconds"] + today_summary["idle_seconds"]
     )
@@ -898,8 +920,12 @@ def heartbeat(
     context: Annotated[DeviceAuthContext, Depends(get_current_device)],
     db: Annotated[Session, Depends(get_db)],
 ):
-    context.device.last_ip_address = (
-        request.client.host if request.client else context.device.last_ip_address
+    employee = db.get(Employee, context.device.employee_id)
+    refresh_device_location(
+        context.device,
+        client_ip=request_client_ip(request),
+        reported_timezone=payload.timezone,
+        employee_timezone=employee.timezone if employee else None,
     )
     if payload.mac_address:
         context.device.mac_address = payload.mac_address
@@ -912,14 +938,18 @@ def heartbeat(
     # Attendance is a derived read model. Refresh it at most once per minute so
     # live admin screens remain current without making every heartbeat heavy.
     try:
-        employee = db.get(Employee, context.device.employee_id)
         if employee is not None:
             cached_daily_attendance(
                 db,
                 employee=employee,
-                work_date=local_today(employee.timezone or "UTC", payload.timestamp),
+                work_date=local_today(
+                    context.device.timezone or employee.timezone or "UTC",
+                    payload.timestamp,
+                ),
                 now=payload.timestamp,
                 max_age_seconds=60,
+                timezone_name=context.device.timezone,
+                device_id=context.device.id,
             )
             db.commit()
     except Exception:
@@ -1122,7 +1152,8 @@ def create_time_adjustment_request(
     row = create_employee_time_adjustment_request(
         db,
         device=context.device,
-        requested_date=payload.requested_date or local_today(employee.timezone),
+        requested_date=payload.requested_date
+        or local_today(context.device.timezone or employee.timezone),
         requested_minutes=payload.requested_minutes,
         reason=payload.reason,
         request_type=payload.request_type,
@@ -1166,7 +1197,11 @@ def list_leave_requests(
     ).all()
     return success_response(
         data={
-            "balance": serialize_balance(db, employee, local_today(employee.timezone).year),
+            "balance": serialize_balance(
+                db,
+                employee,
+                local_today(context.device.timezone or employee.timezone).year,
+            ),
             "requests": [serialize_leave_request(row) for row in rows],
         }
     )

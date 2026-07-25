@@ -29,6 +29,10 @@ DESKTOP_UPDATE_DIRECTORY=/app/downloads
 SCREENSHOT_MAX_FILE_SIZE_MB=10
 APP_PUBLIC_URL=https://app.khaliduo.example.com
 PASSWORD_RESET_EXPIRE_MINUTES=30
+TRUSTED_PROXY_IPS=127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
+IP_GEOLOCATION_URL=https://ipwho.is/{ip}
+IP_GEOLOCATION_TIMEOUT_SECONDS=2
+IP_GEOLOCATION_RETRY_MINUTES=15
 
 # Configure Microsoft Graph (preferred) or SMTP so invitations and resets send.
 GRAPH_TENANT_ID=
@@ -118,6 +122,9 @@ Verify all of the following after deployment:
 - Employee/Team Manager invitation email.
 - Password-reset link opens the production dashboard.
 - Device enrollment with a one-time code.
+- A device on an Egyptian public IP receives `Africa/Cairo`, while a device on
+  a British public IP receives `Europe/London`, even if Windows has the other
+  timezone selected.
 - Khaliduo starts hidden after the next Windows login.
 - Screenshot upload and protected image display.
 - Installer download from `/download`.

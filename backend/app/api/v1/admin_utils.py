@@ -79,6 +79,13 @@ def serialize_device(device: Device) -> dict[str, Any]:
         "windows_username": device.windows_username,
         "mac_address": device.mac_address,
         "last_ip_address": device.last_ip_address,
+        "timezone": device.timezone,
+        "reported_timezone": device.reported_timezone,
+        "country_code": device.country_code,
+        "timezone_source": device.timezone_source,
+        "timezone_checked_at": (
+            device.timezone_checked_at.isoformat() if device.timezone_checked_at else None
+        ),
         "status": device.status,
         "last_seen_at": device.last_seen_at.isoformat() if device.last_seen_at else None,
         "registered_at": device.registered_at.isoformat(),
@@ -95,6 +102,7 @@ def serialize_work_session(session: WorkSession) -> dict[str, Any]:
         "team_id": str(session.team_id) if session.team_id else None,
         "project_id": str(session.project_id) if session.project_id else None,
         "task_id": str(session.task_id) if session.task_id else None,
+        "timezone": session.timezone,
         "started_at": session.started_at.isoformat(),
         "ended_at": session.ended_at.isoformat() if session.ended_at else None,
         "status": session.status,

@@ -167,8 +167,15 @@ def initiate_screenshot(
     if employee is not None:
         captured_at = utc(payload.captured_at)
         profile = get_or_create_work_profile(db, employee)
-        local_day = captured_at.astimezone(timezone_for(employee)).date()
-        schedule = effective_schedule(db, employee, profile, local_day)
+        timezone = timezone_for(employee, device.timezone)
+        local_day = captured_at.astimezone(timezone).date()
+        schedule = effective_schedule(
+            db,
+            employee,
+            profile,
+            local_day,
+            timezone_name=timezone.key,
+        )
         if schedule["start_at"] and schedule["end_at"]:
             category = (
                 "scheduled_shift"
@@ -256,8 +263,15 @@ def record_screenshot_skip(
     occurred_at = utc(payload.occurred_at)
     if employee is not None:
         profile = get_or_create_work_profile(db, employee)
-        local_day = occurred_at.astimezone(timezone_for(employee)).date()
-        schedule = effective_schedule(db, employee, profile, local_day)
+        timezone = timezone_for(employee, device.timezone)
+        local_day = occurred_at.astimezone(timezone).date()
+        schedule = effective_schedule(
+            db,
+            employee,
+            profile,
+            local_day,
+            timezone_name=timezone.key,
+        )
         if schedule["start_at"] and schedule["end_at"]:
             category = (
                 "scheduled_shift"

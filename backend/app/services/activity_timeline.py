@@ -60,6 +60,8 @@ def build_workday_timeline(
     timezone_name: str,
     target_date: date | None = None,
     now: datetime | None = None,
+    device_id: UUID | None = None,
+    session_timezone_name: str | None = None,
 ) -> dict:
     now_utc = _utc(now or datetime.now(UTC))
     zone = _timezone(timezone_name)
@@ -75,7 +77,7 @@ def build_workday_timeline(
         )
     ) is not None
 
-    rows = db.execute(
+    session_statement = (
         select(WorkSession, Project.name, Task.name)
         .outerjoin(Project, Project.id == WorkSession.project_id)
         .outerjoin(Task, Task.id == WorkSession.task_id)
@@ -86,7 +88,17 @@ def build_workday_timeline(
             or_(WorkSession.ended_at.is_(None), WorkSession.ended_at > day_start),
         )
         .order_by(WorkSession.started_at)
-    ).all()
+    )
+    if device_id is not None:
+        session_statement = session_statement.where(WorkSession.device_id == device_id)
+    if session_timezone_name:
+        session_statement = session_statement.where(
+            or_(
+                WorkSession.timezone == session_timezone_name,
+                WorkSession.timezone.is_(None),
+            )
+        )
+    rows = db.execute(session_statement).all()
     sessions = [row[0] for row in rows]
     session_context = {
         session.id: {"project_name": project_name, "task_name": task_name}

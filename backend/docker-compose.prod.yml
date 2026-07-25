@@ -22,6 +22,9 @@ services:
     environment:
       DESKTOP_INSTALLER_PATH: /app/downloads/KhaliduoSetup.exe
       DESKTOP_UPDATE_DIRECTORY: /app/downloads
+      # The API is private to this Compose network, so forwarded client IPs
+      # from Nginx are trusted across Docker's standard bridge address space.
+      TRUSTED_PROXY_IPS: "127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
     depends_on:
       - postgres
     restart: unless-stopped

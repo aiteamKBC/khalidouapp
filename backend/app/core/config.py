@@ -94,6 +94,22 @@ class Settings(BaseSettings):
     email_support_address: str = Field(default="", alias="EMAIL_SUPPORT_ADDRESS")
     app_public_url: str = Field(default="http://localhost:5174", alias="APP_PUBLIC_URL")
     trusted_proxy_ips: list[str] = Field(default=["127.0.0.1", "::1"], alias="TRUSTED_PROXY_IPS")
+    ip_geolocation_url: str = Field(
+        default="https://ipwho.is/{ip}",
+        alias="IP_GEOLOCATION_URL",
+    )
+    ip_geolocation_timeout_seconds: float = Field(
+        default=2.0,
+        ge=0.25,
+        le=10.0,
+        alias="IP_GEOLOCATION_TIMEOUT_SECONDS",
+    )
+    ip_geolocation_retry_minutes: int = Field(
+        default=15,
+        ge=1,
+        le=1440,
+        alias="IP_GEOLOCATION_RETRY_MINUTES",
+    )
 
     @field_validator("cors_origins", mode="before")
     @classmethod
