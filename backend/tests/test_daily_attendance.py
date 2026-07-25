@@ -248,6 +248,20 @@ def test_stale_session_closed_days_later_does_not_fill_the_offline_gap(
     assert len(timeline["intervals"]) == 1
     assert timeline["intervals"][0]["started_at"] == timeline["first_started_at"]
 
+    historical_attendance, historical_timeline = calculate_daily_attendance(
+        db,
+        employee=employee,
+        work_date=date(2026, 7, 23),
+        now=datetime(2026, 7, 25, 12, 0, tzinfo=UTC),
+    )
+
+    assert historical_timeline["last_ended_at"] == datetime(
+        2026, 7, 23, 13, 2, tzinfo=UTC
+    ).isoformat()
+    assert historical_attendance.actual_sign_out_at == datetime(
+        2026, 7, 23, 13, 2, tzinfo=UTC
+    )
+
 
 def test_active_reconnected_session_clears_an_earlier_sign_out(
     attendance_context,
