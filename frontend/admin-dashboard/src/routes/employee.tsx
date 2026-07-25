@@ -254,6 +254,8 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
   const screenshots = useQuery({
     queryKey: [...employeePortalQueryKey, "screenshots", screenshotDay],
     queryFn: () => employeeScreenshots(token, screenshotDay),
+    refetchInterval: 30_000,
+    refetchOnWindowFocus: true,
   });
   useEffect(() => {
     if (new URLSearchParams(window.location.search).get("view") !== "screenshots") return;

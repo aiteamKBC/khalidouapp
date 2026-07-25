@@ -117,6 +117,7 @@ function ScreenshotsPage() {
         workCategory,
         folderStatus,
       }),
+    refetchInterval: 30_000,
   });
   const shots = useQuery({
     queryKey: ["screenshots", scope, screenshotPage, selectedFolderId, teamId, date, workCategory],
@@ -131,6 +132,7 @@ function ScreenshotsPage() {
         workCategory,
       }),
     enabled: selectedFolderId !== null,
+    refetchInterval: selectedFolderId !== null ? 30_000 : false,
   });
   const [openIdx, setOpenIdx] = useState<number | null>(null);
   const [failedIds, setFailedIds] = useState<Set<string>>(new Set());

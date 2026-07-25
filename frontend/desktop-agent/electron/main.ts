@@ -300,6 +300,10 @@ dotenv.config({
 function normalizeTrackingConfig(config: TrackingConfig): TrackingConfig {
   return {
     ...config,
+    screenshot_interval_minutes: Math.max(
+      1,
+      Math.min(240, config.screenshot_interval_minutes ?? 10),
+    ),
     screenshots_per_interval: Math.max(
       1,
       Math.min(2, config.screenshots_per_interval ?? 1),
@@ -1305,7 +1309,6 @@ function clearRuntimeTimers() {
 
 function screenshotCaptureBlockReason(): string | null {
   if (!runtimeStatus.enrolled) return "device_not_enrolled";
-  if (!currentSessionId) return "session_not_active";
   if (!trackingConfig.screenshot_enabled) return "capture_disabled";
   if (!onAcPower) return "battery_power";
   if (
@@ -1318,9 +1321,10 @@ function screenshotCaptureBlockReason(): string | null {
   }
   const systemIdleSeconds = powerMonitor.getSystemIdleTime();
   if (
-    runtimeStatus.trackingStatus === "idle" ||
-    systemIdleSeconds >=
-      Math.max(60, trackingConfig.idle_threshold_minutes * 60)
+    !trackingConfig.capture_during_idle &&
+    (runtimeStatus.trackingStatus === "idle" ||
+      systemIdleSeconds >=
+        Math.max(60, trackingConfig.idle_threshold_minutes * 60))
   ) {
     return "no_user_activity";
   }
