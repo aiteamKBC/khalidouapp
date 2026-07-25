@@ -65,6 +65,13 @@ function formatDuration(seconds: number) {
   return `${hours}h ${minutes}m`;
 }
 
+function localDateKey(date = new Date()) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
 function EmployeePortalPage() {
   const [token, setToken] = useState(() => readEmployeeToken());
   const [handoffLoading, setHandoffLoading] = useState(false);
@@ -221,7 +228,7 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
     queryClient.removeQueries({ queryKey: ["employee-portal"] });
     onLogout();
   };
-  const [screenshotDay, setScreenshotDay] = useState(() => new Date().toISOString().slice(0, 10));
+  const [screenshotDay, setScreenshotDay] = useState(() => localDateKey());
   const me = useQuery({
     queryKey: [...employeePortalQueryKey, "me"],
     queryFn: () => employeeMe(token),
@@ -269,7 +276,7 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
   });
   const [minutes, setMinutes] = useState(30);
   const [previewScreenshot, setPreviewScreenshot] = useState<PortalScreenshot | null>(null);
-  const [requestedDate, setRequestedDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [requestedDate, setRequestedDate] = useState(() => localDateKey());
   const [reason, setReason] = useState("");
   const [leaveStart, setLeaveStart] = useState("");
   const [leaveEnd, setLeaveEnd] = useState("");
