@@ -3,7 +3,7 @@ from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, event, select
+from sqlalchemy import create_engine, delete, event, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -1157,6 +1157,25 @@ def test_team_owner_cannot_retrieve_employees_from_another_team(team_client):
 
     assert detail.status_code == 403
     assert filtered.status_code == 403
+
+
+def test_revoked_device_token_requires_desktop_reenrollment(team_client):
+    client, data = team_client
+    db: Session = data["session_factory"]()
+    try:
+        db.execute(delete(DeviceToken).where(DeviceToken.device_id == data["session_a"].device_id))
+        db.commit()
+    finally:
+        db.close()
+
+    response = client.get("/api/v1/agent/summary", headers=data["device_headers"])
+
+    assert response.status_code == 401
+    assert response.json()["error"] == {
+        "code": "DEVICE_REENROLLMENT_REQUIRED",
+        "message": "Device token identity does not match this device.",
+        "details": {},
+    }
 
 
 def test_team_owner_cannot_retrieve_reports_from_another_team(team_client):
