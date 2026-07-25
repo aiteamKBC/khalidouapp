@@ -179,15 +179,9 @@ def calculate_daily_attendance(
         if correction and correction.corrected_end_at
         else raw_last_at
     )
-    session_ids = {UUID(item[0]["session_id"]) for item in intervals if item[0].get("session_id")}
-    actual_sign_out_at = None
-    if session_ids and not timeline["is_running"]:
-        actual_sign_out_at = db.scalar(
-            select(WorkSession.ended_at)
-            .where(WorkSession.id.in_(session_ids), WorkSession.ended_at.is_not(None))
-            .order_by(WorkSession.ended_at.desc())
-            .limit(1)
-        )
+    actual_sign_out_at = (
+        None if timeline["is_running"] else _parsed(timeline["last_ended_at"])
+    )
     normal_worked = 0
     pre_shift_extra = 0
     post_shift_extra = 0

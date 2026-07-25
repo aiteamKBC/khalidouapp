@@ -9,6 +9,7 @@ import {
   Coffee,
   Eye,
   EyeOff,
+  TriangleAlert,
   Pencil,
   Plus,
   RotateCcw,
@@ -503,26 +504,84 @@ function BreakEditorDialog({
       })),
     [breaks],
   );
-  const invalid =
-    !shiftStart ||
-    !shiftEnd ||
-    minutesBetween(shiftStart, shiftEnd) <= 0 ||
-    rules.length === 0 ||
-    rules.some(
-      (rule) =>
-        !rule.name || rule.minutes <= 0 || rule.start_time < shiftStart || rule.end_time > shiftEnd,
-    ) ||
-    rules.some(
-      (rule, index) =>
-        index > 0 &&
-        [...rules].sort((a, b) => a.start_time.localeCompare(b.start_time))[index - 1].end_time >
-          [...rules].sort((a, b) => a.start_time.localeCompare(b.start_time))[index].start_time,
-    ) ||
-    !reason.trim() ||
-    (scope === "employee" && !employeeId) ||
-    (scope === "employees" && employeeIds.length === 0) ||
-    (scope === "team" && !teamId) ||
-    (!permanent && !effectiveDate);
+  const breakProblems = useMemo(() => {
+    const problems: Array<{ key: string; message: string; indexes: number[] }> = [];
+
+    rules.forEach((rule, index) => {
+      const label = rule.name || `Break ${index + 1}`;
+      if (!rule.name) {
+        problems.push({
+          key: `name-${index}`,
+          message: `Enter a name for break ${index + 1}.`,
+          indexes: [index],
+        });
+      }
+      if (
+        !rule.start_time ||
+        !rule.end_time ||
+        !Number.isFinite(rule.minutes) ||
+        rule.minutes <= 0
+      ) {
+        problems.push({
+          key: `duration-${index}`,
+          message: `${label} must end after it starts.`,
+          indexes: [index],
+        });
+      }
+      if (
+        shiftStart &&
+        shiftEnd &&
+        rule.start_time &&
+        rule.end_time &&
+        (rule.start_time < shiftStart || rule.end_time > shiftEnd)
+      ) {
+        problems.push({
+          key: `outside-${index}`,
+          message: `${label} must stay inside the ${shiftStart}–${shiftEnd} shift.`,
+          indexes: [index],
+        });
+      }
+    });
+
+    const sortedRules = rules
+      .map((rule, index) => ({ ...rule, index }))
+      .sort((a, b) => a.start_time.localeCompare(b.start_time));
+    for (let index = 1; index < sortedRules.length; index += 1) {
+      const previous = sortedRules[index - 1];
+      const current = sortedRules[index];
+      if (
+        previous.start_time &&
+        previous.end_time &&
+        current.start_time &&
+        current.end_time &&
+        previous.end_time > current.start_time
+      ) {
+        problems.push({
+          key: `overlap-${previous.index}-${current.index}`,
+          message: `${previous.name || `Break ${previous.index + 1}`} overlaps with ${
+            current.name || `break ${current.index + 1}`
+          }. Give each break a separate time.`,
+          indexes: [previous.index, current.index],
+        });
+      }
+    }
+
+    return problems;
+  }, [rules, shiftEnd, shiftStart]);
+  const invalidBreakIndexes = new Set(breakProblems.flatMap((problem) => problem.indexes));
+  const validationMessages = [
+    ...(!shiftStart || !shiftEnd || minutesBetween(shiftStart, shiftEnd) <= 0
+      ? ["Shift end must be later than shift start."]
+      : []),
+    ...(rules.length === 0 ? ["Add at least one break."] : []),
+    ...breakProblems.map((problem) => problem.message),
+    ...(!reason.trim() ? ["Enter a reason for this schedule change."] : []),
+    ...(scope === "employee" && !employeeId ? ["Select an employee."] : []),
+    ...(scope === "employees" && employeeIds.length === 0 ? ["Select at least one employee."] : []),
+    ...(scope === "team" && !teamId ? ["Select a team."] : []),
+    ...(!permanent && !effectiveDate ? ["Select the effective date."] : []),
+  ];
+  const invalid = validationMessages.length > 0;
 
   const save = useMutation({
     mutationFn: async () => {
@@ -915,7 +974,9 @@ function BreakEditorDialog({
           {breaks.map((item, index) => (
             <div
               key={index}
-              className="grid items-end gap-2 rounded-xl border bg-card p-3 sm:grid-cols-[minmax(150px,1fr)_120px_120px_92px_auto]"
+              className={`grid items-end gap-2 rounded-xl border bg-card p-3 sm:grid-cols-[minmax(150px,1fr)_120px_120px_92px_auto] ${
+                invalidBreakIndexes.has(index) ? "border-destructive/60 bg-destructive/5" : ""
+              }`}
             >
               <Field label="Name">
                 <Input
@@ -997,6 +1058,24 @@ function BreakEditorDialog({
           to the employee's normal schedule on the next day.
         </div>
 
+        {validationMessages.length > 0 && (
+          <div
+            id="schedule-policy-validation"
+            role="alert"
+            className="flex items-start gap-2 rounded-xl border border-destructive/40 bg-destructive/10 px-3 py-2.5 text-sm text-destructive"
+          >
+            <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+            <div>
+              <p className="font-bold">Fix this before saving:</p>
+              <ul className="mt-1 list-disc space-y-0.5 pl-4">
+                {validationMessages.map((message) => (
+                  <li key={message}>{message}</li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        )}
+
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
@@ -1004,6 +1083,7 @@ function BreakEditorDialog({
           <Button
             loading={save.isPending}
             disabled={save.isPending || invalid}
+            aria-describedby={invalid ? "schedule-policy-validation" : undefined}
             onClick={() => save.mutate()}
           >
             {save.isPending ? "Saving…" : permanent ? "Save policy" : "Schedule change"}

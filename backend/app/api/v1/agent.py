@@ -456,7 +456,7 @@ def agent_period_summary(context: DeviceAuthContext, db: Session) -> dict:
         session_timezone_name=device_timezone,
     )
     today_summary = reconcile_today_summary_with_timeline(summarize(today, today), timeline)
-    today_summary["idle_seconds"] = _eligible_idle_seconds(
+    today_summary["eligible_idle_seconds"] = _eligible_idle_seconds(
         db,
         employee,
         profile,
@@ -464,6 +464,10 @@ def agent_period_summary(context: DeviceAuthContext, db: Session) -> dict:
         timeline,
         timezone_name=device_timezone,
     )
+    # The visible Today total must describe what actually happened in the
+    # timeline, even on an off day. Eligibility is a separate policy value used
+    # only when the employee asks for an idle-time adjustment.
+    today_summary["idle_seconds"] = int(timeline.get("idle_seconds", 0))
     today_summary["tracked_seconds"] = (
         today_summary["active_seconds"] + today_summary["idle_seconds"]
     )

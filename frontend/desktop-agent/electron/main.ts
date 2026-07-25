@@ -942,7 +942,8 @@ async function refreshWorkedTodayTotal() {
       week: summary.week,
       month: summary.month,
     };
-    runtimeStatus.eligibleIdleSeconds = summary.today.idle_seconds;
+    runtimeStatus.eligibleIdleSeconds =
+      summary.today.eligible_idle_seconds ?? summary.today.idle_seconds;
     runtimeStatus.dailyTargetSeconds =
       summary.daily_target_seconds ?? 8 * 60 * 60;
     runtimeStatus.dailyTargetProgressPercent =

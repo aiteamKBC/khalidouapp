@@ -1,7 +1,7 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
-import { AlertTriangle, CalendarCheck2, Clock3, Coffee, TimerReset } from "lucide-react";
+import { AlertTriangle, CalendarCheck2, Clock3, Coffee, Images, TimerReset } from "lucide-react";
 
 import { getDailyAttendance, listDailyAttendance } from "@/api/attendance";
 import { listTeams } from "@/api/teams";
@@ -180,23 +180,20 @@ function AttendancePage() {
               <TableHead>Manual</TableHead>
               <TableHead>Payable</TableHead>
               <TableHead>Status</TableHead>
+              <TableHead className="text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {attendance.isLoading
               ? Array.from({ length: 6 }).map((_, index) => (
                   <TableRow key={index}>
-                    <TableCell colSpan={12}>
+                    <TableCell colSpan={13}>
                       <div className="h-10 animate-pulse rounded bg-muted" />
                     </TableCell>
                   </TableRow>
                 ))
               : rows.map((row) => (
-                  <TableRow
-                    key={row.id}
-                    className="cursor-pointer"
-                    onClick={() => setSelectedEmployeeId(row.employeeId)}
-                  >
+                  <TableRow key={row.id}>
                     <TableCell>
                       <p className="font-bold">{row.employeeName}</p>
                       <p className="text-xs text-muted-foreground">
@@ -242,11 +239,29 @@ function AttendancePage() {
                     <TableCell>
                       <StatusBadge status={row.status} />
                     </TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex justify-end gap-2">
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={() => setSelectedEmployeeId(row.employeeId)}
+                        >
+                          Details
+                        </Button>
+                        <Button type="button" size="sm" variant="outline" asChild>
+                          <Link to="/screenshots" search={{ employeeId: row.employeeId, day }}>
+                            <Images className="mr-1 h-4 w-4" />
+                            Screenshots
+                          </Link>
+                        </Button>
+                      </div>
+                    </TableCell>
                   </TableRow>
                 ))}
             {!attendance.isLoading && rows.length === 0 && (
               <TableRow>
-                <TableCell colSpan={12} className="py-12 text-center text-muted-foreground">
+                <TableCell colSpan={13} className="py-12 text-center text-muted-foreground">
                   No attendance rows match these filters.
                 </TableCell>
               </TableRow>
@@ -260,9 +275,19 @@ function AttendancePage() {
       >
         <DialogContent className="max-h-[88vh] max-w-5xl overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>
-              {detail.data?.employeeName ?? "Attendance detail"} · {day}
-            </DialogTitle>
+            <div className="flex flex-wrap items-center justify-between gap-3 pr-7">
+              <DialogTitle>
+                {detail.data?.employeeName ?? "Attendance detail"} · {day}
+              </DialogTitle>
+              {selectedEmployeeId && (
+                <Button type="button" size="sm" variant="outline" asChild>
+                  <Link to="/screenshots" search={{ employeeId: selectedEmployeeId, day }}>
+                    <Images className="mr-1 h-4 w-4" />
+                    View day screenshots
+                  </Link>
+                </Button>
+              )}
+            </div>
           </DialogHeader>
           {detail.data ? (
             <>

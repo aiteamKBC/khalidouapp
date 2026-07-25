@@ -1,5 +1,5 @@
 from datetime import UTC, datetime
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request
@@ -32,10 +32,14 @@ def list_time_adjustment_requests(
     employee_id: UUID | None = None,
     team_id: UUID | None = None,
     status: str | None = None,
+    request_group: Literal["time", "early_leave"] | None = None,
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=200),
 ):
-    require_capability(current_admin, "time_requests.view")
+    require_capability(
+        current_admin,
+        "leave_requests.view" if request_group == "early_leave" else "time_requests.view",
+    )
     statement = (
         select(TimeAdjustmentRequest)
         .join(Employee, Employee.id == TimeAdjustmentRequest.employee_id)
@@ -50,6 +54,10 @@ def list_time_adjustment_requests(
         statement = statement.where(TimeAdjustmentRequest.employee_id == employee_id)
     if status:
         statement = statement.where(TimeAdjustmentRequest.status == status)
+    if request_group == "early_leave":
+        statement = statement.where(TimeAdjustmentRequest.request_type == "early_leave")
+    elif request_group == "time":
+        statement = statement.where(TimeAdjustmentRequest.request_type != "early_leave")
     total = count_for(db, statement)
     rows = db.scalars(apply_pagination(statement, page, page_size)).all()
     return success_response(
@@ -66,8 +74,13 @@ def review_time_adjustment_request(
     current_admin: Annotated[AdminUser, Depends(get_current_admin)],
     db: Annotated[Session, Depends(get_db)],
 ):
-    require_capability(current_admin, "time_requests.manage")
     row = get_time_adjustment_or_404(db, current_admin.company_id, request_id)
+    require_capability(
+        current_admin,
+        "leave_requests.manage"
+        if row.request_type == "early_leave"
+        else "time_requests.manage",
+    )
     employee = ensure_employee_access(db, current_admin, row.employee_id)
     if row.status != "pending":
         raise ApiError(

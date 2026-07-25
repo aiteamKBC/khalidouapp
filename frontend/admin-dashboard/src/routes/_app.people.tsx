@@ -330,6 +330,7 @@ function PeopleDirectory({
   const [editPermissions, setEditPermissions] = useState<string[]>([]);
   const [editShiftStart, setEditShiftStart] = useState("09:00");
   const [editShiftEnd, setEditShiftEnd] = useState("17:00");
+  const [editStartDate, setEditStartDate] = useState("");
   const [editTimezone, setEditTimezone] = useState("Africa/Cairo");
   const [editWorkingDays, setEditWorkingDays] = useState<number[]>([0, 1, 2, 3, 4]);
   const [editLateGraceMinutes, setEditLateGraceMinutes] = useState(15);
@@ -532,7 +533,10 @@ function PeopleDirectory({
           password: editPassword || undefined,
         });
         if (managedEmployeeId) {
-          await updateEmployee(managedEmployeeId, { timezone: editTimezone });
+          await updateEmployee(managedEmployeeId, {
+            timezone: editTimezone,
+            startDate: editStartDate || undefined,
+          });
         }
       } else if (editPersonRow.employee) {
         await updateEmployee(editPersonRow.employee.id, {
@@ -540,6 +544,7 @@ function PeopleDirectory({
           email: editEmail,
           jobTitle: editJobTitle,
           timezone: editTimezone,
+          startDate: editStartDate || undefined,
         });
       }
       if (managedEmployeeId && managedWorkProfile.data) {
@@ -691,6 +696,7 @@ function PeopleDirectory({
     setEditEmail(row.email);
     setEditJobTitle(user?.jobTitle ?? row.employee?.jobTitle ?? "");
     setEditTimezone(trackedEmployee?.timezone ?? "Africa/Cairo");
+    setEditStartDate(trackedEmployee?.startDate ?? "");
     setEditPassword("");
     setEditRole(user?.role ?? "employee");
     setEditPreset(user ? (user.permissionMode === "custom" ? "custom" : user.role) : "employee");
@@ -1225,6 +1231,20 @@ function PeopleDirectory({
                     placeholder="e.g. Operations Manager"
                   />
                 </div>
+                {managedEmployeeId && (
+                  <div className="space-y-1.5">
+                    <Label htmlFor="edit-start-date">Employment start date</Label>
+                    <Input
+                      id="edit-start-date"
+                      type="date"
+                      value={editStartDate}
+                      onChange={(event) => setEditStartDate(event.target.value)}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Used to calculate annual leave eligibility and payroll periods.
+                    </p>
+                  </div>
+                )}
                 <div className="space-y-1.5">
                   <Label htmlFor="edit-password">Reset password</Label>
                   <Input

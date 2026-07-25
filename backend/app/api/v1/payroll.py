@@ -2,7 +2,7 @@ import csv
 import html
 import io
 import zipfile
-from datetime import UTC, date, datetime, time
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Annotated, Literal
 from uuid import UUID
@@ -54,7 +54,11 @@ from app.services.payroll import (
 )
 from app.services.permissions import require_capability
 from app.services.permissions import has_company_data_scope
-from app.services.work_profiles import get_or_create_work_profile, refresh_profile_completed_at
+from app.services.work_profiles import (
+    get_or_create_work_profile,
+    refresh_profile_completed_at,
+    validate_break_rules,
+)
 from app.services.attendance import refresh_daily_attendance_range
 
 
@@ -140,11 +144,11 @@ class PayrollSettingsUpdate(BaseModel):
     def validate_cycle(self):
         try:
             ZoneInfo(self.timezone)
-            first, last = payroll_period_bounds(
-                "2028-03", self.cycle_start_day, self.cycle_end_day
-            )
+            first, last = payroll_period_bounds("2028-03", self.cycle_start_day, self.cycle_end_day)
         except (ValueError, ZoneInfoNotFoundError) as exc:
-            raise ValueError("Choose a valid timezone and continuous monthly payroll cycle.") from exc
+            raise ValueError(
+                "Choose a valid timezone and continuous monthly payroll cycle."
+            ) from exc
         length = (last - first).days + 1
         if not 27 <= length <= 32:
             raise ValueError("Payroll cycle must be one continuous monthly period.")
@@ -166,9 +170,7 @@ def _period_for_request(
     end_date: date | None,
 ) -> tuple[date, date]:
     if (start_date is None) != (end_date is None):
-        raise ApiError(
-            "INVALID_PAYROLL_PERIOD", "Choose both custom start and end dates.", 400
-        )
+        raise ApiError("INVALID_PAYROLL_PERIOD", "Choose both custom start and end dates.", 400)
     if start_date is not None and end_date is not None:
         if start_date > end_date or (end_date - start_date).days > 62:
             raise ApiError("INVALID_PAYROLL_PERIOD", "Choose a valid payroll date range.", 400)
@@ -764,44 +766,20 @@ def create_schedule_override(
         else None
     )
     if payload.break_rules is not None:
+        validate_break_rules(rules)
         profiles_by_employee = {
             profile.employee_id: profile
             for profile in db.scalars(
                 select(EmployeeWorkProfile).where(EmployeeWorkProfile.employee_id.in_(employee_ids))
             ).all()
         }
-        ordered_rules = sorted(payload.break_rules, key=lambda item: item.start_time or time.min)
-        for index, rule in enumerate(ordered_rules):
-            if rule.start_time is None or rule.end_time is None or rule.end_time <= rule.start_time:
-                raise ApiError(
-                    "INVALID_BREAK", "Every break needs a valid start and end time.", 400
-                )
-            actual_minutes = (
-                rule.end_time.hour * 60
-                + rule.end_time.minute
-                - rule.start_time.hour * 60
-                - rule.start_time.minute
+        for employee_id in employee_ids:
+            profile = profiles_by_employee.get(employee_id)
+            validate_break_rules(
+                rules,
+                shift_start=parsed_start or (profile.shift_start if profile else None),
+                shift_end=parsed_end or (profile.shift_end if profile else None),
             )
-            if actual_minutes != rule.minutes:
-                raise ApiError(
-                    "INVALID_BREAK_DURATION", "Break duration must match start and end.", 400
-                )
-            for employee_id in employee_ids:
-                profile = profiles_by_employee.get(employee_id)
-                effective_start = parsed_start or (profile.shift_start if profile else None)
-                effective_end = parsed_end or (profile.shift_end if profile else None)
-                if (
-                    effective_start
-                    and effective_end
-                    and not (effective_start <= rule.start_time < rule.end_time <= effective_end)
-                ):
-                    raise ApiError(
-                        "BREAK_OUTSIDE_SHIFT",
-                        "Every break must be fully inside the affected shift.",
-                        400,
-                    )
-            if index and ordered_rules[index - 1].end_time > rule.start_time:
-                raise ApiError("OVERLAPPING_BREAKS", "Break periods cannot overlap.", 400)
     if payload.scope == "company":
         targets: list[tuple[UUID | None, UUID | None, str]] = [(None, None, "company")]
     elif payload.scope == "team":
@@ -1208,16 +1186,18 @@ def _visa_bank_document(rows: list[dict]) -> bytes:
             details={"employees": missing},
         )
     if not data_rows:
-        raise ApiError("BANK_EXPORT_EMPTY", "There are no employee payroll rows for this period.", 409)
+        raise ApiError(
+            "BANK_EXPORT_EMPTY", "There are no employee payroll rows for this period.", 409
+        )
 
     widths = ("400", "180", "420", "340", "300")
     styles = (
-        '<Styles>'
+        "<Styles>"
         '<Style ss:ID="Default" ss:Name="Normal"><Font ss:FontName="Arial" ss:Size="10"/></Style>'
         '<Style ss:ID="Header"><Font ss:FontName="Arial" ss:Size="10" ss:Bold="1"/><Interior ss:Color="#D9EAF7" ss:Pattern="Solid"/><Alignment ss:Horizontal="Center" ss:Vertical="Center" ss:WrapText="1"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#808080"/></Borders></Style>'
         '<Style ss:ID="Text"><Alignment ss:Vertical="Center"/></Style>'
         '<Style ss:ID="Amount"><NumberFormat ss:Format="0.00"/><Alignment ss:Horizontal="Right" ss:Vertical="Center"/></Style>'
-        '</Styles>'
+        "</Styles>"
     )
     header_cells = "".join(
         f'<Cell ss:StyleID="Header"><Data ss:Type="String">{xml(label)}</Data></Cell>'
@@ -1241,9 +1221,9 @@ def _visa_bank_document(rows: list[dict]) -> bytes:
         'xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet" '
         'xmlns:x="urn:schemas-microsoft-com:office:excel">'
         '<DocumentProperties xmlns="urn:schemas-microsoft-com:office:office"><Author>Khaliduo</Author></DocumentProperties>'
-        f"{styles}<Worksheet ss:Name=\"Template\"><Table ss:ExpandedColumnCount=\"5\" ss:ExpandedRowCount=\"{len(data_rows) + 1}\">"
+        f'{styles}<Worksheet ss:Name="Template"><Table ss:ExpandedColumnCount="5" ss:ExpandedRowCount="{len(data_rows) + 1}">'
         + "".join(f'<Column ss:Width="{width}"/>' for width in widths)
-        + f"<Row ss:AutoFitHeight=\"0\">{header_cells}</Row>"
+        + f'<Row ss:AutoFitHeight="0">{header_cells}</Row>'
         + "".join(body_rows)
         + "</Table><WorksheetOptions xmlns="
         '"urn:schemas-microsoft-com:office:excel"><FreezePanes/><FrozenNoSplit/><SplitHorizontal>1</SplitHorizontal><TopRowBottomPane>1</TopRowBottomPane></WorksheetOptions></Worksheet></Workbook>'
@@ -1269,7 +1249,10 @@ def _xlsx_document(rows: list[dict], run: PayrollRun) -> bytes:
         + cell("B1", f"{run.period_start} to {run.period_end}")
         + "</row>",
         '<row r="2">'
-        + "".join(cell(f"{column_name(index)}2", label) for index, (label, _) in enumerate(EXPORT_COLUMNS, 1))
+        + "".join(
+            cell(f"{column_name(index)}2", label)
+            for index, (label, _) in enumerate(EXPORT_COLUMNS, 1)
+        )
         + "</row>",
     ]
     for row_index, row in enumerate(rows, 3):
@@ -1284,7 +1267,7 @@ def _xlsx_document(rows: list[dict], run: PayrollRun) -> bytes:
     worksheet = (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
         '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
-        f'<sheetData>{"".join(sheet_rows)}</sheetData></worksheet>'
+        f"<sheetData>{''.join(sheet_rows)}</sheetData></worksheet>"
     )
     content_types = (
         '<?xml version="1.0" encoding="UTF-8"?>'
@@ -1293,7 +1276,7 @@ def _xlsx_document(rows: list[dict], run: PayrollRun) -> bytes:
         '<Default Extension="xml" ContentType="application/xml"/>'
         '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
         '<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
-        '</Types>'
+        "</Types>"
     )
     output = io.BytesIO()
     with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:

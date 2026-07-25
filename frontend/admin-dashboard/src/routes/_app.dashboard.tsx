@@ -30,6 +30,7 @@ import { StatusBadge } from "@/components/ui/status-badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { ProtectedImage } from "@/components/ProtectedImage";
 import { useAuth } from "@/lib/auth";
+import { listDailyAttendance } from "@/api/attendance";
 import { getDashboardSummary } from "@/api/dashboard";
 import { listEmployees } from "@/api/employees";
 import { listScreenshots } from "@/api/screenshots";
@@ -134,6 +135,7 @@ function DashboardPage() {
   const { scopedTeamIds } = useAuth();
   const scope = scopedTeamIds();
   const scopeKey = scope?.join(",") ?? "all";
+  const dashboardDay = isoDate(new Date());
 
   const summary = useQuery({
     queryKey: ["dashboard", scope],
@@ -217,6 +219,20 @@ function DashboardPage() {
     refetchOnWindowFocus: "always",
     placeholderData: (previous) => previous,
   });
+  const todayAttendance = useQuery({
+    queryKey: ["daily-attendance", "dashboard", dashboardDay, scope],
+    queryFn: () =>
+      listDailyAttendance({
+        day: dashboardDay,
+        teamId: scope?.length === 1 ? scope[0] : undefined,
+      }),
+    enabled: loadActions,
+    staleTime: 20_000,
+    refetchInterval: ACTION_REFRESH_MS,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: "always",
+    placeholderData: (previous) => previous,
+  });
 
   const now = new Date();
   const thisMonday = startOfWeek(now);
@@ -284,25 +300,33 @@ function DashboardPage() {
     idleHours: day.idleHours,
   }));
 
-  // Recent activity grouped by employee
+  // Member activity includes every employee with a registered device. Starting
+  // from screenshots hid offline employees because they often have no recent
+  // capture, which made the Offline filter incorrectly show zero.
   const byEmployee = new Map<string, Screenshot[]>();
   for (const shot of shots.data ?? []) {
     byEmployee.set(shot.employeeId, [...(byEmployee.get(shot.employeeId) ?? []), shot]);
   }
-  const recentActivity = [...byEmployee.entries()]
-    .map(([id, list]) => ({
-      employee: nameById.get(id),
-      shots: [...list]
+  const memberActivity = (emps.data ?? [])
+    .filter((employee) => employee.currentDeviceId || byEmployee.has(employee.id))
+    .map((employee) => {
+      const images = [...(byEmployee.get(employee.id) ?? [])]
         .sort((a, b) => +new Date(b.capturedAt) - +new Date(a.capturedAt))
-        .slice(0, 3),
-      latest: Math.max(...list.map((s) => +new Date(s.capturedAt))),
-    }))
-    .filter((r) => r.employee)
-    .sort((a, b) => b.latest - a.latest)
-    .slice(0, 5);
-  const filteredActivity = recentActivity.filter(
+        .slice(0, 3);
+      return {
+        employee,
+        shots: images,
+        latest: Math.max(
+          images[0] ? +new Date(images[0].capturedAt) : 0,
+          employee.lastHeartbeat ? +new Date(employee.lastHeartbeat) : 0,
+        ),
+      };
+    })
+    .sort((a, b) => b.latest - a.latest);
+  const matchingActivity = memberActivity.filter(
     ({ employee }) => activityFilter === "all" || employee?.status === activityFilter,
   );
+  const filteredActivity = matchingActivity.slice(0, 5);
 
   const online = (emps.data ?? [])
     .filter((e) => e.status !== "offline")
@@ -313,9 +337,18 @@ function DashboardPage() {
   const dateRange = `${fmtDay(thisMonday)} - ${fmtDay(sunday)}`;
   const loading = month.isLoading || summary.isLoading;
   const offlineDevices = (devices.data ?? []).filter((device) => device.status === "offline");
-  const inactiveToday = (emps.data ?? []).filter(
-    (employee) => employee.status === "offline" && employee.workedTodayMinutes === 0,
-  );
+  const lateStarts = (todayAttendance.data ?? []).filter((attendance) => {
+    if (
+      attendance.status !== "not_started" ||
+      !attendance.scheduledStartAt ||
+      attendance.actualFirstActivityAt
+    ) {
+      return false;
+    }
+    const graceDeadline =
+      new Date(attendance.scheduledStartAt).getTime() + attendance.lateGraceMinutes * 60_000;
+    return Date.now() > graceDeadline;
+  });
   const idleNow = (emps.data ?? []).filter((employee) => employee.status === "idle");
   const teamsWithoutOwner = (teams.data ?? []).filter(
     (team) => team.status === "active" && team.ownerIds.length === 0,
@@ -330,14 +363,6 @@ function DashboardPage() {
       tone: "text-info bg-info/10",
     },
     {
-      to: "/devices" as const,
-      label: "Check offline devices",
-      description: "Machines not reporting right now",
-      count: offlineDevices.length,
-      icon: Monitor,
-      tone: "text-destructive bg-destructive/10",
-    },
-    {
       to: "/live-activity" as const,
       label: "Check idle employees",
       description: "People online but currently idle",
@@ -346,10 +371,10 @@ function DashboardPage() {
       tone: "text-warning-foreground bg-warning/20",
     },
     {
-      to: "/employees" as const,
-      label: "Follow up not started",
-      description: "Offline employees with no time today",
-      count: inactiveToday.length,
+      to: "/attendance" as const,
+      label: "Follow up late starts",
+      description: "Scheduled employees still missing after their grace time",
+      count: lateStarts.length,
       icon: AlertTriangle,
       tone: "text-warning-foreground bg-warning/20",
     },
@@ -361,7 +386,8 @@ function DashboardPage() {
     month.isError ||
     teams.isError ||
     devices.isError ||
-    requests.isError;
+    requests.isError ||
+    todayAttendance.isError;
 
   return (
     <div className="studio-page">
@@ -398,10 +424,10 @@ function DashboardPage() {
           tone="blue"
         />
         <MetricTile
-          to="/employees"
-          value={inactiveToday.length}
-          label="Not started"
-          hint="Today"
+          to="/attendance"
+          value={lateStarts.length}
+          label="Late starts"
+          hint="Past grace time"
           icon={Users}
           tone="muted"
         />
@@ -443,7 +469,7 @@ function DashboardPage() {
                   <div>
                     <p className="text-sm font-extrabold">No open issues</p>
                     <p className="mt-0.5 text-xs text-muted-foreground">
-                      Time requests, devices, idle status, and starts look clean.
+                      Time requests, idle status, and scheduled starts look clean.
                     </p>
                   </div>
                 </div>
@@ -502,6 +528,7 @@ function DashboardPage() {
               teams.refetch();
               devices.refetch();
               requests.refetch();
+              todayAttendance.refetch();
             }}
           >
             Retry all
@@ -687,9 +714,10 @@ function DashboardPage() {
           <Card className="studio-card overflow-hidden rounded-2xl border-border/70 shadow-none">
             <CardHeader className="flex-row items-center justify-between space-y-0 border-b border-border/70 p-[18px]">
               <div className="flex items-center gap-3">
-                <CardTitle className="text-sm font-extrabold">Recent activity</CardTitle>
+                <CardTitle className="text-sm font-extrabold">Member activity</CardTitle>
                 <span className="text-[11px] font-bold text-muted-foreground">
-                  {filteredActivity.length} of {recentActivity.length} members
+                  {filteredActivity.length} of {matchingActivity.length}{" "}
+                  {activityFilter === "all" ? "members" : `${activityFilter} members`}
                 </span>
               </div>
               <div className="flex flex-wrap gap-1.5">
@@ -708,28 +736,33 @@ function DashboardPage() {
             <CardContent className="space-y-3 p-[18px]">
               {filteredActivity.length === 0 && (
                 <p className="rounded-[18px] border border-dashed bg-muted/20 p-6 text-sm text-muted-foreground">
-                  No recent screenshots.
+                  {activityFilter === "all"
+                    ? "No members with registered devices."
+                    : `No ${activityFilter} members right now.`}
                 </p>
               )}
               {filteredActivity.map(({ employee, shots: images }) => (
                 <div
-                  key={employee!.id}
+                  key={employee.id}
                   className="grid items-center gap-3 rounded-[18px] border border-border/80 bg-card/70 p-3 md:grid-cols-[190px_minmax(0,1fr)] 2xl:grid-cols-[220px_minmax(0,1fr)]"
                 >
                   <Link
                     to="/employees/$employeeId"
-                    params={{ employeeId: employee!.id }}
+                    params={{ employeeId: employee.id }}
                     className="flex min-w-0 items-center gap-2 rounded-md p-1 transition hover:bg-muted/60"
                   >
                     <Avatar className="h-9 w-9">
-                      <AvatarFallback className="text-xs">
-                        {initials(employee!.name)}
-                      </AvatarFallback>
+                      <AvatarFallback className="text-xs">{initials(employee.name)}</AvatarFallback>
                     </Avatar>
-                    <span className="truncate text-[12.5px] font-bold">{employee!.name}</span>
-                    <StatusBadge status={employee!.status} className="ml-auto shrink-0" />
+                    <span className="truncate text-[12.5px] font-bold">{employee.name}</span>
+                    <StatusBadge status={employee.status} className="ml-auto shrink-0" />
                   </Link>
                   <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
+                    {images.length === 0 && (
+                      <p className="col-span-full rounded-[13px] border border-dashed bg-muted/20 px-4 py-5 text-center text-xs text-muted-foreground">
+                        No recent screenshots from this member.
+                      </p>
+                    )}
                     {images.map((shot) => (
                       <Link
                         key={shot.id}
@@ -738,7 +771,7 @@ function DashboardPage() {
                       >
                         <ProtectedImage
                           src={shot.thumbnailUrl}
-                          alt={`Screenshot from ${employee!.name}`}
+                          alt={`Screenshot from ${employee.name}`}
                           className="aspect-video w-full object-cover transition-transform group-hover:scale-[1.03]"
                         />
                       </Link>

@@ -9,6 +9,8 @@ type BackendEmployee = {
   employee_code: string;
   job_title?: string | null;
   timezone: string;
+  start_date?: string | null;
+  annual_leave_days?: number;
   status: string;
   invitation?: {
     id: string;
@@ -64,6 +66,7 @@ export type EmployeeCreateInput = {
 export type EmployeeUpdateInput = Partial<EmployeeCreateInput> & {
   status?: "active" | "inactive";
   weeklyCapacityMinutes?: number;
+  startDate?: string;
 };
 
 export type WorkProfile = {
@@ -186,6 +189,8 @@ function mapEmployee(status: BackendEmployeeStatus, teamIds: string[]): Employee
     email: employee.email,
     jobTitle: normalizeAiAcronym(employee.job_title ?? ""),
     timezone: employee.timezone || "Africa/Cairo",
+    startDate: employee.start_date ?? undefined,
+    annualLeaveDays: employee.annual_leave_days ?? 21,
     teamRole: status.team_role ?? undefined,
     teamIds,
     status: normalizeEmployeeStatus(status.activity_status),
@@ -288,6 +293,7 @@ export async function updateEmployee(
       employee_code: input.employeeCode,
       job_title: input.jobTitle === undefined ? undefined : normalizeAiAcronym(input.jobTitle),
       timezone: input.timezone,
+      start_date: input.startDate,
       status: input.status,
       weekly_capacity_minutes: input.weeklyCapacityMinutes,
     }),

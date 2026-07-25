@@ -607,6 +607,11 @@ function App() {
 
   const timeBreakdown = useMemo(() => {
     const period = status.timeSummary?.today;
+    const visibleIdleSeconds = Math.max(
+      period?.idle_seconds ?? 0,
+      status.todayTimeline?.idle_seconds ?? 0,
+      status.eligibleIdleSeconds,
+    );
     const segments = [
       {
         label: "Normal shift work",
@@ -622,7 +627,7 @@ function App() {
       },
       {
         label: "Idle",
-        seconds: status.eligibleIdleSeconds,
+        seconds: visibleIdleSeconds,
         className: "idle",
         counted: false,
       },
@@ -656,6 +661,7 @@ function App() {
     status.extraSeconds,
     status.eligibleIdleSeconds,
     status.normalSeconds,
+    status.todayTimeline?.idle_seconds,
     status.timeSummary,
   ]);
 
@@ -1917,7 +1923,11 @@ function HomeView({
   idleRequestOptions: IdleRequestOption[];
   onRequestManualTime: (option?: IdleRequestOption) => void;
 }) {
-  const todayIdleSeconds = status.eligibleIdleSeconds;
+  const todayIdleSeconds = Math.max(
+    status.timeSummary?.today.idle_seconds ?? 0,
+    status.todayTimeline?.idle_seconds ?? 0,
+    status.eligibleIdleSeconds,
+  );
   const isPaused = status.trackingPaused || status.trackingStatus === "paused";
   const shouldResume =
     isPaused ||

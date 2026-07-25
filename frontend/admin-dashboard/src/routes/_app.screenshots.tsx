@@ -49,6 +49,21 @@ import { toast } from "sonner";
 import type { Screenshot } from "@/types";
 
 export const Route = createFileRoute("/_app/screenshots")({
+  validateSearch: (
+    search: Record<string, unknown>,
+  ): {
+    employeeId?: string;
+    day?: string;
+    startDate?: string;
+    endDate?: string;
+  } => ({
+    employeeId:
+      typeof search.employeeId === "string" && search.employeeId ? search.employeeId : undefined,
+    day: typeof search.day === "string" && search.day ? search.day : undefined,
+    startDate:
+      typeof search.startDate === "string" && search.startDate ? search.startDate : undefined,
+    endDate: typeof search.endDate === "string" && search.endDate ? search.endDate : undefined,
+  }),
   component: ScreenshotsPage,
 });
 
@@ -76,6 +91,7 @@ function dayIsoDate(offset: number): string {
 }
 
 function ScreenshotsPage() {
+  const search = Route.useSearch();
   const { scopedTeamIds, can } = useAuth();
   const canManageScreenshots = can(permissions.screenshotsManage);
   const scope = scopedTeamIds();
@@ -87,15 +103,24 @@ function ScreenshotsPage() {
     queryFn: () => listTasks({ scopedTeamIds: scope }),
   });
 
-  const [empId, setEmpId] = useState("all");
+  const initialRangeMode = Boolean(search.startDate && search.endDate);
+  const [empId, setEmpId] = useState(search.employeeId ?? "all");
   const [teamId, setTeamId] = useState("all");
-  const [date, setDate] = useState(todayIsoDate);
+  const [date, setDate] = useState(search.day ?? todayIsoDate());
+  const [rangeMode, setRangeMode] = useState(initialRangeMode);
+  const [rangeStart, setRangeStart] = useState(
+    search.startDate ?? `${todayIsoDate().slice(0, 7)}-01`,
+  );
+  const [rangeEnd, setRangeEnd] = useState(search.endDate ?? todayIsoDate());
   const [workCategory, setWorkCategory] = useState("all");
   const [folderStatus, setFolderStatus] = useState("all");
   const [folderPage, setFolderPage] = useState(1);
   const [screenshotPage, setScreenshotPage] = useState(1);
-  const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null);
+  const [selectedFolderId, setSelectedFolderId] = useState<string | null>(
+    search.employeeId ?? (initialRangeMode ? "all" : null),
+  );
   const [auditOpen, setAuditOpen] = useState(false);
+  const validRange = !rangeMode || Boolean(rangeStart && rangeEnd && rangeStart <= rangeEnd);
   const folders = useQuery({
     queryKey: [
       "screenshot-folders",
@@ -117,21 +142,35 @@ function ScreenshotsPage() {
         workCategory,
         folderStatus,
       }),
+    enabled: !rangeMode,
     refetchInterval: 30_000,
   });
   const shots = useQuery({
-    queryKey: ["screenshots", scope, screenshotPage, selectedFolderId, teamId, date, workCategory],
+    queryKey: [
+      "screenshots",
+      scope,
+      screenshotPage,
+      selectedFolderId,
+      teamId,
+      date,
+      rangeMode,
+      rangeStart,
+      rangeEnd,
+      workCategory,
+    ],
     queryFn: () =>
       listScreenshotPage({
         scopedTeamIds: scope,
         page: screenshotPage,
         pageSize: 24,
-        employeeId: selectedFolderId ?? undefined,
+        employeeId: selectedFolderId && selectedFolderId !== "all" ? selectedFolderId : undefined,
         teamId,
-        day: date,
+        day: rangeMode ? undefined : date,
+        startDate: rangeMode ? rangeStart : undefined,
+        endDate: rangeMode ? rangeEnd : undefined,
         workCategory,
       }),
-    enabled: selectedFolderId !== null,
+    enabled: selectedFolderId !== null && validRange,
     refetchInterval: selectedFolderId !== null ? 30_000 : false,
   });
   const [openIdx, setOpenIdx] = useState<number | null>(null);
@@ -166,11 +205,27 @@ function ScreenshotsPage() {
   });
 
   useEffect(() => {
+    if (search.startDate && search.endDate) {
+      setRangeMode(true);
+      setRangeStart(search.startDate);
+      setRangeEnd(search.endDate);
+      setEmpId(search.employeeId ?? "all");
+      setSelectedFolderId(search.employeeId ?? "all");
+      return;
+    }
+    if (search.day) {
+      setRangeMode(false);
+      setDate(search.day);
+      setEmpId(search.employeeId ?? "all");
+      setSelectedFolderId(search.employeeId ?? null);
+    }
+  }, [search.day, search.employeeId, search.endDate, search.startDate]);
+
+  useEffect(() => {
     setFolderPage(1);
     setScreenshotPage(1);
-    setSelectedFolderId(null);
     setOpenIdx(null);
-  }, [empId, teamId, date, workCategory, folderStatus]);
+  }, [empId, teamId, date, rangeMode, rangeStart, rangeEnd, workCategory, folderStatus]);
 
   const filtered = shots.data?.items ?? [];
 
@@ -184,22 +239,37 @@ function ScreenshotsPage() {
     ? folders.data?.items.find((folder) => folder.employeeId === selectedFolderId)
     : null;
   const visibleShots = filtered;
+  const periodLabel = rangeMode ? `${rangeStart} to ${rangeEnd}` : date;
+  const selectedEmployeeName =
+    selectedFolderId === "all"
+      ? "All employees"
+      : (selectedFolder?.employeeName ?? (selectedFolderId ? empOf(selectedFolderId) : "-"));
 
   return (
     <div className="studio-page">
       <PageHeader
         title="Screenshots"
-        description={`Employee screenshot folders for ${date}${folders.data ? ` · ${folders.data.total} employees` : ""}.`}
+        description={
+          rangeMode
+            ? `Screenshots captured from ${rangeStart} through ${rangeEnd}.`
+            : `Employee screenshot folders for ${date}${folders.data ? ` · ${folders.data.total} employees` : ""}.`
+        }
         actions={
-          <Button variant="outline" onClick={() => setAuditOpen(true)}>
+          <Button variant="outline" onClick={() => setAuditOpen(true)} disabled={rangeMode}>
             <ListChecks className="mr-2 h-4 w-4" /> Capture audit
           </Button>
         }
       />
 
       <Card className="mb-4 p-4">
-        <div className="grid gap-3 sm:grid-cols-5">
-          <Select value={empId} onValueChange={setEmpId}>
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-7">
+          <Select
+            value={empId}
+            onValueChange={(value) => {
+              setEmpId(value);
+              setSelectedFolderId(rangeMode ? value : null);
+            }}
+          >
             <SelectTrigger>
               <SelectValue placeholder="Employee" />
             </SelectTrigger>
@@ -212,7 +282,31 @@ function ScreenshotsPage() {
               ))}
             </SelectContent>
           </Select>
-          <Select value={teamId} onValueChange={setTeamId}>
+          <Select
+            value={rangeMode ? "range" : "day"}
+            onValueChange={(value) => {
+              const nextRangeMode = value === "range";
+              setRangeMode(nextRangeMode);
+              setSelectedFolderId(nextRangeMode ? empId : null);
+              setFolderStatus("all");
+              setScreenshotPage(1);
+            }}
+          >
+            <SelectTrigger>
+              <SelectValue placeholder="Period" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="day">One day</SelectItem>
+              <SelectItem value="range">Date range</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select
+            value={teamId}
+            onValueChange={(value) => {
+              setTeamId(value);
+              if (!rangeMode) setSelectedFolderId(null);
+            }}
+          >
             <SelectTrigger>
               <SelectValue placeholder="Team" />
             </SelectTrigger>
@@ -225,17 +319,37 @@ function ScreenshotsPage() {
               ))}
             </SelectContent>
           </Select>
-          <Input
-            type="date"
-            value={date}
-            onChange={(event) => {
-              const nextDate = event.target.value || todayIsoDate();
-              setDate(nextDate);
-              if (nextDate !== todayIsoDate() && folderStatus === "active_now") {
-                setFolderStatus("all");
-              }
-            }}
-          />
+          {rangeMode ? (
+            <>
+              <Input
+                aria-label="Range start"
+                type="date"
+                value={rangeStart}
+                max={rangeEnd}
+                onChange={(event) => setRangeStart(event.target.value)}
+              />
+              <Input
+                aria-label="Range end"
+                type="date"
+                value={rangeEnd}
+                min={rangeStart}
+                onChange={(event) => setRangeEnd(event.target.value)}
+              />
+            </>
+          ) : (
+            <Input
+              type="date"
+              value={date}
+              onChange={(event) => {
+                const nextDate = event.target.value || todayIsoDate();
+                setDate(nextDate);
+                setSelectedFolderId(null);
+                if (nextDate !== todayIsoDate() && folderStatus === "active_now") {
+                  setFolderStatus("all");
+                }
+              }}
+            />
+          )}
           <Select value={workCategory} onValueChange={setWorkCategory}>
             <SelectTrigger>
               <SelectValue placeholder="Work category" />
@@ -252,6 +366,10 @@ function ScreenshotsPage() {
               setEmpId("all");
               setTeamId("all");
               setDate(todayIsoDate());
+              setRangeMode(false);
+              setRangeStart(`${todayIsoDate().slice(0, 7)}-01`);
+              setRangeEnd(todayIsoDate());
+              setSelectedFolderId(null);
               setWorkCategory("all");
               setFolderStatus("all");
             }}
@@ -259,71 +377,78 @@ function ScreenshotsPage() {
             Reset
           </Button>
         </div>
-        <div className="mt-4 flex flex-wrap items-center gap-2 border-t pt-4">
-          <span className="mr-1 text-xs font-bold uppercase tracking-wide text-muted-foreground">
-            Quick date
-          </span>
-          {[
-            { label: "Today", value: dayIsoDate(0) },
-            { label: "Yesterday", value: dayIsoDate(-1) },
-          ].map((option) => (
-            <button
-              key={option.label}
-              type="button"
-              onClick={() => {
-                setDate(option.value);
-                if (option.value !== todayIsoDate() && folderStatus === "active_now") {
-                  setFolderStatus("all");
-                }
-              }}
-              className={`rounded-full border px-3 py-1.5 text-xs font-bold transition ${
-                date === option.value
-                  ? "border-primary bg-primary text-primary-foreground"
-                  : "bg-background text-muted-foreground hover:border-primary/40 hover:text-foreground"
-              }`}
-            >
-              {option.label}
-            </button>
-          ))}
-          <span className="mx-1 hidden h-6 w-px bg-border sm:block" />
-          <span className="mr-1 text-xs font-bold uppercase tracking-wide text-muted-foreground">
-            Show
-          </span>
-          {[
-            { label: "Everyone", value: "all", icon: null },
-            ...(date === todayIsoDate()
-              ? [{ label: "Active now", value: "active_now", icon: Activity }]
-              : []),
-            { label: "Worked", value: "worked", icon: MonitorCheck },
-            { label: "No work", value: "no_work", icon: MonitorX },
-            { label: "Has screenshots", value: "with_screenshots", icon: Camera },
-            { label: "Empty folders", value: "empty", icon: FolderOpen },
-          ].map((option) => {
-            const Icon = option.icon;
-            return (
+        {rangeMode && !validRange && (
+          <p className="mt-3 text-sm font-medium text-destructive">
+            The start date must be on or before the end date.
+          </p>
+        )}
+        {!rangeMode && (
+          <div className="mt-4 flex flex-wrap items-center gap-2 border-t pt-4">
+            <span className="mr-1 text-xs font-bold uppercase tracking-wide text-muted-foreground">
+              Quick date
+            </span>
+            {[
+              { label: "Today", value: dayIsoDate(0) },
+              { label: "Yesterday", value: dayIsoDate(-1) },
+            ].map((option) => (
               <button
-                key={option.value}
+                key={option.label}
                 type="button"
-                onClick={() => setFolderStatus(option.value)}
-                className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-bold transition ${
-                  folderStatus === option.value
-                    ? "border-primary/30 bg-primary/10 text-primary"
+                onClick={() => {
+                  setDate(option.value);
+                  if (option.value !== todayIsoDate() && folderStatus === "active_now") {
+                    setFolderStatus("all");
+                  }
+                }}
+                className={`rounded-full border px-3 py-1.5 text-xs font-bold transition ${
+                  date === option.value
+                    ? "border-primary bg-primary text-primary-foreground"
                     : "bg-background text-muted-foreground hover:border-primary/40 hover:text-foreground"
                 }`}
               >
-                {Icon ? <Icon className="h-3.5 w-3.5" /> : null}
                 {option.label}
               </button>
-            );
-          })}
-        </div>
+            ))}
+            <span className="mx-1 hidden h-6 w-px bg-border sm:block" />
+            <span className="mr-1 text-xs font-bold uppercase tracking-wide text-muted-foreground">
+              Show
+            </span>
+            {[
+              { label: "Everyone", value: "all", icon: null },
+              ...(date === todayIsoDate()
+                ? [{ label: "Active now", value: "active_now", icon: Activity }]
+                : []),
+              { label: "Worked", value: "worked", icon: MonitorCheck },
+              { label: "No work", value: "no_work", icon: MonitorX },
+              { label: "Has screenshots", value: "with_screenshots", icon: Camera },
+              { label: "Empty folders", value: "empty", icon: FolderOpen },
+            ].map((option) => {
+              const Icon = option.icon;
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => setFolderStatus(option.value)}
+                  className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-bold transition ${
+                    folderStatus === option.value
+                      ? "border-primary/30 bg-primary/10 text-primary"
+                      : "bg-background text-muted-foreground hover:border-primary/40 hover:text-foreground"
+                  }`}
+                >
+                  {Icon ? <Icon className="h-3.5 w-3.5" /> : null}
+                  {option.label}
+                </button>
+              );
+            })}
+          </div>
+        )}
       </Card>
 
       {!selectedFolderId ? (
         folders.isLoading ? (
-          <div className="grid gap-6 lg:grid-cols-2">
-            {Array.from({ length: 4 }).map((_, index) => (
-              <div key={index} className="h-80 animate-pulse rounded-2xl border bg-muted" />
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+            {Array.from({ length: 8 }).map((_, index) => (
+              <div key={index} className="h-64 animate-pulse rounded-xl border bg-muted" />
             ))}
           </div>
         ) : folders.isError ? (
@@ -334,7 +459,7 @@ function ScreenshotsPage() {
             action={<Button onClick={() => folders.refetch()}>Retry</Button>}
           />
         ) : folders.data?.items.length ? (
-          <div className="grid gap-6 lg:grid-cols-2">
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
             {folders.data.items.map((folder) => (
               <button
                 key={folder.employeeId}
@@ -344,18 +469,18 @@ function ScreenshotsPage() {
                   setScreenshotPage(1);
                   setOpenIdx(null);
                 }}
-                className="group relative pt-7 text-left outline-none"
+                className="group relative pt-5 text-left outline-none"
               >
-                <span className="absolute left-0 top-0 h-9 w-52 rounded-t-2xl border border-b-0 bg-card transition group-hover:border-primary/30" />
-                <span className="absolute left-12 top-3 h-1 w-16 rounded-full bg-primary/80" />
-                <span className="relative block overflow-hidden rounded-b-2xl rounded-tr-2xl border bg-card p-4 shadow-sm transition group-hover:-translate-y-0.5 group-hover:border-primary/30 group-hover:shadow-md">
-                  <span className="mb-4 flex items-start justify-between gap-3">
-                    <span className="flex min-w-0 items-center gap-3">
-                      <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border bg-primary/5 text-primary">
-                        <Folder className="h-5 w-5" />
+                <span className="absolute left-0 top-0 h-7 w-36 rounded-t-xl border border-b-0 bg-card transition group-hover:border-primary/30" />
+                <span className="absolute left-8 top-2 h-1 w-12 rounded-full bg-primary/80" />
+                <span className="relative block overflow-hidden rounded-b-xl rounded-tr-xl border bg-card p-3 shadow-sm transition group-hover:-translate-y-0.5 group-hover:border-primary/30 group-hover:shadow-md">
+                  <span className="mb-3 flex items-start justify-between gap-2">
+                    <span className="flex min-w-0 items-center gap-2">
+                      <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg border bg-primary/5 text-primary">
+                        <Folder className="h-4 w-4" />
                       </span>
                       <span className="min-w-0">
-                        <span className="block truncate text-base font-extrabold text-foreground">
+                        <span className="block truncate text-sm font-extrabold text-foreground">
                           {folder.employeeName}
                         </span>
                         <span className="block truncate text-xs text-muted-foreground">
@@ -364,7 +489,7 @@ function ScreenshotsPage() {
                       </span>
                     </span>
                     <span
-                      className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-bold ${
+                      className={`inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-1 text-[10px] font-bold ${
                         folder.activeNow
                           ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300"
                           : folder.worked
@@ -380,11 +505,11 @@ function ScreenshotsPage() {
                   </span>
 
                   {folder.previews.length ? (
-                    <span className="grid grid-cols-3 gap-2 rounded-xl border bg-muted/40 p-2">
+                    <span className="grid grid-cols-3 gap-1.5 rounded-lg border bg-muted/40 p-1.5">
                       {folder.previews.map((shot) => (
                         <span
                           key={shot.id}
-                          className="aspect-video overflow-hidden rounded-lg border bg-card"
+                          className="aspect-video overflow-hidden rounded-md border bg-card"
                         >
                           <ProtectedImage
                             src={shot.thumbnailUrl}
@@ -397,18 +522,18 @@ function ScreenshotsPage() {
                         (_, index) => (
                           <span
                             key={`empty-${index}`}
-                            className="grid aspect-video place-items-center rounded-lg border border-dashed bg-card/60 text-muted-foreground/40"
+                            className="grid aspect-video place-items-center rounded-md border border-dashed bg-card/60 text-muted-foreground/40"
                           >
-                            <Camera className="h-5 w-5" />
+                            <Camera className="h-4 w-4" />
                           </span>
                         ),
                       )}
                     </span>
                   ) : (
-                    <span className="grid h-36 place-items-center rounded-xl border border-dashed bg-muted/30 text-center">
+                    <span className="grid h-24 place-items-center rounded-lg border border-dashed bg-muted/30 px-2 text-center">
                       <span>
-                        <FolderOpen className="mx-auto mb-2 h-8 w-8 text-muted-foreground/50" />
-                        <span className="block text-sm font-semibold text-foreground">
+                        <FolderOpen className="mx-auto mb-1 h-6 w-6 text-muted-foreground/50" />
+                        <span className="block text-xs font-semibold text-foreground">
                           {folder.worked ? "No screenshots captured" : "Did not work on this day"}
                         </span>
                         <span className="mt-1 block text-xs text-muted-foreground">
@@ -420,9 +545,9 @@ function ScreenshotsPage() {
                     </span>
                   )}
 
-                  <span className="mt-4 flex items-center justify-between gap-3">
-                    <span className="flex min-w-0 items-center gap-3">
-                      <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-primary/10 text-xs font-extrabold text-primary">
+                  <span className="mt-3 flex items-center justify-between gap-2">
+                    <span className="flex min-w-0 items-center gap-2">
+                      <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-primary/10 text-[11px] font-extrabold text-primary">
                         {initials(folder.employeeName)}
                       </span>
                       <span className="min-w-0 text-xs text-muted-foreground">
@@ -437,8 +562,8 @@ function ScreenshotsPage() {
                         </span>
                       </span>
                     </span>
-                    <span className="inline-flex items-center gap-1.5 text-sm font-bold text-primary">
-                      Open folder <ChevronRight className="h-4 w-4" />
+                    <span className="inline-flex items-center gap-1 text-xs font-bold text-primary">
+                      Open <ChevronRight className="h-3.5 w-3.5" />
                     </span>
                   </span>
                 </span>
@@ -460,20 +585,19 @@ function ScreenshotsPage() {
               variant="outline"
               size="sm"
               onClick={() => {
+                if (rangeMode) setRangeMode(false);
                 setSelectedFolderId(null);
                 setScreenshotPage(1);
                 setOpenIdx(null);
               }}
             >
               <ArrowLeft className="mr-2 h-4 w-4" />
-              Back to folders
+              {rangeMode ? "Back to daily folders" : "Back to folders"}
             </Button>
             <div className="flex items-center gap-3 text-sm">
               <CalendarDays className="h-4 w-4 text-primary" />
-              <span className="font-semibold">
-                {selectedFolder?.employeeName ?? empOf(selectedFolderId)}
-              </span>
-              <span className="text-muted-foreground">{date}</span>
+              <span className="font-semibold">{selectedEmployeeName}</span>
+              <span className="text-muted-foreground">{periodLabel}</span>
               <span className="rounded-full bg-primary/10 px-2.5 py-1 text-xs font-bold text-primary">
                 {shots.data?.total ?? selectedFolder?.screenshotCount ?? 0} screenshots
               </span>
@@ -535,12 +659,18 @@ function ScreenshotsPage() {
             <EmptyState
               icon={FolderOpen}
               title={
-                selectedFolder?.worked ? "No screenshots captured" : "Did not work on this day"
+                rangeMode
+                  ? "No screenshots in this period"
+                  : selectedFolder?.worked
+                    ? "No screenshots captured"
+                    : "Did not work on this day"
               }
               description={
-                selectedFolder?.worked
-                  ? "A work session exists, but no screenshots were captured for the selected filters."
-                  : `No work session or screenshots were recorded on ${date}.`
+                rangeMode
+                  ? `No captures matched ${periodLabel} for ${selectedEmployeeName}.`
+                  : selectedFolder?.worked
+                    ? "A work session exists, but no screenshots were captured for the selected filters."
+                    : `No work session or screenshots were recorded on ${date}.`
               }
             />
           )}

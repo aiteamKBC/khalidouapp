@@ -20,6 +20,7 @@ from app.models import (
     TimeAdjustmentRequest,
     WorkSession,
 )
+from app.services.activity_timeline import build_workday_timeline, local_today
 
 router = APIRouter(prefix="/timesheets", tags=["timesheets"])
 
@@ -40,6 +41,7 @@ def timesheet_rows(
         select(
             Employee.id,
             Employee.name,
+            Employee.timezone,
             func.date(WorkSession.started_at).label("work_date"),
             func.min(WorkSession.started_at),
             func.max(WorkSession.ended_at),
@@ -49,7 +51,7 @@ def timesheet_rows(
         )
         .join(WorkSession, WorkSession.employee_id == Employee.id)
         .where(Employee.company_id == company_id, WorkSession.started_at.between(start, end))
-        .group_by(Employee.id, Employee.name, func.date(WorkSession.started_at))
+        .group_by(Employee.id, Employee.name, Employee.timezone, func.date(WorkSession.started_at))
         .order_by(func.date(WorkSession.started_at).desc(), Employee.name)
     )
     if current_admin is not None:
@@ -65,19 +67,46 @@ def timesheet_rows(
 
     result_by_key: dict[tuple[UUID, date], dict] = {}
     for row in db.execute(session_statement).all():
-        work_date = row[2] if isinstance(row[2], date) else date.fromisoformat(str(row[2]))
+        work_date = row[3] if isinstance(row[3], date) else date.fromisoformat(str(row[3]))
         key = (row[0], work_date)
         result_by_key[key] = {
             "employee_id": str(row[0]),
             "employee_name": row[1],
+            "timezone": row[2] or "UTC",
             "date": work_date.isoformat(),
-            "start_time": row[3].isoformat() if row[3] else None,
-            "end_time": row[4].isoformat() if row[4] else None,
-            "active_seconds": max(0, int(row[5]) - int(row[7])),
-            "idle_seconds": int(row[6]),
-            "deducted_seconds": int(row[7]),
+            "start_time": row[4].isoformat() if row[4] else None,
+            "end_time": row[5].isoformat() if row[5] else None,
+            "active_seconds": max(0, int(row[6]) - int(row[8])),
+            "idle_seconds": int(row[7]),
+            "deducted_seconds": int(row[8]),
             "adjustment_seconds": 0,
         }
+
+    # A live session can have authoritative activity events before its
+    # cumulative counters are persisted by the next heartbeat. Reconcile only
+    # each employee's current local day so daily/weekly/monthly views agree with
+    # Today's activity without turning historical reports into an N+1 query.
+    for (row_employee_id, work_date), item in result_by_key.items():
+        timezone_name = str(item["timezone"])
+        if work_date != local_today(timezone_name):
+            continue
+        timeline = build_workday_timeline(
+            db,
+            company_id=company_id,
+            employee_id=row_employee_id,
+            timezone_name=timezone_name,
+            target_date=work_date,
+            device_id=device_id,
+            session_timezone_name=timezone_name if device_id else None,
+        )
+        item["active_seconds"] = max(
+            int(item["active_seconds"]),
+            max(0, int(timeline["worked_seconds"]) - int(item["deducted_seconds"])),
+        )
+        item["idle_seconds"] = max(
+            int(item["idle_seconds"]),
+            int(timeline["idle_seconds"]),
+        )
 
     adjustment_statement = (
         select(
@@ -90,6 +119,7 @@ def timesheet_rows(
         .where(
             TimeAdjustmentRequest.company_id == company_id,
             TimeAdjustmentRequest.status == "approved",
+            TimeAdjustmentRequest.request_type != "early_leave",
             TimeAdjustmentRequest.requested_date >= start_day,
             TimeAdjustmentRequest.requested_date <= end_day,
         )
@@ -110,6 +140,7 @@ def timesheet_rows(
             result_by_key[key] = {
                 "employee_id": str(row[0]),
                 "employee_name": row[1],
+                "timezone": "UTC",
                 "date": work_date.isoformat(),
                 "start_time": None,
                 "end_time": None,

@@ -79,6 +79,7 @@ def approved_days(db: Session, employee_id, year: int) -> int:
             select(func.coalesce(func.sum(LeaveRequest.requested_days), 0)).where(
                 LeaveRequest.employee_id == employee_id,
                 LeaveRequest.status == "approved",
+                LeaveRequest.leave_type == "annual",
                 func.extract("year", LeaveRequest.start_date) == year,
             )
         )
