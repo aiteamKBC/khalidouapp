@@ -101,7 +101,7 @@ export function StatusBadge({ status, className }: { status: AnyStatus; classNam
           "bg-destructive": ["offline", "revoked", "rejected", "absent"].includes(status),
         })}
       />
-      {status.replace("_", " ")}
+      {status.replaceAll("_", " ")}
     </span>
   );
 }

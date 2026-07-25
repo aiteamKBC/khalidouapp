@@ -723,9 +723,9 @@ function MonthlyAttendanceDialog({
               <MiniMetric label="Screenshots" value={String(history.data.summary.screenshots)} />
             </div>
 
-            <div className="overflow-x-auto rounded-xl border">
+            <div className="overflow-hidden rounded-xl border [&>div]:max-h-[54vh] [&>div]:overflow-auto">
               <Table>
-                <TableHeader>
+                <TableHeader className="sticky top-0 z-20 bg-card shadow-sm [&_th]:bg-card">
                   <TableRow>
                     <TableHead>Date</TableHead>
                     <TableHead>Schedule</TableHead>
@@ -734,6 +734,7 @@ function MonthlyAttendanceDialog({
                     <TableHead>Idle</TableHead>
                     <TableHead>Late</TableHead>
                     <TableHead>Payable</TableHead>
+                    <TableHead>Extra / overtime</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead className="text-right">Evidence</TableHead>
                   </TableRow>
@@ -744,7 +745,7 @@ function MonthlyAttendanceDialog({
                   ))}
                   {rows.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={9} className="py-10 text-center text-muted-foreground">
+                      <TableCell colSpan={10} className="py-10 text-center text-muted-foreground">
                         No attendance days were found in this payroll period.
                       </TableCell>
                     </TableRow>
@@ -783,6 +784,7 @@ function MonthlyAttendanceRow({ row }: { row: DailyAttendance }) {
         </span>
       </TableCell>
       <TableCell className="font-semibold">{shortTime(row.totalPayableSeconds)}</TableCell>
+      <AttendanceOvertimeCell row={row} />
       <TableCell>
         <StatusBadge status={row.status} />
       </TableCell>
@@ -795,6 +797,31 @@ function MonthlyAttendanceRow({ row }: { row: DailyAttendance }) {
         </Button>
       </TableCell>
     </TableRow>
+  );
+}
+
+function AttendanceOvertimeCell({ row }: { row: DailyAttendance }) {
+  const notes = [
+    row.status === "worked_off_day" ? "Extra day" : null,
+    row.approvedOvertimeSeconds > 0 ? `${shortTime(row.approvedOvertimeSeconds)} approved` : null,
+    row.unapprovedOvertimeSeconds > 0
+      ? `${shortTime(row.unapprovedOvertimeSeconds)} pending`
+      : null,
+  ].filter(Boolean);
+
+  return (
+    <TableCell className="whitespace-nowrap">
+      <span
+        className={
+          row.recordedOvertimeSeconds > 0 ? "font-semibold text-info" : "text-muted-foreground"
+        }
+      >
+        {shortTime(row.recordedOvertimeSeconds)}
+      </span>
+      <span className="block text-[10px] text-muted-foreground">
+        {notes.length ? notes.join(" · ") : "No extra time"}
+      </span>
+    </TableCell>
   );
 }
 
