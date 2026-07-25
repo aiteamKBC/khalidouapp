@@ -771,7 +771,7 @@ textarea:focus {
 .k-hero-meta {
   display: flex;
   flex-wrap: wrap;
-  gap: 22px;
+  gap: 12px;
   justify-content: center;
   width: min(440px, 100%);
   margin-top: 18px;
@@ -780,7 +780,10 @@ textarea:focus {
 }
 
 .k-hero-meta div {
-  min-width: 82px;
+  min-width: 0;
+  flex: 1 1 78px;
+  max-width: 105px;
+  overflow: hidden;
   text-align: center;
 }
 
@@ -839,11 +842,15 @@ textarea:focus {
 .k-stat strong {
   display: block;
   margin-top: 3px;
+  min-width: 0;
+  overflow: hidden;
   color: var(--text);
   font-family: var(--mono);
-  font-size: 17px;
+  font-size: clamp(13px, 2.8vw, 17px);
   font-weight: 900;
   font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .k-meta-note {
@@ -869,7 +876,7 @@ textarea:focus {
 
 .k-stat-grid {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
   margin-top: 14px;
 }
@@ -924,6 +931,7 @@ textarea:focus {
 
 .k-stat {
   min-width: 0;
+  overflow: hidden;
   padding: 10px 11px;
 }
 

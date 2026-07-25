@@ -241,29 +241,32 @@ def sync_session_time_buckets(
         row["extra"] += max(0, interval_seconds - normal_seconds)
 
     for day_session in _sessions_for_workday(db, session):
-        worked_seconds = max(0, day_session.active_seconds - day_session.deducted_seconds)
+        stored_worked_seconds = max(
+            0, day_session.active_seconds - day_session.deducted_seconds
+        )
         classified = buckets.get(day_session.id, {"normal": 0, "extra": 0})
         classified_total = classified["normal"] + classified["extra"]
-        if classified_total > worked_seconds and classified_total > 0:
-            day_session.normal_seconds = round(
-                worked_seconds * classified["normal"] / classified_total
-            )
-            day_session.extra_seconds = max(0, worked_seconds - day_session.normal_seconds)
+
+        # The activity timeline is the authoritative record of what happened.
+        # A client can reconnect after a restart with a stale active_seconds
+        # counter, so never throw away timeline time just because the counter is
+        # smaller. Keep the larger value and use it for the bucket split.
+        worked_seconds = max(stored_worked_seconds, classified_total)
+        day_session.normal_seconds = classified["normal"]
+        day_session.extra_seconds = classified["extra"]
+        unclassified = max(0, worked_seconds - classified_total)
+        session_end = utc(day_session.ended_at) if day_session.ended_at else calculated_at
+        if (
+            shift_start
+            and shift_end
+            and shift_start <= session_end <= shift_end
+        ):
+            day_session.normal_seconds += unclassified
         else:
-            day_session.normal_seconds = classified["normal"]
-            day_session.extra_seconds = classified["extra"]
-            unclassified = max(0, worked_seconds - classified_total)
-            session_end = utc(day_session.ended_at) if day_session.ended_at else calculated_at
-            if (
-                shift_start
-                and shift_end
-                and shift_start <= session_end <= shift_end
-            ):
-                day_session.normal_seconds += unclassified
-            else:
-                # Missing timeline seconds must never become paid shift time merely
-                # because the session happened before the configured shift ended.
-                day_session.extra_seconds += unclassified
+            # Missing timeline seconds must never become paid shift time merely
+            # because the session happened before the configured shift ended.
+            # They remain extra/recorded time until classified by a later sync.
+            day_session.extra_seconds += unclassified
         db.add(day_session)
         record = db.scalar(
             select(OvertimeRecord).where(OvertimeRecord.work_session_id == day_session.id)

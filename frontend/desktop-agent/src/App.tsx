@@ -770,6 +770,13 @@ function App() {
   const countedTodaySeconds = timeBreakdown.segments
     .filter((segment) => segment.counted)
     .reduce((total, segment) => total + segment.seconds, 0);
+  const manualApprovedTodaySeconds =
+    status.timeSummary?.today.manual_approved_seconds ?? 0;
+  const trackedTodaySeconds = Math.max(
+    status.timeSummary?.today.tracked_active_seconds ?? 0,
+    status.normalSeconds + status.extraSeconds + manualApprovedTodaySeconds,
+    status.workedTodaySeconds,
+  );
   const normalSeconds = status.enrolled
     ? status.normalSeconds
     : Math.min(countedTodaySeconds, status.dailyTargetSeconds);
@@ -1551,6 +1558,7 @@ function App() {
               timeBreakdown={timeBreakdown}
               targetProgress={targetProgress}
               countedTodaySeconds={countedTodaySeconds}
+              trackedTodaySeconds={trackedTodaySeconds}
               displayedTimerSeconds={displayedTimerSeconds}
               isExtraTime={isExtraTime}
               normalSeconds={normalSeconds}
@@ -1839,6 +1847,7 @@ function HomeView({
   timeBreakdown,
   targetProgress,
   countedTodaySeconds,
+  trackedTodaySeconds,
   displayedTimerSeconds,
   isExtraTime,
   normalSeconds,
@@ -1876,6 +1885,7 @@ function HomeView({
   };
   targetProgress: number;
   countedTodaySeconds: number;
+  trackedTodaySeconds: number;
   displayedTimerSeconds: number;
   isExtraTime: boolean;
   normalSeconds: number;
@@ -2119,7 +2129,7 @@ function HomeView({
         </section>
 
         <div className="k-stat-grid">
-          <Stat label="Today" value={formatDuration(countedTodaySeconds)} />
+          <Stat label="Today" value={formatDuration(trackedTodaySeconds)} />
           <Stat
             label="This week"
             value={formatDuration(
