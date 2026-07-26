@@ -8,6 +8,10 @@ from sqlalchemy.orm import Session
 from app.core.exceptions import ApiError
 from app.models import Device, Employee, TimeAdjustmentRequest
 from app.services.activity_timeline import build_workday_timeline
+from app.services.idle_request_periods import (
+    build_idle_request_periods,
+    idle_request_period_matches,
+)
 from app.services.session_tracking import get_current_session
 from app.services.work_profiles import get_or_create_work_profile
 
@@ -170,66 +174,34 @@ def create_employee_time_adjustment_request(
                 "Idle time cannot be requested on an approved leave day.",
                 422,
             )
-        matched_interval = None
-        for interval in timeline["intervals"]:
-            if interval["type"] != "idle" or interval["ended_at"] is None:
-                continue
-            if interval["session_id"] != str(work_session_id):
-                continue
-            interval_start = _as_utc(datetime.fromisoformat(interval["started_at"]))
-            interval_end = _as_utc(datetime.fromisoformat(interval["ended_at"]))
-            if (
-                abs((interval_start - source_start_at).total_seconds()) <= 2
-                and abs((interval_end - source_end_at).total_seconds()) <= 2
-            ):
-                matched_interval = interval
-                break
-
-        if matched_interval is None:
+        request_periods = build_idle_request_periods(
+            db,
+            employee=employee,
+            company_id=device.company_id,
+            work_date=requested_date,
+            timeline=timeline,
+            timezone_name=timezone_name,
+        )
+        matched_period = next(
+            (
+                period
+                for period in request_periods
+                if idle_request_period_matches(
+                    period,
+                    work_session_id=work_session_id,
+                    source_start_at=source_start_at,
+                    source_end_at=source_end_at,
+                )
+            ),
+            None,
+        )
+        if matched_period is None:
             raise ApiError(
                 "IDLE_PERIOD_NOT_FOUND",
-                "This idle period is no longer available for a request.",
+                "This idle period is outside your scheduled shift or is no longer available.",
                 422,
             )
-
-        profile = get_or_create_work_profile(db, employee)
-        working_days = profile.working_days or [0, 1, 2, 3, 4]
-        try:
-            timezone = ZoneInfo(timezone_name)
-        except ZoneInfoNotFoundError:
-            timezone = UTC
-        local_start = source_start_at.astimezone(timezone)
-        local_end = source_end_at.astimezone(timezone)
-        if (
-            requested_date.weekday() not in working_days
-            or local_start.date() != requested_date
-            or local_end.date() != requested_date
-            or not profile.shift_start
-            or not profile.shift_end
-            or local_start.time().replace(tzinfo=None) < profile.shift_start
-            or local_end.time().replace(tzinfo=None) > profile.shift_end
-        ):
-            raise ApiError(
-                "IDLE_OUTSIDE_SCHEDULED_SHIFT",
-                "Only idle periods fully inside your scheduled shift can be explained.",
-                422,
-            )
-
-        already_requested_seconds = (
-            db.scalar(
-                select(func.coalesce(func.sum(TimeAdjustmentRequest.requested_seconds), 0)).where(
-                    TimeAdjustmentRequest.company_id == device.company_id,
-                    TimeAdjustmentRequest.employee_id == device.employee_id,
-                    TimeAdjustmentRequest.request_type == IDLE_TIME_REQUEST,
-                    TimeAdjustmentRequest.work_session_id == work_session_id,
-                    TimeAdjustmentRequest.source_start_at == source_start_at,
-                    TimeAdjustmentRequest.source_end_at == source_end_at,
-                    TimeAdjustmentRequest.status.in_(REVIEWABLE_STATUSES),
-                )
-            )
-            or 0
-        )
-        available_seconds = max(0, matched_interval["duration_seconds"] - already_requested_seconds)
+        available_seconds = matched_period["available_seconds"]
         if requested_seconds > available_seconds:
             raise ApiError(
                 "IDLE_REQUEST_TOO_LONG",

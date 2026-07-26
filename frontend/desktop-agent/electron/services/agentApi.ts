@@ -248,6 +248,16 @@ export type AgentWorkdayTimeline = {
   }>;
 };
 
+export type AgentIdleRequestPeriod = {
+  work_session_id: string;
+  started_at: string;
+  ended_at: string;
+  duration_seconds: number;
+  available_seconds: number;
+  project_name: string | null;
+  task_name: string | null;
+};
+
 export type AgentSummary = {
   employee: { id: string; name: string; avatar_url: string | null };
   daily_target_seconds: number;
@@ -255,6 +265,7 @@ export type AgentSummary = {
   activity_percent: number;
   today: AgentPeriodSummary;
   today_timeline: AgentWorkdayTimeline;
+  idle_request_periods?: AgentIdleRequestPeriod[];
   week: AgentPeriodSummary;
   month: AgentPeriodSummary;
 };

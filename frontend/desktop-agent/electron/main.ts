@@ -141,6 +141,7 @@ type AgentRuntimeStatus = {
   paidPauseBalanceRemainingSeconds: number | null;
   recentTasks: RuntimeTask[];
   todayTimeline: AgentSummary["today_timeline"] | null;
+  idleRequestPeriods: NonNullable<AgentSummary["idle_request_periods"]>;
   lastIdleAlert: IdleLossAlert | null;
   updateStatus:
     | "idle"
@@ -305,6 +306,7 @@ const runtimeStatus: AgentRuntimeStatus = {
   paidPauseBalanceRemainingSeconds: null,
   recentTasks: [],
   todayTimeline: null,
+  idleRequestPeriods: [],
   lastIdleAlert: null,
   updateStatus: "idle",
   updateVersion: null,
@@ -492,6 +494,7 @@ function resetForDeviceReenrollment() {
     timeAdjustmentRequests: [],
     timeSummary: null,
     todayTimeline: null,
+    idleRequestPeriods: [],
     lastIdleAlert: null,
   } satisfies Partial<AgentRuntimeStatus>);
   tray?.setImage(createTrayImage("#b7791f"));
@@ -1038,6 +1041,7 @@ async function refreshWorkedTodayTotal() {
       summary.daily_target_progress_percent ?? 0;
     runtimeStatus.activityPercent = summary.activity_percent ?? 0;
     runtimeStatus.todayTimeline = summary.today_timeline;
+    runtimeStatus.idleRequestPeriods = summary.idle_request_periods ?? [];
     const trackedTodaySeconds = Math.max(
       summary.today.tracked_active_seconds,
       summary.today_timeline?.worked_seconds ?? 0,
@@ -2330,6 +2334,7 @@ async function logoutDevice() {
     timeAdjustmentRequests: [],
     timeSummary: null,
     todayTimeline: null,
+    idleRequestPeriods: [],
     lastIdleAlert: null,
   } satisfies Partial<AgentRuntimeStatus>);
   tray?.setImage(createTrayImage("#b7791f"));
@@ -3291,6 +3296,7 @@ ipcMain.handle(
       const request = await createTimeAdjustmentRequest(input);
       await refreshTimeAdjustmentRequests();
       await refreshTrackingConfig();
+      await refreshWorkedTodayTotal();
       runtimeStatus.connectionStatus = "online";
       runtimeStatus.lastSuccessfulSyncAt = new Date().toISOString();
       rebuildTrayMenu();

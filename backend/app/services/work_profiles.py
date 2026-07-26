@@ -6,7 +6,14 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import ApiError
-from app.models import Employee, EmployeeWorkProfile, WorkScheduleOverride, WorkSession
+from app.models import (
+    Employee,
+    EmployeeWorkProfile,
+    LeaveRequest,
+    TimeAdjustmentRequest,
+    WorkScheduleOverride,
+    WorkSession,
+)
 
 STANDARD_MONTH_DAYS = 30
 
@@ -124,6 +131,83 @@ def get_or_create_work_profile(db: Session, employee: Employee) -> EmployeeWorkP
         db.add(profile)
         db.flush()
     return profile
+
+
+def _latest_day_override(
+    db: Session,
+    employee: Employee,
+    work_date: date,
+    override_types: list[str],
+) -> WorkScheduleOverride | None:
+    common = (
+        WorkScheduleOverride.company_id == employee.company_id,
+        WorkScheduleOverride.permanent.is_(False),
+        WorkScheduleOverride.effective_date == work_date,
+        WorkScheduleOverride.override_type.in_(override_types),
+    )
+    employee_override = db.scalar(
+        select(WorkScheduleOverride)
+        .where(*common, WorkScheduleOverride.employee_id == employee.id)
+        .order_by(WorkScheduleOverride.created_at.desc())
+    )
+    if employee_override:
+        return employee_override
+    return db.scalar(
+        select(WorkScheduleOverride)
+        .where(*common, WorkScheduleOverride.employee_id.is_(None))
+        .order_by(WorkScheduleOverride.created_at.desc())
+    )
+
+
+def resolve_day_policy(
+    db: Session,
+    employee: Employee,
+    profile: EmployeeWorkProfile,
+    work_date: date,
+) -> dict:
+    shift_override = _latest_day_override(db, employee, work_date, ["shift", "both"])
+    break_override = _latest_day_override(db, employee, work_date, ["breaks", "both"])
+    approved_leave = db.scalar(
+        select(LeaveRequest.id).where(
+            LeaveRequest.company_id == employee.company_id,
+            LeaveRequest.employee_id == employee.id,
+            LeaveRequest.status == "approved",
+            LeaveRequest.start_date <= work_date,
+            LeaveRequest.end_date >= work_date,
+        )
+    )
+    approved_early_leave = db.scalar(
+        select(TimeAdjustmentRequest)
+        .where(
+            TimeAdjustmentRequest.company_id == employee.company_id,
+            TimeAdjustmentRequest.employee_id == employee.id,
+            TimeAdjustmentRequest.request_type == "early_leave",
+            TimeAdjustmentRequest.requested_date == work_date,
+            TimeAdjustmentRequest.status == "approved",
+        )
+        .order_by(TimeAdjustmentRequest.created_at.desc())
+    )
+    return {
+        "shift_start": (
+            shift_override.shift_start
+            if shift_override and shift_override.shift_start
+            else profile.shift_start
+        ),
+        "shift_end": (
+            shift_override.shift_end
+            if shift_override and shift_override.shift_end
+            else profile.shift_end
+        ),
+        "break_rules": (
+            break_override.break_rules
+            if break_override and break_override.break_rules is not None
+            else profile.break_rules or []
+        ),
+        "approved_leave": bool(approved_leave),
+        "approved_early_leave_from": (
+            approved_early_leave.source_start_at if approved_early_leave else None
+        ),
+    }
 
 
 def _missing_fields(profile: EmployeeWorkProfile) -> list[str]:

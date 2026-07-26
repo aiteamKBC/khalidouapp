@@ -66,6 +66,7 @@ const fallbackStatus: AgentStatus = {
   extraTimeStatus: "none",
   recentTasks: [],
   todayTimeline: null,
+  idleRequestPeriods: [],
   lastIdleAlert: null,
   updateStatus: "idle",
   updateVersion: null,
@@ -78,7 +79,6 @@ const TRACKABLE_TASK_STAGES = new Set(["backlog", "assigned", "in_progress"]);
 const THEME_STORAGE_KEY = "khaliduo-theme";
 const LIGHT_DEFAULT_RESET_KEY = "khaliduo-desktop-light-default-applied";
 
-type TimelineInterval = WorkdayTimeline["intervals"][number];
 type IdleRequestOption = {
   key: string;
   sessionId: string;
@@ -113,17 +113,6 @@ function formatDuration(totalSeconds: number) {
     .toString()
     .padStart(2, "0");
   return `${hours}:${minutes}:${seconds}`;
-}
-
-function idleRequestKey(input: {
-  session_id?: string;
-  work_session_id?: string | null;
-  started_at?: string;
-  ended_at?: string | null;
-  source_start_at?: string | null;
-  source_end_at?: string | null;
-}) {
-  return `${input.session_id ?? input.work_session_id ?? ""}|${input.started_at ?? input.source_start_at ?? ""}|${input.ended_at ?? input.source_end_at ?? ""}`;
 }
 
 type KIconName =
@@ -670,65 +659,20 @@ function App() {
   ]);
 
   const idleRequestOptions = useMemo<IdleRequestOption[]>(() => {
-    const timeline = status.todayTimeline;
-    const policy = status.requestPolicy;
-    const shiftStart = timeToMinutes(policy?.shift_start);
-    const shiftEnd = timeToMinutes(policy?.shift_end);
-    if (!timeline || !policy || shiftStart === null || shiftEnd === null)
-      return [];
-    if (
-      !policy.working_days.includes(weekdayIndex(timeline.date)) ||
-      shiftEnd <= shiftStart
-    )
-      return [];
-    const requestedByIdle = new Map<string, number>();
-    for (const request of status.timeAdjustmentRequests) {
-      if (request.request_type !== "idle_time" || request.status === "rejected")
-        continue;
-      const key = idleRequestKey(request);
-      requestedByIdle.set(
-        key,
-        (requestedByIdle.get(key) ?? 0) + request.requested_minutes * 60,
-      );
-    }
-    return timeline.intervals
-      .filter(
-        (interval): interval is TimelineInterval & { ended_at: string } =>
-          interval.type === "idle" &&
-          Boolean(interval.ended_at) &&
-          !interval.is_current &&
-          interval.duration_seconds >= 60,
-      )
-      .filter(
-        (interval) =>
-          localDateAt(interval.started_at, policy.timezone) === timeline.date &&
-          localDateAt(interval.ended_at, policy.timezone) === timeline.date &&
-          localMinutesAt(interval.started_at, policy.timezone) >= shiftStart &&
-          localMinutesAt(interval.ended_at, policy.timezone) <= shiftEnd,
-      )
-      .map((interval) => {
-        const key = idleRequestKey(interval);
-        return {
-          key,
-          sessionId: interval.session_id,
-          startedAt: interval.started_at,
-          endedAt: interval.ended_at,
-          durationSeconds: interval.duration_seconds,
-          availableSeconds: Math.max(
-            0,
-            interval.duration_seconds - (requestedByIdle.get(key) ?? 0),
-          ),
-          projectName: interval.project_name,
-          taskName: interval.task_name,
-        };
-      })
+    return (status.idleRequestPeriods ?? [])
+      .map((period) => ({
+        key: `${period.work_session_id}|${period.started_at}|${period.ended_at}`,
+        sessionId: period.work_session_id,
+        startedAt: period.started_at,
+        endedAt: period.ended_at,
+        durationSeconds: period.duration_seconds,
+        availableSeconds: period.available_seconds,
+        projectName: period.project_name,
+        taskName: period.task_name,
+      }))
       .filter((option) => option.availableSeconds >= 60)
       .reverse();
-  }, [
-    status.requestPolicy,
-    status.timeAdjustmentRequests,
-    status.todayTimeline,
-  ]);
+  }, [status.idleRequestPeriods]);
 
   const selectedIdleRequest =
     idleRequestOptions.find(

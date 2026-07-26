@@ -34,7 +34,6 @@ from app.models import (
     Team,
     TeamMember,
     TimeAdjustmentRequest,
-    WorkScheduleOverride,
 )
 from app.schemas.agent import (
     AgentChecklistItemCreate,
@@ -103,11 +102,12 @@ from app.services.leave_management import (
     serialize_balance,
     serialize_leave_request,
 )
+from app.services.idle_request_periods import build_idle_request_periods
 from app.services.time_adjustments import (
     create_employee_time_adjustment_request,
     serialize_time_adjustment_request,
 )
-from app.services.work_profiles import get_or_create_work_profile
+from app.services.work_profiles import get_or_create_work_profile, resolve_day_policy
 from app.services.rate_limit import enforce_rate_limit, request_client_ip
 from app.services.attendance import cached_daily_attendance
 from app.services.device_location import refresh_device_location
@@ -127,78 +127,6 @@ def _employee_zone(employee: Employee, timezone_name: str | None = None) -> Zone
 
 def _as_utc(value: datetime) -> datetime:
     return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
-
-
-def _latest_day_override(
-    db: Session,
-    employee: Employee,
-    work_date: date,
-    override_types: list[str],
-) -> WorkScheduleOverride | None:
-    common = (
-        WorkScheduleOverride.company_id == employee.company_id,
-        WorkScheduleOverride.permanent.is_(False),
-        WorkScheduleOverride.effective_date == work_date,
-        WorkScheduleOverride.override_type.in_(override_types),
-    )
-    employee_override = db.scalar(
-        select(WorkScheduleOverride)
-        .where(*common, WorkScheduleOverride.employee_id == employee.id)
-        .order_by(WorkScheduleOverride.created_at.desc())
-    )
-    if employee_override:
-        return employee_override
-    return db.scalar(
-        select(WorkScheduleOverride)
-        .where(*common, WorkScheduleOverride.employee_id.is_(None))
-        .order_by(WorkScheduleOverride.created_at.desc())
-    )
-
-
-def _resolved_day_policy(db: Session, employee: Employee, profile, work_date: date) -> dict:
-    shift_override = _latest_day_override(db, employee, work_date, ["shift", "both"])
-    break_override = _latest_day_override(db, employee, work_date, ["breaks", "both"])
-    approved_leave = db.scalar(
-        select(LeaveRequest.id).where(
-            LeaveRequest.company_id == employee.company_id,
-            LeaveRequest.employee_id == employee.id,
-            LeaveRequest.status == "approved",
-            LeaveRequest.start_date <= work_date,
-            LeaveRequest.end_date >= work_date,
-        )
-    )
-    approved_early_leave = db.scalar(
-        select(TimeAdjustmentRequest)
-        .where(
-            TimeAdjustmentRequest.company_id == employee.company_id,
-            TimeAdjustmentRequest.employee_id == employee.id,
-            TimeAdjustmentRequest.request_type == "early_leave",
-            TimeAdjustmentRequest.requested_date == work_date,
-            TimeAdjustmentRequest.status == "approved",
-        )
-        .order_by(TimeAdjustmentRequest.created_at.desc())
-    )
-    return {
-        "shift_start": (
-            shift_override.shift_start
-            if shift_override and shift_override.shift_start
-            else profile.shift_start
-        ),
-        "shift_end": (
-            shift_override.shift_end
-            if shift_override and shift_override.shift_end
-            else profile.shift_end
-        ),
-        "break_rules": (
-            break_override.break_rules
-            if break_override and break_override.break_rules is not None
-            else profile.break_rules or []
-        ),
-        "approved_leave": bool(approved_leave),
-        "approved_early_leave_from": (
-            approved_early_leave.source_start_at if approved_early_leave else None
-        ),
-    }
 
 
 def _seconds_after_exclusions(
@@ -231,7 +159,7 @@ def _eligible_idle_seconds(
     *,
     timezone_name: str | None = None,
 ) -> int:
-    policy = _resolved_day_policy(db, employee, profile, work_date)
+    policy = resolve_day_policy(db, employee, profile, work_date)
     working_days = profile.working_days or [0, 1, 2, 3, 4]
     weekly_off_days = profile.weekly_off_days or []
     if (
@@ -330,7 +258,7 @@ def config(
     device_timezone = context.device.timezone or employee.timezone or "UTC"
     profile = get_or_create_work_profile(db, employee)
     today = local_today(device_timezone)
-    day_policy = _resolved_day_policy(db, employee, profile, today)
+    day_policy = resolve_day_policy(db, employee, profile, today)
     week_start = today - timedelta(days=today.weekday())
     week_end = week_start + timedelta(days=6)
     early_leave_seconds = (
@@ -471,7 +399,7 @@ def agent_period_summary(context: DeviceAuthContext, db: Session) -> dict:
     today_summary["tracked_seconds"] = (
         today_summary["active_seconds"] + today_summary["idle_seconds"]
     )
-    today_policy = _resolved_day_policy(db, employee, profile, today)
+    today_policy = resolve_day_policy(db, employee, profile, today)
     shift_start = today_policy["shift_start"]
     shift_end = today_policy["shift_end"]
     target_seconds = int(profile.required_daily_minutes or 480) * 60
@@ -484,6 +412,14 @@ def agent_period_summary(context: DeviceAuthContext, db: Session) -> dict:
         )
     tracked_seconds = today_summary["tracked_active_seconds"]
     activity_base_seconds = tracked_seconds + today_summary["idle_seconds"]
+    idle_request_periods = build_idle_request_periods(
+        db,
+        employee=employee,
+        company_id=context.device.company_id,
+        work_date=today,
+        timeline=timeline,
+        timezone_name=device_timezone,
+    )
     return {
         "employee": {
             "id": str(employee.id),
@@ -502,6 +438,7 @@ def agent_period_summary(context: DeviceAuthContext, db: Session) -> dict:
         else 0,
         "today": today_summary,
         "today_timeline": timeline,
+        "idle_request_periods": idle_request_periods,
         "week": summarize(week_start, week_start + timedelta(days=6)),
         "month": summarize(month_start, month_end),
     }

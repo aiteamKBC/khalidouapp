@@ -53,6 +53,7 @@ export type AgentStatus = {
   paidPauseBalanceRemainingSeconds: number | null;
   recentTasks: AgentTask[];
   todayTimeline: WorkdayTimeline | null;
+  idleRequestPeriods: IdleRequestPeriod[];
   lastIdleAlert: IdleAlert | null;
   updateStatus:
     | "idle"
@@ -105,6 +106,16 @@ export type WorkdayTimeline = {
     is_current: boolean;
     work_category?: "extra" | null;
   }>;
+};
+
+export type IdleRequestPeriod = {
+  work_session_id: string;
+  started_at: string;
+  ended_at: string;
+  duration_seconds: number;
+  available_seconds: number;
+  project_name: string | null;
+  task_name: string | null;
 };
 
 export type AgentTask = {

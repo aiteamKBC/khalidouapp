@@ -1787,6 +1787,123 @@ def test_desktop_today_shows_actual_idle_on_an_off_day(team_client):
     assert timesheet_row["idle_seconds"] == 15 * 60
 
 
+def test_idle_request_period_is_clipped_at_shift_end_and_tracks_remaining_time(
+    team_client,
+):
+    client, data = team_client
+    work_day = local_today("UTC")
+    shift_start = datetime.combine(work_day, datetime.min.time(), tzinfo=UTC).replace(hour=10)
+    shift_end = shift_start.replace(hour=18)
+    idle_start = shift_start.replace(hour=17, minute=1)
+    idle_end = shift_end.replace(minute=18)
+
+    with data["session_factory"]() as db:
+        session = db.get(WorkSession, data["session_a"].id)
+        employee = db.get(Employee, data["employee_a"].id)
+        session.started_at = idle_start - timedelta(minutes=20)
+        session.ended_at = idle_end + timedelta(minutes=2)
+        session.status = "ended"
+        profile = get_or_create_work_profile(db, employee)
+        profile.shift_start = shift_start.time().replace(tzinfo=None)
+        profile.shift_end = shift_end.time().replace(tzinfo=None)
+        profile.working_days = [work_day.weekday()]
+        profile.weekly_off_days = [weekday for weekday in range(7) if weekday != work_day.weekday()]
+        profile.break_rules = []
+        db.add_all(
+            [
+                ActivityEvent(
+                    company_id=session.company_id,
+                    employee_id=session.employee_id,
+                    device_id=session.device_id,
+                    session_id=session.id,
+                    event_type="idle_started",
+                    event_timestamp=idle_start,
+                    payload=None,
+                    idempotency_key=str(uuid4()),
+                ),
+                ActivityEvent(
+                    company_id=session.company_id,
+                    employee_id=session.employee_id,
+                    device_id=session.device_id,
+                    session_id=session.id,
+                    event_type="idle_ended",
+                    event_timestamp=idle_end,
+                    payload=None,
+                    idempotency_key=str(uuid4()),
+                ),
+            ]
+        )
+        db.commit()
+
+    summary_response = client.get(
+        "/api/v1/agent/summary",
+        headers=data["device_headers"],
+    )
+
+    assert summary_response.status_code == 200
+    periods = summary_response.json()["data"]["idle_request_periods"]
+    assert len(periods) == 1
+    period = periods[0]
+    assert datetime.fromisoformat(period["started_at"]) == idle_start
+    assert datetime.fromisoformat(period["ended_at"]) == shift_end
+    assert period["duration_seconds"] == 59 * 60
+    assert period["available_seconds"] == 59 * 60
+
+    first_request = client.post(
+        "/api/v1/agent/time-adjustment-requests",
+        headers=data["device_headers"],
+        json={
+            "requested_date": work_day.isoformat(),
+            "request_type": "idle_time",
+            "work_session_id": period["work_session_id"],
+            "source_start_at": period["started_at"],
+            "source_end_at": period["ended_at"],
+            "requested_minutes": 30,
+            "reason": "Completed offline work during this idle period.",
+        },
+    )
+    assert first_request.status_code == 200
+
+    refreshed_summary = client.get(
+        "/api/v1/agent/summary",
+        headers=data["device_headers"],
+    )
+    refreshed_period = refreshed_summary.json()["data"]["idle_request_periods"][0]
+    assert refreshed_period["available_seconds"] == 29 * 60
+
+    excessive_request = client.post(
+        "/api/v1/agent/time-adjustment-requests",
+        headers=data["device_headers"],
+        json={
+            "requested_date": work_day.isoformat(),
+            "request_type": "idle_time",
+            "work_session_id": period["work_session_id"],
+            "source_start_at": period["started_at"],
+            "source_end_at": period["ended_at"],
+            "requested_minutes": 30,
+            "reason": "Attempting to request more than the remaining time.",
+        },
+    )
+    assert excessive_request.status_code == 422
+    assert excessive_request.json()["error"]["code"] == "IDLE_REQUEST_TOO_LONG"
+
+    outside_shift_request = client.post(
+        "/api/v1/agent/time-adjustment-requests",
+        headers=data["device_headers"],
+        json={
+            "requested_date": work_day.isoformat(),
+            "request_type": "idle_time",
+            "work_session_id": period["work_session_id"],
+            "source_start_at": idle_start.isoformat(),
+            "source_end_at": idle_end.isoformat(),
+            "requested_minutes": 1,
+            "reason": "The source range must not include time after shift end.",
+        },
+    )
+    assert outside_shift_request.status_code == 422
+    assert outside_shift_request.json()["error"]["code"] == "IDLE_PERIOD_NOT_FOUND"
+
+
 def test_workday_timeline_splits_work_idle_and_locked_periods(team_client):
     client, data = team_client
     work_day = local_today(data["employee_a"].timezone)
