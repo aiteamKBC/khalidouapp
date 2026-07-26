@@ -39,15 +39,15 @@ DEFAULT_BREAK_RULES = [
         "name": "Lunch",
         "minutes": 30,
         "paid": False,
-        "start_time": "12:30",
-        "end_time": "13:00",
+        "start_time": "13:00",
+        "end_time": "13:30",
     },
     {
         "name": "Short break",
         "minutes": 15,
         "paid": False,
-        "start_time": "15:30",
-        "end_time": "15:45",
+        "start_time": "16:30",
+        "end_time": "16:45",
     },
 ]
 DEFAULT_DEDUCTION_POLICY = {
@@ -94,12 +94,12 @@ def get_or_create_work_profile(db: Session, employee: Employee) -> EmployeeWorkP
             shift_start=(
                 company_shift_default.shift_start
                 if company_shift_default and company_shift_default.shift_start
-                else datetime.strptime("09:00", "%H:%M").time()
+                else datetime.strptime("10:00", "%H:%M").time()
             ),
             shift_end=(
                 company_shift_default.shift_end
                 if company_shift_default and company_shift_default.shift_end
-                else datetime.strptime("17:00", "%H:%M").time()
+                else datetime.strptime("18:00", "%H:%M").time()
             ),
             working_days=[0, 1, 2, 3, 4],
             weekly_off_days=[5, 6],

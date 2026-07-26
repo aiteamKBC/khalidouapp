@@ -1404,8 +1404,8 @@ function EmployeeProfileDialog({
   useEffect(() => {
     if (profile.data)
       setForm({
-        shiftStart: profile.data.shiftStart ?? "09:00",
-        shiftEnd: profile.data.shiftEnd ?? "17:00",
+        shiftStart: profile.data.shiftStart ?? "10:00",
+        shiftEnd: profile.data.shiftEnd ?? "18:00",
         workingDays: profile.data.workingDays ?? undefined,
         weeklyOffDays: profile.data.weeklyOffDays ?? undefined,
         requiredDailyMinutes: profile.data.requiredDailyMinutes ?? undefined,
@@ -1605,11 +1605,11 @@ function ScheduleOverrideDialog({
   const [type, setType] = useState<"shift" | "breaks" | "both">("shift");
   const [permanent, setPermanent] = useState(false);
   const [effectiveDate, setEffectiveDate] = useState(new Date().toISOString().slice(0, 10));
-  const [start, setStart] = useState("09:00");
-  const [end, setEnd] = useState("17:00");
+  const [start, setStart] = useState("10:00");
+  const [end, setEnd] = useState("18:00");
   const [breaks, setBreaks] = useState([
     { name: "Lunch", start_time: "13:00", end_time: "13:30", paid: true },
-    { name: "Short break", start_time: "15:30", end_time: "15:45", paid: true },
+    { name: "Short break", start_time: "16:30", end_time: "16:45", paid: true },
   ]);
   const [reason, setReason] = useState("");
   const breakRules = breaks.map((item) => ({

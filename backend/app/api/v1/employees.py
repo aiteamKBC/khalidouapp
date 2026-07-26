@@ -214,8 +214,8 @@ def list_employee_break_rules(
                 "break_rules": break_rules if break_rules is not None else DEFAULT_BREAK_RULES,
                 "shift_start": shift_start.isoformat(timespec="minutes")
                 if shift_start
-                else "09:00",
-                "shift_end": shift_end.isoformat(timespec="minutes") if shift_end else "17:00",
+                else "10:00",
+                "shift_end": shift_end.isoformat(timespec="minutes") if shift_end else "18:00",
                 "required_daily_minutes": required_daily_minutes or 480,
                 "working_days": working_days or [0, 1, 2, 3, 4],
                 "weekly_off_days": weekly_off_days or [5, 6],

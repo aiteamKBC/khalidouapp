@@ -340,8 +340,8 @@ function PeopleDirectory({
   const [editEmployeeTeamIds, setEditEmployeeTeamIds] = useState<string[]>([]);
   const [editEmployeeTeamRole, setEditEmployeeTeamRole] = useState<TeamMemberRole>("member");
   const [editPermissions, setEditPermissions] = useState<string[]>([]);
-  const [editShiftStart, setEditShiftStart] = useState("09:00");
-  const [editShiftEnd, setEditShiftEnd] = useState("17:00");
+  const [editShiftStart, setEditShiftStart] = useState("10:00");
+  const [editShiftEnd, setEditShiftEnd] = useState("18:00");
   const [editStartDate, setEditStartDate] = useState("");
   const [editTimezone, setEditTimezone] = useState("Africa/Cairo");
   const [editWorkingDays, setEditWorkingDays] = useState<number[]>([0, 1, 2, 3, 4]);
@@ -382,8 +382,8 @@ function PeopleDirectory({
   useEffect(() => {
     const profile = managedWorkProfile.data;
     if (!profile) return;
-    setEditShiftStart(profile.shiftStart ?? "09:00");
-    setEditShiftEnd(profile.shiftEnd ?? "17:00");
+    setEditShiftStart(profile.shiftStart ?? "10:00");
+    setEditShiftEnd(profile.shiftEnd ?? "18:00");
     setEditWorkingDays(profile.workingDays ?? [0, 1, 2, 3, 4]);
     setEditLateGraceMinutes(profile.lateGraceMinutes ?? 15);
     setEditOvertimeEnabled(profile.overtimeEnabled);
@@ -2023,8 +2023,8 @@ function AddPersonWizard({
   const [teamIds, setTeamIds] = useState<string[]>([]);
   const [startDate, setStartDate] = useState("");
   const [annualLeaveDays, setAnnualLeaveDays] = useState(21);
-  const [shiftStart, setShiftStart] = useState("09:00");
-  const [shiftEnd, setShiftEnd] = useState("17:00");
+  const [shiftStart, setShiftStart] = useState("10:00");
+  const [shiftEnd, setShiftEnd] = useState("18:00");
   const [offDays, setOffDays] = useState<number[]>([5, 6]);
   const [salaryType, setSalaryType] = useState<"monthly" | "hourly">("monthly");
   const [salaryAmount, setSalaryAmount] = useState("0");
@@ -2033,7 +2033,7 @@ function AddPersonWizard({
   const [showSalary, setShowSalary] = useState(false);
   const [breaks, setBreaks] = useState([
     { name: "Lunch", start_time: "13:00", end_time: "13:30", minutes: 30, paid: true },
-    { name: "Short break", start_time: "15:30", end_time: "15:45", minutes: 15, paid: true },
+    { name: "Short break", start_time: "16:30", end_time: "16:45", minutes: 15, paid: true },
   ]);
   const canCreateTeamLeader = canAssignRole(currentUser, "team_owner");
   const canCreateHr = canAssignRole(currentUser, "hr");
@@ -2053,8 +2053,8 @@ function AddPersonWizard({
     setTeamIds([]);
     setStartDate("");
     setAnnualLeaveDays(21);
-    setShiftStart("09:00");
-    setShiftEnd("17:00");
+    setShiftStart("10:00");
+    setShiftEnd("18:00");
     setOffDays([5, 6]);
     setSalaryType("monthly");
     setSalaryAmount("0");
@@ -2063,7 +2063,7 @@ function AddPersonWizard({
     setShowSalary(false);
     setBreaks([
       { name: "Lunch", start_time: "13:00", end_time: "13:30", minutes: 30, paid: true },
-      { name: "Short break", start_time: "15:30", end_time: "15:45", minutes: 15, paid: true },
+      { name: "Short break", start_time: "16:30", end_time: "16:45", minutes: 15, paid: true },
     ]);
     setCreatedEmployee(null);
     setCreatedInvitation(undefined);
@@ -2795,7 +2795,7 @@ function AddPersonWizard({
 
         {step === "review" && (
           <div className="space-y-4">
-            <div className="grid gap-3 rounded-xl border bg-muted/25 p-4 sm:grid-cols-2">
+            <div className="grid gap-3 rounded-xl border bg-muted/25 p-4 sm:grid-cols-2 [&>*]:min-w-0 [&_p]:break-words">
               <div>
                 <span className="text-xs text-muted-foreground">Name</span>
                 <p className="font-bold">{name}</p>

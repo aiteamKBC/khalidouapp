@@ -74,7 +74,7 @@ type EditorIntent =
 
 const FALLBACK_BREAKS: BreakDraft[] = [
   { name: "Lunch", startTime: "13:00", endTime: "13:30", paid: true },
-  { name: "Short break", startTime: "15:30", endTime: "15:45", paid: true },
+  { name: "Short break", startTime: "16:30", endTime: "16:45", paid: true },
 ];
 
 function todayIso() {
@@ -431,8 +431,8 @@ function BreakEditorDialog({
   const [employeeIds, setEmployeeIds] = useState<string[]>([]);
   const [teamId, setTeamId] = useState("");
   const [effectiveDate, setEffectiveDate] = useState(todayIso());
-  const [shiftStart, setShiftStart] = useState("09:00");
-  const [shiftEnd, setShiftEnd] = useState("17:00");
+  const [shiftStart, setShiftStart] = useState("10:00");
+  const [shiftEnd, setShiftEnd] = useState("18:00");
   const [breaks, setBreaks] = useState<BreakDraft[]>(FALLBACK_BREAKS);
   const [reason, setReason] = useState("");
   const [employeeName, setEmployeeName] = useState("");
@@ -471,8 +471,8 @@ function BreakEditorDialog({
     setEmployeeIds([]);
     setTeamId("");
     setEffectiveDate(todayIso());
-    setShiftStart(source?.shiftStart ?? "09:00");
-    setShiftEnd(source?.shiftEnd ?? "17:00");
+    setShiftStart(source?.shiftStart ?? "10:00");
+    setShiftEnd(source?.shiftEnd ?? "18:00");
     setBreaks(toDrafts(source?.breakRules));
     setEmployeeName(source?.name ?? "");
     setJobTitle(source?.jobTitle ?? "");
@@ -683,8 +683,8 @@ function BreakEditorDialog({
                   if (nextScope === "company") {
                     setEmployeeId("");
                     setEmployeeIds([]);
-                    setShiftStart(people[0]?.shiftStart ?? "09:00");
-                    setShiftEnd(people[0]?.shiftEnd ?? "17:00");
+                    setShiftStart(people[0]?.shiftStart ?? "10:00");
+                    setShiftEnd(people[0]?.shiftEnd ?? "18:00");
                     setBreaks(toDrafts(people[0]?.breakRules));
                   }
                 }}

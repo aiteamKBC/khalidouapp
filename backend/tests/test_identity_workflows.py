@@ -32,8 +32,8 @@ def employee_onboarding_payload() -> dict:
         "start_date": "2026-01-01",
         "annual_leave_days": 21,
         "work_profile": {
-            "shift_start": "09:00",
-            "shift_end": "17:00",
+            "shift_start": "10:00",
+            "shift_end": "18:00",
             "working_days": [0, 1, 2, 3, 4],
             "weekly_off_days": [5, 6],
             "required_daily_minutes": 480,
@@ -42,15 +42,15 @@ def employee_onboarding_payload() -> dict:
                     "name": "Lunch",
                     "minutes": 30,
                     "paid": False,
-                    "start_time": "12:30",
-                    "end_time": "13:00",
+                    "start_time": "13:00",
+                    "end_time": "13:30",
                 },
                 {
                     "name": "Short break",
                     "minutes": 15,
                     "paid": False,
-                    "start_time": "15:30",
-                    "end_time": "15:45",
+                    "start_time": "16:30",
+                    "end_time": "16:45",
                 },
             ],
             "late_grace_minutes": 15,
@@ -335,8 +335,8 @@ def test_inviting_team_manager_is_atomic_and_permissions_are_scoped(identity_cli
         assert manager.role == "team_owner"
         assert employee.timezone == "Africa/Cairo"
         assert employee.start_date.isoformat() == "2026-01-01"
-        assert employee.work_profile.shift_start.isoformat() == "09:00:00"
-        assert employee.work_profile.shift_end.isoformat() == "17:00:00"
+        assert employee.work_profile.shift_start.isoformat() == "10:00:00"
+        assert employee.work_profile.shift_end.isoformat() == "18:00:00"
         assert len(employee.work_profile.break_rules) == 2
         assert membership is not None and membership.status == "active"
         assert ownership is not None
@@ -437,7 +437,7 @@ def test_general_admin_can_invite_employee_and_other_general_admin(identity_clie
         assert len(invited_admin.employee.work_profile.break_rules) == 2
         assert invited_hr is not None and invited_hr.role == "hr"
         assert invited_hr.employee is not None
-        assert invited_hr.employee.work_profile.shift_start.isoformat() == "09:00:00"
+        assert invited_hr.employee.work_profile.shift_start.isoformat() == "10:00:00"
     finally:
         db.close()
 
