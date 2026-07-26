@@ -95,14 +95,14 @@ def employee_invitation_email(
 ) -> EmailContent:
     subject = f"You have been invited to {settings.app_name}"
     text = (
-        f"Hi {name},\n\nYour Khaliduo employee account is ready. "
+        f"Hi {name},\n\nYour Khaliduo account is ready. "
         f"Choose your password here: {invitation_url}\n\n"
         f"This one-time link expires in {expires_in_hours} hours."
     )
     html = _layout(
-        eyebrow="Employee invitation",
+        eyebrow="Account invitation",
         title="Welcome to Khaliduo",
-        intro=f"Hi {name}, your employee workspace is ready. Choose your password to activate your account.",
+        intro=f"Hi {name}, your workspace is ready. Choose your password to activate your account.",
         content=_details_table([("Work email", to), ("Link expires", f"{expires_in_hours} hours")]),
         action_label="Accept invitation",
         action_url=invitation_url,

@@ -6,7 +6,7 @@ export type EmployeeStatus = "active" | "idle" | "locked" | "sleeping" | "offlin
 export type EmployeeAccountStatus = "invited" | "active" | "inactive";
 export type DeviceStatus = "online" | "offline" | "revoked";
 export type TeamStatus = "active" | "archived";
-export type UserStatus = "active" | "inactive";
+export type UserStatus = "invited" | "active" | "inactive" | "archived";
 export type TeamMemberRole = "team_manager" | "team_lead" | "senior" | "member" | "trainee";
 
 export interface User {

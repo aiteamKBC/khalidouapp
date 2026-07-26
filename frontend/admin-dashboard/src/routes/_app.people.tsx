@@ -481,12 +481,18 @@ function PeopleDirectory({
                 .filter(Boolean)
                 .join(", ") || "—"),
         managerNames: linkedEmployee?.managers.map((manager) => manager.name) ?? [],
-        status: user.status === "active" ? "active" : "archived",
+        status:
+          user.status === "active"
+            ? "active"
+            : user.status === "invited" && linkedEmployee
+              ? employeeDirectoryStatus(linkedEmployee)
+              : "archived",
         teamIds:
           user.dataScope === "company" ? activeTeams.map((team) => team.id) : user.teamLeadTeamIds,
         dashboardEmployeeId: user.trackedEmployeeId,
         isCurrentUser: currentUser?.id === user.id,
         isSuperAdmin: user.isSuperAdmin,
+        employee: linkedEmployee,
         user,
       };
     });
@@ -1072,10 +1078,8 @@ function PeopleDirectory({
                       </div>
                     </TableCell>
                     <TableCell className="text-xs text-muted-foreground">
-                      {row.kind === "employee"
-                        ? row.status === "invited" || row.status === "expired"
-                          ? "Email invitation"
-                          : "Password"
+                      {row.status === "invited" || row.status === "expired"
+                        ? "Email invitation"
                         : "Password"}
                     </TableCell>
                     <TableCell>
@@ -1083,27 +1087,26 @@ function PeopleDirectory({
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-2">
-                        {row.dashboardEmployeeId &&
-                          (row.kind === "admin" || row.status === "active") && (
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              className="rounded-full border-[#e5185d]/25 bg-[#fce3ec]/55 text-[#e5185d] hover:bg-[#fce3ec]"
-                              onClick={() =>
-                                navigate({
-                                  to: "/monitoring",
-                                  search: {
-                                    employeeId: row.dashboardEmployeeId!,
-                                    day: todayIsoDate(),
-                                    tab: "attendance",
-                                  },
-                                })
-                              }
-                            >
-                              <Activity className="mr-1.5 h-3.5 w-3.5" />
-                              Monitor
-                            </Button>
-                          )}
+                        {row.dashboardEmployeeId && row.status === "active" && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="rounded-full border-[#e5185d]/25 bg-[#fce3ec]/55 text-[#e5185d] hover:bg-[#fce3ec]"
+                            onClick={() =>
+                              navigate({
+                                to: "/monitoring",
+                                search: {
+                                  employeeId: row.dashboardEmployeeId!,
+                                  day: todayIsoDate(),
+                                  tab: "attendance",
+                                },
+                              })
+                            }
+                          >
+                            <Activity className="mr-1.5 h-3.5 w-3.5" />
+                            Monitor
+                          </Button>
+                        )}
                         {row.isCurrentUser && !row.dashboardEmployeeId ? (
                           <Button
                             variant="outline"
@@ -1143,18 +1146,6 @@ function PeopleDirectory({
                                     Manage employee
                                   </DropdownMenuItem>
                                 )}
-                                {(row.status === "invited" || row.status === "expired") &&
-                                  row.employee?.invitation && (
-                                    <DropdownMenuItem
-                                      disabled={resendMutation.isPending}
-                                      onSelect={() =>
-                                        resendMutation.mutate(row.employee!.invitation!.id)
-                                      }
-                                    >
-                                      <RefreshCw className="h-4 w-4" />
-                                      Resend invitation
-                                    </DropdownMenuItem>
-                                  )}
                               </>
                             ) : (
                               <>
@@ -1169,6 +1160,18 @@ function PeopleDirectory({
                                   )}
                               </>
                             )}
+                            {(row.status === "invited" || row.status === "expired") &&
+                              row.employee?.invitation && (
+                                <DropdownMenuItem
+                                  disabled={resendMutation.isPending}
+                                  onSelect={() =>
+                                    resendMutation.mutate(row.employee!.invitation!.id)
+                                  }
+                                >
+                                  <RefreshCw className="h-4 w-4" />
+                                  Resend invitation
+                                </DropdownMenuItem>
+                              )}
                             {can(permissions.peopleArchive) &&
                               !row.isCurrentUser &&
                               !row.isSuperAdmin && (
@@ -2039,7 +2042,7 @@ function AddPersonWizard({
   const canCreateHr = canAssignRole(currentUser, "hr");
   const canCreateGeneralAdmin = canAssignRole(currentUser, "general_admin");
 
-  // Invitation confirmation for employees who choose their own password.
+  // Invitation confirmation for every tracked role that chooses its own password.
   const [createdEmployee, setCreatedEmployee] = useState<Employee | null>(null);
   const [createdInvitation, setCreatedInvitation] = useState<PersonInvitationSummary>();
   const [invitationEmailQueued, setInvitationEmailQueued] = useState(false);
@@ -2149,15 +2152,15 @@ function AddPersonWizard({
     },
     onSuccess: async (result) => {
       await onCreated();
-      if (result.kind === "employee" && result.employee) {
+      if (result.employee && result.invitation.invitation) {
         setCreatedEmployee(result.employee);
         setCreatedInvitation(result.invitation.invitation);
         setInvitationEmailQueued(result.invitation.emailQueued);
         setStep("invited");
         toast.success(
           result.invitation.emailQueued
-            ? "Employee invited"
-            : "Employee created, but the invitation email was not queued",
+            ? `${kindLabel(result.kind)} invited`
+            : `${kindLabel(result.kind)} created, but the invitation email was not queued`,
         );
       } else {
         toast.success(

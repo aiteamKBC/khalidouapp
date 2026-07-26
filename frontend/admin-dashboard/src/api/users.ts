@@ -1,6 +1,6 @@
 import { apiFetch } from "./client";
 import { mapUser } from "./auth";
-import type { AuditLogEntry, Role, User } from "@/types";
+import type { AuditLogEntry, Role, User, UserStatus } from "@/types";
 
 type BackendUser = {
   id: string;
@@ -12,7 +12,7 @@ type BackendUser = {
   is_super_admin?: boolean;
   permissions?: string[];
   assigned_team_ids?: string[];
-  status: "active" | "inactive";
+  status: UserStatus;
   updated_at?: string;
 };
 

@@ -28,7 +28,6 @@ from app.schemas.admin import PersonInvitationCreate, PersonRoleUpdate
 from app.schemas.employee_portal import EmployeeInvitationAccept
 from app.services.audit import record_audit_log
 from app.services.email import (
-    enqueue_admin_credentials_email,
     enqueue_employee_invitation_email,
     ensure_email_allowed,
 )
@@ -110,10 +109,15 @@ def invite_person(
     if payload.kind in {"team_manager", "general_admin", "hr"} and admin is not None:
         raise ApiError("ADMIN_EMAIL_EXISTS", "An admin user with this email already exists.", 409)
 
-    temporary_password: str | None = None
     employee_invitation: EmployeeInvitation | None = None
     raw_invitation_token: str | None = None
     track_as_employee = payload.kind in {"employee", "team_manager", "general_admin", "hr"}
+    existing_employee_is_active = bool(
+        employee is not None
+        and employee.status == "active"
+        and employee.portal_password_hash
+    )
+    requires_invitation = track_as_employee and not existing_employee_is_active
     if track_as_employee and employee is None:
         default_job_title = {
             "employee": None,
@@ -128,7 +132,7 @@ def invite_person(
             employee_code=f"EMP-{uuid4().hex[:8].upper()}",
             job_title=payload.job_title or default_job_title,
             timezone=payload.timezone,
-            status="invited" if payload.kind == "employee" else "active",
+            status="invited",
             start_date=payload.start_date,
             annual_leave_days=payload.annual_leave_days,
         )
@@ -141,15 +145,18 @@ def invite_person(
         employee.timezone = payload.timezone
         employee.start_date = payload.start_date
         employee.annual_leave_days = payload.annual_leave_days
-        if payload.kind != "employee":
-            employee.status = "active"
+        if requires_invitation:
+            employee.status = "invited"
             employee.archived_at = None
             employee.status_before_archive = None
         db.add(employee)
 
     if payload.kind in {"team_manager", "general_admin", "hr"}:
-        temporary_password = generate_temporary_password()
-        password_hash = hash_password(temporary_password)
+        password_hash = (
+            employee.portal_password_hash
+            if existing_employee_is_active and employee and employee.portal_password_hash
+            else hash_password(generate_temporary_password())
+        )
         admin_role = "team_owner" if payload.kind == "team_manager" else payload.kind
         admin = AdminUser(
             company_id=current_admin.company_id,
@@ -158,11 +165,11 @@ def invite_person(
             email=email,
             password_hash=password_hash,
             role=admin_role,
-            status="active",
+            status="invited" if requires_invitation else "active",
             permission_mode="role",
             data_scope="assigned_teams" if payload.kind == "team_manager" else "company",
         )
-        if employee is not None:
+        if employee is not None and not requires_invitation:
             employee.portal_password_hash = password_hash
             db.add(employee)
         db.add(admin)
@@ -218,7 +225,7 @@ def invite_person(
             setattr(profile, key, value)
         refresh_profile_completed_at(profile)
 
-    if payload.kind == "employee" and employee is not None:
+    if requires_invitation and employee is not None:
         employee_invitation, raw_invitation_token = issue_employee_invitation(db, employee)
 
     record_audit_log(
@@ -233,19 +240,7 @@ def invite_person(
     )
     db.commit()
 
-    if admin is not None and temporary_password is not None:
-        email_queued = enqueue_admin_credentials_email(
-            db,
-            background_tasks,
-            company_id=current_admin.company_id,
-            to=email,
-            name=payload.name,
-            password=temporary_password,
-            is_reset=False,
-        )
-    else:
-        if employee_invitation is None or raw_invitation_token is None:
-            raise RuntimeError("Employee invitation was not created.")
+    if employee_invitation is not None and raw_invitation_token is not None:
         email_queued = enqueue_employee_invitation_email(
             db,
             background_tasks,
@@ -255,6 +250,8 @@ def invite_person(
             token=raw_invitation_token,
             expires_in_hours=settings.employee_invitation_expire_hours,
         )
+    else:
+        email_queued = False
 
     return success_response(
         data={
@@ -282,13 +279,26 @@ def verify_employee_invitation(token: str, db: Annotated[Session, Depends(get_db
     employee = db.get(Employee, invitation.employee_id)
     if employee is None or employee.status != "invited":
         return success_response(data={"valid": False, "status": "invalid"})
+    admin = db.scalar(
+        select(AdminUser).where(
+            AdminUser.employee_id == employee.id,
+            AdminUser.status == "invited",
+        )
+    )
+    invitation_kind = (
+        "team_manager"
+        if admin and admin.role == "team_owner"
+        else admin.role
+        if admin
+        else "employee"
+    )
     return success_response(
         data={
             "valid": True,
             "status": status,
             "name": employee.name,
             "email": employee.email,
-            "kind": "employee",
+            "kind": invitation_kind,
             "expires_at": invitation.expires_at.isoformat(),
         }
     )
@@ -315,15 +325,28 @@ def accept_employee_invitation(
             400,
         )
     now = datetime.now(UTC)
-    employee.portal_password_hash = hash_password(payload.password)
+    password_hash = hash_password(payload.password)
+    employee.portal_password_hash = password_hash
     employee.status = "active"
+    admin = db.scalar(
+        select(AdminUser).where(
+            AdminUser.employee_id == employee.id,
+            AdminUser.status == "invited",
+        )
+    )
+    if admin is not None:
+        admin.password_hash = password_hash
+        admin.status = "active"
+        admin.archived_at = None
+        admin.status_before_archive = None
     invitation.accepted_at = now
-    db.add_all([employee, invitation])
+    db.add_all([employee, invitation, *([admin] if admin else [])])
     db.commit()
     return success_response(
         data={
             "status": "accepted",
             "employee_id": str(employee.id),
+            "admin_user_id": str(admin.id) if admin else None,
         }
     )
 

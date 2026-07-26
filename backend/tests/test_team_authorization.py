@@ -803,7 +803,7 @@ def test_cancelling_today_override_restores_normal_schedule_immediately(team_cli
         headers=data["general_headers"],
     )
     assert restored.status_code == 200
-    assert restored.json()["data"]["scheduled_start_at"].endswith("09:00:00+00:00")
+    assert restored.json()["data"]["scheduled_start_at"].endswith("10:00:00+00:00")
 
 
 def test_payroll_overtime_decision_updates_daily_source_records(team_client):

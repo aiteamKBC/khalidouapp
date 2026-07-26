@@ -1,6 +1,6 @@
 import { apiFetch } from "./client";
 import { normalizeAiAcronym } from "@/lib/text";
-import type { DataScope, PermissionMode, User } from "@/types";
+import type { DataScope, PermissionMode, User, UserStatus } from "@/types";
 
 type BackendAuthTokens = {
   access_token: string;
@@ -18,7 +18,7 @@ type BackendUser = {
   role: "general_admin" | "team_owner" | "hr";
   is_super_admin?: boolean;
   permissions?: string[];
-  status: "active" | "inactive";
+  status: UserStatus;
   assigned_team_ids?: string[];
   permission_mode?: PermissionMode;
   data_scope?: DataScope;

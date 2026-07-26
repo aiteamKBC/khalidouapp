@@ -44,6 +44,7 @@ export type PersonInvitationResult = {
 };
 
 export type PersonInvitationStatus = "pending" | "accepted" | "expired" | "revoked";
+export type PersonInvitationKind = PersonInvitationInput["kind"];
 
 export type PersonInvitationSummary = {
   id: string;
@@ -57,7 +58,7 @@ export type PublicPersonInvitation =
       status: "pending";
       name: string;
       email: string;
-      kind: "employee";
+      kind: PersonInvitationKind;
       expiresAt: string;
     }
   | {
@@ -222,13 +223,13 @@ export async function getPersonInvitation(token: string): Promise<PublicPersonIn
     status: PersonInvitationStatus | "invalid";
     name?: string;
     email?: string;
-    kind?: "employee";
+    kind?: PersonInvitationKind;
     expires_at?: string;
   }>(`/people/invitations/${encodeURIComponent(token)}`);
   if (!row.valid || row.status !== "pending") {
     return { valid: false, status: row.status };
   }
-  if (!row.name || !row.email || row.kind !== "employee" || !row.expires_at) {
+  if (!row.name || !row.email || !row.kind || !row.expires_at) {
     return { valid: false, status: "invalid" };
   }
   return {
@@ -244,15 +245,20 @@ export async function getPersonInvitation(token: string): Promise<PublicPersonIn
 export async function acceptPersonInvitation(
   token: string,
   password: string,
-): Promise<{ status: "accepted"; employeeId: string }> {
-  const row = await apiFetch<{ status: "accepted"; employee_id: string }>(
-    `/people/invitations/${encodeURIComponent(token)}`,
-    {
-      method: "POST",
-      body: JSON.stringify({ password }),
-    },
-  );
-  return { status: row.status, employeeId: row.employee_id };
+): Promise<{ status: "accepted"; employeeId: string; adminUserId?: string }> {
+  const row = await apiFetch<{
+    status: "accepted";
+    employee_id: string;
+    admin_user_id?: string | null;
+  }>(`/people/invitations/${encodeURIComponent(token)}`, {
+    method: "POST",
+    body: JSON.stringify({ password }),
+  });
+  return {
+    status: row.status,
+    employeeId: row.employee_id,
+    adminUserId: row.admin_user_id ?? undefined,
+  };
 }
 
 export async function resendPersonInvitation(invitationId: string): Promise<{

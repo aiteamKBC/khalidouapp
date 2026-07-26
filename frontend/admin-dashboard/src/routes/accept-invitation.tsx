@@ -67,6 +67,8 @@ function AcceptInvitationPage() {
     accept.mutate();
   }
 
+  const isAdminInvitation = Boolean(invitation.data?.valid && invitation.data.kind !== "employee");
+
   let content;
   if (!token) {
     content = <UnavailableInvitation reason="invalid" />;
@@ -85,11 +87,22 @@ function AcceptInvitationPage() {
       <StatePanel
         icon={<CheckCircle2 className="h-10 w-10 text-success" />}
         title="Your account is ready"
-        message="Your password has been saved. You can now sign in to the employee portal."
+        message={
+          isAdminInvitation
+            ? "Your password has been saved. You can now sign in to the dashboard and employee app."
+            : "Your password has been saved. You can now sign in to the employee portal."
+        }
       >
-        <Button asChild className="mt-5 w-full">
-          <a href="/employee">Open employee portal</a>
-        </Button>
+        <div className="mt-5 space-y-2">
+          {isAdminInvitation && (
+            <Button asChild className="w-full">
+              <a href="/login">Open dashboard sign in</a>
+            </Button>
+          )}
+          <Button asChild variant={isAdminInvitation ? "outline" : "default"} className="w-full">
+            <a href="/employee">Open employee portal</a>
+          </Button>
+        </div>
       </StatePanel>
     );
   } else if (!invitation.data.valid || invitation.data.status !== "pending") {
@@ -105,7 +118,7 @@ function AcceptInvitationPage() {
           <BrandLogo className="mb-3 h-20 w-20 rounded-2xl" />
           <CardTitle className="text-2xl">Welcome to Khaliduo</CardTitle>
           <p className="text-sm text-muted-foreground">
-            Hi {invitation.data.name}. Choose a password to finish setting up your employee account.
+            Hi {invitation.data.name}. Choose a password to finish setting up your account.
           </p>
         </CardHeader>
         <CardContent>

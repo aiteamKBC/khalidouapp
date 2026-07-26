@@ -211,15 +211,14 @@ def test_unknown_password_reset_is_non_enumerating(identity_client):
     assert "If the account exists" in response.json()["data"]["message"]
 
 
-def test_invited_user_can_change_temporary_password_and_sessions_are_revoked(
-    identity_client, monkeypatch
-):
+def test_invited_admin_accepts_link_then_can_change_password(identity_client, monkeypatch):
     client, data = identity_client
+    raw_token = "admin-invitation-token-with-enough-random-looking-bytes-123"
     monkeypatch.setattr(
-        "app.api.v1.people.generate_temporary_password",
-        lambda: "TemporaryInvitePassword123!",
+        "app.services.employee_invitations.secrets.token_urlsafe",
+        lambda _length: raw_token,
     )
-    client.post(
+    created = client.post(
         "/api/v1/people/invitations",
         headers=data["general_headers"],
         json={
@@ -230,11 +229,22 @@ def test_invited_user_can_change_temporary_password_and_sessions_are_revoked(
             **employee_onboarding_payload(),
         },
     )
+    before_accept = client.post(
+        "/api/v1/auth/login",
+        json={
+            "email": "change.password@kentconsultancy.co",
+            "password": "ChosenInvitePassword123!",
+        },
+    )
+    accepted = client.post(
+        f"/api/v1/people/invitations/{raw_token}",
+        json={"password": "ChosenInvitePassword123!"},
+    )
     login = client.post(
         "/api/v1/auth/login",
         json={
             "email": "change.password@kentconsultancy.co",
-            "password": "TemporaryInvitePassword123!",
+            "password": "ChosenInvitePassword123!",
         },
     )
     tokens = login.json()["data"]
@@ -249,7 +259,7 @@ def test_invited_user_can_change_temporary_password_and_sessions_are_revoked(
         "/api/v1/auth/change-password",
         headers=headers,
         json={
-            "current_password": "TemporaryInvitePassword123!",
+            "current_password": "ChosenInvitePassword123!",
             "new_password": "NewPassword456!",
         },
     )
@@ -261,7 +271,7 @@ def test_invited_user_can_change_temporary_password_and_sessions_are_revoked(
         "/api/v1/auth/login",
         json={
             "email": "change.password@kentconsultancy.co",
-            "password": "TemporaryInvitePassword123!",
+            "password": "ChosenInvitePassword123!",
         },
     )
     new_login = client.post(
@@ -279,6 +289,10 @@ def test_invited_user_can_change_temporary_password_and_sessions_are_revoked(
         },
     )
 
+    assert created.status_code == 200
+    assert created.json()["data"]["invitation"]["status"] == "pending"
+    assert before_accept.status_code == 401
+    assert accepted.status_code == 200
     assert login.status_code == 200
     assert wrong_current.status_code == 400
     assert changed.status_code == 200
@@ -290,9 +304,10 @@ def test_invited_user_can_change_temporary_password_and_sessions_are_revoked(
 
 def test_inviting_team_manager_is_atomic_and_permissions_are_scoped(identity_client, monkeypatch):
     client, data = identity_client
+    raw_token = "team-manager-invitation-token-with-enough-random-looking-bytes"
     monkeypatch.setattr(
-        "app.api.v1.people.generate_temporary_password",
-        lambda: "InvitePassword123!",
+        "app.services.employee_invitations.secrets.token_urlsafe",
+        lambda _length: raw_token,
     )
     invited = client.post(
         "/api/v1/people/invitations",
@@ -309,6 +324,7 @@ def test_inviting_team_manager_is_atomic_and_permissions_are_scoped(identity_cli
     assert invited.status_code == 200
     invitation = invited.json()["data"]
     assert invitation["email_queued"] is True
+    assert invitation["invitation"]["status"] == "pending"
 
     db: Session = data["session_factory"]()
     try:
@@ -333,6 +349,8 @@ def test_inviting_team_manager_is_atomic_and_permissions_are_scoped(identity_cli
         )
         assert manager.employee_id == employee.id
         assert manager.role == "team_owner"
+        assert manager.status == "invited"
+        assert employee.status == "invited"
         assert employee.timezone == "Africa/Cairo"
         assert employee.start_date.isoformat() == "2026-01-01"
         assert employee.work_profile.shift_start.isoformat() == "10:00:00"
@@ -340,13 +358,26 @@ def test_inviting_team_manager_is_atomic_and_permissions_are_scoped(identity_cli
         assert len(employee.work_profile.break_rules) == 2
         assert membership is not None and membership.status == "active"
         assert ownership is not None
-        assert delivery.category == "admin_welcome"
+        assert delivery.category == "employee_invitation"
         assert delivery.status == "suppressed"
     finally:
         db.close()
 
+    before_accept = client.post(
+        "/api/v1/auth/login",
+        json={"email": "manager@kentconsultancy.co", "password": "InvitePassword123!"},
+    )
+    verified = client.get(f"/api/v1/people/invitations/{raw_token}")
+    accepted = client.post(
+        f"/api/v1/people/invitations/{raw_token}",
+        json={"password": "InvitePassword123!"},
+    )
     login = client.post(
         "/api/v1/auth/login",
+        json={"email": "manager@kentconsultancy.co", "password": "InvitePassword123!"},
+    )
+    employee_app_login = client.post(
+        "/api/v1/employee-auth/login",
         json={"email": "manager@kentconsultancy.co", "password": "InvitePassword123!"},
     )
     manager_headers = {"Authorization": f"Bearer {login.json()['data']['access_token']}"}
@@ -365,7 +396,13 @@ def test_inviting_team_manager_is_atomic_and_permissions_are_scoped(identity_cli
         },
     )
 
+    assert before_accept.status_code == 401
+    assert verified.status_code == 200
+    assert verified.json()["data"]["kind"] == "team_manager"
+    assert accepted.status_code == 200
+    assert accepted.json()["data"]["admin_user_id"] == invitation["admin_user_id"]
     assert login.status_code == 200
+    assert employee_app_login.status_code == 200
     assert me.status_code == 200
     assert "tasks.manage_team" in me.json()["data"]["permissions"]
     assert "company.manage" not in me.json()["data"]["permissions"]
@@ -375,12 +412,8 @@ def test_inviting_team_manager_is_atomic_and_permissions_are_scoped(identity_cli
     assert invite_attempt.status_code == 403
 
 
-def test_general_admin_can_invite_employee_and_other_general_admin(identity_client, monkeypatch):
+def test_general_admin_can_invite_employee_and_other_general_admin(identity_client):
     client, data = identity_client
-    monkeypatch.setattr(
-        "app.api.v1.people.generate_temporary_password",
-        lambda: "AdminInvitePassword123!",
-    )
     employee_response = client.post(
         "/api/v1/people/invitations",
         headers=data["general_headers"],
@@ -428,14 +461,17 @@ def test_general_admin_can_invite_employee_and_other_general_admin(identity_clie
             select(AdminUser).where(AdminUser.email == "admin2@kentconsultancy.co")
         )
         invited_hr = db.scalar(select(AdminUser).where(AdminUser.email == "hr@kentconsultancy.co"))
-        assert {row.category for row in deliveries} == {"employee_invitation", "admin_welcome"}
+        assert {row.category for row in deliveries} == {"employee_invitation"}
         assert invited_employee is not None
         assert invited_admin is not None and invited_admin.role == "general_admin"
+        assert invited_admin.status == "invited"
         assert invited_admin.employee is not None
+        assert invited_admin.employee.status == "invited"
         assert invited_admin.employee.job_title == "Operations Manager"
         assert invited_admin.employee.work_profile.required_daily_minutes == 480
         assert len(invited_admin.employee.work_profile.break_rules) == 2
         assert invited_hr is not None and invited_hr.role == "hr"
+        assert invited_hr.status == "invited"
         assert invited_hr.employee is not None
         assert invited_hr.employee.work_profile.shift_start.isoformat() == "10:00:00"
     finally:
@@ -542,9 +578,10 @@ def test_general_admin_can_reset_manager_password_and_queue_reset_email(
     identity_client, monkeypatch
 ):
     client, data = identity_client
+    raw_token = "password-reset-manager-invitation-token-with-enough-length"
     monkeypatch.setattr(
-        "app.api.v1.people.generate_temporary_password",
-        lambda: "OriginalInvitePassword123!",
+        "app.services.employee_invitations.secrets.token_urlsafe",
+        lambda _length: raw_token,
     )
     invited = client.post(
         "/api/v1/people/invitations",
@@ -558,6 +595,10 @@ def test_general_admin_can_reset_manager_password_and_queue_reset_email(
         },
     )
     admin_id = invited.json()["data"]["admin_user_id"]
+    accepted = client.post(
+        f"/api/v1/people/invitations/{raw_token}",
+        json={"password": "OriginalInvitePassword123!"},
+    )
     changed = client.patch(
         f"/api/v1/users/{admin_id}",
         headers=data["general_headers"],
@@ -587,10 +628,14 @@ def test_general_admin_can_reset_manager_password_and_queue_reset_email(
     finally:
         db.close()
 
+    assert accepted.status_code == 200
     assert changed.status_code == 200
     assert old_login.status_code == 401
     assert new_login.status_code == 200
-    assert [row.category for row in deliveries] == ["admin_welcome", "admin_password_reset"]
+    assert [row.category for row in deliveries] == [
+        "employee_invitation",
+        "admin_password_reset",
+    ]
     assert all(row.status == "suppressed" for row in deliveries)
 
 
