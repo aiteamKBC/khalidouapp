@@ -18,6 +18,11 @@ Daily operation after enrollment:
 1. Windows login starts Khaliduo automatically.
 2. The agent authenticates using saved device credentials.
 3. The agent starts or resumes the current work session.
-4. Heartbeats, activity events, and screenshots sync to the backend.
+4. Heartbeats, foreground application/domain activity, and screenshots sync to the backend.
+
+While work tracking is active on Windows, the agent samples the foreground
+application. For supported browsers it reads the active address locally, removes
+everything except the hostname, and sends only that domain. Full URLs and page
+titles are never stored.
 
 Screenshot cadence is controlled by the company tracking settings. With the default settings, Khaliduo captures two screenshots at random times inside each 10-minute interval.

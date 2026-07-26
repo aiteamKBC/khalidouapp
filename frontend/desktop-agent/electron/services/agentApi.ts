@@ -626,6 +626,7 @@ export async function sendActivityEvent(options: {
   sessionId: string;
   eventId: string;
   eventType: string;
+  eventTimestamp?: string;
   payload?: Record<string, unknown>;
 }) {
   const response = await axios.post<
@@ -635,7 +636,7 @@ export async function sendActivityEvent(options: {
     {
       event_id: options.eventId,
       event_type: options.eventType,
-      event_timestamp: new Date().toISOString(),
+      event_timestamp: options.eventTimestamp ?? new Date().toISOString(),
       payload: options.payload ?? {},
     },
     { headers: getAuthHeaders() },

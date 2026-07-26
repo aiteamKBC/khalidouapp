@@ -20,6 +20,7 @@ from app.models import (
     WorkSession,
 )
 from app.schemas.session import (
+    ActivityEventRequest,
     HeartbeatRequest,
     PauseStartRequest,
     SessionEndRequest,
@@ -28,6 +29,7 @@ from app.schemas.session import (
 from app.services.session_tracking import (
     end_session,
     get_current_session,
+    record_agent_event,
     record_heartbeat,
     resume_paid_pause,
     start_paid_pause,
@@ -82,6 +84,48 @@ def tracking_context():
         db.close()
         Base.metadata.drop_all(engine)
         engine.dispose()
+
+
+def test_foreground_activity_is_reduced_to_safe_usage_metadata(tracking_context):
+    db, device = tracking_context
+    started = start_or_get_session(
+        db,
+        device,
+        SessionStartRequest(started_at=datetime.now(UTC) - timedelta(minutes=1)),
+    )
+    event_id = uuid4()
+
+    record_agent_event(
+        db,
+        device=device,
+        session_id=UUID(started["session"]["id"]),
+        payload=ActivityEventRequest(
+            event_id=event_id,
+            event_type="foreground_activity",
+            event_timestamp=datetime.now(UTC),
+            payload={
+                "application_name": "  Google   Chrome ",
+                "process_name": "chrome",
+                "site_domain": "www.example.com",
+                "ended_at": datetime.now(UTC).isoformat(),
+                "duration_seconds": 9_999,
+                "full_url": "https://example.com/private?secret=value",
+                "window_title": "Sensitive page title",
+            },
+        ),
+    )
+
+    event = db.scalar(select(ActivityEvent).where(ActivityEvent.idempotency_key == str(event_id)))
+    assert event is not None
+    assert event.payload == {
+        "application_name": "Google Chrome",
+        "process_name": "chrome",
+        "site_domain": "example.com",
+        "ended_at": event.payload["ended_at"],
+        "duration_seconds": 300,
+    }
+    assert "full_url" not in event.payload
+    assert "window_title" not in event.payload
 
 
 def test_duplicate_session_end_keeps_original_end_state(tracking_context):

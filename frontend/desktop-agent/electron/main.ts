@@ -4,9 +4,11 @@ import log from "electron-log/main";
 import electronUpdater from "electron-updater";
 import dotenv from "dotenv";
 import axios from "axios";
+import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -193,6 +195,22 @@ type IdleLossAlert = {
   endedAt: string;
 };
 
+type ForegroundActivity = {
+  applicationName: string;
+  processName: string;
+  siteDomain: string | null;
+};
+
+type ForegroundActivitySegment = ForegroundActivity & {
+  sessionId: string;
+  startedAt: number;
+  lastObservedAt: number;
+};
+
+const execFileAsync = promisify(execFile);
+const FOREGROUND_SAMPLE_INTERVAL_MS = 15_000;
+const FOREGROUND_SEGMENT_MAX_MS = 60_000;
+
 let mainWindow: Electron.BrowserWindow | null = null;
 let tray: Electron.Tray | null = null;
 let isQuitting = false;
@@ -200,6 +218,9 @@ let quitNotificationSent = false;
 let currentSessionId: string | null = null;
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 let durationTimer: ReturnType<typeof setInterval> | null = null;
+let foregroundActivityTimer: ReturnType<typeof setInterval> | null = null;
+let foregroundActivityTickRunning = false;
+let foregroundActivitySegment: ForegroundActivitySegment | null = null;
 let idleTimer: ReturnType<typeof setInterval> | null = null;
 let idleAttentionTimer: ReturnType<typeof setTimeout> | null = null;
 let idleAlertAttentionActive = false;
@@ -291,7 +312,73 @@ const runtimeStatus: AgentRuntimeStatus = {
 };
 
 const privacyNotice =
-  "While this enrolled device is active, unlocked, and connected to AC power, company policy may capture periodic workplace screenshots even when no task timer is selected. It does not record typed text, passwords, webcam, microphone, or personal files.";
+  "While work tracking is active, Khaliduo records the foreground application name and, for supported browsers, the website domain. Company policy may also capture periodic workplace screenshots while this enrolled device is active, unlocked, and connected to AC power. Full URLs, page titles, typed text, passwords, webcam, microphone, and personal files are not recorded.";
+
+const FOREGROUND_WINDOW_POWERSHELL = String.raw`
+$ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class KhaliduoForegroundWindow {
+  [DllImport("user32.dll")]
+  public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")]
+  public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+}
+'@ -ErrorAction SilentlyContinue
+
+$handle = [KhaliduoForegroundWindow]::GetForegroundWindow()
+if ($handle -eq [IntPtr]::Zero) {
+  [PSCustomObject]@{ processName = $null; url = $null } | ConvertTo-Json -Compress
+  exit 0
+}
+
+$processId = [uint32]0
+[void][KhaliduoForegroundWindow]::GetWindowThreadProcessId($handle, [ref]$processId)
+$processInfo = Get-Process -Id $processId -ErrorAction Stop
+$processName = $processInfo.ProcessName.ToLowerInvariant()
+$url = $null
+$browserProcesses = @('chrome', 'msedge', 'firefox', 'brave', 'opera', 'vivaldi')
+
+if ($browserProcesses -contains $processName) {
+  try {
+    Add-Type -AssemblyName UIAutomationClient
+    $root = [System.Windows.Automation.AutomationElement]::FromHandle($handle)
+    $rootBounds = $root.Current.BoundingRectangle
+    $editCondition = New-Object System.Windows.Automation.PropertyCondition(
+      [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+      [System.Windows.Automation.ControlType]::Edit
+    )
+    $edits = $root.FindAll(
+      [System.Windows.Automation.TreeScope]::Descendants,
+      $editCondition
+    )
+    foreach ($element in $edits) {
+      try {
+        $rectangle = $element.Current.BoundingRectangle
+        if ($rectangle.Top -gt ($rootBounds.Top + 240)) { continue }
+        $pattern = $element.GetCurrentPattern(
+          [System.Windows.Automation.ValuePattern]::Pattern
+        )
+        $candidate = $pattern.Current.Value.Trim()
+        if (
+          $candidate -match '^(https?://|[a-z0-9][a-z0-9.-]+\.[a-z]{2,}([/:]|$))'
+        ) {
+          $url = $candidate
+          break
+        }
+      } catch {
+        continue
+      }
+    }
+  } catch {
+    $url = $null
+  }
+}
+
+[PSCustomObject]@{ processName = $processName; url = $url } | ConvertTo-Json -Compress
+`;
 
 dotenv.config({
   path: app.isPackaged
@@ -1175,6 +1262,250 @@ function startIdleMonitor() {
   }, 250);
 }
 
+function applicationDisplayName(processName: string) {
+  const normalized = processName.trim().replace(/\.exe$/i, "").toLowerCase();
+  const knownApplications: Record<string, string> = {
+    chrome: "Google Chrome",
+    msedge: "Microsoft Edge",
+    firefox: "Mozilla Firefox",
+    brave: "Brave",
+    opera: "Opera",
+    vivaldi: "Vivaldi",
+    code: "Visual Studio Code",
+    devenv: "Visual Studio",
+    winword: "Microsoft Word",
+    excel: "Microsoft Excel",
+    powerpnt: "Microsoft PowerPoint",
+    outlook: "Microsoft Outlook",
+    teams: "Microsoft Teams",
+    "ms-teams": "Microsoft Teams",
+    slack: "Slack",
+    explorer: "File Explorer",
+    notepad: "Notepad",
+    photoshop: "Adobe Photoshop",
+    acrobat: "Adobe Acrobat",
+  };
+  return (
+    knownApplications[normalized] ??
+    normalized
+      .split(/[-_.\s]+/)
+      .filter(Boolean)
+      .map((part) => `${part[0]?.toUpperCase() ?? ""}${part.slice(1)}`)
+      .join(" ")
+  );
+}
+
+function siteDomainFromAddress(address: string | null | undefined) {
+  const value = address?.trim();
+  if (!value || /\s/.test(value)) {
+    return null;
+  }
+  try {
+    const candidate = /^[a-z][a-z0-9+.-]*:\/\//i.test(value)
+      ? value
+      : `https://${value}`;
+    const parsed = new URL(candidate);
+    if (!["http:", "https:"].includes(parsed.protocol)) {
+      return null;
+    }
+    return parsed.hostname.toLowerCase().replace(/^www\./, "") || null;
+  } catch {
+    return null;
+  }
+}
+
+async function readForegroundActivity(): Promise<ForegroundActivity | null> {
+  if (process.platform !== "win32") {
+    return null;
+  }
+  try {
+    const { stdout } = await execFileAsync(
+      "powershell.exe",
+      [
+        "-NoLogo",
+        "-NoProfile",
+        "-NonInteractive",
+        "-WindowStyle",
+        "Hidden",
+        "-Command",
+        FOREGROUND_WINDOW_POWERSHELL,
+      ],
+      {
+        encoding: "utf8",
+        timeout: 5_000,
+        windowsHide: true,
+        maxBuffer: 64 * 1024,
+      },
+    );
+    const output = String(stdout).trim();
+    if (!output) {
+      return null;
+    }
+    const metadata = JSON.parse(output) as {
+      processName?: unknown;
+      url?: unknown;
+    };
+    if (typeof metadata.processName !== "string" || !metadata.processName.trim()) {
+      return null;
+    }
+    const processName = metadata.processName.trim().slice(0, 120);
+    return {
+      processName,
+      applicationName: applicationDisplayName(processName).slice(0, 160),
+      siteDomain:
+        typeof metadata.url === "string"
+          ? (siteDomainFromAddress(metadata.url)?.slice(0, 253) ?? null)
+          : null,
+    };
+  } catch (error) {
+    log.debug("Foreground application could not be read", error);
+    return null;
+  }
+}
+
+function sameForegroundActivity(
+  left: ForegroundActivitySegment,
+  right: ForegroundActivity,
+) {
+  return (
+    left.processName === right.processName &&
+    left.applicationName === right.applicationName &&
+    left.siteDomain === right.siteDomain
+  );
+}
+
+async function uploadForegroundActivitySegment(
+  segment: ForegroundActivitySegment,
+  endedAtMs: number,
+) {
+  const effectiveEnd = Math.max(segment.startedAt + 1_000, endedAtMs);
+  const durationSeconds = Math.max(
+    1,
+    Math.min(300, Math.round((effectiveEnd - segment.startedAt) / 1_000)),
+  );
+  const eventId = randomUUID();
+  const eventTimestamp = new Date(segment.startedAt).toISOString();
+  const payload = {
+    application_name: segment.applicationName,
+    process_name: segment.processName,
+    site_domain: segment.siteDomain,
+    ended_at: new Date(effectiveEnd).toISOString(),
+    duration_seconds: durationSeconds,
+  };
+  try {
+    await sendActivityEvent({
+      sessionId: segment.sessionId,
+      eventId,
+      eventType: "foreground_activity",
+      eventTimestamp,
+      payload,
+    });
+  } catch (error) {
+    enqueuePendingEvent({
+      id: eventId,
+      method: "POST",
+      endpoint: `/agent/sessions/${segment.sessionId}/events`,
+      payload: {
+        event_id: eventId,
+        event_type: "foreground_activity",
+        event_timestamp: eventTimestamp,
+        payload,
+      },
+      idempotencyKey: eventId,
+    });
+    log.warn("Foreground application segment was queued for sync", error);
+  }
+}
+
+async function flushForegroundActivitySegment(endedAtMs = Date.now()) {
+  const segment = foregroundActivitySegment;
+  foregroundActivitySegment = null;
+  if (!segment) {
+    return;
+  }
+  await uploadForegroundActivitySegment(
+    segment,
+    Math.max(segment.lastObservedAt, endedAtMs),
+  );
+}
+
+async function foregroundActivityTick() {
+  if (foregroundActivityTickRunning) {
+    return;
+  }
+  foregroundActivityTickRunning = true;
+  try {
+    const sessionId = currentSessionId;
+    const shouldCapture =
+      Boolean(sessionId) &&
+      runtimeStatus.enrolled &&
+      !runtimeStatus.trackingPaused &&
+      runtimeStatus.trackingStatus === "active";
+    if (!shouldCapture || !sessionId) {
+      await flushForegroundActivitySegment();
+      return;
+    }
+
+    const activity = await readForegroundActivity();
+    const observedAt = Date.now();
+    if (
+      !foregroundActivityTimer ||
+      currentSessionId !== sessionId ||
+      runtimeStatus.trackingPaused ||
+      runtimeStatus.trackingStatus !== "active"
+    ) {
+      await flushForegroundActivitySegment(observedAt);
+      return;
+    }
+    if (!activity) {
+      await flushForegroundActivitySegment(observedAt);
+      return;
+    }
+
+    if (
+      foregroundActivitySegment &&
+      foregroundActivitySegment.sessionId === sessionId &&
+      sameForegroundActivity(foregroundActivitySegment, activity)
+    ) {
+      foregroundActivitySegment.lastObservedAt = observedAt;
+      if (
+        observedAt - foregroundActivitySegment.startedAt >=
+        FOREGROUND_SEGMENT_MAX_MS
+      ) {
+        await flushForegroundActivitySegment(observedAt);
+        foregroundActivitySegment = {
+          ...activity,
+          sessionId,
+          startedAt: observedAt,
+          lastObservedAt: observedAt,
+        };
+      }
+      return;
+    }
+
+    await flushForegroundActivitySegment(observedAt);
+    foregroundActivitySegment = {
+      ...activity,
+      sessionId,
+      startedAt: observedAt,
+      lastObservedAt: observedAt,
+    };
+  } finally {
+    foregroundActivityTickRunning = false;
+  }
+}
+
+function startForegroundActivityMonitoring() {
+  if (foregroundActivityTimer || process.platform !== "win32") {
+    return;
+  }
+  foregroundActivityTimer = setInterval(
+    () => void foregroundActivityTick(),
+    FOREGROUND_SAMPLE_INTERVAL_MS,
+  );
+  void foregroundActivityTick();
+}
+
 async function heartbeatTick() {
   if (!currentSessionId || !runtimeStatus.enrolled) {
     return;
@@ -1285,6 +1616,7 @@ function startTimers() {
     );
   }
   startIdleMonitor();
+  startForegroundActivityMonitoring();
   startScreenshotMonitoring();
 }
 
@@ -1300,6 +1632,11 @@ function startScreenshotMonitoring() {
 
 function clearRuntimeTimers() {
   lastDurationTickAt = null;
+  if (foregroundActivityTimer) {
+    clearInterval(foregroundActivityTimer);
+    foregroundActivityTimer = null;
+  }
+  void flushForegroundActivitySegment();
   if (heartbeatTimer) {
     clearInterval(heartbeatTimer);
     heartbeatTimer = null;

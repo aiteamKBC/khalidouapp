@@ -809,6 +809,11 @@ def test_cancelling_today_override_restores_normal_schedule_immediately(team_cli
 def test_payroll_overtime_decision_updates_daily_source_records(team_client):
     client, data = team_client
     work_date = local_today("UTC")
+    payroll_month = (
+        (work_date.replace(day=28) + timedelta(days=4)).replace(day=1)
+        if work_date.day >= 26
+        else work_date.replace(day=1)
+    )
     db: Session = data["session_factory"]()
     try:
         db.add(
@@ -828,7 +833,7 @@ def test_payroll_overtime_decision_updates_daily_source_records(team_client):
         db.close()
 
     sheet = client.get(
-        f"/api/v1/payroll/sheet?month={work_date.strftime('%Y-%m')}",
+        f"/api/v1/payroll/sheet?month={payroll_month.strftime('%Y-%m')}",
         headers=data["general_headers"],
     )
     assert sheet.status_code == 200

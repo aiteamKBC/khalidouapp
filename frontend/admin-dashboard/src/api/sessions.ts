@@ -24,6 +24,46 @@ type BackendActivityEvent = {
   payload?: Record<string, unknown>;
 };
 
+type BackendApplicationHistory = {
+  employee_id: string;
+  date: string;
+  timezone: string;
+  total_seconds: number;
+  application_count: number;
+  website_count: number;
+  applications: Array<{ name: string; duration_seconds: number }>;
+  websites: Array<{ domain: string; duration_seconds: number }>;
+  items: Array<{
+    id: string;
+    application_name: string;
+    process_name?: string | null;
+    site_domain?: string | null;
+    started_at: string;
+    ended_at: string;
+    duration_seconds: number;
+  }>;
+};
+
+export type ApplicationHistory = {
+  employeeId: string;
+  date: string;
+  timezone: string;
+  totalSeconds: number;
+  applicationCount: number;
+  websiteCount: number;
+  applications: Array<{ name: string; durationSeconds: number }>;
+  websites: Array<{ domain: string; durationSeconds: number }>;
+  items: Array<{
+    id: string;
+    applicationName: string;
+    processName?: string;
+    siteDomain?: string;
+    startedAt: string;
+    endedAt: string;
+    durationSeconds: number;
+  }>;
+};
+
 function mapSession(session: BackendSession): WorkSession {
   return {
     id: session.id,
@@ -71,4 +111,41 @@ export async function getWorkdayTimeline(employeeId: string, day: string) {
     withQuery("/activity/timeline", { employee_id: employeeId, day }),
   );
   return mapWorkdayTimeline(timeline);
+}
+
+export async function getApplicationHistory(
+  employeeId: string,
+  day: string,
+): Promise<ApplicationHistory> {
+  const history = await apiFetch<BackendApplicationHistory>(
+    withQuery("/activity/application-history", {
+      employee_id: employeeId,
+      day,
+    }),
+  );
+  return {
+    employeeId: history.employee_id,
+    date: history.date,
+    timezone: history.timezone,
+    totalSeconds: history.total_seconds,
+    applicationCount: history.application_count,
+    websiteCount: history.website_count,
+    applications: history.applications.map((item) => ({
+      name: item.name,
+      durationSeconds: item.duration_seconds,
+    })),
+    websites: history.websites.map((item) => ({
+      domain: item.domain,
+      durationSeconds: item.duration_seconds,
+    })),
+    items: history.items.map((item) => ({
+      id: item.id,
+      applicationName: item.application_name,
+      processName: item.process_name ?? undefined,
+      siteDomain: item.site_domain ?? undefined,
+      startedAt: item.started_at,
+      endedAt: item.ended_at,
+      durationSeconds: item.duration_seconds,
+    })),
+  };
 }

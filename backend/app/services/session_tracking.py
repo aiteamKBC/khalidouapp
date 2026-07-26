@@ -65,8 +65,7 @@ def session_zone(db: Session, session: WorkSession) -> ZoneInfo:
         if device is not None:
             return employee_zone(db, device)
         timezone_name = (
-            db.scalar(select(Employee.timezone).where(Employee.id == session.employee_id))
-            or "UTC"
+            db.scalar(select(Employee.timezone).where(Employee.id == session.employee_id)) or "UTC"
         )
     try:
         return ZoneInfo(timezone_name)
@@ -287,19 +286,21 @@ def sync_session_time_buckets(
         if interval_end <= interval_start:
             continue
         interval_seconds = int((interval_end - interval_start).total_seconds())
-        normal_seconds = 0 if interval.get("work_category") == "extra" else (
-            overlap_seconds(interval_start, interval_end, shift_start, shift_end)
-            if shift_start and shift_end
-            else 0
+        normal_seconds = (
+            0
+            if interval.get("work_category") == "extra"
+            else (
+                overlap_seconds(interval_start, interval_end, shift_start, shift_end)
+                if shift_start and shift_end
+                else 0
+            )
         )
         row = buckets.setdefault(UUID(interval["session_id"]), {"normal": 0, "extra": 0})
         row["normal"] += normal_seconds
         row["extra"] += max(0, interval_seconds - normal_seconds)
 
     for day_session in _sessions_for_workday(db, session):
-        stored_worked_seconds = max(
-            0, day_session.active_seconds - day_session.deducted_seconds
-        )
+        stored_worked_seconds = max(0, day_session.active_seconds - day_session.deducted_seconds)
         classified = buckets.get(day_session.id, {"normal": 0, "extra": 0})
         classified_total = classified["normal"] + classified["extra"]
 
@@ -312,11 +313,7 @@ def sync_session_time_buckets(
         day_session.extra_seconds = classified["extra"]
         unclassified = max(0, worked_seconds - classified_total)
         session_end = utc(day_session.ended_at) if day_session.ended_at else calculated_at
-        if (
-            shift_start
-            and shift_end
-            and shift_start <= session_end <= shift_end
-        ):
+        if shift_start and shift_end and shift_start <= session_end <= shift_end:
             day_session.normal_seconds += unclassified
         else:
             # Missing timeline seconds must never become paid shift time merely
@@ -998,6 +995,40 @@ def record_agent_event(
     payload: ActivityEventRequest,
 ) -> dict[str, Any]:
     session = get_owned_session(db, device, session_id)
+    event_payload = payload.payload
+    if payload.event_type == "foreground_activity":
+        source = payload.payload or {}
+
+        def safe_text(key: str, maximum: int) -> str | None:
+            value = source.get(key)
+            if not isinstance(value, str):
+                return None
+            return " ".join(value.strip().split())[:maximum] or None
+
+        site_domain = safe_text("site_domain", 253)
+        if site_domain:
+            site_domain = site_domain.lower().removeprefix("www.")
+            if any(character.isspace() or character in "/?#@" for character in site_domain):
+                site_domain = None
+
+        # Foreground tracking is intentionally data-minimal: application
+        # identity, website domain, and duration only. Never persist a full URL,
+        # browser query, page title, or arbitrary extra agent fields.
+        event_payload = {
+            "application_name": safe_text("application_name", 160),
+            "process_name": safe_text("process_name", 120),
+            "site_domain": site_domain,
+            "ended_at": safe_text("ended_at", 40),
+            "duration_seconds": max(
+                1,
+                min(
+                    300,
+                    int(source.get("duration_seconds", 1))
+                    if str(source.get("duration_seconds", 1)).isdigit()
+                    else 1,
+                ),
+            ),
+        }
     event, duplicate = create_activity_event(
         db,
         device=device,
@@ -1005,7 +1036,7 @@ def record_agent_event(
         event_type=payload.event_type,
         event_timestamp=payload.event_timestamp,
         idempotency_key=str(payload.event_id),
-        payload=payload.payload,
+        payload=event_payload,
     )
 
     if payload.event_type in {"screen_locked", "system_suspended"}:

@@ -67,7 +67,7 @@ const fallbackStatus: AgentStatus = {
   updateVersion: null,
   updatePercent: null,
   privacyNotice:
-    "While this enrolled device is active, unlocked, and connected to AC power, company policy may capture periodic workplace screenshots even when no task timer is selected. It does not record typed text, passwords, webcam, microphone, or personal files.",
+    "While work tracking is active, Khaliduo records the foreground application name and, for supported browsers, the website domain. Company policy may also capture periodic workplace screenshots while this enrolled device is active, unlocked, and connected to AC power. Full URLs, page titles, typed text, passwords, webcam, microphone, and personal files are not recorded.",
 };
 
 const TRACKABLE_TASK_STAGES = new Set(["backlog", "assigned", "in_progress"]);

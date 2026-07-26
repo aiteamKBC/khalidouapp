@@ -52,6 +52,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { WorkdayTimeline } from "@/components/workday-timeline";
+import { ApplicationHistoryPanel } from "@/components/application-history-panel";
 import {
   getEmployee,
   getEmployeeChangeHistory,
@@ -103,6 +104,7 @@ function EmployeeDetailPage() {
   const [payrollMonth, setPayrollMonth] = useState(() => toDateKey(new Date()).slice(0, 7));
   const [selectedAttendanceDay, setSelectedAttendanceDay] = useState<string | null>(null);
   const [screenshotDay, setScreenshotDay] = useState<string | null>(null);
+  const [applicationHistoryDay, setApplicationHistoryDay] = useState(() => toDateKey(new Date()));
   const [showAmounts, setShowAmounts] = useState(false);
   const canManageSchedule = can(permissions.breaksManage);
   const canManageAttendance = can(permissions.timesheetsManage);
@@ -309,6 +311,7 @@ function EmployeeDetailPage() {
           {canViewPayroll && <TabsTrigger value="payroll">Monthly payroll</TabsTrigger>}
           <TabsTrigger value="sessions">Sessions</TabsTrigger>
           <TabsTrigger value="screenshots">Screenshots</TabsTrigger>
+          <TabsTrigger value="application-history">App & site history</TabsTrigger>
           <TabsTrigger value="timesheets">Timesheets</TabsTrigger>
           <TabsTrigger value="devices">Devices</TabsTrigger>
           <TabsTrigger value="activity">Activity</TabsTrigger>
@@ -631,6 +634,17 @@ function EmployeeDetailPage() {
                             <Camera className="mr-1 h-3.5 w-3.5" />
                             {row.screenshotCount}
                           </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => {
+                              setApplicationHistoryDay(row.date);
+                              setActiveTab("application-history");
+                            }}
+                          >
+                            <History className="mr-1 h-3.5 w-3.5" />
+                            History
+                          </Button>
                         </div>
                       </TableCell>
                     </TableRow>
@@ -831,6 +845,14 @@ function EmployeeDetailPage() {
           </div>
         </TabsContent>
 
+        <TabsContent value="application-history">
+          <ApplicationHistoryPanel
+            employeeId={employeeId}
+            day={applicationHistoryDay}
+            onDayChange={setApplicationHistoryDay}
+          />
+        </TabsContent>
+
         <TabsContent value="timesheets">
           <Card>
             <CardContent className="p-0">
@@ -994,17 +1016,33 @@ function EmployeeDetailPage() {
                 />
               )}
               <div className="flex justify-end">
-                <Button
-                  variant="outline"
-                  onClick={() => {
-                    setScreenshotDay(selectedAttendanceDay);
-                    setSelectedAttendanceDay(null);
-                    setActiveTab("screenshots");
-                  }}
-                >
-                  <Camera className="mr-2 h-4 w-4" />
-                  View this day's screenshots
-                </Button>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setScreenshotDay(selectedAttendanceDay);
+                      setSelectedAttendanceDay(null);
+                      setActiveTab("screenshots");
+                    }}
+                  >
+                    <Camera className="mr-2 h-4 w-4" />
+                    View this day's screenshots
+                  </Button>
+                  <Button
+                    variant="outline"
+                    disabled={!selectedAttendanceDay}
+                    onClick={() => {
+                      if (selectedAttendanceDay) {
+                        setApplicationHistoryDay(selectedAttendanceDay);
+                      }
+                      setSelectedAttendanceDay(null);
+                      setActiveTab("application-history");
+                    }}
+                  >
+                    <History className="mr-2 h-4 w-4" />
+                    View app & site history
+                  </Button>
+                </div>
               </div>
             </div>
           ) : (

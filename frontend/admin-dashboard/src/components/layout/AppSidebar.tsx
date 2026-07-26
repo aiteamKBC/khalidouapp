@@ -18,6 +18,7 @@ import {
   Coffee,
   Palmtree,
   CalendarCheck2,
+  History,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { BrandLogo } from "@/components/ui/brand-logo";
@@ -70,6 +71,12 @@ const navGroups: { label: string; items: NavItem[] }[] = [
         label: "Screenshots",
         icon: Camera,
         permission: permissions.screenshotsView,
+      },
+      {
+        to: "/history",
+        label: "App & Site History",
+        icon: History,
+        permission: permissions.timesheetsView,
       },
       {
         to: "/timesheets",

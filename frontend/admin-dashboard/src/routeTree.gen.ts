@@ -27,6 +27,7 @@ import { Route as AppPayrollRouteImport } from './routes/_app.payroll'
 import { Route as AppNotificationsRouteImport } from './routes/_app.notifications'
 import { Route as AppLiveActivityRouteImport } from './routes/_app.live-activity'
 import { Route as AppHolidayRequestsRouteImport } from './routes/_app.holiday-requests'
+import { Route as AppHistoryRouteImport } from './routes/_app.history'
 import { Route as AppEmployeesRouteImport } from './routes/_app.employees'
 import { Route as AppDevicesRouteImport } from './routes/_app.devices'
 import { Route as AppDashboardRouteImport } from './routes/_app.dashboard'
@@ -128,6 +129,11 @@ const AppHolidayRequestsRoute = AppHolidayRequestsRouteImport.update({
   path: '/holiday-requests',
   getParentRoute: () => AppRoute,
 } as any)
+const AppHistoryRoute = AppHistoryRouteImport.update({
+  id: '/history',
+  path: '/history',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppEmployeesRoute = AppEmployeesRouteImport.update({
   id: '/employees',
   path: '/employees',
@@ -196,6 +202,7 @@ export interface FileRoutesByFullPath {
   '/dashboard': typeof AppDashboardRoute
   '/devices': typeof AppDevicesRouteWithChildren
   '/employees': typeof AppEmployeesRouteWithChildren
+  '/history': typeof AppHistoryRoute
   '/holiday-requests': typeof AppHolidayRequestsRoute
   '/live-activity': typeof AppLiveActivityRoute
   '/notifications': typeof AppNotificationsRoute
@@ -226,6 +233,7 @@ export interface FileRoutesByTo {
   '/dashboard': typeof AppDashboardRoute
   '/devices': typeof AppDevicesRouteWithChildren
   '/employees': typeof AppEmployeesRouteWithChildren
+  '/history': typeof AppHistoryRoute
   '/holiday-requests': typeof AppHolidayRequestsRoute
   '/live-activity': typeof AppLiveActivityRoute
   '/notifications': typeof AppNotificationsRoute
@@ -258,6 +266,7 @@ export interface FileRoutesById {
   '/_app/dashboard': typeof AppDashboardRoute
   '/_app/devices': typeof AppDevicesRouteWithChildren
   '/_app/employees': typeof AppEmployeesRouteWithChildren
+  '/_app/history': typeof AppHistoryRoute
   '/_app/holiday-requests': typeof AppHolidayRequestsRoute
   '/_app/live-activity': typeof AppLiveActivityRoute
   '/_app/notifications': typeof AppNotificationsRoute
@@ -290,6 +299,7 @@ export interface FileRouteTypes {
     | '/dashboard'
     | '/devices'
     | '/employees'
+    | '/history'
     | '/holiday-requests'
     | '/live-activity'
     | '/notifications'
@@ -320,6 +330,7 @@ export interface FileRouteTypes {
     | '/dashboard'
     | '/devices'
     | '/employees'
+    | '/history'
     | '/holiday-requests'
     | '/live-activity'
     | '/notifications'
@@ -351,6 +362,7 @@ export interface FileRouteTypes {
     | '/_app/dashboard'
     | '/_app/devices'
     | '/_app/employees'
+    | '/_app/history'
     | '/_app/holiday-requests'
     | '/_app/live-activity'
     | '/_app/notifications'
@@ -507,6 +519,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppHolidayRequestsRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/history': {
+      id: '/_app/history'
+      path: '/history'
+      fullPath: '/history'
+      preLoaderRoute: typeof AppHistoryRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/employees': {
       id: '/_app/employees'
       path: '/employees'
@@ -642,6 +661,7 @@ interface AppRouteChildren {
   AppDashboardRoute: typeof AppDashboardRoute
   AppDevicesRoute: typeof AppDevicesRouteWithChildren
   AppEmployeesRoute: typeof AppEmployeesRouteWithChildren
+  AppHistoryRoute: typeof AppHistoryRoute
   AppHolidayRequestsRoute: typeof AppHolidayRequestsRoute
   AppLiveActivityRoute: typeof AppLiveActivityRoute
   AppNotificationsRoute: typeof AppNotificationsRoute
@@ -664,6 +684,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppDashboardRoute: AppDashboardRoute,
   AppDevicesRoute: AppDevicesRouteWithChildren,
   AppEmployeesRoute: AppEmployeesRouteWithChildren,
+  AppHistoryRoute: AppHistoryRoute,
   AppHolidayRequestsRoute: AppHolidayRequestsRoute,
   AppLiveActivityRoute: AppLiveActivityRoute,
   AppNotificationsRoute: AppNotificationsRoute,
