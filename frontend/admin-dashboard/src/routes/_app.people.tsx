@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FocusEvent, type FormEvent } from "react";
 import {
   Plus,
   Search,
@@ -165,6 +165,13 @@ function addClockMinutes(value: string, minutes: number) {
   const [hour = 0, minute = 0] = value.split(":").map(Number);
   const total = (hour * 60 + minute + minutes) % (24 * 60);
   return `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
+}
+
+function selectZeroOnFocus(event: FocusEvent<HTMLInputElement>) {
+  if (event.currentTarget.value && Number(event.currentTarget.value) === 0) {
+    const input = event.currentTarget;
+    requestAnimationFrame(() => input.select());
+  }
 }
 
 type PersonRow = {
@@ -1712,6 +1719,7 @@ function PeopleDirectory({
                           min={0}
                           step={0.01}
                           value={editSalaryAmount}
+                          onFocus={selectZeroOnFocus}
                           onChange={(event) => setEditSalaryAmount(Number(event.target.value) || 0)}
                         />
                         <Button
@@ -2676,6 +2684,7 @@ function AddPersonWizard({
                   }
                   readOnly={salaryType === "hourly"}
                   className={salaryType === "hourly" ? "bg-muted" : undefined}
+                  onFocus={selectZeroOnFocus}
                   onKeyDown={(event) => {
                     if (salaryAmount === "0" && /^\d$/.test(event.key)) {
                       event.preventDefault();
@@ -2694,6 +2703,7 @@ function AddPersonWizard({
                   value={salaryType === "monthly" ? calculatedHourlyRate.toFixed(2) : hourlyRate}
                   readOnly={salaryType === "monthly"}
                   className={salaryType === "monthly" ? "bg-muted" : undefined}
+                  onFocus={selectZeroOnFocus}
                   onKeyDown={(event) => {
                     if (hourlyRate === "0" && /^\d$/.test(event.key)) {
                       event.preventDefault();

@@ -1470,6 +1470,12 @@ function EmployeeProfileDialog({
               step="0.01"
               value={form.salaryAmount ?? 0}
               disabled={!showAmounts}
+              onFocus={(event) => {
+                if (Number(event.currentTarget.value) === 0) {
+                  const input = event.currentTarget;
+                  requestAnimationFrame(() => input.select());
+                }
+              }}
               onChange={(event) => setForm({ ...form, salaryAmount: Number(event.target.value) })}
             />
           </Field>
