@@ -262,6 +262,14 @@ class PersonInvitationCreate(BaseModel):
     annual_leave_days: int = Field(default=21, ge=0, le=365)
     work_profile: EmployeeWorkProfileUpdate | None = None
 
+    @field_validator("name")
+    @classmethod
+    def validate_person_name(cls, value: str) -> str:
+        clean_name = " ".join(value.split())
+        if not clean_name:
+            raise ValueError("Name is required.")
+        return clean_name
+
 
 class AdminAccessUpdate(BaseModel):
     role: Literal["general_admin", "team_owner", "hr"] | None = None

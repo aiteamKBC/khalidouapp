@@ -2022,6 +2022,8 @@ function AddPersonWizard({
   const [kind, setKind] = useState<PersonKind>("employee");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
+  const [nameTouched, setNameTouched] = useState(false);
+  const [emailTouched, setEmailTouched] = useState(false);
   const [jobTitle, setJobTitle] = useState("");
   const [teamIds, setTeamIds] = useState<string[]>([]);
   const [startDate, setStartDate] = useState("");
@@ -2052,6 +2054,8 @@ function AddPersonWizard({
     setKind("employee");
     setName("");
     setEmail("");
+    setNameTouched(false);
+    setEmailTouched(false);
     setJobTitle("");
     setTeamIds([]);
     setStartDate("");
@@ -2085,7 +2089,10 @@ function AddPersonWizard({
     setTimeout(reset, 200);
   }
 
+  const normalizedName = name.trim().replace(/\s+/g, " ");
   const normalizedEmail = email.trim().toLowerCase();
+  const emailIsValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail);
+  const identityIsValid = normalizedName.length > 0 && emailIsValid;
   const existingPerson = normalizedEmail
     ? (() => {
         const employee = employees.find((item) => item.email.toLowerCase() === normalizedEmail);
@@ -2115,12 +2122,15 @@ function AddPersonWizard({
 
   const createMutation = useMutation({
     mutationFn: async () => {
+      if (!identityIsValid) {
+        throw new Error("Enter the employee name and a valid work email.");
+      }
       if (existingPerson) {
         throw new Error(existingPersonMessage ?? "A person with this email already exists.");
       }
       const invitation = await invitePerson({
-        name,
-        email,
+        name: normalizedName,
+        email: normalizedEmail,
         kind: kind === "team_owner" ? "team_manager" : kind,
         teamIds,
         jobTitle,
@@ -2190,6 +2200,12 @@ function AddPersonWizard({
 
   function submitForm(event: FormEvent) {
     event.preventDefault();
+    setNameTouched(true);
+    setEmailTouched(true);
+    if (!identityIsValid) {
+      toast.error("Enter the employee name and a valid work email.");
+      return;
+    }
     if (existingPerson) {
       toast.error(existingPersonMessage ?? "A person with this email already exists.");
       return;
@@ -2411,23 +2427,43 @@ function AddPersonWizard({
           <form onSubmit={submitForm} className="space-y-4">
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-1.5">
-                <Label htmlFor="person-name">Name</Label>
+                <Label htmlFor="person-name">Name *</Label>
                 <Input
                   id="person-name"
                   value={name}
                   onChange={(event) => setName(event.target.value)}
+                  onBlur={() => setNameTouched(true)}
+                  aria-invalid={nameTouched && !normalizedName}
+                  aria-describedby={
+                    nameTouched && !normalizedName ? "person-name-error" : undefined
+                  }
                   required
                 />
+                {nameTouched && !normalizedName && (
+                  <p id="person-name-error" className="text-xs font-medium text-destructive">
+                    Name is required.
+                  </p>
+                )}
               </div>
               <div className="space-y-1.5">
-                <Label htmlFor="person-email">Work email</Label>
+                <Label htmlFor="person-email">Work email *</Label>
                 <Input
                   id="person-email"
                   type="email"
                   value={email}
                   onChange={(event) => setEmail(event.target.value)}
+                  onBlur={() => setEmailTouched(true)}
+                  aria-invalid={emailTouched && !emailIsValid}
+                  aria-describedby={
+                    emailTouched && !emailIsValid ? "person-email-error" : undefined
+                  }
                   required
                 />
+                {emailTouched && !emailIsValid && (
+                  <p id="person-email-error" className="text-xs font-medium text-destructive">
+                    Enter a valid work email.
+                  </p>
+                )}
                 {existingPersonMessage && (
                   <p className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs font-medium text-destructive">
                     {existingPersonMessage}
@@ -2495,6 +2531,7 @@ function AddPersonWizard({
                   type="submit"
                   disabled={
                     createMutation.isPending ||
+                    !identityIsValid ||
                     Boolean(existingPerson) ||
                     ((kind === "employee" || kind === "team_owner") && teamIds.length === 0)
                   }
