@@ -10,15 +10,19 @@ export function ApplicationHistoryPanel({
   employeeId,
   day,
   onDayChange,
+  showDayPicker = true,
+  enabled = true,
 }: {
   employeeId: string;
   day: string;
   onDayChange: (day: string) => void;
+  showDayPicker?: boolean;
+  enabled?: boolean;
 }) {
   const history = useQuery({
     queryKey: ["application-history", employeeId, day],
     queryFn: () => getApplicationHistory(employeeId, day),
-    enabled: Boolean(employeeId && day),
+    enabled: enabled && Boolean(employeeId && day),
     staleTime: 30_000,
     refetchInterval: 30_000,
   });
@@ -36,15 +40,17 @@ export function ApplicationHistoryPanel({
               content are not collected.
             </p>
           </div>
-          <div className="w-full space-y-1 sm:w-48">
-            <Label htmlFor={`application-history-day-${employeeId}`}>Day</Label>
-            <Input
-              id={`application-history-day-${employeeId}`}
-              type="date"
-              value={day}
-              onChange={(event) => onDayChange(event.target.value)}
-            />
-          </div>
+          {showDayPicker && (
+            <div className="w-full space-y-1 sm:w-48">
+              <Label htmlFor={`application-history-day-${employeeId}`}>Day</Label>
+              <Input
+                id={`application-history-day-${employeeId}`}
+                type="date"
+                value={day}
+                onChange={(event) => onDayChange(event.target.value)}
+              />
+            </div>
+          )}
         </CardContent>
       </Card>
 

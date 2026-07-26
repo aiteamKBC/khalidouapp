@@ -17,6 +17,7 @@ import {
   FileClock,
   FileSpreadsheet,
   History,
+  MonitorCheck,
   PencilLine,
   Plus,
   Save,
@@ -297,6 +298,15 @@ function EmployeeDetailPage() {
         actions={
           <div className="flex items-center gap-2">
             <StatusBadge status={e.accountStatus === "invited" ? "invited" : e.status} />
+            <Button asChild variant="outline" size="sm">
+              <Link
+                to="/monitoring"
+                search={{ employeeId: e.id, day: todayKey, tab: "attendance" }}
+              >
+                <MonitorCheck className="mr-2 h-4 w-4" />
+                Monitor
+              </Link>
+            </Button>
           </div>
         }
       />

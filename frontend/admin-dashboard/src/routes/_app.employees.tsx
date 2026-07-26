@@ -201,8 +201,15 @@ export function EmployeesList({ embedded = false }: { embedded?: boolean }) {
                 <TableCell className="text-sm">{employee.currentDeviceName ?? "-"}</TableCell>
                 <TableCell className="text-right">
                   <Button asChild variant="ghost" size="sm">
-                    <Link to="/employees/$employeeId" params={{ employeeId: employee.id }}>
-                      View
+                    <Link
+                      to="/monitoring"
+                      search={{
+                        employeeId: employee.id,
+                        day: todayIsoDate(),
+                        tab: "attendance",
+                      }}
+                    >
+                      Monitor
                     </Link>
                   </Button>
                 </TableCell>
@@ -220,4 +227,10 @@ export function EmployeesList({ embedded = false }: { embedded?: boolean }) {
       </Card>
     </div>
   );
+}
+
+function todayIsoDate() {
+  const now = new Date();
+  const local = new Date(now.getTime() - now.getTimezoneOffset() * 60_000);
+  return local.toISOString().slice(0, 10);
 }

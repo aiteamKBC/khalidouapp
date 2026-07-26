@@ -6,9 +6,8 @@ import {
   CalendarCheck2,
   CalendarDays,
   Clock3,
-  History,
-  Images,
   ListChecks,
+  MonitorCheck,
   TimerReset,
   Users,
 } from "lucide-react";
@@ -332,15 +331,16 @@ function AttendancePage() {
                               Details
                             </Button>
                             <Button type="button" size="sm" variant="outline" asChild>
-                              <Link to="/screenshots" search={{ employeeId: row.employeeId, day }}>
-                                <Images className="mr-1 h-4 w-4" />
-                                Screenshots
-                              </Link>
-                            </Button>
-                            <Button type="button" size="sm" variant="outline" asChild>
-                              <Link to="/history" search={{ employeeId: row.employeeId, day }}>
-                                <History className="mr-1 h-4 w-4" />
-                                History
+                              <Link
+                                to="/monitoring"
+                                search={{
+                                  employeeId: row.employeeId,
+                                  day,
+                                  tab: "attendance",
+                                }}
+                              >
+                                <MonitorCheck className="mr-1 h-4 w-4" />
+                                Monitor
                               </Link>
                             </Button>
                           </div>
@@ -522,15 +522,16 @@ function AttendancePage() {
               {selectedEmployeeId && (
                 <div className="flex flex-wrap gap-2">
                   <Button type="button" size="sm" variant="outline" asChild>
-                    <Link to="/screenshots" search={{ employeeId: selectedEmployeeId, day }}>
-                      <Images className="mr-1 h-4 w-4" />
-                      View day screenshots
-                    </Link>
-                  </Button>
-                  <Button type="button" size="sm" variant="outline" asChild>
-                    <Link to="/history" search={{ employeeId: selectedEmployeeId, day }}>
-                      <History className="mr-1 h-4 w-4" />
-                      View app & site history
+                    <Link
+                      to="/monitoring"
+                      search={{
+                        employeeId: selectedEmployeeId,
+                        day,
+                        tab: "attendance",
+                      }}
+                    >
+                      <MonitorCheck className="mr-1 h-4 w-4" />
+                      Open employee monitoring
                     </Link>
                   </Button>
                 </div>

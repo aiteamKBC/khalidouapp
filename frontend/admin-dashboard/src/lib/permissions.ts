@@ -37,6 +37,7 @@ export function requiredPermissionForPath(pathname: string): PermissionKey | und
   if (pathname.startsWith("/dashboard")) return permissions.dashboardView;
   if (pathname.startsWith("/teams")) return permissions.teamsView;
   if (pathname.startsWith("/projects")) return permissions.projectsView;
+  if (pathname.startsWith("/monitoring")) return permissions.timesheetsView;
   if (pathname.startsWith("/screenshots")) return permissions.screenshotsView;
   if (pathname.startsWith("/timesheets")) return permissions.timesheetsView;
   if (pathname.startsWith("/time-adjustments")) return permissions.timeRequestsView;

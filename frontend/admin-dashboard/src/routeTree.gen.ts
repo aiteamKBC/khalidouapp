@@ -25,6 +25,7 @@ import { Route as AppProfileRouteImport } from './routes/_app.profile'
 import { Route as AppPeopleRouteImport } from './routes/_app.people'
 import { Route as AppPayrollRouteImport } from './routes/_app.payroll'
 import { Route as AppNotificationsRouteImport } from './routes/_app.notifications'
+import { Route as AppMonitoringRouteImport } from './routes/_app.monitoring'
 import { Route as AppLiveActivityRouteImport } from './routes/_app.live-activity'
 import { Route as AppHolidayRequestsRouteImport } from './routes/_app.holiday-requests'
 import { Route as AppHistoryRouteImport } from './routes/_app.history'
@@ -119,6 +120,11 @@ const AppNotificationsRoute = AppNotificationsRouteImport.update({
   path: '/notifications',
   getParentRoute: () => AppRoute,
 } as any)
+const AppMonitoringRoute = AppMonitoringRouteImport.update({
+  id: '/monitoring',
+  path: '/monitoring',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppLiveActivityRoute = AppLiveActivityRouteImport.update({
   id: '/live-activity',
   path: '/live-activity',
@@ -205,6 +211,7 @@ export interface FileRoutesByFullPath {
   '/history': typeof AppHistoryRoute
   '/holiday-requests': typeof AppHolidayRequestsRoute
   '/live-activity': typeof AppLiveActivityRoute
+  '/monitoring': typeof AppMonitoringRoute
   '/notifications': typeof AppNotificationsRoute
   '/payroll': typeof AppPayrollRoute
   '/people': typeof AppPeopleRoute
@@ -236,6 +243,7 @@ export interface FileRoutesByTo {
   '/history': typeof AppHistoryRoute
   '/holiday-requests': typeof AppHolidayRequestsRoute
   '/live-activity': typeof AppLiveActivityRoute
+  '/monitoring': typeof AppMonitoringRoute
   '/notifications': typeof AppNotificationsRoute
   '/payroll': typeof AppPayrollRoute
   '/people': typeof AppPeopleRoute
@@ -269,6 +277,7 @@ export interface FileRoutesById {
   '/_app/history': typeof AppHistoryRoute
   '/_app/holiday-requests': typeof AppHolidayRequestsRoute
   '/_app/live-activity': typeof AppLiveActivityRoute
+  '/_app/monitoring': typeof AppMonitoringRoute
   '/_app/notifications': typeof AppNotificationsRoute
   '/_app/payroll': typeof AppPayrollRoute
   '/_app/people': typeof AppPeopleRoute
@@ -302,6 +311,7 @@ export interface FileRouteTypes {
     | '/history'
     | '/holiday-requests'
     | '/live-activity'
+    | '/monitoring'
     | '/notifications'
     | '/payroll'
     | '/people'
@@ -333,6 +343,7 @@ export interface FileRouteTypes {
     | '/history'
     | '/holiday-requests'
     | '/live-activity'
+    | '/monitoring'
     | '/notifications'
     | '/payroll'
     | '/people'
@@ -365,6 +376,7 @@ export interface FileRouteTypes {
     | '/_app/history'
     | '/_app/holiday-requests'
     | '/_app/live-activity'
+    | '/_app/monitoring'
     | '/_app/notifications'
     | '/_app/payroll'
     | '/_app/people'
@@ -503,6 +515,13 @@ declare module '@tanstack/react-router' {
       path: '/notifications'
       fullPath: '/notifications'
       preLoaderRoute: typeof AppNotificationsRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/monitoring': {
+      id: '/_app/monitoring'
+      path: '/monitoring'
+      fullPath: '/monitoring'
+      preLoaderRoute: typeof AppMonitoringRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/live-activity': {
@@ -664,6 +683,7 @@ interface AppRouteChildren {
   AppHistoryRoute: typeof AppHistoryRoute
   AppHolidayRequestsRoute: typeof AppHolidayRequestsRoute
   AppLiveActivityRoute: typeof AppLiveActivityRoute
+  AppMonitoringRoute: typeof AppMonitoringRoute
   AppNotificationsRoute: typeof AppNotificationsRoute
   AppPayrollRoute: typeof AppPayrollRoute
   AppPeopleRoute: typeof AppPeopleRoute
@@ -687,6 +707,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppHistoryRoute: AppHistoryRoute,
   AppHolidayRequestsRoute: AppHolidayRequestsRoute,
   AppLiveActivityRoute: AppLiveActivityRoute,
+  AppMonitoringRoute: AppMonitoringRoute,
   AppNotificationsRoute: AppNotificationsRoute,
   AppPayrollRoute: AppPayrollRoute,
   AppPeopleRoute: AppPeopleRoute,

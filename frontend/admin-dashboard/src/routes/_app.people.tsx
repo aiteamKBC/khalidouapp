@@ -153,6 +153,12 @@ const WORK_DAYS = [
   { value: 6, label: "Sun" },
 ];
 
+function todayIsoDate() {
+  const now = new Date();
+  const local = new Date(now.getTime() - now.getTimezoneOffset() * 60_000);
+  return local.toISOString().slice(0, 10);
+}
+
 function shiftMinutes(start: string, end: string) {
   const [startHour = 0, startMinute = 0] = start.split(":").map(Number);
   const [endHour = 0, endMinute = 0] = end.split(":").map(Number);
@@ -1086,13 +1092,17 @@ function PeopleDirectory({
                               className="rounded-full border-[#e5185d]/25 bg-[#fce3ec]/55 text-[#e5185d] hover:bg-[#fce3ec]"
                               onClick={() =>
                                 navigate({
-                                  to: "/employees/$employeeId",
-                                  params: { employeeId: row.dashboardEmployeeId! },
+                                  to: "/monitoring",
+                                  search: {
+                                    employeeId: row.dashboardEmployeeId!,
+                                    day: todayIsoDate(),
+                                    tab: "attendance",
+                                  },
                                 })
                               }
                             >
                               <Activity className="mr-1.5 h-3.5 w-3.5" />
-                              Employee profile
+                              Monitor
                             </Button>
                           )}
                         {row.isCurrentUser && !row.dashboardEmployeeId ? (
@@ -1113,6 +1123,19 @@ function PeopleDirectory({
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end" className="w-52">
+                            {row.dashboardEmployeeId && (
+                              <DropdownMenuItem
+                                onSelect={() =>
+                                  navigate({
+                                    to: "/employees/$employeeId",
+                                    params: { employeeId: row.dashboardEmployeeId! },
+                                  })
+                                }
+                              >
+                                <UserCircle className="h-4 w-4" />
+                                Employee profile
+                              </DropdownMenuItem>
+                            )}
                             {row.kind === "employee" ? (
                               <>
                                 {canManageAccess && row.status !== "archived" && (
