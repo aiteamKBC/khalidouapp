@@ -157,8 +157,7 @@ function shiftMinutes(start: string, end: string) {
   const [startHour = 0, startMinute = 0] = start.split(":").map(Number);
   const [endHour = 0, endMinute = 0] = end.split(":").map(Number);
   const startTotal = startHour * 60 + startMinute;
-  let endTotal = endHour * 60 + endMinute;
-  if (endTotal <= startTotal) endTotal += 24 * 60;
+  const endTotal = endHour * 60 + endMinute;
   return endTotal - startTotal;
 }
 
@@ -520,9 +519,63 @@ function PeopleDirectory({
     q,
   ]);
 
+  const editScheduleProblems = useMemo(() => {
+    const messages: string[] = [];
+    const breakIndexes = new Set<number>();
+    if (!managedEmployeeId || !managedWorkProfile.data) {
+      return { messages, breakIndexes };
+    }
+
+    const scheduledMinutes = shiftMinutes(editShiftStart, editShiftEnd);
+    const validShift = Boolean(editShiftStart && editShiftEnd && scheduledMinutes > 0);
+    if (!validShift) {
+      messages.push("Shift end must be later than shift start on the same day.");
+    }
+
+    editBreakRules.forEach((rule, index) => {
+      const label = rule.name?.trim() || `Break ${index + 1}`;
+      const start = rule.start_time?.slice(0, 5) ?? "";
+      const end = rule.end_time?.slice(0, 5) ?? "";
+      const duration = shiftMinutes(start, end);
+      if (!start || !end || duration <= 0) {
+        messages.push(`${label} must end after it starts.`);
+        breakIndexes.add(index);
+        return;
+      }
+      if (validShift && (start < editShiftStart || end > editShiftEnd)) {
+        messages.push(`${label} must stay inside the ${editShiftStart}–${editShiftEnd} shift.`);
+        breakIndexes.add(index);
+      }
+    });
+
+    const orderedBreaks = editBreakRules
+      .map((rule, index) => ({
+        index,
+        name: rule.name?.trim() || `Break ${index + 1}`,
+        start: rule.start_time?.slice(0, 5) ?? "",
+        end: rule.end_time?.slice(0, 5) ?? "",
+      }))
+      .filter((rule) => rule.start && rule.end && shiftMinutes(rule.start, rule.end) > 0)
+      .sort((left, right) => left.start.localeCompare(right.start));
+    for (let index = 1; index < orderedBreaks.length; index += 1) {
+      const previous = orderedBreaks[index - 1];
+      const current = orderedBreaks[index];
+      if (previous.end > current.start) {
+        messages.push(`${previous.name} overlaps with ${current.name}.`);
+        breakIndexes.add(previous.index);
+        breakIndexes.add(current.index);
+      }
+    }
+
+    return { messages: [...new Set(messages)], breakIndexes };
+  }, [editBreakRules, editShiftEnd, editShiftStart, managedEmployeeId, managedWorkProfile.data]);
+
   const updateMutation = useMutation({
     mutationFn: async () => {
       if (!editPersonRow) throw new Error("Choose a person to manage.");
+      if (editScheduleProblems.messages.length > 0) {
+        throw new Error(editScheduleProblems.messages[0]);
+      }
       const currentRole: EditableRole =
         editPersonRow.kind === "admin" ? editPersonRow.user!.role : "employee";
       if (editPersonRow.kind === "admin" && editUser) {
@@ -1387,7 +1440,9 @@ function PeopleDirectory({
                           <Input
                             id="manage-shift-start"
                             type="time"
+                            max={editShiftEnd}
                             value={editShiftStart}
+                            aria-invalid={shiftMinutes(editShiftStart, editShiftEnd) <= 0}
                             onChange={(event) => setEditShiftStart(event.target.value)}
                           />
                         </div>
@@ -1396,7 +1451,9 @@ function PeopleDirectory({
                           <Input
                             id="manage-shift-end"
                             type="time"
+                            min={editShiftStart}
                             value={editShiftEnd}
+                            aria-invalid={shiftMinutes(editShiftStart, editShiftEnd) <= 0}
                             onChange={(event) => setEditShiftEnd(event.target.value)}
                           />
                         </div>
@@ -1497,7 +1554,11 @@ function PeopleDirectory({
                         {editBreakRules.map((rule, index) => (
                           <div
                             key={`${rule.name}-${index}`}
-                            className="grid items-end gap-2 rounded-lg bg-muted/30 p-2 sm:grid-cols-[1fr_120px_120px_110px_auto]"
+                            className={cn(
+                              "grid items-end gap-2 rounded-lg border border-transparent bg-muted/30 p-2 sm:grid-cols-[1fr_120px_120px_110px_auto]",
+                              editScheduleProblems.breakIndexes.has(index) &&
+                                "border-destructive/60 bg-destructive/5",
+                            )}
                           >
                             <div className="space-y-1">
                               <Label>Break name</Label>
@@ -1518,23 +1579,38 @@ function PeopleDirectory({
                               <Label>Starts</Label>
                               <Input
                                 type="time"
+                                min={editShiftStart}
+                                max={rule.end_time?.slice(0, 5) || editShiftEnd}
                                 value={rule.start_time ?? ""}
-                                onChange={(event) =>
+                                aria-invalid={editScheduleProblems.breakIndexes.has(index)}
+                                onChange={(event) => {
+                                  const nextStart = event.target.value;
+                                  const nextMinutes = Math.max(
+                                    0,
+                                    shiftMinutes(nextStart, rule.end_time?.slice(0, 5) ?? ""),
+                                  );
                                   setEditBreakRules((current) =>
                                     current.map((item, itemIndex) =>
                                       itemIndex === index
-                                        ? { ...item, start_time: event.target.value }
+                                        ? {
+                                            ...item,
+                                            start_time: nextStart,
+                                            minutes: nextMinutes,
+                                          }
                                         : item,
                                     ),
-                                  )
-                                }
+                                  );
+                                }}
                               />
                             </div>
                             <div className="space-y-1">
                               <Label>Ends</Label>
                               <Input
                                 type="time"
+                                min={rule.start_time?.slice(0, 5) || editShiftStart}
+                                max={editShiftEnd}
                                 value={rule.end_time ?? ""}
+                                aria-invalid={editScheduleProblems.breakIndexes.has(index)}
                                 onChange={(event) => {
                                   const [startHour = 0, startMinute = 0] = String(
                                     rule.start_time ?? "00:00",
@@ -1586,6 +1662,16 @@ function PeopleDirectory({
                             </Button>
                           </div>
                         ))}
+                        {editScheduleProblems.messages.length > 0 && (
+                          <div
+                            role="alert"
+                            className="space-y-1 rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs font-semibold text-destructive"
+                          >
+                            {editScheduleProblems.messages.map((message) => (
+                              <p key={message}>{message}</p>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     </>
                   )}
@@ -1816,7 +1902,10 @@ function PeopleDirectory({
               >
                 Cancel
               </Button>
-              <Button type="submit" disabled={updateMutation.isPending}>
+              <Button
+                type="submit"
+                disabled={updateMutation.isPending || editScheduleProblems.messages.length > 0}
+              >
                 {updateMutation.isPending ? "Saving..." : "Save employee"}
               </Button>
             </div>
