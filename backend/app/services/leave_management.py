@@ -10,6 +10,7 @@ from app.services.work_profiles import DEFAULT_WORKING_DAYS
 
 
 DEFAULT_ANNUAL_CREDIT_DAYS = 21
+TEN_YEAR_ANNUAL_CREDIT_DAYS = 30
 
 
 def _add_six_months(value: date) -> date:
@@ -19,10 +20,31 @@ def _add_six_months(value: date) -> date:
     return date(year, month, min(value.day, monthrange(year, month)[1]))
 
 
-def entitled_credit_days(employee: Employee, year: int) -> Decimal:
+def _add_years(value: date, years: int) -> date:
+    target_year = value.year + years
+    return date(target_year, value.month, min(value.day, monthrange(target_year, value.month)[1]))
+
+
+def _leave_credit_reference_date(year: int, as_of: date) -> date:
+    if year < as_of.year:
+        return date(year, 12, 31)
+    if year == as_of.year:
+        return as_of
+    return date(year, 12, 31)
+
+
+def entitled_credit_days(
+    employee: Employee,
+    year: int,
+    *,
+    as_of: date | None = None,
+) -> Decimal:
     annual = Decimal(employee.annual_leave_days or DEFAULT_ANNUAL_CREDIT_DAYS)
     if employee.start_date is None:
         return Decimal("0.00")
+    reference_date = _leave_credit_reference_date(year, as_of or date.today())
+    if reference_date >= _add_years(employee.start_date, 10):
+        annual = max(annual, Decimal(TEN_YEAR_ANNUAL_CREDIT_DAYS))
     eligible_at = _add_six_months(employee.start_date)
     if year < eligible_at.year:
         return Decimal("0.00")

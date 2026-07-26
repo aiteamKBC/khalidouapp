@@ -2143,7 +2143,7 @@ function AddPersonWizard({
         jobTitle,
         timezone: "Africa/Cairo",
         startDate,
-        annualLeaveDays,
+        annualLeaveDays: effectiveAnnualLeaveDays,
         workProfile: {
           shiftStart,
           shiftEnd,
@@ -2323,9 +2323,11 @@ function AddPersonWizard({
       return changed ? normalized : rows;
     });
   }, [breaks, shiftEndMinutes, shiftStartMinutes]);
-  const firstYearLeaveCredit = (() => {
+  const currentLeaveYear = new Date().getFullYear();
+  const currentYearLeaveCredit = (() => {
     if (!startDate) return null;
     const [startYear, startMonth, startDay] = startDate.split("-").map(Number);
+    const now = new Date();
     const targetMonthStart = new Date(startYear, startMonth - 1 + 6, 1, 12);
     const targetMonthLastDay = new Date(
       targetMonthStart.getFullYear(),
@@ -2338,22 +2340,48 @@ function AddPersonWizard({
       Math.min(startDay, targetMonthLastDay),
       12,
     );
-    const fullYearCredit = eligibleAt.getFullYear() > startYear;
-    const remainingFullMonths = fullYearCredit ? 12 : 12 - (eligibleAt.getMonth() + 1);
+    const tenYearMonthLastDay = new Date(startYear + 10, startMonth, 0).getDate();
+    const tenYearAnniversary = new Date(
+      startYear + 10,
+      startMonth - 1,
+      Math.min(startDay, tenYearMonthLastDay),
+      12,
+    );
+    const hasTenYearsService = now >= tenYearAnniversary;
+    const effectiveAnnualDays = Math.max(annualLeaveDays, hasTenYearsService ? 30 : 21);
+    const eligibleYear = eligibleAt.getFullYear();
+    const creditType =
+      currentLeaveYear < eligibleYear
+        ? "not_eligible"
+        : currentLeaveYear > eligibleYear || startYear < eligibleYear
+          ? "full"
+          : "prorated";
+    const remainingFullMonths = creditType === "prorated" ? 12 - (eligibleAt.getMonth() + 1) : 0;
     return {
       eligibleAt: eligibleAt.toLocaleDateString(),
+      year: currentLeaveYear,
       months: remainingFullMonths,
-      days: fullYearCredit
-        ? annualLeaveDays
-        : Number(((remainingFullMonths * annualLeaveDays) / 12).toFixed(2)),
-      fullYearCredit,
+      days:
+        creditType === "not_eligible"
+          ? 0
+          : creditType === "full"
+            ? effectiveAnnualDays
+            : Number(((remainingFullMonths * effectiveAnnualDays) / 12).toFixed(2)),
+      creditType,
+      hasTenYearsService,
+      effectiveAnnualDays,
     };
   })();
-  const displayedLeaveDays = firstYearLeaveCredit?.days ?? annualLeaveDays;
-  const leaveCreditHelp = firstYearLeaveCredit
-    ? firstYearLeaveCredit.fullYearCredit
-      ? `Eligible after 6 months on ${firstYearLeaveCredit.eligibleAt}. New calendar year, so full ${annualLeaveDays} days.`
-      : `Eligible after 6 months on ${firstYearLeaveCredit.eligibleAt}. Rest of year: (${firstYearLeaveCredit.months} months / 12) x ${annualLeaveDays} = ${firstYearLeaveCredit.days} days.`
+  const effectiveAnnualLeaveDays = currentYearLeaveCredit?.effectiveAnnualDays ?? annualLeaveDays;
+  const displayedLeaveDays = currentYearLeaveCredit?.days ?? annualLeaveDays;
+  const leaveCreditHelp = currentYearLeaveCredit
+    ? currentYearLeaveCredit.creditType === "not_eligible"
+      ? `No annual leave credit for ${currentYearLeaveCredit.year}. Eligible after 6 months on ${currentYearLeaveCredit.eligibleAt}.`
+      : currentYearLeaveCredit.creditType === "full"
+        ? currentYearLeaveCredit.hasTenYearsService
+          ? `Full ${currentYearLeaveCredit.effectiveAnnualDays}-day entitlement for ${currentYearLeaveCredit.year} after 10 completed years of service.`
+          : `Full ${currentYearLeaveCredit.effectiveAnnualDays}-day entitlement for ${currentYearLeaveCredit.year}. Eligible since ${currentYearLeaveCredit.eligibleAt}.`
+        : `First-year entitlement for ${currentYearLeaveCredit.year}: (${currentYearLeaveCredit.months} months / 12) x ${currentYearLeaveCredit.effectiveAnnualDays} = ${currentYearLeaveCredit.days} days. Eligible on ${currentYearLeaveCredit.eligibleAt}.`
     : `Default: ${annualLeaveDays} days per full calendar year.`;
   const shiftMinutes = Math.max(
     0,
