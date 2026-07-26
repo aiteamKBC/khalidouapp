@@ -38,7 +38,7 @@ import {
 import { StatusBadge } from "@/components/ui/status-badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAuth } from "@/lib/auth";
-import { formatDateTime } from "@/lib/format";
+import { formatClock, formatDateTime } from "@/lib/format";
 import { permissions } from "@/lib/permissions";
 import type { Screenshot } from "@/types";
 
@@ -297,19 +297,19 @@ function DailyAttendanceTab({
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <AttendanceMetric
           label="Scheduled shift"
-          value={`${clock(row.scheduledStartAt, row.timezone)} – ${clock(row.scheduledEndAt, row.timezone)}`}
+          value={`${formatClock(row.scheduledStartAt, row.timezone)} – ${formatClock(row.scheduledEndAt, row.timezone)}`}
         />
         <AttendanceMetric
           label="First activity"
-          value={clock(row.actualFirstActivityAt, row.timezone)}
+          value={formatClock(row.actualFirstActivityAt, row.timezone)}
         />
         <AttendanceMetric
           label="Last activity"
-          value={
-            row.isRunning
-              ? "In progress"
-              : clock(row.actualSignOutAt ?? row.actualLastActivityAt, row.timezone)
-          }
+          value={formatClock(row.actualLastActivityAt, row.timezone)}
+        />
+        <AttendanceMetric
+          label="Sign-out"
+          value={row.isRunning ? "Open until now" : formatClock(row.actualSignOutAt, row.timezone)}
         />
         <AttendanceMetric label="Normal worked" value={duration(row.normalWorkedSeconds)} />
         <AttendanceMetric label="Idle" value={duration(row.idleSeconds)} tone="warning" />
@@ -611,15 +611,6 @@ function todayIsoDate() {
   const now = new Date();
   const local = new Date(now.getTime() - now.getTimezoneOffset() * 60_000);
   return local.toISOString().slice(0, 10);
-}
-
-function clock(value: string | null | undefined, timezone: string) {
-  if (!value) return "—";
-  return new Intl.DateTimeFormat([], {
-    hour: "numeric",
-    minute: "2-digit",
-    timeZone: timezone,
-  }).format(new Date(value));
 }
 
 function duration(value: number) {

@@ -1,6 +1,7 @@
 import { Activity, CalendarDays, Coffee, LockKeyhole, Moon } from "lucide-react";
 
 import type { WorkdayIntervalType, WorkdayTimeline as WorkdayTimelineData } from "@/types";
+import { formatClock } from "@/lib/format";
 
 type DisplayIntervalType = WorkdayIntervalType | "extra" | "leave";
 
@@ -46,15 +47,6 @@ const intervalStyles: Record<
   },
 };
 
-function formatClock(value: string | undefined, timezone: string) {
-  if (!value) return "-";
-  return new Intl.DateTimeFormat([], {
-    hour: "numeric",
-    minute: "2-digit",
-    timeZone: timezone,
-  }).format(new Date(value));
-}
-
 function formatDuration(totalSeconds: number) {
   const hours = Math.floor(totalSeconds / 3600);
   const minutes = Math.floor((totalSeconds % 3600) / 60);
@@ -95,10 +87,10 @@ export function WorkdayTimeline({ timeline }: { timeline?: WorkdayTimelineData }
           value={formatClock(timeline.lastActivityAt, timeline.timezone)}
         />
         <Metric
-          label="End"
+          label="Sign-out"
           value={
             timeline.isRunning
-              ? "In progress"
+              ? "Open until now"
               : formatClock(timeline.lastEndedAt, timeline.timezone)
           }
         />
@@ -148,7 +140,7 @@ export function WorkdayTimeline({ timeline }: { timeline?: WorkdayTimelineData }
             >
               <span className="font-mono text-xs">
                 {formatClock(interval.startedAt, timeline.timezone)} -{" "}
-                {interval.endedAt ? formatClock(interval.endedAt, timeline.timezone) : "Now"}
+                {interval.endedAt ? formatClock(interval.endedAt, timeline.timezone) : "Until now"}
               </span>
               <span
                 className={`inline-flex w-fit items-center gap-1.5 rounded px-2 py-1 text-xs font-medium ${style.badge}`}

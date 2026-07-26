@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { formatClock } from "@/lib/format";
 
 export function ApplicationHistoryPanel({
   employeeId,
@@ -153,7 +154,7 @@ export function ApplicationHistoryPanel({
                     )}
                   </div>
                   <time className="text-sm text-muted-foreground">
-                    {formatHistoryTime(item.startedAt, data.timezone)}
+                    {formatClock(item.startedAt, data.timezone)}
                   </time>
                   <span className="text-sm font-semibold">
                     {formatDuration(item.durationSeconds)}
@@ -220,14 +221,6 @@ function UsageTotals({
       </CardContent>
     </Card>
   );
-}
-
-function formatHistoryTime(value: string, timezone: string) {
-  return new Intl.DateTimeFormat(undefined, {
-    hour: "2-digit",
-    minute: "2-digit",
-    timeZone: timezone || undefined,
-  }).format(new Date(value));
 }
 
 function formatDuration(value: number) {

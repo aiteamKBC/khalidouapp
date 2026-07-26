@@ -27,7 +27,7 @@ import { listTimesheets } from "@/api/timesheets";
 import { listEmployees } from "@/api/employees";
 import { listTeams } from "@/api/teams";
 import { useAuth } from "@/lib/auth";
-import { formatMinutes, downloadCSV } from "@/lib/format";
+import { downloadCSV, formatClock, formatMinutes } from "@/lib/format";
 import type { LucideIcon } from "lucide-react";
 
 export const Route = createFileRoute("/_app/timesheets")({
@@ -203,7 +203,8 @@ function TimesheetsPage() {
                         {teamName(t.teamId)} · {t.date}
                       </p>
                       <p className="mt-1 text-xs text-muted-foreground">
-                        {t.startTime ?? "—"} → {t.endTime ?? "In progress"}
+                        {formatClock(t.startTime)} →{" "}
+                        {t.endTime ? formatClock(t.endTime) : "Open until now"}
                       </p>
                     </div>
 
@@ -276,8 +277,8 @@ function TimesheetsPage() {
                 <TableCell>{t.date}</TableCell>
                 <TableCell>{empName(t.employeeId)}</TableCell>
                 <TableCell>{teamName(t.teamId)}</TableCell>
-                <TableCell>{t.startTime ?? "—"}</TableCell>
-                <TableCell>{t.endTime ?? "—"}</TableCell>
+                <TableCell>{formatClock(t.startTime)}</TableCell>
+                <TableCell>{t.endTime ? formatClock(t.endTime) : "Open until now"}</TableCell>
                 <TableCell>{formatMinutes(t.totalMinutes)}</TableCell>
                 <TableCell>{formatMinutes(t.activeMinutes)}</TableCell>
                 <TableCell>{formatMinutes(t.idleMinutes)}</TableCell>

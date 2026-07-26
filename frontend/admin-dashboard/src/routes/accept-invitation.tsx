@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { formatDateTime } from "@/lib/format";
 
 export const Route = createFileRoute("/accept-invitation")({
   validateSearch: (search: Record<string, unknown>) => ({
@@ -112,7 +113,7 @@ function AcceptInvitationPage() {
             <div className="font-medium">{invitation.data.email}</div>
             <div className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
               <Clock3 className="h-3.5 w-3.5" />
-              Link expires {new Date(invitation.data.expiresAt).toLocaleString()}.
+              Link expires {formatDateTime(invitation.data.expiresAt)}.
             </div>
           </div>
           <form className="space-y-4" onSubmit={submit}>

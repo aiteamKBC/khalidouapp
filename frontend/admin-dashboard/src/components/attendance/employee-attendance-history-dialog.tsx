@@ -26,6 +26,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { formatClock } from "@/lib/format";
 
 type EmployeeAttendanceHistoryDialogProps = {
   employeeId: string | null;
@@ -212,7 +213,7 @@ export function EmployeeAttendanceHistoryDialog({
                   label="Signed out"
                   value={
                     dayDetail.data.isRunning
-                      ? "In progress"
+                      ? "Open until now"
                       : formatClock(dayDetail.data.actualSignOutAt, dayDetail.data.timezone)
                   }
                 />
@@ -295,7 +296,8 @@ function AttendanceDayRow({
             row.isRunning ? "font-semibold text-emerald-700" : "text-muted-foreground"
           }`}
         >
-          Sign-out {row.isRunning ? "In progress" : formatClock(row.actualSignOutAt, row.timezone)}
+          Sign-out{" "}
+          {row.isRunning ? "Open until now" : formatClock(row.actualSignOutAt, row.timezone)}
         </span>
       </TableCell>
       <TableCell>{formatDuration(row.normalWorkedSeconds)}</TableCell>
@@ -347,14 +349,4 @@ function formatDuration(seconds: number) {
   const hours = Math.floor(seconds / 3600);
   const minutes = Math.floor((seconds % 3600) / 60);
   return hours ? `${hours}h ${minutes}m` : `${minutes}m`;
-}
-
-function formatClock(value: string | null | undefined, timezone: string) {
-  return value
-    ? new Intl.DateTimeFormat([], {
-        hour: "numeric",
-        minute: "2-digit",
-        timeZone: timezone,
-      }).format(new Date(value))
-    : "—";
 }

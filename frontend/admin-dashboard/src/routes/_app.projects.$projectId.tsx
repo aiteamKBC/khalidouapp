@@ -46,7 +46,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
-import { formatMinutes } from "@/lib/format";
+import { formatDateTime, formatMinutes } from "@/lib/format";
 import { projectProgressTasks, projectWorkflowProgress } from "@/lib/project-progress";
 import { toast } from "sonner";
 
@@ -247,7 +247,7 @@ function ProjectDetailPage() {
             <CardContent className="space-y-4 text-sm">
               <Summary label="Team" value={team?.name ?? "—"} />
               <Summary label="Description" value={project.data.description || "No description"} />
-              <Summary label="Updated" value={new Date(project.data.updatedAt).toLocaleString()} />
+              <Summary label="Updated" value={formatDateTime(project.data.updatedAt)} />
             </CardContent>
           </Card>
         </div>
@@ -278,7 +278,7 @@ function ProjectDetailPage() {
                     </p>
                   </div>
                   <span className="text-xs text-muted-foreground">
-                    {new Date(task.updatedAt).toLocaleString()}
+                    {formatDateTime(task.updatedAt)}
                   </span>
                 </div>
               ))}

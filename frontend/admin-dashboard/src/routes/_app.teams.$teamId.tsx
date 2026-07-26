@@ -65,7 +65,7 @@ import { updatePersonRole } from "@/api/people";
 import { listUsers } from "@/api/users";
 import { useAuth } from "@/lib/auth";
 import { permissions } from "@/lib/permissions";
-import { formatDate, formatMinutes, formatRelative } from "@/lib/format";
+import { formatDate, formatDateTime, formatMinutes, formatRelative } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type { Employee, Project, Screenshot, Task, TeamMemberRole, Timesheet, User } from "@/types";
 import { StatCard } from "@/components/ui/stat-card";
@@ -746,11 +746,11 @@ function TeamDetailPage() {
                         >
                           <ProtectedImage
                             src={shot.thumbnailUrl}
-                            alt={`Screenshot captured ${new Date(shot.capturedAt).toLocaleString()}`}
+                            alt={`Screenshot captured ${formatDateTime(shot.capturedAt)}`}
                             className="aspect-video w-full object-cover transition-transform group-hover:scale-[1.02]"
                           />
                           <span className="block px-2 py-1.5 text-xs text-muted-foreground">
-                            {new Date(shot.capturedAt).toLocaleString()}
+                            {formatDateTime(shot.capturedAt)}
                           </span>
                         </button>
                       ))}
@@ -779,11 +779,11 @@ function TeamDetailPage() {
                           >
                             <ProtectedImage
                               src={shot.thumbnailUrl}
-                              alt={`Screenshot captured ${new Date(shot.capturedAt).toLocaleString()}`}
+                              alt={`Screenshot captured ${formatDateTime(shot.capturedAt)}`}
                               className="aspect-video w-full object-cover transition-transform group-hover:scale-[1.02]"
                             />
                             <span className="block px-2 py-1.5 text-xs text-muted-foreground">
-                              {new Date(shot.capturedAt).toLocaleString()}
+                              {formatDateTime(shot.capturedAt)}
                             </span>
                           </button>
                         ))}
@@ -974,7 +974,7 @@ function TeamDetailPage() {
                 className="max-h-[70vh] w-full rounded-md bg-muted object-contain"
               />
               <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-muted-foreground">
-                <span>{new Date(selectedShot.capturedAt).toLocaleString()}</span>
+                <span>{formatDateTime(selectedShot.capturedAt)}</span>
                 <span>{selectedShot.isIdle ? "Captured while idle" : "Captured while active"}</span>
               </div>
             </div>

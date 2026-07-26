@@ -52,7 +52,7 @@ import {
   type DailyAttendance,
 } from "@/api/attendance";
 import { useAuth } from "@/lib/auth";
-import { formatMinutes } from "@/lib/format";
+import { formatClock as attendanceClock, formatMinutes } from "@/lib/format";
 import { WorkdayTimeline } from "@/components/workday-timeline";
 import { PageHeader } from "@/components/ui/page-header";
 import { StatCard } from "@/components/ui/stat-card";
@@ -836,7 +836,7 @@ function MonthlyAttendanceDialog({
                   label="Signed out"
                   value={
                     dayDetail.data.isRunning
-                      ? "In progress"
+                      ? "Open until now"
                       : attendanceClock(dayDetail.data.actualSignOutAt, dayDetail.data.timezone)
                   }
                 />
@@ -904,7 +904,7 @@ function MonthlyAttendanceRow({
           }`}
         >
           Sign-out{" "}
-          {row.isRunning ? "In progress" : attendanceClock(row.actualSignOutAt, row.timezone)}
+          {row.isRunning ? "Open until now" : attendanceClock(row.actualSignOutAt, row.timezone)}
         </span>
       </TableCell>
       <TableCell>{shortTime(row.normalWorkedSeconds)}</TableCell>
@@ -2289,15 +2289,6 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 }
 function shortTime(seconds: number) {
   return formatMinutes(Math.round(seconds / 60));
-}
-function attendanceClock(value: string | null | undefined, timezone: string) {
-  return value
-    ? new Intl.DateTimeFormat([], {
-        hour: "numeric",
-        minute: "2-digit",
-        timeZone: timezone,
-      }).format(new Date(value))
-    : "—";
 }
 function minutesBetween(start: string, end: string) {
   const [startHour, startMinute] = start.split(":").map(Number);

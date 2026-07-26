@@ -122,7 +122,7 @@ import { listEmployees } from "@/api/employees";
 import { useAuth } from "@/lib/auth";
 import type { Task } from "@/types";
 import { toast } from "sonner";
-import { formatMinutes } from "@/lib/format";
+import { formatDateTime, formatMinutes } from "@/lib/format";
 import { projectWorkflowProgress } from "@/lib/project-progress";
 
 export const Route = createFileRoute("/_app/projects")({
@@ -2614,7 +2614,7 @@ function TaskWorkspacePanel({
                 <div className="mb-1 flex items-center justify-between gap-2">
                   <span className="text-xs font-semibold">{item.authorName}</span>
                   <span className="text-[10px] text-muted-foreground">
-                    {new Date(item.createdAt).toLocaleString()}
+                    {formatDateTime(item.createdAt)}
                   </span>
                 </div>
                 <p className="whitespace-pre-wrap text-sm">{item.body}</p>
@@ -2646,7 +2646,7 @@ function TaskWorkspacePanel({
                   <span className="font-medium">{item.actorName}</span> {item.action}
                 </p>
                 <p className="text-[10px] text-muted-foreground">
-                  {new Date(item.createdAt).toLocaleString()}
+                  {formatDateTime(item.createdAt)}
                 </p>
               </div>
             ))}

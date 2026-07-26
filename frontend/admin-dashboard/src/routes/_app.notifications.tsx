@@ -29,6 +29,7 @@ import { useAuth } from "@/lib/auth";
 import type { Task } from "@/types";
 import { toast } from "sonner";
 import { MetricTile } from "@/components/ui/metric-tile";
+import { formatDateTime } from "@/lib/format";
 
 export const Route = createFileRoute("/_app/notifications")({ component: NotificationsPage });
 
@@ -166,7 +167,7 @@ function NotificationsPage() {
                   <div className="flex items-center justify-between gap-3">
                     <p className="font-medium">{item.title}</p>
                     <time className="shrink-0 text-xs text-muted-foreground">
-                      {new Date(item.createdAt).toLocaleString()}
+                      {formatDateTime(item.createdAt)}
                     </time>
                   </div>
                   <p className="mt-1 text-sm text-muted-foreground">{item.message}</p>

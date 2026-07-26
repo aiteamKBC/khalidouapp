@@ -83,7 +83,7 @@ import { listTimesheets } from "@/api/timesheets";
 import { listDevices } from "@/api/devices";
 import { listTeams } from "@/api/teams";
 import { listTasks } from "@/api/projects";
-import { formatMinutes, formatRelative, formatDateTime } from "@/lib/format";
+import { formatClock, formatDateTime, formatMinutes, formatRelative } from "@/lib/format";
 import { useAuth } from "@/lib/auth";
 import { permissions } from "@/lib/permissions";
 
@@ -598,6 +598,18 @@ function EmployeeDetailPage() {
                       <TableCell>
                         {formatClock(row.actualFirstActivityAt, row.timezone)} –{" "}
                         {formatClock(row.actualLastActivityAt, row.timezone)}
+                        <span
+                          className={`block text-xs ${
+                            row.isRunning
+                              ? "font-semibold text-emerald-700"
+                              : "text-muted-foreground"
+                          }`}
+                        >
+                          Sign-out{" "}
+                          {row.isRunning
+                            ? "Open until now"
+                            : formatClock(row.actualSignOutAt, row.timezone)}
+                        </span>
                       </TableCell>
                       <TableCell>{formatSeconds(row.normalWorkedSeconds)}</TableCell>
                       <TableCell>{formatSeconds(row.idleSeconds)}</TableCell>
@@ -767,7 +779,7 @@ function EmployeeDetailPage() {
                   <div key={session.id} className="grid grid-cols-4 gap-2 px-4 py-3">
                     <div>{formatDateTime(session.startedAt)}</div>
                     <div className="text-muted-foreground">
-                      {session.endedAt ? formatDateTime(session.endedAt) : "In progress"}
+                      {session.endedAt ? formatDateTime(session.endedAt) : "Open until now"}
                     </div>
                     <div>Active {formatMinutes(session.activeMinutes)}</div>
                     <div className="text-right">{session.screenshotCount} screenshots</div>
@@ -986,11 +998,15 @@ function EmployeeDetailPage() {
                   )}
                 />
                 <CompactMetric
-                  label="Ended"
-                  value={formatClock(
-                    attendanceDetail.data.actualLastActivityAt,
-                    attendanceDetail.data.timezone,
-                  )}
+                  label="Signed out"
+                  value={
+                    attendanceDetail.data.isRunning
+                      ? "Open until now"
+                      : formatClock(
+                          attendanceDetail.data.actualSignOutAt,
+                          attendanceDetail.data.timezone,
+                        )
+                  }
                 />
                 <CompactMetric
                   label="Payable"
@@ -1924,15 +1940,6 @@ function formatSeconds(value: number) {
   const hours = Math.floor(seconds / 3600);
   const minutes = Math.floor((seconds % 3600) / 60);
   return `${hours}h ${String(minutes).padStart(2, "0")}m`;
-}
-
-function formatClock(value?: string | null, timezone?: string | null) {
-  if (!value) return "—";
-  return new Intl.DateTimeFormat(undefined, {
-    hour: "2-digit",
-    minute: "2-digit",
-    timeZone: timezone || undefined,
-  }).format(new Date(value));
 }
 
 function toTimeInput(value?: string | null, timezone?: string | null) {

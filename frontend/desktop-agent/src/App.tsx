@@ -229,17 +229,22 @@ function KIcon({
 
 function formatTimestamp(value: string | null) {
   if (!value) return "Not available";
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
   }).format(new Date(value));
 }
 
 function formatClock(value: string | null, timezone: string) {
   if (!value) return "-";
-  return new Intl.DateTimeFormat(undefined, {
+  return new Intl.DateTimeFormat("en-US", {
     hour: "numeric",
     minute: "2-digit",
+    hour12: true,
     timeZone: timezone,
   }).format(new Date(value));
 }
@@ -267,9 +272,10 @@ function formatScheduledTime(value: string | null | undefined) {
   const minutes = timeToMinutes(value);
   if (minutes === null) return "Not configured";
   const date = new Date(2000, 0, 1, Math.floor(minutes / 60), minutes % 60);
-  return new Intl.DateTimeFormat(undefined, {
+  return new Intl.DateTimeFormat("en-US", {
     hour: "numeric",
     minute: "2-digit",
+    hour12: true,
   }).format(date);
 }
 
@@ -2087,10 +2093,10 @@ function HomeView({
             </strong>
           </div>
           <div>
-            <span>Ended at</span>
+            <span>Sign-out</span>
             <strong>
               {status.todayTimeline?.is_running
-                ? "In progress"
+                ? "Open until now"
                 : status.todayTimeline?.last_ended_at
                   ? formatClock(
                       status.todayTimeline.last_ended_at,
@@ -2322,7 +2328,7 @@ function Timeline({
               <span>
                 {formatClock(interval.started_at, timeline.timezone)} -{" "}
                 {interval.is_current
-                  ? "Now"
+                  ? "Until now"
                   : formatClock(interval.ended_at, timeline.timezone)}
               </span>
               <b

@@ -107,6 +107,7 @@ import {
 } from "@/api/access";
 import { useAuth } from "@/lib/auth";
 import { permissions } from "@/lib/permissions";
+import { formatDateTime, formatTimeOfDay } from "@/lib/format";
 import { toast } from "sonner";
 import type {
   DataScope,
@@ -2775,9 +2776,9 @@ function AddPersonWizard({
               breaks are paid and included.
             </p>
             <p className="rounded-lg border bg-muted/40 p-3 text-xs text-muted-foreground">
-              Time outside {shiftStart}–{shiftEnd} is categorized as overtime, paid at the normal
-              hourly rate, and requires approval each time. Breaks are part of the shift hours and
-              are never counted as idle.
+              Time outside {formatTimeOfDay(shiftStart)}–{formatTimeOfDay(shiftEnd)} is categorized
+              as overtime, paid at the normal hourly rate, and requires approval each time. Breaks
+              are part of the shift hours and are never counted as idle.
             </p>
             <div className="flex justify-between">
               <Button variant="ghost" onClick={() => setStep("form")}>
@@ -2838,7 +2839,7 @@ function AddPersonWizard({
                   <div>
                     <span className="text-xs text-muted-foreground">Shift</span>
                     <p className="font-bold">
-                      {shiftStart}–{shiftEnd}
+                      {formatTimeOfDay(shiftStart)}–{formatTimeOfDay(shiftEnd)}
                     </p>
                   </div>
                   {canManagePayroll && (
@@ -2855,7 +2856,10 @@ function AddPersonWizard({
                     <span className="text-xs text-muted-foreground">Breaks</span>
                     <p className="font-bold">
                       {breaks
-                        .map((item) => `${item.name} ${item.start_time}–${item.end_time}`)
+                        .map(
+                          (item) =>
+                            `${item.name} ${formatTimeOfDay(item.start_time)}–${formatTimeOfDay(item.end_time)}`,
+                        )
                         .join(", ")}
                     </p>
                   </div>
@@ -2900,7 +2904,7 @@ function AddPersonWizard({
               {createdInvitation && (
                 <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
                   <span className="text-xs text-muted-foreground">
-                    Link expires {new Date(createdInvitation.expiresAt).toLocaleString()}.
+                    Link expires {formatDateTime(createdInvitation.expiresAt)}.
                   </span>
                   <Button
                     type="button"

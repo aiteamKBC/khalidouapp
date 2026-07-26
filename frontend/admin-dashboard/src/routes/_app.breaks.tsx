@@ -34,6 +34,7 @@ import {
 } from "@/api/payroll";
 import { useAuth } from "@/lib/auth";
 import { permissions } from "@/lib/permissions";
+import { formatTimeOfDay } from "@/lib/format";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -229,7 +230,7 @@ function BreaksPage() {
                   <p className="text-xs text-muted-foreground">
                     {item.effective_date} ·{" "}
                     {item.shift_start && item.shift_end
-                      ? `${item.shift_start}–${item.shift_end}`
+                      ? `${formatTimeOfDay(item.shift_start)}–${formatTimeOfDay(item.shift_end)}`
                       : `${item.break_rules?.length ?? 0} break(s)`}{" "}
                     · {item.reason}
                   </p>
@@ -322,7 +323,7 @@ function BreaksPage() {
                       Scheduled shift
                     </p>
                     <p className="mt-0.5 font-mono text-lg font-extrabold tabular-nums">
-                      {shiftStart}–{shiftEnd}
+                      {formatTimeOfDay(shiftStart)}–{formatTimeOfDay(shiftEnd)}
                     </p>
                     <p className="mt-1 text-[11px] font-semibold text-muted-foreground">
                       Source: {scheduleSource}
@@ -537,7 +538,7 @@ function BreakEditorDialog({
       ) {
         problems.push({
           key: `outside-${index}`,
-          message: `${label} must stay inside the ${shiftStart}–${shiftEnd} shift.`,
+          message: `${label} must stay inside the ${formatTimeOfDay(shiftStart)}–${formatTimeOfDay(shiftEnd)} shift.`,
           indexes: [index],
         });
       }

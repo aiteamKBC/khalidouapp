@@ -40,6 +40,7 @@ import {
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAuth } from "@/lib/auth";
+import { formatClock } from "@/lib/format";
 
 export const Route = createFileRoute("/_app/attendance")({ component: AttendancePage });
 
@@ -54,15 +55,6 @@ const duration = (seconds: number) => {
   const minutes = Math.floor((seconds % 3600) / 60);
   return hours ? `${hours}h ${minutes}m` : `${minutes}m`;
 };
-const clock = (value: string | null | undefined, timezone: string) =>
-  value
-    ? new Intl.DateTimeFormat([], {
-        hour: "numeric",
-        minute: "2-digit",
-        timeZone: timezone,
-      }).format(new Date(value))
-    : "—";
-
 function AttendancePage() {
   const { scopedTeamIds } = useAuth();
   const scope = scopedTeamIds();
@@ -272,12 +264,12 @@ function AttendancePage() {
                           </p>
                         </TableCell>
                         <TableCell className="text-xs">
-                          {clock(row.scheduledStartAt, row.timezone)} –{" "}
-                          {clock(row.scheduledEndAt, row.timezone)}
+                          {formatClock(row.scheduledStartAt, row.timezone)} –{" "}
+                          {formatClock(row.scheduledEndAt, row.timezone)}
                         </TableCell>
                         <TableCell className="text-xs">
-                          {clock(row.actualFirstActivityAt, row.timezone)} –{" "}
-                          {clock(row.actualLastActivityAt, row.timezone)}
+                          {formatClock(row.actualFirstActivityAt, row.timezone)} –{" "}
+                          {formatClock(row.actualLastActivityAt, row.timezone)}
                           <span
                             className={`block text-[10px] ${
                               row.isRunning
@@ -287,8 +279,8 @@ function AttendancePage() {
                           >
                             Sign-out{" "}
                             {row.isRunning
-                              ? "In progress"
-                              : clock(row.actualSignOutAt, row.timezone)}
+                              ? "Open until now"
+                              : formatClock(row.actualSignOutAt, row.timezone)}
                           </span>
                         </TableCell>
                         <TableCell>{duration(row.normalWorkedSeconds)}</TableCell>
@@ -479,7 +471,9 @@ function AttendancePage() {
                           <StatusBadge status={row.status} />
                         </TableCell>
                         <TableCell className="whitespace-nowrap text-xs">
-                          {row.isRunning ? "In progress" : clock(row.actualSignOutAt, row.timezone)}
+                          {row.isRunning
+                            ? "Open until now"
+                            : formatClock(row.actualSignOutAt, row.timezone)}
                         </TableCell>
                         <TableCell className="text-right">
                           <Button
@@ -582,18 +576,18 @@ function AttendancePage() {
               <div className="grid gap-2 sm:grid-cols-3 lg:grid-cols-6">
                 <Small
                   label="Started"
-                  value={clock(detail.data.actualFirstActivityAt, detail.data.timezone)}
+                  value={formatClock(detail.data.actualFirstActivityAt, detail.data.timezone)}
                 />
                 <Small
                   label="Last activity"
-                  value={clock(detail.data.actualLastActivityAt, detail.data.timezone)}
+                  value={formatClock(detail.data.actualLastActivityAt, detail.data.timezone)}
                 />
                 <Small
                   label="Signed out"
                   value={
                     detail.data.isRunning
-                      ? "In progress"
-                      : clock(detail.data.actualSignOutAt, detail.data.timezone)
+                      ? "Open until now"
+                      : formatClock(detail.data.actualSignOutAt, detail.data.timezone)
                   }
                 />
                 <Small label="Paid breaks" value={duration(detail.data.paidBreakSeconds)} />
