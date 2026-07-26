@@ -55,6 +55,7 @@ import {
 import { WorkdayTimeline } from "@/components/workday-timeline";
 import { ApplicationHistoryPanel } from "@/components/application-history-panel";
 import {
+  employeeDisplayStatus,
   getEmployee,
   getEmployeeChangeHistory,
   getWorkProfile,
@@ -297,7 +298,7 @@ function EmployeeDetailPage() {
         description={`Employee profile · ${e.code} · ${e.jobTitle || "No job title"}`}
         actions={
           <div className="flex items-center gap-2">
-            <StatusBadge status={e.accountStatus === "invited" ? "invited" : e.status} />
+            <StatusBadge status={employeeDisplayStatus(e)} />
             <Button asChild variant="outline" size="sm">
               <Link
                 to="/monitoring"
@@ -444,14 +445,7 @@ function EmployeeDetailPage() {
                   <div className="rounded-xl border border-border p-3">
                     <div className="mb-2 font-semibold">Current status</div>
                     <div className="space-y-2">
-                      <Row
-                        k="Status"
-                        v={
-                          <StatusBadge
-                            status={e.accountStatus === "invited" ? "invited" : e.status}
-                          />
-                        }
-                      />
+                      <Row k="Status" v={<StatusBadge status={employeeDisplayStatus(e)} />} />
                       <Row k="Session start" v={formatDateTime(e.sessionStart)} />
                       <Row k="Last heartbeat" v={formatRelative(e.lastHeartbeat)} />
                       <Row k="Last screenshot" v={formatRelative(e.lastScreenshotAt)} />

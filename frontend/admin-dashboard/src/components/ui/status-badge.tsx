@@ -14,6 +14,7 @@ export type AnyStatus =
   | UserStatus
   | TimeAdjustmentStatus
   | "invited"
+  | "app_pending"
   | "expired"
   | "revoked"
   | "complete"
@@ -48,6 +49,7 @@ const styles: Record<string, string> = {
   needs_review: "bg-warning/15 text-warning-foreground ring-warning/40",
   draft: "bg-info/15 text-info ring-info/30",
   invited: "bg-info/15 text-info ring-info/30",
+  app_pending: "bg-warning/15 text-warning-foreground ring-warning/40",
   approved: "bg-success/15 text-success ring-success/30",
   present: "bg-success/15 text-success ring-success/30",
   approved_leave: "bg-success/15 text-success ring-success/30",
@@ -87,6 +89,7 @@ export function StatusBadge({ status, className }: { status: AnyStatus; classNam
             "idle",
             "missing",
             "pending",
+            "app_pending",
             "expired",
             "needs_review",
             "late",

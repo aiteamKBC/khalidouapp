@@ -12,6 +12,7 @@ type BackendEmployee = {
   start_date?: string | null;
   annual_leave_days?: number;
   status: string;
+  onboarding_status?: string;
   invitation?: {
     id: string;
     status: "pending" | "accepted" | "expired" | "revoked";
@@ -176,8 +177,12 @@ function normalizeEmployeeStatus(value?: string | null): EmployeeStatus {
 }
 
 function normalizeEmployeeAccountStatus(value?: string | null): EmployeeAccountStatus {
-  if (value === "invited" || value === "inactive") return value;
+  if (value === "invited" || value === "app_pending" || value === "inactive") return value;
   return "active";
+}
+
+export function employeeDisplayStatus(employee: Employee): EmployeeStatus | EmployeeAccountStatus {
+  return employee.accountStatus === "active" ? employee.status : employee.accountStatus;
 }
 
 function mapEmployee(status: BackendEmployeeStatus, teamIds: string[]): Employee {
@@ -206,7 +211,7 @@ function mapEmployee(status: BackendEmployeeStatus, teamIds: string[]): Employee
     currentProjectId: status.current_session?.project_id ?? undefined,
     currentTaskId: status.current_session?.task_id ?? undefined,
     active: employee.status === "active",
-    accountStatus: normalizeEmployeeAccountStatus(employee.status),
+    accountStatus: normalizeEmployeeAccountStatus(employee.onboarding_status ?? employee.status),
     invitation: employee.invitation
       ? {
           id: employee.invitation.id,

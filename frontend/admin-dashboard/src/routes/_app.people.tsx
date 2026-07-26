@@ -141,7 +141,7 @@ type PersonKind = "employee" | "team_owner" | "general_admin" | "hr";
 type EditableRole = PersonRole;
 type TypeFilter = "all" | "employees" | "admins";
 type RoleFilter = "all" | "employee" | Role;
-type StatusFilter = "all" | "active" | "invited" | "archived";
+type StatusFilter = "all" | "active" | "app_pending" | "invited" | "archived";
 type AccessPreset = EditableRole | "custom";
 
 const WORK_DAYS = [
@@ -191,7 +191,7 @@ type PersonRow = {
   roleLabel: string;
   detail: string;
   managerNames: string[];
-  status: "active" | "invited" | "expired" | "archived";
+  status: "active" | "app_pending" | "invited" | "expired" | "archived";
   teamIds: string[];
   dashboardEmployeeId?: string;
   isCurrentUser: boolean;
@@ -234,6 +234,7 @@ function employeeDirectoryStatus(employee: Employee): PersonRow["status"] {
   if (employee.accountStatus === "invited") {
     return employee.invitation?.status === "expired" ? "expired" : "invited";
   }
+  if (employee.accountStatus === "app_pending") return "app_pending";
   return employee.active ? "active" : "archived";
 }
 
@@ -484,10 +485,10 @@ function PeopleDirectory({
                 .join(", ") || "—"),
         managerNames: linkedEmployee?.managers.map((manager) => manager.name) ?? [],
         status:
-          user.status === "active"
-            ? "active"
-            : user.status === "invited" && linkedEmployee
-              ? employeeDirectoryStatus(linkedEmployee)
+          linkedEmployee && user.status !== "archived" && user.status !== "inactive"
+            ? employeeDirectoryStatus(linkedEmployee)
+            : user.status === "active"
+              ? "active"
               : "archived",
         teamIds:
           user.dataScope === "company" ? activeTeams.map((team) => team.id) : user.teamLeadTeamIds,
@@ -517,6 +518,7 @@ function PeopleDirectory({
       if (teamFilter !== "all" && !row.teamIds.includes(teamFilter)) return false;
       if (!archiveOnly) {
         if (statusFilter === "active" && row.status !== "active") return false;
+        if (statusFilter === "app_pending" && row.status !== "app_pending") return false;
         if (statusFilter === "invited" && row.status !== "invited" && row.status !== "expired")
           return false;
         if (statusFilter === "archived" && row.status !== "archived") return false;
@@ -980,8 +982,9 @@ function PeopleDirectory({
                 <SelectValue placeholder="Status" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All active/invited</SelectItem>
+                <SelectItem value="all">All onboarding/active</SelectItem>
                 <SelectItem value="active">Active only</SelectItem>
+                <SelectItem value="app_pending">App pending</SelectItem>
                 <SelectItem value="invited">Invited / expired</SelectItem>
               </SelectContent>
             </Select>
@@ -1082,7 +1085,9 @@ function PeopleDirectory({
                     <TableCell className="text-xs text-muted-foreground">
                       {row.status === "invited" || row.status === "expired"
                         ? "Email invitation"
-                        : "Password"}
+                        : row.status === "app_pending"
+                          ? "Invitation accepted"
+                          : "Password"}
                     </TableCell>
                     <TableCell>
                       <StatusBadge status={row.status} />

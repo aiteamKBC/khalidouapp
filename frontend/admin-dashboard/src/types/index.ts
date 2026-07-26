@@ -3,7 +3,7 @@ export type PermissionMode = "role" | "custom";
 export type DataScope = "company" | "assigned_teams";
 
 export type EmployeeStatus = "active" | "idle" | "locked" | "sleeping" | "offline";
-export type EmployeeAccountStatus = "invited" | "active" | "inactive";
+export type EmployeeAccountStatus = "invited" | "app_pending" | "active" | "inactive";
 export type DeviceStatus = "online" | "offline" | "revoked";
 export type TeamStatus = "active" | "archived";
 export type UserStatus = "invited" | "active" | "inactive" | "archived";

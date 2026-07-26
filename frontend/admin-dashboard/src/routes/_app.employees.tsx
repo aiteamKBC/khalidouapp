@@ -24,7 +24,7 @@ import {
 import { StatusBadge } from "@/components/ui/status-badge";
 import { useAuth } from "@/lib/auth";
 import { permissions } from "@/lib/permissions";
-import { listEmployees } from "@/api/employees";
+import { employeeDisplayStatus, listEmployees } from "@/api/employees";
 import { listTeams } from "@/api/teams";
 import { formatMinutes, formatRelative } from "@/lib/format";
 
@@ -82,7 +82,7 @@ export function EmployeesList({ embedded = false }: { embedded?: boolean }) {
           return false;
         if (teamId !== "all" && !employee.teamIds.includes(teamId)) return false;
         if (jobTitle !== "all" && employee.jobTitle !== jobTitle) return false;
-        const displayStatus = employee.accountStatus === "invited" ? "invited" : employee.status;
+        const displayStatus = employeeDisplayStatus(employee);
         if (status !== "all" && displayStatus !== status) return false;
         return true;
       }),
@@ -152,6 +152,7 @@ export function EmployeesList({ embedded = false }: { embedded?: boolean }) {
             <SelectContent>
               <SelectItem value="all">All statuses</SelectItem>
               <SelectItem value="invited">Invited</SelectItem>
+              <SelectItem value="app_pending">App pending</SelectItem>
               <SelectItem value="active">Active</SelectItem>
               <SelectItem value="idle">Idle</SelectItem>
               <SelectItem value="locked">Locked</SelectItem>
@@ -188,9 +189,7 @@ export function EmployeesList({ embedded = false }: { embedded?: boolean }) {
                 <TableCell className="font-mono text-xs">{employee.code}</TableCell>
                 <TableCell>{employee.jobTitle || "-"}</TableCell>
                 <TableCell>
-                  <StatusBadge
-                    status={employee.accountStatus === "invited" ? "invited" : employee.status}
-                  />
+                  <StatusBadge status={employeeDisplayStatus(employee)} />
                 </TableCell>
                 <TableCell>{formatMinutes(employee.workedTodayMinutes)}</TableCell>
                 <TableCell>{formatMinutes(employee.activeMinutes)}</TableCell>

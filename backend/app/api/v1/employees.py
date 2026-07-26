@@ -52,6 +52,7 @@ from app.services.email import (
     enqueue_employee_invitation_email,
 )
 from app.services.employee_invitations import (
+    employee_onboarding_status,
     issue_employee_invitation,
     latest_employee_invitations,
 )
@@ -365,6 +366,13 @@ def list_employee_overviews(
             deducted_seconds,
             screenshot_at,
         ) = row
+        invitation = invitations_by_employee.get(employee.id)
+        employee_data = serialize_employee(employee, invitation)
+        employee_data["onboarding_status"] = employee_onboarding_status(
+            employee,
+            invitation,
+            desktop_app_linked=device_id is not None,
+        )
         online = bool(
             device_id
             and device_status != "revoked"
@@ -375,7 +383,7 @@ def list_employee_overviews(
         idle_seconds = int(idle_seconds or 0)
         data.append(
             {
-                "employee": serialize_employee(employee, invitations_by_employee.get(employee.id)),
+                "employee": employee_data,
                 "online_status": "online" if online else "offline",
                 "activity_status": session_status if session_id and online else "offline",
                 "current_session": (
