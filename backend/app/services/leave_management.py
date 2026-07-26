@@ -6,6 +6,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models import Employee, LeaveBalance, LeaveRequest
+from app.services.work_profiles import DEFAULT_WORKING_DAYS
 
 
 DEFAULT_ANNUAL_CREDIT_DAYS = 21
@@ -40,7 +41,7 @@ def requested_workdays(
 ) -> int:
     if end_date < start_date:
         return 0
-    allowed_days = set(working_days or [0, 1, 2, 3, 4])
+    allowed_days = set(working_days or DEFAULT_WORKING_DAYS)
     return sum(
         1
         for offset in range((end_date - start_date).days + 1)

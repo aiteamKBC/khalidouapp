@@ -25,7 +25,11 @@ from app.models import (
     WorkSession,
 )
 from app.services.attendance import calculate_daily_attendance
-from app.services.work_profiles import STANDARD_MONTH_DAYS, get_or_create_work_profile
+from app.services.work_profiles import (
+    DEFAULT_WORKING_DAYS,
+    STANDARD_MONTH_DAYS,
+    get_or_create_work_profile,
+)
 
 
 MONEY = Decimal("0.01")
@@ -303,7 +307,7 @@ def calculate_employee_metrics(
     scheduled_leave_days = 0
     absence_days = 0
     elapsed_last = min(last, datetime.now(zone).date())
-    working_days = set(profile.working_days or [0, 1, 2, 3, 4])
+    working_days = set(profile.working_days or DEFAULT_WORKING_DAYS)
     cursor = max(first, employee.start_date) if employee.start_date else first
     while cursor <= last:
         if cursor.weekday() in working_days:

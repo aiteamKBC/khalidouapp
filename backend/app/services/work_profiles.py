@@ -16,6 +16,8 @@ from app.models import (
 )
 
 STANDARD_MONTH_DAYS = 30
+DEFAULT_WORKING_DAYS = [0, 1, 2, 3, 5, 6]
+DEFAULT_WEEKLY_OFF_DAYS = [4]
 
 REQUIRED_PROFILE_FIELDS = (
     "shift_start",
@@ -101,8 +103,8 @@ def get_or_create_work_profile(db: Session, employee: Employee) -> EmployeeWorkP
                 if company_shift_default and company_shift_default.shift_end
                 else datetime.strptime("18:00", "%H:%M").time()
             ),
-            working_days=[0, 1, 2, 3, 4],
-            weekly_off_days=[5, 6],
+            working_days=DEFAULT_WORKING_DAYS.copy(),
+            weekly_off_days=DEFAULT_WEEKLY_OFF_DAYS.copy(),
             required_daily_minutes=(
                 company_shift_default.shift_end.hour * 60
                 + company_shift_default.shift_end.minute
@@ -395,7 +397,7 @@ def payroll_preview(
     break_minutes = schedule_minutes(profile)
     if break_minutes["payable"]:
         required_daily = break_minutes["payable"]
-    working_days = profile.working_days or [0, 1, 2, 3, 4]
+    working_days = profile.working_days or DEFAULT_WORKING_DAYS
     days = (end_date - start_date).days + 1
     required_days = sum(
         1

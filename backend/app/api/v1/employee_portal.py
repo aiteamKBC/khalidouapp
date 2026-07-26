@@ -64,6 +64,7 @@ from app.services.activity_timeline import build_workday_timeline, local_today
 from app.services.attendance import calculate_daily_attendance, serialize_daily_attendance
 from app.services.time_adjustments import serialize_time_adjustment_request
 from app.services.work_profiles import (
+    DEFAULT_WORKING_DAYS,
     get_or_create_work_profile,
     payroll_preview,
     serialize_work_profile,
@@ -111,7 +112,7 @@ def participant_task(db: Session, employee: Employee, task_id: UUID) -> tuple[Ta
 
 
 def _is_profile_workday(profile, target_day: date) -> bool:
-    working_days = profile.working_days or [0, 1, 2, 3, 4]
+    working_days = profile.working_days or DEFAULT_WORKING_DAYS
     off_days = profile.weekly_off_days or []
     weekday = target_day.weekday()
     return weekday in working_days and weekday not in off_days

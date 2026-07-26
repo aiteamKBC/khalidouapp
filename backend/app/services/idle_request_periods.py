@@ -6,7 +6,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import Employee, PauseSession, TimeAdjustmentRequest
-from app.services.work_profiles import get_or_create_work_profile, resolve_day_policy
+from app.services.work_profiles import (
+    DEFAULT_WORKING_DAYS,
+    get_or_create_work_profile,
+    resolve_day_policy,
+)
 
 
 REVIEWABLE_STATUSES = {"pending", "approved"}
@@ -105,7 +109,7 @@ def build_idle_request_periods(
 ) -> list[dict]:
     profile = get_or_create_work_profile(db, employee)
     policy = resolve_day_policy(db, employee, profile, work_date)
-    working_days = profile.working_days or [0, 1, 2, 3, 4]
+    working_days = profile.working_days or DEFAULT_WORKING_DAYS
     weekly_off_days = profile.weekly_off_days or []
     if (
         work_date.weekday() not in working_days

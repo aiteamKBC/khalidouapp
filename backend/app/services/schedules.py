@@ -7,6 +7,7 @@ from sqlalchemy import false, or_, select
 from sqlalchemy.orm import Session
 
 from app.models import Employee, EmployeeWorkProfile, TeamMember, WorkScheduleOverride
+from app.services.work_profiles import DEFAULT_WORKING_DAYS
 
 
 def timezone_for(employee: Employee, timezone_name: str | None = None) -> ZoneInfo:
@@ -102,7 +103,7 @@ def _schedule_from_override(
         if override.override_type in {"breaks", "both"} and override.break_rules is not None:
             break_rules = list(override.break_rules)
 
-    scheduled_day = work_date.weekday() in set(profile.working_days or [0, 1, 2, 3, 4])
+    scheduled_day = work_date.weekday() in set(profile.working_days or DEFAULT_WORKING_DAYS)
     if override and override.override_type in {"shift", "both"}:
         scheduled_day = True
     zone = timezone_for(employee, timezone_name)

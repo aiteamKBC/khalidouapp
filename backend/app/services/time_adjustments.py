@@ -13,7 +13,7 @@ from app.services.idle_request_periods import (
     idle_request_period_matches,
 )
 from app.services.session_tracking import get_current_session
-from app.services.work_profiles import get_or_create_work_profile
+from app.services.work_profiles import DEFAULT_WORKING_DAYS, get_or_create_work_profile
 
 
 IDLE_TIME_REQUEST = "idle_time"
@@ -103,7 +103,7 @@ def create_employee_time_adjustment_request(
         )
         remaining_weekly_seconds = max(0, weekly_allowance_seconds - already_requested_seconds)
         if requested_leave_time is not None:
-            working_days = profile.working_days or [0, 1, 2, 3, 4]
+            working_days = profile.working_days or DEFAULT_WORKING_DAYS
             if requested_date.weekday() not in working_days:
                 raise ApiError(
                     "EARLY_LEAVE_NON_WORKDAY",

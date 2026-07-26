@@ -7,7 +7,17 @@ from app.core.exceptions import ApiError
 from app.models import AdminPermissionOverride, AdminUser, Employee, EmployeeWorkProfile
 from app.services.leave_management import entitled_credit_days, requested_workdays
 from app.services.permissions import capabilities_for_admin, capabilities_for_role
-from app.services.work_profiles import schedule_minutes, validate_work_profile
+from app.services.work_profiles import (
+    DEFAULT_WEEKLY_OFF_DAYS,
+    DEFAULT_WORKING_DAYS,
+    schedule_minutes,
+    validate_work_profile,
+)
+
+
+def test_default_schedule_has_friday_as_the_only_weekly_day_off():
+    assert DEFAULT_WORKING_DAYS == [0, 1, 2, 3, 5, 6]
+    assert DEFAULT_WEEKLY_OFF_DAYS == [4]
 
 
 def test_first_leave_credit_is_prorated_after_six_months():

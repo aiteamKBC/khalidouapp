@@ -61,6 +61,8 @@ from app.services.person_access import disable_employee_tracking
 from app.services.request_notifications import employee_manager_summaries
 from app.services.work_profiles import (
     DEFAULT_BREAK_RULES,
+    DEFAULT_WEEKLY_OFF_DAYS,
+    DEFAULT_WORKING_DAYS,
     get_or_create_work_profile,
     payroll_preview,
     profile_completeness,
@@ -217,8 +219,8 @@ def list_employee_break_rules(
                 else "10:00",
                 "shift_end": shift_end.isoformat(timespec="minutes") if shift_end else "18:00",
                 "required_daily_minutes": required_daily_minutes or 480,
-                "working_days": working_days or [0, 1, 2, 3, 4],
-                "weekly_off_days": weekly_off_days or [5, 6],
+                "working_days": working_days or DEFAULT_WORKING_DAYS,
+                "weekly_off_days": weekly_off_days or DEFAULT_WEEKLY_OFF_DAYS,
                 "late_grace_minutes": late_grace_minutes or 15,
                 "overtime_enabled": bool(overtime_enabled),
         }

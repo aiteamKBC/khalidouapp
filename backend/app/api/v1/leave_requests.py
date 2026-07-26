@@ -20,7 +20,7 @@ from app.services.leave_management import (
     serialize_balance,
     serialize_leave_request,
 )
-from app.services.work_profiles import get_or_create_work_profile
+from app.services.work_profiles import DEFAULT_WORKING_DAYS, get_or_create_work_profile
 from app.services.permissions import require_capability
 from app.services.attendance import refresh_daily_attendance_range
 
@@ -165,7 +165,7 @@ def list_leave_balances(
     data = []
     for employee in employees:
         profile = get_or_create_work_profile(db, employee)
-        working_days = set(profile.working_days or [0, 1, 2, 3, 4])
+        working_days = set(profile.working_days or DEFAULT_WORKING_DAYS)
         taken_dates = []
         for request in requests_by_employee[employee.id]:
             current = request.start_date

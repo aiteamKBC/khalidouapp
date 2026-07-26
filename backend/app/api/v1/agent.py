@@ -108,7 +108,11 @@ from app.services.time_adjustments import (
     create_employee_time_adjustment_request,
     serialize_time_adjustment_request,
 )
-from app.services.work_profiles import get_or_create_work_profile, resolve_day_policy
+from app.services.work_profiles import (
+    DEFAULT_WORKING_DAYS,
+    get_or_create_work_profile,
+    resolve_day_policy,
+)
 from app.services.rate_limit import enforce_rate_limit, request_client_ip
 from app.services.attendance import cached_daily_attendance
 from app.services.device_location import refresh_device_location
@@ -161,7 +165,7 @@ def _eligible_idle_seconds(
     timezone_name: str | None = None,
 ) -> int:
     policy = resolve_day_policy(db, employee, profile, work_date)
-    working_days = profile.working_days or [0, 1, 2, 3, 4]
+    working_days = profile.working_days or DEFAULT_WORKING_DAYS
     weekly_off_days = profile.weekly_off_days or []
     if (
         work_date.weekday() not in working_days
@@ -293,7 +297,7 @@ def config(
                 "shift_end": day_policy["shift_end"].isoformat(timespec="minutes")
                 if day_policy["shift_end"]
                 else None,
-                "working_days": profile.working_days or [0, 1, 2, 3, 4],
+                "working_days": profile.working_days or DEFAULT_WORKING_DAYS,
                 "break_rules": day_policy["break_rules"],
                 "approved_leave_today": day_policy["approved_leave"],
                 "approved_early_leave_from": (

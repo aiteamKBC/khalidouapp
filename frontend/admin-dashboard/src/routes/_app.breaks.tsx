@@ -76,6 +76,7 @@ const FALLBACK_BREAKS: BreakDraft[] = [
   { name: "Lunch", startTime: "13:00", endTime: "13:30", paid: true },
   { name: "Short break", startTime: "16:30", endTime: "16:45", paid: true },
 ];
+const DEFAULT_WORKING_DAYS = [0, 1, 2, 3, 5, 6];
 
 function todayIso() {
   const now = new Date();
@@ -438,7 +439,7 @@ function BreakEditorDialog({
   const [employeeName, setEmployeeName] = useState("");
   const [jobTitle, setJobTitle] = useState("");
   const [timezone, setTimezone] = useState("Africa/Cairo");
-  const [workingDays, setWorkingDays] = useState<number[]>([0, 1, 2, 3, 4]);
+  const [workingDays, setWorkingDays] = useState<number[]>(DEFAULT_WORKING_DAYS);
   const [lateGraceMinutes, setLateGraceMinutes] = useState(15);
   const [overtimeEnabled, setOvertimeEnabled] = useState(false);
   const [overtimeMultiplier, setOvertimeMultiplier] = useState(1.5);
@@ -477,7 +478,7 @@ function BreakEditorDialog({
     setEmployeeName(source?.name ?? "");
     setJobTitle(source?.jobTitle ?? "");
     setTimezone(source?.timezone ?? "Africa/Cairo");
-    setWorkingDays(source?.workingDays ?? [0, 1, 2, 3, 4]);
+    setWorkingDays(source?.workingDays ?? DEFAULT_WORKING_DAYS);
     setLateGraceMinutes(source?.lateGraceMinutes ?? 15);
     setOvertimeEnabled(source?.overtimeEnabled ?? false);
     setOvertimeMultiplier(source?.overtimeRateMultiplier ?? 1.5);
