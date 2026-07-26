@@ -96,7 +96,7 @@ export async function invitePerson(input: PersonInvitationInput): Promise<Person
       team_ids: input.teamIds,
       job_title: input.jobTitle ? normalizeAiAcronym(input.jobTitle) : null,
       timezone: input.timezone || "Africa/Cairo",
-      track_as_employee: input.trackAsEmployee ?? false,
+      track_as_employee: true,
       start_date: input.startDate,
       annual_leave_days: input.annualLeaveDays,
       work_profile: input.workProfile

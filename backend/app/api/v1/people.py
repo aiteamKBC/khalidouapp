@@ -113,10 +113,7 @@ def invite_person(
     temporary_password: str | None = None
     employee_invitation: EmployeeInvitation | None = None
     raw_invitation_token: str | None = None
-    track_as_employee = (
-        payload.kind in {"employee", "team_manager", "general_admin", "hr"}
-        or payload.track_as_employee
-    )
+    track_as_employee = payload.kind in {"employee", "team_manager", "general_admin", "hr"}
     if track_as_employee and employee is None:
         default_job_title = {
             "employee": None,
@@ -141,6 +138,9 @@ def invite_person(
         employee.name = payload.name.strip()
         if payload.job_title:
             employee.job_title = payload.job_title
+        employee.timezone = payload.timezone
+        employee.start_date = payload.start_date
+        employee.annual_leave_days = payload.annual_leave_days
         if payload.kind != "employee":
             employee.status = "active"
             employee.archived_at = None
@@ -184,14 +184,18 @@ def invite_person(
         if admin is not None:
             db.add(TeamOwner(team_id=team.id, admin_user_id=admin.id))
 
-    if payload.kind == "employee" and employee is not None:
+    if employee is not None:
         profile = get_or_create_work_profile(db, employee)
         if payload.start_date is None:
-            raise ApiError("START_DATE_REQUIRED", "Employee start date is required.", 400)
+            raise ApiError(
+                "START_DATE_REQUIRED",
+                "Employment start date is required for every tracked role.",
+                400,
+            )
         if payload.work_profile is None:
             raise ApiError(
                 "WORK_PROFILE_REQUIRED",
-                "Complete the employee schedule and salary before invitation.",
+                "Complete the schedule, hours, and breaks before creating this person.",
                 400,
             )
         work_profile_changes = payload.work_profile.model_dump(exclude_unset=True, mode="json")
@@ -213,6 +217,8 @@ def invite_person(
         for key, value in work_profile_changes.items():
             setattr(profile, key, value)
         refresh_profile_completed_at(profile)
+
+    if payload.kind == "employee" and employee is not None:
         employee_invitation, raw_invitation_token = issue_employee_invitation(db, employee)
 
     record_audit_log(

@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from uuid import UUID, uuid4
 
 from sqlalchemy import select, update
@@ -17,6 +17,7 @@ from app.models import (
     TeamMember,
     WorkSession,
 )
+from app.services.work_profiles import get_or_create_work_profile
 
 
 def default_admin_job_title(admin: AdminUser) -> str:
@@ -28,11 +29,17 @@ def default_admin_job_title(admin: AdminUser) -> str:
 
 
 def sync_linked_employee_password(admin: AdminUser) -> None:
-    if admin.employee is not None:
+    if not admin.is_super_admin and admin.employee is not None:
         admin.employee.portal_password_hash = admin.password_hash
 
 
 def ensure_tracked_employee(db: Session, admin: AdminUser) -> Employee:
+    if admin.is_super_admin:
+        raise ApiError(
+            "SUPER_ADMIN_NOT_TRACKED",
+            "The protected Super Admin account is not an employee tracking account.",
+            409,
+        )
     employee = db.get(Employee, admin.employee_id) if admin.employee_id else None
     if employee is None:
         employee = db.scalar(
@@ -63,6 +70,7 @@ def ensure_tracked_employee(db: Session, admin: AdminUser) -> Employee:
             job_title=default_admin_job_title(admin),
             timezone="Africa/Cairo",
             status="active",
+            start_date=admin.created_at.date() if admin.created_at else date.today(),
         )
         db.add(employee)
         db.flush()
@@ -73,10 +81,13 @@ def ensure_tracked_employee(db: Session, admin: AdminUser) -> Employee:
         employee.job_title = default_admin_job_title(admin)
     employee.portal_password_hash = admin.password_hash
     employee.status = "active"
+    if employee.start_date is None:
+        employee.start_date = admin.created_at.date() if admin.created_at else date.today()
     employee.archived_at = None
     employee.status_before_archive = None
     admin.employee_id = employee.id
     db.add_all([admin, employee])
+    get_or_create_work_profile(db, employee)
     return employee
 
 
@@ -150,6 +161,17 @@ def disable_employee_tracking(db: Session, employee: Employee) -> None:
         employee.status = "inactive"
     revoke_employee_runtime(db, employee)
     db.add(employee)
+
+
+def enforce_admin_tracking_policy(db: Session, admin: AdminUser) -> Employee | None:
+    """All admins are tracked employees except the protected Super Admin."""
+
+    if admin.is_super_admin:
+        employee = db.get(Employee, admin.employee_id) if admin.employee_id else None
+        if employee is not None and employee.status not in {"inactive", "archived", "deleted"}:
+            disable_employee_tracking(db, employee)
+        return None
+    return ensure_tracked_employee(db, admin)
 
 
 def archive_admin_identity(db: Session, admin: AdminUser, now: datetime) -> None:

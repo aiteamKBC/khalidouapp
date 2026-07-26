@@ -31,6 +31,7 @@ from app.services.admin_auth import (
 )
 from app.services.audit import record_audit_log
 from app.services.permissions import capabilities_for_admin, is_super_admin
+from app.services.person_access import enforce_admin_tracking_policy
 from app.services.rate_limit import enforce_rate_limit
 
 router = APIRouter(prefix="/auth", tags=["admin-auth"])
@@ -80,6 +81,9 @@ def me(
     current_admin: Annotated[AdminUser, Depends(get_current_admin)],
     db: Annotated[Session, Depends(get_db)],
 ):
+    tracked_employee = enforce_admin_tracking_policy(db, current_admin)
+    db.commit()
+    display_employee = tracked_employee or current_admin.employee
     assigned_team_ids = db.scalars(
         select(TeamOwner.team_id).where(TeamOwner.admin_user_id == current_admin.id)
     ).all()
@@ -87,10 +91,10 @@ def me(
         data={
             "id": str(current_admin.id),
             "company_id": str(current_admin.company_id),
-            "employee_id": str(current_admin.employee_id) if current_admin.employee_id else None,
+            "employee_id": str(tracked_employee.id) if tracked_employee else None,
             "name": current_admin.name,
             "email": current_admin.email,
-            "job_title": current_admin.employee.job_title if current_admin.employee else None,
+            "job_title": display_employee.job_title if display_employee else None,
             "role": current_admin.role,
             "is_super_admin": is_super_admin(current_admin),
             "permissions": capabilities_for_admin(current_admin),
@@ -130,6 +134,7 @@ def change_password(
 
     now = datetime.now(UTC)
     current_admin.password_hash = hash_password(payload.new_password)
+    enforce_admin_tracking_policy(db, current_admin)
     db.execute(
         update(AdminRefreshToken)
         .where(
@@ -218,6 +223,7 @@ def reset_password(
     if admin is None or admin.status != "active":
         raise ApiError("PASSWORD_RESET_TOKEN_INVALID", "This account is not available.", 400)
     admin.password_hash = hash_password(payload.new_password)
+    enforce_admin_tracking_policy(db, admin)
     token.used_at = now
     db.execute(
         update(AdminRefreshToken)

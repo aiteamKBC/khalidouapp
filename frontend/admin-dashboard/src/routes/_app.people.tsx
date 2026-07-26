@@ -339,7 +339,6 @@ function PeopleDirectory({
   const [editTeamIds, setEditTeamIds] = useState<string[]>([]);
   const [editEmployeeTeamIds, setEditEmployeeTeamIds] = useState<string[]>([]);
   const [editEmployeeTeamRole, setEditEmployeeTeamRole] = useState<TeamMemberRole>("member");
-  const [editTrackAsEmployee, setEditTrackAsEmployee] = useState(false);
   const [editPermissions, setEditPermissions] = useState<string[]>([]);
   const [editShiftStart, setEditShiftStart] = useState("09:00");
   const [editShiftEnd, setEditShiftEnd] = useState("17:00");
@@ -370,8 +369,9 @@ function PeopleDirectory({
   const canChangeRoles =
     canManageAccess && Boolean(editPersonRow) && !editingSelf && !isProtectedOwner;
   const allowedRoleOptions = useMemo(() => assignableRoles(currentUser), [currentUser]);
-  const managedEmployeeId =
-    editPersonRow?.dashboardEmployeeId ?? editPersonRow?.employee?.id ?? null;
+  const managedEmployeeId = isProtectedOwner
+    ? null
+    : (editPersonRow?.dashboardEmployeeId ?? editPersonRow?.employee?.id ?? null);
 
   const managedWorkProfile = useQuery({
     queryKey: ["employee-work-profile", managedEmployeeId],
@@ -415,7 +415,6 @@ function PeopleDirectory({
     setEditPermissionMode(access.data.permissionMode);
     setEditDataScope(access.data.dataScope);
     setEditTeamIds(access.data.teamLeadTeamIds);
-    setEditTrackAsEmployee(access.data.trackAsEmployee);
     setEditPermissions(access.data.effectivePermissions);
   }, [access.data]);
 
@@ -690,7 +689,7 @@ function PeopleDirectory({
         dataScope: editRole === "team_owner" ? "assigned_teams" : "company",
         permissionOverrides: overrides,
         teamLeadTeamIds: editRole === "team_owner" ? editTeamIds : [],
-        trackAsEmployee: editTrackAsEmployee,
+        trackAsEmployee: true,
       });
     },
     onSuccess: async () => {
@@ -772,7 +771,6 @@ function PeopleDirectory({
     setEditTeamIds(user?.teamLeadTeamIds ?? row.teamIds);
     setEditEmployeeTeamIds(trackedEmployee?.teamIds ?? []);
     setEditEmployeeTeamRole(trackedEmployee?.teamRole ?? "member");
-    setEditTrackAsEmployee(user?.trackAsEmployee ?? false);
     setEditPermissions(user?.permissions ?? []);
     setShowFullPermissions(false);
   }
@@ -1887,16 +1885,13 @@ function PeopleDirectory({
                 onToggleFull={() => setShowFullPermissions((value) => !value)}
               />
 
-              {canChangeRoles && editRole === "team_owner" && (
-                <div className="flex items-center justify-between gap-3 rounded-xl border p-3">
-                  <div>
-                    <Label>Also track as employee</Label>
-                    <p className="text-xs text-muted-foreground">
-                      Use this when the team lead also works on tasks and needs their own employee
-                      dashboard.
-                    </p>
-                  </div>
-                  <Switch checked={editTrackAsEmployee} onCheckedChange={setEditTrackAsEmployee} />
+              {!isProtectedOwner && editRole !== "employee" && (
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50/70 p-3 text-sm dark:border-emerald-900 dark:bg-emerald-950/25">
+                  <Label>Employee tracking included</Label>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    This role also uses the desktop app and has attendance, shift, breaks, idle
+                    time, overtime, and payroll records. Only the protected Super admin is excluded.
+                  </p>
                 </div>
               )}
 
@@ -2044,7 +2039,7 @@ function AddPersonWizard({
   const canCreateHr = canAssignRole(currentUser, "hr");
   const canCreateGeneralAdmin = canAssignRole(currentUser, "general_admin");
 
-  // Invitation confirmation (employee only).
+  // Invitation confirmation for employees who choose their own password.
   const [createdEmployee, setCreatedEmployee] = useState<Employee | null>(null);
   const [createdInvitation, setCreatedInvitation] = useState<PersonInvitationSummary>();
   const [invitationEmailQueued, setInvitationEmailQueued] = useState(false);
@@ -2127,31 +2122,27 @@ function AddPersonWizard({
         teamIds,
         jobTitle,
         timezone: "Africa/Cairo",
-        startDate: kind === "employee" ? startDate : undefined,
-        annualLeaveDays: kind === "employee" ? annualLeaveDays : undefined,
-        workProfile:
-          kind === "employee"
+        startDate,
+        annualLeaveDays,
+        workProfile: {
+          shiftStart,
+          shiftEnd,
+          workingDays: [0, 1, 2, 3, 4, 5, 6].filter((day) => !offDays.includes(day)),
+          weeklyOffDays: offDays,
+          requiredDailyMinutes: Math.max(60, requiredDailyMinutes),
+          breakRules: breaks,
+          lateGraceMinutes: 15,
+          ...(canManagePayroll
             ? {
-                shiftStart,
-                shiftEnd,
-                workingDays: [0, 1, 2, 3, 4, 5, 6].filter((day) => !offDays.includes(day)),
-                weeklyOffDays: offDays,
-                requiredDailyMinutes: Math.max(60, requiredDailyMinutes),
-                breakRules: breaks,
-                lateGraceMinutes: 15,
-                ...(canManagePayroll
-                  ? {
-                      overtimeEnabled: true,
-                      overtimeBasis: "outside_shift",
-                      overtimeRateMultiplier: 1,
-                      salaryAmount:
-                        salaryType === "monthly" ? Number(salaryAmount) : Number(hourlyRate),
-                      salaryCurrency,
-                      salaryType,
-                    }
-                  : {}),
+                overtimeEnabled: true,
+                overtimeBasis: "outside_shift",
+                overtimeRateMultiplier: 1,
+                salaryAmount: salaryType === "monthly" ? Number(salaryAmount) : Number(hourlyRate),
+                salaryCurrency,
+                salaryType,
               }
-            : undefined,
+            : {}),
+        },
       });
       const employee = invitation.employeeId ? await getEmployee(invitation.employeeId) : undefined;
       return { kind, employee, invitation };
@@ -2200,7 +2191,7 @@ function AddPersonWizard({
       toast.error(existingPersonMessage ?? "A person with this email already exists.");
       return;
     }
-    setStep(kind === "employee" ? "work" : "review");
+    setStep("work");
   }
 
   const shiftTimeOptions = Array.from({ length: 96 }, (_, index) => {
@@ -2383,7 +2374,7 @@ function AddPersonWizard({
                 onClick={() => setKind("team_owner")}
                 icon={UserPlus}
                 title="Team leader"
-                subtitle="Manages assigned teams in the dashboard and has an Employee profile, so they can receive and track their own tasks."
+                subtitle="Tracked employee with a shift, breaks, attendance and desktop app, plus access to manage assigned teams."
               />
             )}
             {canCreateGeneralAdmin && (
@@ -2392,7 +2383,7 @@ function AddPersonWizard({
                 onClick={() => setKind("general_admin")}
                 icon={ShieldCheck}
                 title="General admin"
-                subtitle="Company-wide admin with access to every team and permission to review a team leader's own task."
+                subtitle="Tracked employee with the desktop app and attendance, plus company-wide administrative access."
               />
             )}
             {canCreateHr && (
@@ -2401,7 +2392,7 @@ function AddPersonWizard({
                 onClick={() => setKind("hr")}
                 icon={KeyRound}
                 title="HR"
-                subtitle="Manages employee profiles, schedules, payroll, deductions, overtime and invitations."
+                subtitle="Tracked employee with the desktop app and attendance, plus HR, schedules and payroll access."
               />
             )}
             <div className="flex justify-end gap-2 pt-1">
@@ -2509,16 +2500,14 @@ function AddPersonWizard({
                     ? kind === "employee"
                       ? "Sending..."
                       : "Creating..."
-                    : kind === "employee"
-                      ? "Next"
-                      : `Create ${kindLabel(kind).toLowerCase()}`}
+                    : "Next"}
                 </Button>
               </div>
             </div>
           </form>
         )}
 
-        {step === "work" && kind === "employee" && (
+        {step === "work" && (
           <div className="space-y-5">
             <div className="grid gap-3 sm:grid-cols-2">
               <div>
@@ -2828,53 +2817,46 @@ function AddPersonWizard({
                     .join(", ") || "Company-wide"}
                 </p>
               </div>
-              {kind === "employee" && (
-                <>
-                  <div>
-                    <span className="text-xs text-muted-foreground">Start / annual leave</span>
-                    <p className="font-bold">
-                      {startDate} · {displayedLeaveDays} days
-                    </p>
-                  </div>
-                  <div>
-                    <span className="text-xs text-muted-foreground">Shift</span>
-                    <p className="font-bold">
-                      {formatTimeOfDay(shiftStart)}–{formatTimeOfDay(shiftEnd)}
-                    </p>
-                  </div>
-                  {canManagePayroll && (
-                    <div>
-                      <span className="text-xs text-muted-foreground">Salary</span>
-                      <p className="font-bold">
-                        {showSalary
-                          ? `${salaryAmount} ${salaryCurrency} · ${salaryType}`
-                          : `•••••• ${salaryCurrency}`}
-                      </p>
-                    </div>
-                  )}
-                  <div>
-                    <span className="text-xs text-muted-foreground">Breaks</span>
-                    <p className="font-bold">
-                      {breaks
-                        .map(
-                          (item) =>
-                            `${item.name} ${formatTimeOfDay(item.start_time)}–${formatTimeOfDay(item.end_time)}`,
-                        )
-                        .join(", ")}
-                    </p>
-                  </div>
-                </>
+              <div>
+                <span className="text-xs text-muted-foreground">Start / annual leave</span>
+                <p className="font-bold">
+                  {startDate} · {displayedLeaveDays} days
+                </p>
+              </div>
+              <div>
+                <span className="text-xs text-muted-foreground">Shift</span>
+                <p className="font-bold">
+                  {formatTimeOfDay(shiftStart)}–{formatTimeOfDay(shiftEnd)}
+                </p>
+              </div>
+              {canManagePayroll && (
+                <div>
+                  <span className="text-xs text-muted-foreground">Salary</span>
+                  <p className="font-bold">
+                    {showSalary
+                      ? `${salaryAmount} ${salaryCurrency} · ${salaryType}`
+                      : `•••••• ${salaryCurrency}`}
+                  </p>
+                </div>
               )}
+              <div>
+                <span className="text-xs text-muted-foreground">Breaks</span>
+                <p className="font-bold">
+                  {breaks
+                    .map(
+                      (item) =>
+                        `${item.name} ${formatTimeOfDay(item.start_time)}–${formatTimeOfDay(item.end_time)}`,
+                    )
+                    .join(", ")}
+                </p>
+              </div>
             </div>
             <p className="text-sm text-muted-foreground">
               {existingPersonMessage ??
                 "No account or invitation has been created yet. Confirm to save this profile and send the invitation."}
             </p>
             <div className="flex justify-between">
-              <Button
-                variant="ghost"
-                onClick={() => setStep(kind === "employee" ? "work" : "form")}
-              >
+              <Button variant="ghost" onClick={() => setStep("work")}>
                 <ArrowLeft className="mr-2 h-4 w-4" />
                 Back
               </Button>

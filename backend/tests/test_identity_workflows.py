@@ -227,6 +227,7 @@ def test_invited_user_can_change_temporary_password_and_sessions_are_revoked(
             "email": "change.password@kentconsultancy.co",
             "kind": "team_manager",
             "team_ids": [str(data["team_a"].id)],
+            **employee_onboarding_payload(),
         },
     )
     login = client.post(
@@ -270,6 +271,13 @@ def test_invited_user_can_change_temporary_password_and_sessions_are_revoked(
             "password": "NewPassword456!",
         },
     )
+    employee_app_login = client.post(
+        "/api/v1/employee-auth/login",
+        json={
+            "email": "change.password@kentconsultancy.co",
+            "password": "NewPassword456!",
+        },
+    )
 
     assert login.status_code == 200
     assert wrong_current.status_code == 400
@@ -277,6 +285,7 @@ def test_invited_user_can_change_temporary_password_and_sessions_are_revoked(
     assert old_refresh.status_code == 401
     assert old_login.status_code == 401
     assert new_login.status_code == 200
+    assert employee_app_login.status_code == 200
 
 
 def test_inviting_team_manager_is_atomic_and_permissions_are_scoped(identity_client, monkeypatch):
@@ -294,6 +303,7 @@ def test_inviting_team_manager_is_atomic_and_permissions_are_scoped(identity_cli
             "kind": "team_manager",
             "team_ids": [str(data["team_a"].id)],
             "timezone": "Africa/Cairo",
+            **employee_onboarding_payload(),
         },
     )
     assert invited.status_code == 200
@@ -324,6 +334,10 @@ def test_inviting_team_manager_is_atomic_and_permissions_are_scoped(identity_cli
         assert manager.employee_id == employee.id
         assert manager.role == "team_owner"
         assert employee.timezone == "Africa/Cairo"
+        assert employee.start_date.isoformat() == "2026-01-01"
+        assert employee.work_profile.shift_start.isoformat() == "09:00:00"
+        assert employee.work_profile.shift_end.isoformat() == "17:00:00"
+        assert len(employee.work_profile.break_rules) == 2
         assert membership is not None and membership.status == "active"
         assert ownership is not None
         assert delivery.category == "admin_welcome"
@@ -387,6 +401,19 @@ def test_general_admin_can_invite_employee_and_other_general_admin(identity_clie
             "kind": "general_admin",
             "job_title": "Operations Manager",
             "team_ids": [],
+            **employee_onboarding_payload(),
+        },
+    )
+    hr_response = client.post(
+        "/api/v1/people/invitations",
+        headers=data["general_headers"],
+        json={
+            "name": "People Partner",
+            "email": "hr@kentconsultancy.co",
+            "kind": "hr",
+            "job_title": "HR Manager",
+            "team_ids": [],
+            **employee_onboarding_payload(),
         },
     )
     me = client.get("/api/v1/auth/me", headers=data["general_headers"])
@@ -400,16 +427,23 @@ def test_general_admin_can_invite_employee_and_other_general_admin(identity_clie
         invited_admin = db.scalar(
             select(AdminUser).where(AdminUser.email == "admin2@kentconsultancy.co")
         )
+        invited_hr = db.scalar(select(AdminUser).where(AdminUser.email == "hr@kentconsultancy.co"))
         assert {row.category for row in deliveries} == {"employee_invitation", "admin_welcome"}
         assert invited_employee is not None
         assert invited_admin is not None and invited_admin.role == "general_admin"
         assert invited_admin.employee is not None
         assert invited_admin.employee.job_title == "Operations Manager"
+        assert invited_admin.employee.work_profile.required_daily_minutes == 480
+        assert len(invited_admin.employee.work_profile.break_rules) == 2
+        assert invited_hr is not None and invited_hr.role == "hr"
+        assert invited_hr.employee is not None
+        assert invited_hr.employee.work_profile.shift_start.isoformat() == "09:00:00"
     finally:
         db.close()
 
     assert employee_response.status_code == 200
     assert admin_response.status_code == 200
+    assert hr_response.status_code == 200
     assert me.status_code == 200
     assert "company.manage" in me.json()["data"]["permissions"]
     assert "admins.manage" in me.json()["data"]["permissions"]
@@ -443,6 +477,67 @@ def test_general_admin_can_sign_in_to_employee_portal(identity_client):
         db.close()
 
 
+def test_protected_super_admin_is_not_an_employee_tracking_account(identity_client):
+    client, data = identity_client
+    db: Session = data["session_factory"]()
+    try:
+        password_hash = hash_password("ProtectedOwnerPassword123!")
+        employee = Employee(
+            company_id=data["general_admin"].company_id,
+            name="Protected Owner",
+            email="owner@kentconsultancy.co",
+            employee_code="EMP-OWNER",
+            timezone="Africa/Cairo",
+            status="active",
+            portal_password_hash=password_hash,
+        )
+        db.add(employee)
+        db.flush()
+        admin = AdminUser(
+            company_id=data["general_admin"].company_id,
+            employee_id=employee.id,
+            name="Protected Owner",
+            email="owner@kentconsultancy.co",
+            password_hash=password_hash,
+            role="general_admin",
+            is_super_admin=True,
+            status="active",
+        )
+        db.add(admin)
+        db.commit()
+        employee_id = employee.id
+    finally:
+        db.close()
+
+    employee_login = client.post(
+        "/api/v1/employee-auth/login",
+        json={
+            "email": "owner@kentconsultancy.co",
+            "password": "ProtectedOwnerPassword123!",
+        },
+    )
+    admin_login = client.post(
+        "/api/v1/auth/login",
+        json={
+            "email": "owner@kentconsultancy.co",
+            "password": "ProtectedOwnerPassword123!",
+        },
+    )
+    headers = {"Authorization": f"Bearer {admin_login.json()['data']['access_token']}"}
+    me = client.get("/api/v1/auth/me", headers=headers)
+
+    assert employee_login.status_code == 401
+    assert admin_login.status_code == 200
+    assert me.status_code == 200
+    assert me.json()["data"]["employee_id"] is None
+
+    db = data["session_factory"]()
+    try:
+        assert db.get(Employee, employee_id).status == "inactive"
+    finally:
+        db.close()
+
+
 def test_general_admin_can_reset_manager_password_and_queue_reset_email(
     identity_client, monkeypatch
 ):
@@ -459,6 +554,7 @@ def test_general_admin_can_reset_manager_password_and_queue_reset_email(
             "email": "reset.manager@kentconsultancy.co",
             "kind": "team_manager",
             "team_ids": [str(data["team_a"].id)],
+            **employee_onboarding_payload(),
         },
     )
     admin_id = invited.json()["data"]["admin_user_id"]
@@ -531,6 +627,40 @@ def test_invalid_team_invitation_creates_nothing(identity_client):
     finally:
         db.close()
     assert response.status_code == 400
+
+
+def test_admin_role_requires_employee_start_date_shift_and_breaks(identity_client):
+    client, data = identity_client
+    response = client.post(
+        "/api/v1/people/invitations",
+        headers=data["general_headers"],
+        json={
+            "name": "Incomplete HR",
+            "email": "incomplete.hr@kentconsultancy.co",
+            "kind": "hr",
+            "team_ids": [],
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "START_DATE_REQUIRED"
+
+    db: Session = data["session_factory"]()
+    try:
+        assert (
+            db.scalar(
+                select(AdminUser.id).where(AdminUser.email == "incomplete.hr@kentconsultancy.co")
+            )
+            is None
+        )
+        assert (
+            db.scalar(
+                select(Employee.id).where(Employee.email == "incomplete.hr@kentconsultancy.co")
+            )
+            is None
+        )
+    finally:
+        db.close()
 
 
 def test_employee_invitation_is_hashed_one_time_and_accepts_password(identity_client, monkeypatch):
