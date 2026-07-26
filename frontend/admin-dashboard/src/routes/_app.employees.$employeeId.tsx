@@ -3,7 +3,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import {
   Activity,
-  ArrowLeft,
   Bell,
   Banknote,
   BriefcaseBusiness,
@@ -29,6 +28,7 @@ import {
 import { toast } from "sonner";
 import { PageHeader } from "@/components/ui/page-header";
 import { ProtectedImage } from "@/components/ProtectedImage";
+import { BackButton } from "@/components/ui/back-button";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -287,12 +287,12 @@ function EmployeeDetailPage() {
 
   return (
     <div>
-      <Button asChild variant="ghost" size="sm" className="mb-2 -ml-2">
-        <Link to="/people" search={{ tab: "directory" }}>
-          <ArrowLeft className="h-4 w-4 mr-1" />
-          Back to people
-        </Link>
-      </Button>
+      <BackButton
+        fallbackHref="/people?tab=directory"
+        variant="ghost"
+        size="sm"
+        className="mb-2 -ml-2"
+      />
       <PageHeader
         title={e.name}
         description={`Employee profile · ${e.code} · ${e.jobTitle || "No job title"}`}

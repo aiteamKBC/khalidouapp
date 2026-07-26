@@ -26,6 +26,7 @@ import { PageHeader } from "@/components/ui/page-header";
 import { ProtectedImage } from "@/components/ProtectedImage";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { BackButton } from "@/components/ui/back-button";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -325,9 +326,7 @@ function TeamDetailPage() {
         description="The team may no longer exist, or the server is temporarily unavailable."
         action={
           <div className="flex gap-2">
-            <Button asChild variant="outline">
-              <Link to="/teams">Back to teams</Link>
-            </Button>
+            <BackButton fallbackHref="/teams" variant="outline" />
             <Button onClick={() => team.refetch()}>
               <RefreshCw className="mr-2 h-4 w-4" /> Retry
             </Button>
@@ -339,12 +338,7 @@ function TeamDetailPage() {
 
   return (
     <div>
-      <Button asChild variant="ghost" size="sm" className="mb-2 -ml-2">
-        <Link to="/teams">
-          <ArrowLeft className="h-4 w-4 mr-1" />
-          Back to teams
-        </Link>
-      </Button>
+      <BackButton fallbackHref="/teams" variant="ghost" size="sm" className="mb-2 -ml-2" />
       <PageHeader
         title={team.data.name}
         description={team.data.description || "Monitor this team's people, activity, and devices."}

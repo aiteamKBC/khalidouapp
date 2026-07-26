@@ -4,7 +4,6 @@ import { useMemo, useState, type ReactNode } from "react";
 import {
   Activity,
   Archive,
-  ArrowLeft,
   BriefcaseBusiness,
   CheckCircle2,
   Clock3,
@@ -23,6 +22,7 @@ import {
 } from "@/api/projects";
 import { listEmployees } from "@/api/employees";
 import { listTeams } from "@/api/teams";
+import { BackButton } from "@/components/ui/back-button";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -142,11 +142,7 @@ function ProjectDetailPage() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <Button variant="ghost" size="sm" asChild className="mb-2 -ml-3">
-            <Link to="/projects">
-              <ArrowLeft className="mr-2 h-4 w-4" /> Projects & tasks
-            </Link>
-          </Button>
+          <BackButton fallbackHref="/projects" variant="ghost" size="sm" className="mb-2 -ml-3" />
           <div className="flex items-center gap-3">
             <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-primary/10 text-lg font-semibold text-primary">
               {project.data.name[0]?.toUpperCase()}

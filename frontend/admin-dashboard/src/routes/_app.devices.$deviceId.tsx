@@ -1,8 +1,7 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowLeft } from "lucide-react";
+import { BackButton } from "@/components/ui/back-button";
 import { PageHeader } from "@/components/ui/page-header";
-import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { getDevice } from "@/api/devices";
@@ -23,12 +22,7 @@ function DeviceDetailPage() {
 
   return (
     <div>
-      <Button asChild variant="ghost" size="sm" className="mb-2 -ml-2">
-        <Link to="/devices">
-          <ArrowLeft className="h-4 w-4 mr-1" />
-          Back
-        </Link>
-      </Button>
+      <BackButton fallbackHref="/devices" variant="ghost" size="sm" className="mb-2 -ml-2" />
       <PageHeader
         title={device.data.name}
         description={employee ? `Assigned to ${employee.name}` : undefined}
