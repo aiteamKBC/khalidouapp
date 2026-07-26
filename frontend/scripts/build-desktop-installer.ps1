@@ -5,7 +5,6 @@ $desktop = Join-Path $root "desktop-agent"
 $release = Join-Path $desktop "release-khaliduo"
 $tempOutput = Join-Path $env:TEMP ("khaliduo-release-" + [guid]::NewGuid().ToString("N"))
 $internalSigningSubject = "Kent Consultancy Internal Code Signing"
-$installerTrust = Join-Path $desktop "installer\trust"
 $runtimeEnvironmentFile = Join-Path $desktop "build-runtime.env"
 
 if (-not $env:KHALIDUO_UPDATE_URL) {
@@ -66,10 +65,6 @@ try {
         if (-not (Test-Path -LiteralPath $rootPublicCertificate) -or -not (Test-Path -LiteralPath $publisherPublicCertificate)) {
             throw "Public trust certificates were not found. Run scripts/setup-internal-code-signing.ps1 first."
         }
-        New-Item -ItemType Directory -Force -Path $installerTrust | Out-Null
-        Copy-Item -LiteralPath $rootPublicCertificate -Destination $installerTrust -Force
-        Copy-Item -LiteralPath $publisherPublicCertificate -Destination $installerTrust -Force
-
         $builderArguments += "--config.win.signtoolOptions.certificateSha1=$($signingCertificate.Thumbprint)"
         $builderArguments += "--config.forceCodeSigning=true"
         Write-Host "Signing Khaliduo as: $internalSigningSubject"
@@ -145,9 +140,6 @@ finally {
         catch {
             Write-Warning "The temporary Electron build folder could not be removed: $resolvedTempOutput"
         }
-    }
-    if (Test-Path -LiteralPath $installerTrust) {
-        Remove-Item -LiteralPath $installerTrust -Recurse -Force
     }
     if (Test-Path -LiteralPath $runtimeEnvironmentFile) {
         Remove-Item -LiteralPath $runtimeEnvironmentFile -Force
