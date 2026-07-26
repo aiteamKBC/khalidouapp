@@ -850,6 +850,12 @@ function BreakEditorDialog({
                       min="0"
                       step="0.01"
                       value={salaryAmount}
+                      onFocus={(event) => {
+                        if (Number(event.currentTarget.value) === 0) {
+                          const input = event.currentTarget;
+                          requestAnimationFrame(() => input.select());
+                        }
+                      }}
                       onChange={(event) => setSalaryAmount(Number(event.target.value))}
                       aria-label={showSalary ? "Salary amount" : "Salary amount hidden"}
                     />
