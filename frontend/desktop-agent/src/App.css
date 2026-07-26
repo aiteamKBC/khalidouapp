@@ -1094,6 +1094,87 @@ textarea:focus {
   font-size: 11.5px;
 }
 
+.k-idle-needs {
+  margin-bottom: 16px;
+  padding: 10px;
+  border: 1px solid rgba(212, 135, 0, 0.3);
+  border-radius: 10px;
+  background: var(--amber-weak);
+}
+
+.k-idle-needs header {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.k-idle-needs header strong {
+  color: var(--amber);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.k-idle-needs header span {
+  color: var(--text-2);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.k-idle-needs-list {
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.k-side-section .k-idle-needs-item {
+  display: grid;
+  grid-template-areas:
+    "icon period action"
+    "icon duration action";
+  grid-template-columns: 30px minmax(0, 1fr) auto;
+  gap: 2px 8px;
+  align-items: center;
+  width: 100%;
+  padding: 7px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  background: var(--surface);
+  text-align: left;
+}
+
+.k-side-section .k-idle-needs-item:hover {
+  border-color: rgba(212, 135, 0, 0.55);
+}
+
+.k-idle-needs-item .k-timeline-icon {
+  grid-area: icon;
+  color: var(--amber);
+  background: var(--amber-weak);
+}
+
+.k-idle-needs-item > span {
+  grid-area: period;
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.k-idle-needs-item > small {
+  grid-area: duration;
+  color: var(--text-2);
+  font-size: 10px;
+}
+
+.k-idle-needs-item > b {
+  grid-area: action;
+  max-width: 76px;
+  color: var(--amber);
+  font-size: 10px;
+  text-align: right;
+}
+
 .k-timeline {
   display: grid;
   gap: 8px;
@@ -1101,22 +1182,12 @@ textarea:focus {
 
 .k-timeline div {
   display: grid;
-  grid-template-columns: 30px 112px minmax(0, 1fr) auto auto;
+  grid-template-columns: 30px 112px minmax(0, 1fr) auto;
   gap: 8px;
   align-items: center;
   min-height: 30px;
   color: var(--text-2);
   font-size: 11px;
-}
-
-.k-timeline-request {
-  padding: 4px 7px;
-  border: 1px solid rgba(212, 135, 0, 0.28);
-  border-radius: 999px;
-  color: var(--amber);
-  background: var(--amber-weak);
-  font-size: 10px;
-  font-weight: 900;
 }
 
 .k-timeline-icon {

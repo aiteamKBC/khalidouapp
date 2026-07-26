@@ -1,7 +1,7 @@
 {
   "name": "khaliduo",
   "private": true,
-  "version": "1.1.59",
+  "version": "1.1.60",
   "type": "module",
   "description": "Khaliduo desktop app by Kent Consultancy.",
   "main": "dist-electron-khaliduo/main.js",
@@ -11,6 +11,7 @@
     "build": "tsc -b && vite build && tsc -p tsconfig.electron.json",
     "dist": "powershell -NoProfile -ExecutionPolicy Bypass -File ../scripts/build-desktop-installer.ps1",
     "lint": "oxlint src electron",
+    "test": "node --test tests/*.test.ts",
     "preview": "vite preview"
   },
   "dependencies": {

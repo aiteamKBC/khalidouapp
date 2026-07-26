@@ -17,6 +17,10 @@ import type {
   RecentScreenshot,
   WorkdayTimeline,
 } from "./types/electron";
+import {
+  requestableIdleMinutes,
+  totalRequestableIdleMinutes,
+} from "./idleRequests";
 import "sweetalert2/dist/sweetalert2.min.css";
 import "./App.css";
 
@@ -750,10 +754,7 @@ function App() {
 
   useEffect(() => {
     if (!selectedIdleRequest) return;
-    const maxMinutes = Math.max(
-      1,
-      Math.floor(selectedIdleRequest.availableSeconds / 60),
-    );
+    const maxMinutes = Math.max(1, requestableIdleMinutes(selectedIdleRequest));
     setTimeRequestMinutes((minutes) =>
       Math.min(Math.max(1, minutes), maxMinutes),
     );
@@ -890,10 +891,7 @@ function App() {
       setTimeRequestError("No completed idle period is available to request.");
       return;
     }
-    const maxMinutes = Math.max(
-      1,
-      Math.floor(selectedIdleRequest.availableSeconds / 60),
-    );
+    const maxMinutes = Math.max(1, requestableIdleMinutes(selectedIdleRequest));
     if (
       !Number.isFinite(timeRequestMinutes) ||
       timeRequestMinutes < 1 ||
@@ -1598,7 +1596,7 @@ function App() {
                 if (option) {
                   setSelectedIdleRequestKey(option.key);
                   setTimeRequestMinutes(
-                    Math.max(1, Math.floor(option.availableSeconds / 60)),
+                    Math.max(1, requestableIdleMinutes(option)),
                   );
                 }
                 setExpandedRequest("idle");
@@ -1928,6 +1926,8 @@ function HomeView({
     status.todayTimeline?.idle_seconds ?? 0,
     status.eligibleIdleSeconds,
   );
+  const requestableIdleMinuteTotal =
+    totalRequestableIdleMinutes(idleRequestOptions);
   const isPaused = status.trackingPaused || status.trackingStatus === "paused";
   const shouldResume =
     isPaused ||
@@ -2099,13 +2099,18 @@ function HomeView({
             <div>
               <span>Idle</span>
               <strong>{formatDuration(todayIdleSeconds)}</strong>
+              <small className="k-meta-note">
+                {requestableIdleMinuteTotal > 0
+                  ? `${requestableIdleMinuteTotal} min requestable`
+                  : "No requestable time"}
+              </small>
               <button
                 type="button"
                 className="k-meta-action"
                 onClick={() => onRequestManualTime(idleRequestOptions[0])}
                 disabled={!idleRequestOptions.length}
               >
-                Request idle time
+                Explain idle
               </button>
             </div>
           </div>
@@ -2310,11 +2315,40 @@ function Timeline({
     extra: "Overtime",
     leave: "Leave",
   } as const;
-  const idleOptionsByKey = new Map(
-    idleRequestOptions.map((option) => [option.key, option]),
-  );
+  const requestableMinutes = totalRequestableIdleMinutes(idleRequestOptions);
   return (
     <section className="k-side-section">
+      {idleRequestOptions.length ? (
+        <section
+          className="k-idle-needs"
+          aria-label="Idle periods needing explanation"
+        >
+          <header>
+            <strong>Needs explanation</strong>
+            <span>{requestableMinutes} min requestable</span>
+          </header>
+          <div className="k-idle-needs-list">
+            {idleRequestOptions.map((option) => (
+              <button
+                key={option.key}
+                type="button"
+                className="k-idle-needs-item"
+                onClick={() => onRequestIdleTime(option)}
+              >
+                <i className="k-timeline-icon">
+                  <KIcon name="idle" />
+                </i>
+                <span>
+                  {formatClock(option.startedAt, timeline.timezone)} -{" "}
+                  {formatClock(option.endedAt, timeline.timezone)}
+                </span>
+                <small>{formatDuration(option.durationSeconds)} idle period</small>
+                <b>Explain up to {requestableIdleMinutes(option)} min</b>
+              </button>
+            ))}
+          </div>
+        </section>
+      ) : null}
       <strong>Today's timeline</strong>
       <div className="k-timeline">
         {timeline.intervals.length === 0 && timeline.approved_leave ? (
@@ -2333,10 +2367,6 @@ function Timeline({
               ? "extra"
               : "leave"
             : interval.type;
-          const idleOption =
-            !timeline.approved_leave && interval.type === "idle"
-              ? idleOptionsByKey.get(idleRequestKey(interval))
-              : undefined;
           return (
             <div
               key={`${interval.session_id}-${interval.started_at}-${index}`}
@@ -2380,15 +2410,6 @@ function Timeline({
                     : interval.duration_seconds,
                 )}
               </small>
-              {idleOption ? (
-                <button
-                  type="button"
-                  className="k-timeline-request"
-                  onClick={() => onRequestIdleTime(idleOption)}
-                >
-                  Request
-                </button>
-              ) : null}
             </div>
           );
         })}
@@ -2871,7 +2892,7 @@ function RequestCentreView(props: RequestCentreProps) {
     idleRequestOptions[0] ??
     null;
   const maxIdleMinutes = selectedIdle
-    ? Math.max(1, Math.floor(selectedIdle.availableSeconds / 60))
+    ? Math.max(1, requestableIdleMinutes(selectedIdle))
     : 0;
   const requests = useMemo(
     () =>
@@ -3046,7 +3067,8 @@ function RequestCentreView(props: RequestCentreProps) {
                             option.endedAt,
                             status.todayTimeline?.timezone ?? "UTC",
                           )}{" "}
-                          · {formatDuration(option.availableSeconds)} available
+                          | {formatDuration(option.durationSeconds)} idle | up
+                          to {requestableIdleMinutes(option)} min remaining
                         </option>
                       ))}
                     </select>
@@ -3086,10 +3108,13 @@ function RequestCentreView(props: RequestCentreProps) {
                 </label>
                 <div className="k-form-footer">
                   <span>
-                    Eligible:{" "}
+                    Idle period:{" "}
                     {selectedIdle
-                      ? formatDuration(selectedIdle.availableSeconds)
+                      ? formatDuration(selectedIdle.durationSeconds)
                       : "00:00:00"}
+                    {selectedIdle
+                      ? ` | Requestable remaining: up to ${requestableIdleMinutes(selectedIdle)} min`
+                      : ""}
                   </span>
                   <button
                     className="k-primary"
@@ -3630,7 +3655,7 @@ function MoreView({
     idleRequestOptions[0] ??
     null;
   const maxIdleMinutes = selectedIdle
-    ? Math.max(1, Math.floor(selectedIdle.availableSeconds / 60))
+    ? Math.max(1, requestableIdleMinutes(selectedIdle))
     : 0;
   const recentRequests = status.timeAdjustmentRequests.slice(0, 5);
   return (
@@ -3766,8 +3791,9 @@ function MoreView({
                         option.endedAt,
                         status.todayTimeline?.timezone ?? "UTC",
                       )}
-                      {" · "}
-                      {formatDuration(option.availableSeconds)} available
+                      {" | "}
+                      {formatDuration(option.durationSeconds)} idle | up to{" "}
+                      {requestableIdleMinutes(option)} min
                     </option>
                   ))
                 ) : (
@@ -3776,11 +3802,11 @@ function MoreView({
               </select>
             </label>
             <div className="k-request-meter">
-              <span>Available to request</span>
+              <span>Idle period / maximum request</span>
               <strong>
                 {selectedIdle
-                  ? formatDuration(selectedIdle.availableSeconds)
-                  : "00:00:00"}
+                  ? `${formatDuration(selectedIdle.durationSeconds)} / ${requestableIdleMinutes(selectedIdle)} min`
+                  : "00:00:00 / 0 min"}
               </strong>
             </div>
             <label>
