@@ -111,8 +111,16 @@ def _count_files(roots: tuple[Path, Path]) -> dict[str, int]:
     }
 
 
-def _backup_database(destination: Path) -> None:
+def _pg_dump_database_url():
     database_url = make_url(settings.database_url)
+    host = database_url.host
+    if host and host.endswith(".neon.tech") and "-pooler." in host:
+        database_url = database_url.set(host=host.replace("-pooler.", ".", 1))
+    return database_url
+
+
+def _backup_database(destination: Path) -> None:
+    database_url = _pg_dump_database_url()
     command = ["pg_dump", "--format=custom", "--file", str(destination)]
     if database_url.host:
         command.extend(["--host", database_url.host])
@@ -126,7 +134,24 @@ def _backup_database(destination: Path) -> None:
     environment = os.environ.copy()
     if database_url.password:
         environment["PGPASSWORD"] = database_url.password
-    subprocess.run(command, check=True, env=environment)
+    for query_key, environment_key in (
+        ("sslmode", "PGSSLMODE"),
+        ("channel_binding", "PGCHANNELBINDING"),
+    ):
+        query_value = database_url.query.get(query_key)
+        if query_value:
+            environment[environment_key] = str(query_value)
+    environment.setdefault("PGCONNECT_TIMEOUT", "30")
+    result = subprocess.run(
+        command,
+        check=False,
+        capture_output=True,
+        env=environment,
+        text=True,
+    )
+    if result.returncode:
+        message = result.stderr.strip() or result.stdout.strip() or "unknown pg_dump error"
+        raise RuntimeError(f"PostgreSQL backup failed: {message}")
     destination.chmod(0o600)
 
 
