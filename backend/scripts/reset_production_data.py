@@ -12,6 +12,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import tarfile
 from datetime import UTC, datetime
 from pathlib import Path
@@ -20,10 +21,17 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.engine import Connection, Engine, make_url
 
-from app.core.config import settings
-from app.database.base import Base
-from app.database.session import get_engine
-from app.models import AdminUser, Company
+# Running ``python scripts/reset_production_data.py`` puts only ``scripts`` on
+# sys.path. Add the backend root so the maintenance command can import ``app``
+# exactly like Alembic and Uvicorn do.
+BACKEND_ROOT = Path(__file__).resolve().parents[1]
+if str(BACKEND_ROOT) not in sys.path:
+    sys.path.insert(0, str(BACKEND_ROOT))
+
+from app.core.config import settings  # noqa: E402
+from app.database.base import Base  # noqa: E402
+from app.database.session import get_engine  # noqa: E402
+from app.models import AdminUser, Company  # noqa: E402
 
 
 CONFIRMATION = "RESET-KHALIDUO-PRODUCTION"
