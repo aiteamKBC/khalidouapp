@@ -47,7 +47,7 @@ def assigned_team_ids(db: Session, admin_user_id: UUID) -> list[str]:
 
 
 def serialize_admin_user(db: Session, admin: AdminUser) -> dict:
-    tracked_employee_id = None if is_super_admin(admin) else admin.employee_id
+    tracked_employee_id = admin.employee_id
     return {
         "id": str(admin.id),
         "company_id": str(admin.company_id),
@@ -102,7 +102,7 @@ def team_owner_employee_identity(
 
 
 def serialize_admin_access(db: Session, admin: AdminUser) -> dict:
-    tracked_employee_id = None if is_super_admin(admin) else admin.employee_id
+    tracked_employee_id = admin.employee_id
     overrides = permission_overrides_for_admin(admin)
     return {
         "admin_user_id": str(admin.id),
@@ -205,23 +205,16 @@ def update_user_access(
 
     if admin.role == "team_owner" and not unique_team_ids:
         raise ApiError("TEAM_REQUIRED", "A Team Manager needs at least one team.", 400)
-    if not is_super_admin(admin) and payload.track_as_employee is False:
+    if payload.track_as_employee is False:
         raise ApiError(
             "EMPLOYEE_TRACKING_REQUIRED",
-            "Every role except the protected Super Admin must remain enabled for employee tracking.",
+            "Every admin role must remain enabled for employee tracking.",
             400,
         )
 
     employee = enforce_admin_tracking_policy(db, admin)
-    if employee is not None:
-        if admin.role == "team_owner":
-            ensure_employee_team_memberships(db, employee, unique_team_ids)
-    elif payload.track_as_employee is True:
-        raise ApiError(
-            "SUPER_ADMIN_NOT_TRACKED",
-            "The protected Super Admin cannot be enabled for employee tracking.",
-            400,
-        )
+    if admin.role == "team_owner":
+        ensure_employee_team_memberships(db, employee, unique_team_ids)
 
     db.add(admin)
     db.flush()
@@ -416,16 +409,11 @@ def update_user(
         admin.data_scope = "company"
 
     employee = enforce_admin_tracking_policy(db, admin)
-    if employee is not None:
-        if job_title_update is not None:
-            employee.job_title = job_title_update or default_admin_job_title(admin)
-            db.add(employee)
-        elif new_password:
-            sync_linked_employee_password(admin)
-    elif job_title_update is not None and admin.employee is not None:
-        # Keep the protected Super Admin's display title without re-enabling tracking.
-        admin.employee.job_title = job_title_update or default_admin_job_title(admin)
-        db.add(admin.employee)
+    if job_title_update is not None:
+        employee.job_title = job_title_update or default_admin_job_title(admin)
+        db.add(employee)
+    elif new_password:
+        sync_linked_employee_password(admin)
     db.add(admin)
     db.commit()
     db.refresh(admin)

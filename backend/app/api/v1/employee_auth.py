@@ -25,20 +25,6 @@ from app.services.rate_limit import enforce_rate_limit
 router = APIRouter(prefix="/employee-auth", tags=["employee-auth"])
 
 
-def is_protected_super_admin_employee(db: Session, employee: Employee) -> bool:
-    return (
-        db.scalar(
-            select(AdminUser.id).where(
-                AdminUser.company_id == employee.company_id,
-                func.lower(AdminUser.email) == employee.email.lower(),
-                AdminUser.is_super_admin.is_(True),
-                AdminUser.status == "active",
-            )
-        )
-        is not None
-    )
-
-
 def validate_avatar(value: str | None) -> str | None:
     if value is None or value == "":
         return None
@@ -86,7 +72,6 @@ def login(payload: EmployeePortalLogin, request: Request, db: Annotated[Session,
             if (
                 candidate.portal_password_hash
                 and verify_password(payload.password, candidate.portal_password_hash)
-                and not is_protected_super_admin_employee(db, candidate)
             )
         ),
         None,
@@ -96,7 +81,6 @@ def login(payload: EmployeePortalLogin, request: Request, db: Annotated[Session,
             select(AdminUser).where(
                 func.lower(AdminUser.email) == payload.email.lower(),
                 AdminUser.status == "active",
-                AdminUser.is_super_admin.is_(False),
             )
         )
         if admin is not None and verify_password(payload.password, admin.password_hash):
@@ -146,13 +130,6 @@ def device_handoff(
     )
     if employee is None:
         raise ApiError("INVALID_EMPLOYEE_HANDOFF", "The employee account is not active.", 401)
-    if is_protected_super_admin_employee(db, employee):
-        raise ApiError(
-            "SUPER_ADMIN_NOT_TRACKED",
-            "The protected Super Admin does not use employee tracking.",
-            403,
-        )
-
     record_employee_portal_login(employee, request, db)
     return success_response(data=employee_login_response(employee))
 

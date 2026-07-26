@@ -513,25 +513,13 @@ def test_general_admin_can_sign_in_to_employee_portal(identity_client):
         db.close()
 
 
-def test_protected_super_admin_is_not_an_employee_tracking_account(identity_client):
+def test_protected_super_admin_can_use_employee_tracking_account(identity_client):
     client, data = identity_client
     db: Session = data["session_factory"]()
     try:
         password_hash = hash_password("ProtectedOwnerPassword123!")
-        employee = Employee(
-            company_id=data["general_admin"].company_id,
-            name="Protected Owner",
-            email="owner@kentconsultancy.co",
-            employee_code="EMP-OWNER",
-            timezone="Africa/Cairo",
-            status="active",
-            portal_password_hash=password_hash,
-        )
-        db.add(employee)
-        db.flush()
         admin = AdminUser(
             company_id=data["general_admin"].company_id,
-            employee_id=employee.id,
             name="Protected Owner",
             email="owner@kentconsultancy.co",
             password_hash=password_hash,
@@ -541,7 +529,7 @@ def test_protected_super_admin_is_not_an_employee_tracking_account(identity_clie
         )
         db.add(admin)
         db.commit()
-        employee_id = employee.id
+        admin_id = admin.id
     finally:
         db.close()
 
@@ -562,14 +550,21 @@ def test_protected_super_admin_is_not_an_employee_tracking_account(identity_clie
     headers = {"Authorization": f"Bearer {admin_login.json()['data']['access_token']}"}
     me = client.get("/api/v1/auth/me", headers=headers)
 
-    assert employee_login.status_code == 401
+    assert employee_login.status_code == 200
     assert admin_login.status_code == 200
     assert me.status_code == 200
-    assert me.json()["data"]["employee_id"] is None
+    employee_id = UUID(employee_login.json()["data"]["employee"]["id"])
+    assert me.json()["data"]["employee_id"] == str(employee_id)
 
     db = data["session_factory"]()
     try:
-        assert db.get(Employee, employee_id).status == "inactive"
+        admin = db.get(AdminUser, admin_id)
+        employee = db.get(Employee, employee_id)
+        assert admin.employee_id == employee.id
+        assert employee.status == "active"
+        assert employee.job_title == "Super admin"
+        assert employee.portal_password_hash == admin.password_hash
+        assert employee.work_profile is not None
     finally:
         db.close()
 

@@ -21,6 +21,8 @@ from app.services.work_profiles import get_or_create_work_profile
 
 
 def default_admin_job_title(admin: AdminUser) -> str:
+    if admin.is_super_admin:
+        return "Super admin"
     if admin.role == "hr":
         return "HR"
     if admin.role == "team_owner":
@@ -29,17 +31,11 @@ def default_admin_job_title(admin: AdminUser) -> str:
 
 
 def sync_linked_employee_password(admin: AdminUser) -> None:
-    if not admin.is_super_admin and admin.employee is not None:
+    if admin.employee is not None:
         admin.employee.portal_password_hash = admin.password_hash
 
 
 def ensure_tracked_employee(db: Session, admin: AdminUser) -> Employee:
-    if admin.is_super_admin:
-        raise ApiError(
-            "SUPER_ADMIN_NOT_TRACKED",
-            "The protected Super Admin account is not an employee tracking account.",
-            409,
-        )
     employee = db.get(Employee, admin.employee_id) if admin.employee_id else None
     if employee is None:
         employee = db.scalar(
@@ -163,14 +159,9 @@ def disable_employee_tracking(db: Session, employee: Employee) -> None:
     db.add(employee)
 
 
-def enforce_admin_tracking_policy(db: Session, admin: AdminUser) -> Employee | None:
-    """All admins are tracked employees except the protected Super Admin."""
+def enforce_admin_tracking_policy(db: Session, admin: AdminUser) -> Employee:
+    """Every active admin identity also has an employee tracking identity."""
 
-    if admin.is_super_admin:
-        employee = db.get(Employee, admin.employee_id) if admin.employee_id else None
-        if employee is not None and employee.status not in {"inactive", "archived", "deleted"}:
-            disable_employee_tracking(db, employee)
-        return None
     return ensure_tracked_employee(db, admin)
 
 
