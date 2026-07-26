@@ -7,6 +7,7 @@ import {
   CalendarDays,
   Clock3,
   ListChecks,
+  Loader2,
   MonitorCheck,
   TimerReset,
   Users,
@@ -538,8 +539,46 @@ function AttendancePage() {
               )}
             </div>
           </DialogHeader>
-          {detail.data ? (
+          {detail.isLoading || (detail.isFetching && !detail.data) ? (
+            <div
+              className="grid min-h-72 place-items-center rounded-xl border border-dashed bg-muted/20"
+              role="status"
+              aria-live="polite"
+            >
+              <div className="text-center">
+                <span className="mx-auto grid h-12 w-12 place-items-center rounded-2xl bg-primary/10">
+                  <Loader2 className="h-6 w-6 animate-spin text-primary" />
+                </span>
+                <p className="mt-3 font-bold">Loading attendance details...</p>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Getting the employee's workday and timeline.
+                </p>
+              </div>
+            </div>
+          ) : detail.isError ? (
+            <div className="grid min-h-64 place-items-center rounded-xl border border-destructive/30 bg-destructive/5 p-6 text-center">
+              <div>
+                <AlertTriangle className="mx-auto h-8 w-8 text-destructive" />
+                <p className="mt-3 font-bold">Attendance details couldn't be loaded</p>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Check the connection and try again.
+                </p>
+                <Button className="mt-4" type="button" onClick={() => detail.refetch()}>
+                  Retry
+                </Button>
+              </div>
+            </div>
+          ) : detail.data ? (
             <>
+              {detail.isFetching && (
+                <div
+                  className="flex items-center gap-2 rounded-lg bg-primary/5 px-3 py-2 text-xs font-semibold text-primary"
+                  role="status"
+                >
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  Refreshing attendance...
+                </div>
+              )}
               <div className="grid gap-2 sm:grid-cols-3 lg:grid-cols-6">
                 <Small
                   label="Started"
@@ -570,7 +609,9 @@ function AttendancePage() {
               <WorkdayTimeline timeline={detail.data.timeline} />
             </>
           ) : (
-            <div className="h-48 animate-pulse rounded bg-muted" />
+            <div className="py-10 text-center text-sm text-muted-foreground">
+              No attendance details are available.
+            </div>
           )}
         </DialogContent>
       </Dialog>

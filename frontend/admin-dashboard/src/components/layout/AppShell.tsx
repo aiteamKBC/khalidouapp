@@ -5,12 +5,14 @@ import { Sheet, SheetContent, SheetTrigger, SheetTitle } from "@/components/ui/s
 import { Button } from "@/components/ui/button";
 import { BrandLogo } from "@/components/ui/brand-logo";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
+import { GlobalActivityIndicator } from "@/components/ui/global-activity-indicator";
 
 export function AppShell({ children }: { children: ReactNode }) {
   const [open, setOpen] = useState(false);
 
   return (
     <div className="min-h-screen w-full bg-background">
+      <GlobalActivityIndicator />
       <div className="flex min-h-screen">
         <div className="sticky top-0 hidden h-screen lg:block">
           <AppSidebar />
