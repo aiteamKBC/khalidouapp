@@ -77,7 +77,7 @@ function EmployeeMonitoringPage() {
   const employeeId = employees.data
     ? requestedEmployeeExists
       ? search.employeeId!
-      : (employees.data[0]?.id ?? "")
+      : ""
     : (search.employeeId ?? "");
   const day = search.day ?? todayIsoDate();
   const tab =
@@ -88,11 +88,11 @@ function EmployeeMonitoringPage() {
 
   useEffect(() => {
     if (
-      employees.data?.length &&
+      employees.data &&
       (search.employeeId !== employeeId || search.day !== day || search.tab !== tab)
     ) {
       void navigate({
-        search: { employeeId, day, tab },
+        search: { employeeId: employeeId || undefined, day, tab },
         replace: true,
       });
     }
@@ -131,7 +131,7 @@ function EmployeeMonitoringPage() {
           <div className="space-y-1.5">
             <Label htmlFor="monitoring-employee">Employee</Label>
             <Select
-              value={employeeId}
+              value={employeeId || undefined}
               onValueChange={(value) => updateSearch({ employeeId: value })}
             >
               <SelectTrigger id="monitoring-employee">
@@ -164,11 +164,19 @@ function EmployeeMonitoringPage() {
       {!employeeId ? (
         <EmptyState
           icon={MonitorCheck}
-          title={employees.isLoading ? "Loading employees..." : "No employee available"}
+          title={
+            employees.isLoading
+              ? "Loading employees..."
+              : employees.data?.length
+                ? "Choose an employee"
+                : "No employee available"
+          }
           description={
             employees.isLoading
               ? "The employee directory is loading."
-              : "Add an employee before opening daily monitoring."
+              : employees.data?.length
+                ? "Select an employee name above to view attendance, screenshots, and app history."
+                : "Add an employee before opening daily monitoring."
           }
         />
       ) : (
