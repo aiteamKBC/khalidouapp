@@ -93,6 +93,7 @@ from app.services.task_workflow import (
     notify_project_admins,
     record_task_activity,
     resolve_task_block,
+    team_owner_admin_for_employee,
     validate_employee_stage_change,
     stop_task_tracking,
 )
@@ -526,6 +527,12 @@ def create_own_task(
         )
     )
     if existing is None:
+        team_leader_admin = team_owner_admin_for_employee(
+            db,
+            company_id=context.device.company_id,
+            team_id=project.team_id,
+            employee_id=context.device.employee_id,
+        )
         existing = Task(
             company_id=context.device.company_id,
             project_id=project.id,
@@ -533,7 +540,7 @@ def create_own_task(
             name=clean_name,
             description=payload.description or "Created by employee from the desktop app.",
             status="active",
-            stage="new_requests",
+            stage="assigned" if team_leader_admin is not None else "new_requests",
             created_by_employee_id=context.device.employee_id,
             start_date=payload.start_date,
             deadline=payload.deadline,
@@ -544,31 +551,40 @@ def create_own_task(
         db.add(existing)
         db.flush()
         employee = db.get(Employee, context.device.employee_id)
-        workflow_request = create_workflow_request(
-            db,
-            existing,
-            requested_by_employee_id=context.device.employee_id,
-            request_type="task_creation",
-            from_stage="new_requests",
-            requested_stage="assigned",
-        )
-        record_task_activity(
-            db,
-            existing,
-            "employee_task_requested",
-            employee=employee,
-            details={"workflow_request_id": str(workflow_request.id)},
-        )
-        notify_project_admins(
-            db,
-            existing,
-            project,
-            "task_approval_requested",
-            "New task needs approval",
-            f"{employee.name if employee else 'An employee'} requested: {existing.name}",
-            "employee-task-requested",
-            workflow_request_id=workflow_request.id,
-        )
+        if team_leader_admin is not None:
+            record_task_activity(
+                db,
+                existing,
+                "team_leader_task_created",
+                employee=employee,
+                details={"stage": "assigned"},
+            )
+        else:
+            workflow_request = create_workflow_request(
+                db,
+                existing,
+                requested_by_employee_id=context.device.employee_id,
+                request_type="task_creation",
+                from_stage="new_requests",
+                requested_stage="assigned",
+            )
+            record_task_activity(
+                db,
+                existing,
+                "employee_task_requested",
+                employee=employee,
+                details={"workflow_request_id": str(workflow_request.id)},
+            )
+            notify_project_admins(
+                db,
+                existing,
+                project,
+                "task_approval_requested",
+                "New task needs approval",
+                f"{employee.name if employee else 'An employee'} requested: {existing.name}",
+                "employee-task-requested",
+                workflow_request_id=workflow_request.id,
+            )
     elif existing.assignee_employee_id != context.device.employee_id:
         from app.core.exceptions import ApiError
 
@@ -614,7 +630,11 @@ def update_own_task(
             "estimated_minutes",
         }
         if forbidden:
-            raise ApiError("TASK_AWAITING_APPROVAL", "An admin must approve this task first.", 409)
+            raise ApiError(
+                "TASK_AWAITING_APPROVAL",
+                "A team manager or company admin must approve this task first.",
+                409,
+            )
     else:
         forbidden = set(changes) - {"stage"}
         if forbidden:

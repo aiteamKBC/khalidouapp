@@ -734,7 +734,7 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
                     </span>
                     {task.stage === "new_requests" && (
                       <span className="rounded-full bg-amber-100 px-2 py-1 text-amber-800">
-                        Awaiting admin approval
+                        Awaiting manager approval
                       </span>
                     )}
                     {task.stage === "ready_for_review" && (
@@ -960,7 +960,7 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
                   />
                 </div>
                 <Button disabled={createRequest.isPending}>
-                  {createRequest.isPending ? "Sending..." : "Send for admin approval"}
+                  {createRequest.isPending ? "Sending..." : "Send for manager approval"}
                 </Button>
                 {createRequest.isSuccess && <p className="text-sm text-success">Request sent.</p>}
                 {createRequest.error && (

@@ -234,7 +234,8 @@ function WorkflowActions({
   if (isSelfReview) {
     return (
       <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-900">
-        You cannot review your own task. A General admin or another team manager must decide it.
+        Your own task cannot be reviewed here. Creation is automatic; completion is reviewed by a
+        company admin.
       </p>
     );
   }

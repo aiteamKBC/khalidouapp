@@ -1387,7 +1387,7 @@ def test_employee_can_delete_selected_items_from_own_task_checklist(team_client)
     assert "Keep this item" in titles
 
 
-def test_employee_task_requires_request_approval_then_non_self_completion_review(team_client):
+def test_team_leader_self_created_task_activates_without_creation_approval(team_client):
     client, data = team_client
     created = client.post(
         "/api/v1/agent/tasks",
@@ -1401,68 +1401,38 @@ def test_employee_task_requires_request_approval_then_non_self_completion_review
     )
     assert created.status_code == 200
     task = created.json()["data"]
-    assert task["stage"] == "new_requests"
+    assert task["stage"] == "assigned"
     assert task["priority"] == "high"
     assert task["created_by_employee_id"] == str(data["employee_a"].id)
-    creation_requests = task_workflow_requests(data, task["id"])
-    assert len(creation_requests) == 1
-    assert creation_requests[0] == {
-        "id": creation_requests[0]["id"],
-        "requested_by_employee_id": str(data["employee_a"].id),
-        "request_type": "task_creation",
-        "from_stage": "new_requests",
-        "requested_stage": "assigned",
-        "status": "pending",
-        "request_note": None,
-        "decision_note": None,
-        "return_stage": None,
-        "reviewed_by_admin_user_id": None,
-    }
-    creation_request_id = creation_requests[0]["id"]
+    assert task_workflow_requests(data, task["id"]) == []
 
-    listed_while_pending = client.get("/api/v1/agent/tasks", headers=data["device_headers"])
-    pending_selection = client.post(
+    listed = client.get("/api/v1/agent/tasks", headers=data["device_headers"])
+    selection = client.post(
         f"/api/v1/agent/sessions/{data['session_a'].id}/task",
         headers=data["device_headers"],
         json={"task_id": task["id"]},
     )
-    assert task["id"] not in {row["id"] for row in listed_while_pending.json()["data"]}
-    assert pending_selection.status_code == 409
-
-    assert {
-        row["type"] for row in admin_task_notifications(client, data["general_headers"], task["id"])
-    } == {"task_approval_requested"}
-    assert {
-        row["type"]
-        for row in admin_task_notifications(client, data["second_owner_headers"], task["id"])
-    } == {"task_approval_requested"}
+    assert task["id"] in {row["id"] for row in listed.json()["data"]}
+    assert selection.status_code == 200
+    assert admin_task_notifications(client, data["general_headers"], task["id"]) == []
+    assert admin_task_notifications(client, data["second_owner_headers"], task["id"]) == []
     assert admin_task_notifications(client, data["owner_headers"], task["id"]) == []
-    assert creation_request_id in admin_notification_request_ids(
-        data, data["general_admin"].id, task["id"]
-    )
-    assert creation_request_id in admin_notification_request_ids(
-        data, data["second_owner"].id, task["id"]
-    )
-    assert admin_notification_request_ids(data, data["owner"].id, task["id"]) == set()
 
-    self_approval = client.post(
-        f"/api/v1/tasks/{task['id']}/approve-request",
-        headers=data["owner_headers"],
-        json={"target_stage": "assigned"},
+    employee_token = create_employee_access_token(
+        employee_id=data["employee_a"].id,
+        company_id=data["employee_a"].company_id,
     )
-    approved_request = client.post(
-        f"/api/v1/tasks/{task['id']}/approve-request",
-        headers=data["second_owner_headers"],
-        json={"target_stage": "assigned"},
+    portal_created = client.post(
+        "/api/v1/employee-portal/tasks",
+        headers={"Authorization": f"Bearer {employee_token}"},
+        json={
+            "project_id": str(data["project_a"].id),
+            "name": "Team Leader portal task",
+        },
     )
-    assert self_approval.status_code == 403
-    assert approved_request.status_code == 200
-    assert approved_request.json()["data"]["stage"] == "assigned"
-    approved_creation_request = task_workflow_requests(data, task["id"])[0]
-    assert approved_creation_request["status"] == "approved"
-    assert approved_creation_request["reviewed_by_admin_user_id"] == str(data["second_owner"].id)
-    listed_after_approval = client.get("/api/v1/agent/tasks", headers=data["device_headers"])
-    assert task["id"] in {row["id"] for row in listed_after_approval.json()["data"]}
+    assert portal_created.status_code == 200
+    assert portal_created.json()["data"]["stage"] == "assigned"
+    assert task_workflow_requests(data, portal_created.json()["data"]["id"]) == []
 
     started = client.patch(
         f"/api/v1/agent/tasks/{task['id']}",
@@ -1478,8 +1448,8 @@ def test_employee_task_requires_request_approval_then_non_self_completion_review
     assert submitted.status_code == 200
     assert submitted.json()["data"]["stage"] == "ready_for_review"
     workflow_requests = task_workflow_requests(data, task["id"])
-    assert len(workflow_requests) == 2
-    completion_request = workflow_requests[1]
+    assert len(workflow_requests) == 1
+    completion_request = workflow_requests[0]
     assert completion_request["request_type"] == "completion"
     assert completion_request["from_stage"] == "in_progress"
     assert completion_request["requested_stage"] == "completed"
@@ -1488,11 +1458,11 @@ def test_employee_task_requires_request_approval_then_non_self_completion_review
 
     assert {
         row["type"] for row in admin_task_notifications(client, data["general_headers"], task["id"])
-    } >= {"task_approval_requested", "task_review_requested"}
+    } == {"task_review_requested"}
     assert {
         row["type"]
         for row in admin_task_notifications(client, data["second_owner_headers"], task["id"])
-    } >= {"task_approval_requested", "task_review_requested"}
+    } == {"task_review_requested"}
     assert admin_task_notifications(client, data["owner_headers"], task["id"]) == []
     assert completion_request["id"] in admin_notification_request_ids(
         data, data["general_admin"].id, task["id"]
@@ -1504,27 +1474,118 @@ def test_employee_task_requires_request_approval_then_non_self_completion_review
     self_review = client.post(
         f"/api/v1/tasks/{task['id']}/approve-review",
         headers=data["owner_headers"],
-        json={"note": "I should not approve my own task"},
+        json={"note": "I cannot approve my own work"},
     )
     completed = client.post(
         f"/api/v1/tasks/{task['id']}/approve-review",
-        headers=data["second_owner_headers"],
-        json={"note": "Reviewed"},
-    )
-    duplicate_decision = client.post(
-        f"/api/v1/tasks/{task['id']}/approve-review",
         headers=data["general_headers"],
-        json={"note": "A stale second decision"},
+        json={"note": "Reviewed by the company admin"},
     )
     assert self_review.status_code == 403
     assert completed.status_code == 200
     assert completed.json()["data"]["stage"] == "completed"
-    assert completed.json()["data"]["completed_at"] is not None
-    assert duplicate_decision.status_code == 409
-    decided_completion_request = task_workflow_requests(data, task["id"])[1]
+    decided_completion_request = task_workflow_requests(data, task["id"])[0]
     assert decided_completion_request["status"] == "approved"
-    assert decided_completion_request["decision_note"] == "Reviewed"
-    assert decided_completion_request["reviewed_by_admin_user_id"] == str(data["second_owner"].id)
+    assert decided_completion_request["decision_note"] == "Reviewed by the company admin"
+    assert decided_completion_request["reviewed_by_admin_user_id"] == str(
+        data["general_admin"].id
+    )
+
+
+def test_team_member_created_task_still_requires_team_leader_approval(team_client):
+    client, data = team_client
+    employee_token = create_employee_access_token(
+        employee_id=data["shared_employee"].id,
+        company_id=data["shared_employee"].company_id,
+    )
+    created = client.post(
+        "/api/v1/employee-portal/tasks",
+        headers={"Authorization": f"Bearer {employee_token}"},
+        json={
+            "project_id": str(data["project_a"].id),
+            "name": "Team member proposed task",
+            "priority": "medium",
+        },
+    )
+
+    assert created.status_code == 200
+    task = created.json()["data"]
+    assert task["stage"] == "new_requests"
+    requests = task_workflow_requests(data, task["id"])
+    assert len(requests) == 1
+    assert requests[0]["request_type"] == "task_creation"
+    assert requests[0]["status"] == "pending"
+
+    owner_notifications = admin_task_notifications(
+        client, data["owner_headers"], task["id"]
+    )
+    assert {row["type"] for row in owner_notifications} == {"task_approval_requested"}
+    approved = client.post(
+        f"/api/v1/tasks/{task['id']}/approve-request",
+        headers=data["owner_headers"],
+        json={"target_stage": "assigned"},
+    )
+    assert approved.status_code == 200
+    assert approved.json()["data"]["stage"] == "assigned"
+    assert task_workflow_requests(data, task["id"])[0]["reviewed_by_admin_user_id"] == str(
+        data["owner"].id
+    )
+
+
+def test_legacy_team_leader_self_creation_request_is_activated_without_self_review(team_client):
+    client, data = team_client
+    db: Session = data["session_factory"]()
+    try:
+        task = Task(
+            company_id=data["employee_a"].company_id,
+            project_id=data["project_a"].id,
+            assignee_employee_id=data["employee_a"].id,
+            created_by_employee_id=data["employee_a"].id,
+            name="Legacy Team Leader request",
+            stage="new_requests",
+            status="active",
+        )
+        db.add(task)
+        db.flush()
+        workflow_request = TaskWorkflowRequest(
+            company_id=task.company_id,
+            task_id=task.id,
+            requested_by_employee_id=data["employee_a"].id,
+            request_type="task_creation",
+            from_stage="new_requests",
+            requested_stage="assigned",
+            status="pending",
+        )
+        db.add(workflow_request)
+        db.flush()
+        db.add(
+            TaskNotification(
+                company_id=task.company_id,
+                admin_user_id=data["general_admin"].id,
+                task_id=task.id,
+                workflow_request_id=workflow_request.id,
+                notification_type="task_approval_requested",
+                title="New task needs approval",
+                message="Legacy request",
+                dedupe_key=f"legacy:{workflow_request.id}",
+            )
+        )
+        db.commit()
+        task_id = str(task.id)
+    finally:
+        db.close()
+
+    notifications = admin_task_notifications(client, data["general_headers"], task_id)
+    assert {row["type"] for row in notifications} == {"task_activated"}
+    assert {row["workflow_request"]["status"] for row in notifications} == {"approved"}
+    request = task_workflow_requests(data, task_id)[0]
+    assert request["status"] == "approved"
+    assert request["reviewed_by_admin_user_id"] is None
+    db = data["session_factory"]()
+    try:
+        assert db.get(Task, UUID(task_id)).stage == "assigned"
+    finally:
+        db.close()
 
 
 @pytest.mark.parametrize("target_stage", ["backlog", "assigned", "in_progress"])

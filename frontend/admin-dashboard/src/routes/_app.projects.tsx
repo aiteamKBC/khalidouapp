@@ -467,7 +467,7 @@ function ProjectsPage() {
       Boolean(user.employeeId && newTaskAssigneeId === user.employeeId) &&
       ["completed", "rejected", "cancelled"].includes(newTaskStage)
     ) {
-      toast.error("A General admin or another team manager must close your task.");
+      toast.error("A company admin must close your own task.");
       return;
     }
     createTaskMutation.mutate({
@@ -515,7 +515,7 @@ function ProjectsPage() {
       return;
     }
     if (isTeamManagerOwnTask(task) && ["completed", "rejected", "cancelled"].includes(stage)) {
-      toast.error("A General admin or another team manager must review your task.");
+      toast.error("Submit the task for review; a company admin must decide it.");
       return;
     }
     const notes = await stageChangeNotes(task, stage);
@@ -552,7 +552,7 @@ function ProjectsPage() {
       isTeamManagerOwnTask(source) &&
       ["completed", "rejected", "cancelled"].includes(targetStage)
     ) {
-      toast.error("A General admin or another team manager must review your task.");
+      toast.error("Submit the task for review; a company admin must decide it.");
       return;
     }
     const targetPosition = targetTask
@@ -1341,8 +1341,8 @@ function ProjectsPage() {
                       </div>
                       {isSelfReview ? (
                         <p className="max-w-sm text-xs font-medium text-amber-900 dark:text-amber-200">
-                          You cannot review your own task. A General admin or another team manager
-                          must decide this request.
+                          Your own Team Leader task activates automatically. Refresh notifications
+                          if this is an older pending request.
                         </p>
                       ) : (
                         <>
@@ -1391,8 +1391,8 @@ function ProjectsPage() {
                       </div>
                       {isSelfReview ? (
                         <p className="max-w-sm text-xs font-medium text-sky-900 dark:text-sky-200">
-                          You cannot review your own work. A General admin or another team manager
-                          must approve or return it.
+                          A company admin reviews completion of your own task. You only review tasks
+                          submitted by members of your team.
                         </p>
                       ) : (
                         <>

@@ -62,10 +62,12 @@ from app.services.task_workflow import (
     notify_employee,
     notify_task_participants,
     record_task_activity,
+    reconcile_team_leader_self_creation_requests,
     resolve_task_block,
     resolve_workflow_request,
     serialize_notification,
     stop_task_tracking,
+    sync_pending_workflow_notifications_for_admin,
     workflow_request_for_decision,
 )
 
@@ -1190,6 +1192,8 @@ def list_admin_notifications(
     current_admin: Annotated[AdminUser, Depends(get_current_admin)],
     db: Annotated[Session, Depends(get_db)],
 ):
+    reconcile_team_leader_self_creation_requests(db, current_admin.company_id)
+    sync_pending_workflow_notifications_for_admin(db, current_admin)
     today = date.today()
     due_tasks = db.execute(
         select(Task, Project)
