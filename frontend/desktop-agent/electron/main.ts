@@ -228,6 +228,7 @@ let isInstallingUpdate = false;
 let hasPromptedForDownloadedUpdate = false;
 let lastFullSummaryRefreshAt = 0;
 let lastMetadataRefreshAt = 0;
+let isRefreshingTrackingConfig = false;
 let paidPauseTimer: ReturnType<typeof setTimeout> | null = null;
 let displaySleepBlockerId: number | null = null;
 let onAcPower = true;
@@ -1290,7 +1291,10 @@ function startTimers() {
 function startScreenshotMonitoring() {
   scheduleNextScreenshot();
   if (!syncTimer) {
-    syncTimer = setInterval(() => void syncPendingQueues(), 30_000);
+    syncTimer = setInterval(() => {
+      void syncPendingQueues();
+      void refreshTrackingConfig();
+    }, 15_000);
   }
 }
 
@@ -1347,10 +1351,14 @@ function screenshotCaptureBlockReason(): string | null {
 }
 
 async function refreshTrackingConfig() {
-  if (!runtimeStatus.enrolled) {
+  if (!runtimeStatus.enrolled || isRefreshingTrackingConfig) {
     return;
   }
+  isRefreshingTrackingConfig = true;
   try {
+    const previousPolicy = JSON.stringify(runtimeStatus.requestPolicy);
+    const previousEmployeeName = runtimeStatus.employeeName;
+    const previousEmployeeEmail = runtimeStatus.employeeEmail;
     const rawConfig = await getAgentConfig();
     const nextConfig = normalizeTrackingConfig(rawConfig);
     if (rawConfig.employee) {
@@ -1358,7 +1366,12 @@ async function refreshTrackingConfig() {
       runtimeStatus.employeeEmail = rawConfig.employee.email;
     }
     runtimeStatus.requestPolicy = rawConfig.request_policy ?? null;
-    const scheduleChanged =
+    const requestPolicyChanged =
+      previousPolicy !== JSON.stringify(runtimeStatus.requestPolicy);
+    const employeeChanged =
+      previousEmployeeName !== runtimeStatus.employeeName ||
+      previousEmployeeEmail !== runtimeStatus.employeeEmail;
+    const screenshotScheduleChanged =
       nextConfig.screenshot_enabled !== trackingConfig.screenshot_enabled ||
       nextConfig.screenshot_interval_minutes !==
         trackingConfig.screenshot_interval_minutes ||
@@ -1366,8 +1379,9 @@ async function refreshTrackingConfig() {
         trackingConfig.screenshots_per_interval;
 
     trackingConfig = nextConfig;
+    lastMetadataRefreshAt = Date.now();
 
-    if (scheduleChanged) {
+    if (screenshotScheduleChanged) {
       if (screenshotTimer) {
         clearTimeout(screenshotTimer);
         screenshotTimer = null;
@@ -1376,8 +1390,21 @@ async function refreshTrackingConfig() {
       screenshotWindowEndsAt = null;
       scheduleNextScreenshot();
     }
+    if (requestPolicyChanged) {
+      await refreshWorkedTodayTotal();
+    }
+    if (
+      requestPolicyChanged ||
+      employeeChanged ||
+      screenshotScheduleChanged
+    ) {
+      notifyRendererStatus();
+      rebuildTrayMenu();
+    }
   } catch (error) {
     log.warn("Failed to refresh tracking config", error);
+  } finally {
+    isRefreshingTrackingConfig = false;
   }
 }
 
@@ -1975,6 +2002,7 @@ async function logoutDevice() {
 }
 
 async function syncNow() {
+  await refreshTrackingConfig();
   await syncPendingQueues();
   if (currentSessionId && !trackingPausedByUser) {
     await heartbeatTick();
