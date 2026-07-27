@@ -2154,8 +2154,8 @@ function AddPersonWizard({
           lateGraceMinutes: 15,
           ...(canManagePayroll
             ? {
-                overtimeEnabled: true,
-                overtimeBasis: "outside_shift",
+                overtimeEnabled: false,
+                overtimeBasis: undefined,
                 overtimeRateMultiplier: 1,
                 salaryAmount: salaryType === "monthly" ? Number(salaryAmount) : Number(hourlyRate),
                 salaryCurrency,

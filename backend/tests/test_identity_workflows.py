@@ -59,7 +59,6 @@ def employee_onboarding_payload() -> dict:
                 "brackets": [],
                 "require_admin_review": True,
             },
-            "overtime_enabled": False,
             "salary_amount": 0,
             "salary_currency": "EGP",
             "salary_type": "monthly",
@@ -446,6 +445,7 @@ def test_inviting_team_manager_is_atomic_and_permissions_are_scoped(identity_cli
         assert employee.work_profile.shift_start.isoformat() == "10:00:00"
         assert employee.work_profile.shift_end.isoformat() == "18:00:00"
         assert len(employee.work_profile.break_rules) == 2
+        assert employee.work_profile.overtime_enabled is False
         assert membership is not None and membership.status == "active"
         assert ownership is not None
         assert delivery.category == "employee_invitation"
