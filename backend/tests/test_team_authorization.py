@@ -1898,6 +1898,14 @@ def test_desktop_today_excludes_idle_on_an_off_day(team_client):
         headers=data["general_headers"],
     )
     employee_report = client.get("/api/v1/reports/employees", headers=data["general_headers"])
+    payroll_preview_response = client.get(
+        f"/api/v1/employees/{data['employee_a'].id}/payroll-preview",
+        params={
+            "start_date": local_today("UTC").isoformat(),
+            "end_date": local_today("UTC").isoformat(),
+        },
+        headers=data["general_headers"],
+    )
 
     assert response.status_code == 200
     summary = response.json()["data"]
@@ -1923,6 +1931,7 @@ def test_desktop_today_excludes_idle_on_an_off_day(team_client):
         if row["employee_id"] == str(data["employee_a"].id)
     )
     assert report_row["idle_seconds"] == 0
+    assert payroll_preview_response.json()["data"]["idle_seconds"] == 0
 
 
 def test_idle_request_period_is_clipped_at_shift_end_and_tracks_remaining_time(
