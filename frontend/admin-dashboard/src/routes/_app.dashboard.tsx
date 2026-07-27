@@ -175,7 +175,7 @@ function DashboardPage() {
         page: 1,
         pageSize: 250,
         day: dashboardDay,
-        previewLimit: 1,
+        previewLimit: 3,
       }),
     enabled: loadMedia,
     staleTime: MEDIA_REFRESH_MS - 15_000,
@@ -316,7 +316,7 @@ function DashboardPage() {
   const matchingActivity = memberActivity.filter(
     ({ employee }) => activityFilter === "all" || employee?.status === activityFilter,
   );
-  const filteredActivity = matchingActivity.slice(0, 5);
+  const filteredActivity = matchingActivity.slice(0, 6);
 
   const online = (emps.data ?? [])
     .filter(employeeIsOnline)
@@ -698,12 +698,15 @@ function DashboardPage() {
           </div>
 
           <Card className="studio-card overflow-hidden rounded-2xl border-border/70 shadow-none">
-            <CardHeader className="flex-row items-center justify-between space-y-0 border-b border-border/70 p-[18px]">
-              <div className="flex items-center gap-3">
+            <CardHeader className="gap-3 space-y-0 border-b border-border/70 p-[18px] xl:flex-row xl:items-center xl:justify-between">
+              <div className="flex flex-wrap items-center gap-2.5">
                 <CardTitle className="text-sm font-extrabold">Member activity</CardTitle>
                 <span className="text-[11px] font-bold text-muted-foreground">
                   {filteredActivity.length} of {matchingActivity.length}{" "}
                   {activityFilter === "all" ? "members" : `${activityFilter} members`}
+                </span>
+                <span className="rounded-full border bg-muted/40 px-2.5 py-1 text-[10px] font-bold text-muted-foreground">
+                  Updates every 3 min
                 </span>
               </div>
               <div className="flex flex-wrap gap-1.5">
@@ -721,9 +724,9 @@ function DashboardPage() {
                 )}
               </div>
             </CardHeader>
-            <CardContent className="space-y-3 p-[18px]">
+            <CardContent className="grid gap-3 p-[18px] md:grid-cols-2">
               {filteredActivity.length === 0 && (
-                <p className="rounded-[18px] border border-dashed bg-muted/20 p-6 text-sm text-muted-foreground">
+                <p className="rounded-[18px] border border-dashed bg-muted/20 p-6 text-sm text-muted-foreground md:col-span-2">
                   {activityFilter === "all"
                     ? "No members with registered devices."
                     : `No ${activityFilter} members right now.`}
@@ -732,12 +735,12 @@ function DashboardPage() {
               {filteredActivity.map(({ employee, shots: images }) => (
                 <div
                   key={employee.id}
-                  className="grid items-center gap-3 rounded-[18px] border border-border/80 bg-card/70 p-3 md:grid-cols-[190px_minmax(0,1fr)] 2xl:grid-cols-[220px_minmax(0,1fr)]"
+                  className="overflow-hidden rounded-[18px] border border-border/80 bg-card/70"
                 >
                   <Link
                     to="/employees/$employeeId"
                     params={{ employeeId: employee.id }}
-                    className="flex min-w-0 items-center gap-2 rounded-md p-1 transition hover:bg-muted/60"
+                    className="flex min-w-0 items-center gap-2 border-b border-border/70 px-3 py-2.5 transition hover:bg-muted/60"
                   >
                     <Avatar className="h-9 w-9">
                       <AvatarFallback className="text-xs">{initials(employee.name)}</AvatarFallback>
@@ -745,30 +748,29 @@ function DashboardPage() {
                     <span className="truncate text-[12.5px] font-bold">{employee.name}</span>
                     <StatusBadge status={employee.status} className="ml-auto shrink-0" />
                   </Link>
-                  <div className="grid grid-cols-1 gap-2.5">
+                  <div className="grid grid-cols-3 gap-2 p-3">
                     {images.length === 0 && (
-                      <p className="col-span-full rounded-[13px] border border-dashed bg-muted/20 px-4 py-5 text-center text-xs text-muted-foreground">
-                        No recent screenshots from this member.
+                      <p className="col-span-3 flex min-h-24 items-center justify-center rounded-[13px] border border-dashed bg-muted/20 px-4 text-center text-xs text-muted-foreground">
+                        No screenshots captured today.
                       </p>
                     )}
                     {images.map((shot) => (
                       <Link
                         key={shot.id}
                         to="/screenshots"
-                        className="group overflow-hidden rounded-[13px] border border-border bg-background transition hover:border-primary/40 hover:shadow-md"
+                        className="group relative overflow-hidden rounded-[12px] border border-border bg-background transition hover:border-primary/40 hover:shadow-md"
                       >
                         <ProtectedImage
                           src={shot.thumbnailUrl}
                           alt={`Screenshot from ${employee.name}`}
-                          className="aspect-video w-full object-cover transition-transform group-hover:scale-[1.03]"
+                          className="aspect-video w-full object-cover transition-transform group-hover:scale-[1.04]"
                         />
-                        <div className="border-t px-3 py-2 text-[11px] font-semibold text-muted-foreground">
-                          Latest screenshot ·{" "}
+                        <span className="absolute bottom-1 right-1 rounded-md bg-black/70 px-1.5 py-0.5 text-[9px] font-bold text-white">
                           {new Date(shot.capturedAt).toLocaleTimeString([], {
                             hour: "2-digit",
                             minute: "2-digit",
                           })}
-                        </div>
+                        </span>
                       </Link>
                     ))}
                   </div>
