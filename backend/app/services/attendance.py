@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime, time, timedelta
+from typing import Literal
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from sqlalchemy import select
@@ -176,6 +177,13 @@ def calculate_daily_attendance(
         device_id=device_id,
         session_timezone_name=effective_timezone if device_id is not None else None,
     )
+    adjustments = db.scalars(
+        select(TimeAdjustmentRequest).where(
+            TimeAdjustmentRequest.company_id == employee.company_id,
+            TimeAdjustmentRequest.employee_id == employee.id,
+            TimeAdjustmentRequest.requested_date == work_date,
+        )
+    ).all()
     start_at = schedule["start_at"]
     end_at = schedule["end_at"]
     timeline = scope_timeline_to_schedule(
@@ -183,6 +191,20 @@ def calculate_daily_attendance(
         shift_start=start_at,
         shift_end=end_at,
         scheduled_breaks=schedule["breaks"],
+        approved_idle_adjustments=[
+            {
+                "session_id": row.work_session_id,
+                "start_at": row.source_start_at,
+                "end_at": row.source_end_at,
+                "approved_seconds": int(row.approved_seconds or row.requested_seconds),
+            }
+            for row in adjustments
+            if row.request_type == "idle_time"
+            and row.status == "approved"
+            and row.work_session_id is not None
+            and row.source_start_at is not None
+            and row.source_end_at is not None
+        ],
         now=now,
     )
     intervals = []
@@ -275,13 +297,6 @@ def calculate_daily_attendance(
             if item.get("source") == "manual_pause":
                 manual_pause_idle += idle_in_shift
 
-    adjustments = db.scalars(
-        select(TimeAdjustmentRequest).where(
-            TimeAdjustmentRequest.company_id == employee.company_id,
-            TimeAdjustmentRequest.employee_id == employee.id,
-            TimeAdjustmentRequest.requested_date == work_date,
-        )
-    ).all()
     approved_manual = sum(
         int(row.approved_seconds or row.requested_seconds)
         for row in adjustments
@@ -522,6 +537,7 @@ def calculate_daily_attendance(
             "attendance_adjustment_seconds": attendance_adjustment_seconds,
             "attendance_correction_reason": correction.reason if correction else None,
             "raw_idle_seconds": raw_eligible_idle,
+            "approved_idle_seconds_removed": int(timeline.get("manual_seconds", 0)),
             "manual_pause_seconds": manual_pause_idle,
             "paid_idle_grace_seconds": paid_idle_grace,
             "raw_first_activity_at": raw_first_at.isoformat() if raw_first_at else None,
@@ -645,13 +661,13 @@ def accountable_idle_totals(
     return totals
 
 
-def is_currently_accountable_idle(
+def current_idle_context(
     db: Session,
     *,
     employee: Employee,
     now: datetime | None = None,
-) -> bool:
-    """Whether the current non-working device state is inside the paid shift."""
+) -> Literal["accountable", "on_break", "off_shift"]:
+    """Classify a live non-working device state against the employee schedule."""
     at = _utc(now or datetime.now(UTC))
     work_date = local_today(employee.timezone, at)
     profile = get_or_create_work_profile(db, employee)
@@ -677,10 +693,25 @@ def is_currently_accountable_idle(
         scheduled_breaks=schedule["breaks"],
         now=at,
     )
-    return any(
-        item.get("is_current") and item.get("type") in {"idle", "locked", "sleeping"}
-        for item in timeline["intervals"]
+    current = next(
+        (item for item in timeline["intervals"] if item.get("is_current")),
+        None,
     )
+    if current and current.get("type") == "break":
+        return "on_break"
+    if current and current.get("type") in {"idle", "locked", "sleeping"}:
+        return "accountable"
+    return "off_shift"
+
+
+def is_currently_accountable_idle(
+    db: Session,
+    *,
+    employee: Employee,
+    now: datetime | None = None,
+) -> bool:
+    """Whether the current non-working device state is accountable attendance idle."""
+    return current_idle_context(db, employee=employee, now=now) == "accountable"
 
 
 def refresh_daily_attendance_range(

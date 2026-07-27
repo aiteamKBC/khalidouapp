@@ -2,7 +2,8 @@ export type Role = "general_admin" | "team_owner" | "hr";
 export type PermissionMode = "role" | "custom";
 export type DataScope = "company" | "assigned_teams";
 
-export type EmployeeStatus = "active" | "idle" | "locked" | "sleeping" | "off_shift" | "offline";
+export type EmployeeStatus =
+  "active" | "idle" | "locked" | "sleeping" | "on_break" | "off_shift" | "offline";
 export type EmployeeAccountStatus = "invited" | "app_pending" | "active" | "inactive";
 export type DeviceStatus = "online" | "offline" | "revoked";
 export type TeamStatus = "active" | "archived";
@@ -172,7 +173,7 @@ export interface ActivityEvent {
   meta?: Record<string, string>;
 }
 
-export type WorkdayIntervalType = "worked" | "idle" | "locked" | "sleeping";
+export type WorkdayIntervalType = "worked" | "idle" | "locked" | "sleeping" | "break" | "manual";
 
 export interface WorkdayInterval {
   type: WorkdayIntervalType;
@@ -201,6 +202,8 @@ export interface WorkdayTimeline {
   idleSeconds: number;
   lockedSeconds: number;
   sleepingSeconds: number;
+  breakSeconds: number;
+  manualSeconds: number;
   approvedLeave: boolean;
   leaveSeconds: number;
   intervals: WorkdayInterval[];
@@ -256,6 +259,7 @@ export interface DashboardSummary {
   onlineEmployees: number;
   activeEmployees: number;
   idleEmployees: number;
+  onBreakEmployees: number;
   offShiftEmployees: number;
   offlineEmployees: number;
   teams: number;

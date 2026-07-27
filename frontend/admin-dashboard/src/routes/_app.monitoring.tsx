@@ -54,6 +54,7 @@ type MonitoringEmployeeStatus =
   | "idle"
   | "locked"
   | "sleeping"
+  | "on_break"
   | "off_shift"
   | "offline"
   | "invited"
@@ -324,6 +325,7 @@ function EmployeeMonitoringPage() {
                   <SelectItem value="idle">Idle</SelectItem>
                   <SelectItem value="locked">Locked</SelectItem>
                   <SelectItem value="sleeping">Sleeping</SelectItem>
+                  <SelectItem value="on_break">On break</SelectItem>
                   <SelectItem value="off_shift">Off shift</SelectItem>
                   <SelectItem value="offline">Offline</SelectItem>
                   <SelectItem value="invited">Invited</SelectItem>
@@ -875,6 +877,7 @@ function statusDotClass(status: string) {
   if (status === "idle") return "bg-amber-400";
   if (status === "locked" || status === "inactive") return "bg-slate-400";
   if (status === "sleeping") return "bg-indigo-400";
+  if (status === "on_break") return "bg-violet-500";
   if (status === "off_shift") return "bg-sky-500";
   if (status === "invited") return "bg-sky-500";
   if (status === "app_pending") return "bg-violet-500";
@@ -892,6 +895,7 @@ function isMonitoringEmployeeStatus(value: unknown): value is MonitoringEmployee
     value === "idle" ||
     value === "locked" ||
     value === "sleeping" ||
+    value === "on_break" ||
     value === "off_shift" ||
     value === "offline" ||
     value === "invited" ||

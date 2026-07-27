@@ -20,7 +20,11 @@ from app.models import (
     WorkScheduleOverride,
     WorkSession,
 )
-from app.services.attendance import calculate_daily_attendance, serialize_daily_attendance
+from app.services.attendance import (
+    calculate_daily_attendance,
+    current_idle_context,
+    serialize_daily_attendance,
+)
 from app.services.activity_timeline import build_workday_timeline
 from app.services.payroll import calculate_employee_metrics
 
@@ -590,7 +594,7 @@ def test_paid_break_is_not_idle_or_double_counted(attendance_context):
     )
     db.commit()
 
-    row, _ = calculate_daily_attendance(
+    row, timeline = calculate_daily_attendance(
         db,
         employee=employee,
         work_date=work_date,
@@ -603,6 +607,124 @@ def test_paid_break_is_not_idle_or_double_counted(attendance_context):
     assert row.total_payable_seconds == 7 * 3600 + 55 * 60
     assert row.calculation_sources["raw_idle_seconds"] == 20 * 60
     assert row.calculation_sources["paid_idle_grace_seconds"] == 15 * 60
+    assert timeline["break_seconds"] == 30 * 60
+    assert timeline["idle_seconds"] == 20 * 60
+    assert [item["type"] for item in timeline["intervals"]].count("break") == 1
+
+
+def test_approved_idle_request_moves_time_from_idle_to_manual(attendance_context):
+    db, employee, device, admin = attendance_context
+    work_date = date(2026, 7, 21)
+    session = _session(
+        db,
+        employee,
+        device,
+        datetime(2026, 7, 21, 9, 0, tzinfo=UTC),
+        datetime(2026, 7, 21, 17, 0, tzinfo=UTC),
+    )
+    idle_start = datetime(2026, 7, 21, 10, 0, tzinfo=UTC)
+    idle_end = datetime(2026, 7, 21, 10, 30, tzinfo=UTC)
+    db.add_all(
+        [
+            ActivityEvent(
+                company_id=employee.company_id,
+                employee_id=employee.id,
+                device_id=device.id,
+                session_id=session.id,
+                event_type="idle_started",
+                event_timestamp=idle_start,
+                idempotency_key="approved-idle-start",
+            ),
+            ActivityEvent(
+                company_id=employee.company_id,
+                employee_id=employee.id,
+                device_id=device.id,
+                session_id=session.id,
+                event_type="idle_ended",
+                event_timestamp=idle_end,
+                idempotency_key="approved-idle-end",
+            ),
+            TimeAdjustmentRequest(
+                company_id=employee.company_id,
+                employee_id=employee.id,
+                device_id=device.id,
+                work_session_id=session.id,
+                request_type="idle_time",
+                requested_date=work_date,
+                source_start_at=idle_start,
+                source_end_at=idle_end,
+                requested_seconds=20 * 60,
+                approved_seconds=15 * 60,
+                reason="Approved customer meeting during the detected idle period.",
+                status="approved",
+                reviewed_by_admin_user_id=admin.id,
+            ),
+        ]
+    )
+    db.commit()
+
+    row, timeline = calculate_daily_attendance(
+        db,
+        employee=employee,
+        work_date=work_date,
+        now=datetime(2026, 7, 22, tzinfo=UTC),
+    )
+
+    assert timeline["idle_seconds"] == 15 * 60
+    assert timeline["manual_seconds"] == 15 * 60
+    assert any(item["type"] == "manual" for item in timeline["intervals"])
+    assert row.approved_manual_seconds == 15 * 60
+    assert row.calculation_sources["raw_idle_seconds"] == 15 * 60
+    assert row.calculation_sources["approved_idle_seconds_removed"] == 15 * 60
+    assert row.idle_seconds == 0
+    assert row.total_payable_seconds == 8 * 3600
+
+
+def test_live_idle_during_scheduled_break_is_on_break(attendance_context):
+    db, employee, device, _ = attendance_context
+    session = WorkSession(
+        company_id=employee.company_id,
+        employee_id=employee.id,
+        device_id=device.id,
+        started_at=datetime(2026, 7, 21, 9, 0, tzinfo=UTC),
+        status="idle",
+        active_seconds=0,
+        idle_seconds=0,
+    )
+    db.add(session)
+    db.flush()
+    db.add_all(
+        [
+            ActivityEvent(
+                company_id=employee.company_id,
+                employee_id=employee.id,
+                device_id=device.id,
+                session_id=session.id,
+                event_type="idle_started",
+                event_timestamp=datetime(2026, 7, 21, 11, 40, tzinfo=UTC),
+                idempotency_key="live-break-idle-start",
+            ),
+            ActivityEvent(
+                company_id=employee.company_id,
+                employee_id=employee.id,
+                device_id=device.id,
+                session_id=session.id,
+                event_type="heartbeat",
+                event_timestamp=datetime(2026, 7, 21, 12, 9, tzinfo=UTC),
+                idempotency_key="live-break-heartbeat",
+            ),
+        ]
+    )
+    db.commit()
+
+    assert (
+        current_idle_context(
+            db,
+            employee=employee,
+            now=datetime(2026, 7, 21, 12, 10, tzinfo=UTC),
+        )
+        == "on_break"
+    )
 
 
 def test_idle_outside_shift_is_not_deductible_or_paid_idle(attendance_context):

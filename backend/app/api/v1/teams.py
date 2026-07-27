@@ -47,7 +47,7 @@ from app.schemas.admin import (
     TeamUpdate,
 )
 from app.services.audit import record_audit_log
-from app.services.attendance import accountable_idle_totals, is_currently_accountable_idle
+from app.services.attendance import accountable_idle_totals, current_idle_context
 from app.services.projects import ensure_general_work_project
 from app.services.screenshots import serialize_screenshot
 
@@ -532,11 +532,15 @@ def team_summary(
         )
     ).one()
     idle_candidates = db.scalars(idle_candidates_query).unique().all()
-    idle_employees = sum(
-        is_currently_accountable_idle(db, employee=employee)
-        for employee in idle_candidates
+    idle_contexts = [
+        current_idle_context(db, employee=employee) for employee in idle_candidates
+    ]
+    idle_employees = sum(context == "accountable" for context in idle_contexts)
+    on_break_employees = sum(context == "on_break" for context in idle_contexts)
+    off_shift_employees = max(
+        0,
+        len(idle_candidates) - idle_employees - on_break_employees,
     )
-    off_shift_employees = max(0, len(idle_candidates) - idle_employees)
     online_employees = max(0, int(connected_employees or 0) - off_shift_employees)
     from app.api.v1.timesheets import timesheet_rows
 
@@ -555,6 +559,7 @@ def team_summary(
             "total_employees": int(total_employees or 0),
             "online_employees": int(online_employees or 0),
             "idle_employees": int(idle_employees or 0),
+            "on_break_employees": int(on_break_employees or 0),
             "off_shift_employees": off_shift_employees,
             "active_seconds": active_seconds,
             "idle_seconds": idle_seconds,

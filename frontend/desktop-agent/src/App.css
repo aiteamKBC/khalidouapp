@@ -476,7 +476,8 @@ textarea:focus {
 
 .k-app[data-tone="overtime"] .k-hero {
   border-color: color-mix(in srgb, var(--overtime) 48%, var(--border));
-  box-shadow: 0 20px 46px -40px color-mix(in srgb, var(--overtime) 60%, transparent);
+  box-shadow: 0 20px 46px -40px
+    color-mix(in srgb, var(--overtime) 60%, transparent);
 }
 
 .k-hero-pill {
@@ -1239,6 +1240,24 @@ textarea:focus {
 .k-line-idle .k-timeline-icon {
   color: var(--amber);
   background: var(--amber-weak);
+}
+
+.k-line-break b {
+  color: #7c3aed;
+}
+
+.k-line-break .k-timeline-icon {
+  color: #7c3aed;
+  background: color-mix(in srgb, #8b5cf6 14%, transparent);
+}
+
+.k-line-manual b {
+  color: var(--blue, #38bdf8);
+}
+
+.k-line-manual .k-timeline-icon {
+  color: var(--blue, #38bdf8);
+  background: color-mix(in srgb, var(--blue, #38bdf8) 14%, transparent);
 }
 
 .k-line-leave b {

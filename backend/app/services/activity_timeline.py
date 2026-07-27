@@ -66,24 +66,100 @@ def _day_bounds(value: date, timezone_name: str) -> tuple[datetime, datetime, Zo
     return local_start.astimezone(UTC), (local_start + timedelta(days=1)).astimezone(UTC), zone
 
 
-def _without_excluded_windows(
-    start_at: datetime,
-    end_at: datetime,
-    excluded_windows: list[tuple[datetime, datetime]],
-) -> list[tuple[datetime, datetime]]:
-    segments = [(start_at, end_at)]
-    for excluded_start, excluded_end in excluded_windows:
-        next_segments: list[tuple[datetime, datetime]] = []
-        for segment_start, segment_end in segments:
-            if excluded_end <= segment_start or excluded_start >= segment_end:
-                next_segments.append((segment_start, segment_end))
+def _approved_idle_allocations(adjustments: list[dict] | None) -> list[dict]:
+    allocations: list[dict] = []
+    for item in adjustments or []:
+        source_start = item.get("start_at")
+        source_end = item.get("end_at")
+        approved_seconds = max(0, int(item.get("approved_seconds") or 0))
+        if not source_start or not source_end or approved_seconds <= 0:
+            continue
+        start_at = _utc(
+            datetime.fromisoformat(source_start) if isinstance(source_start, str) else source_start
+        )
+        end_at = _utc(
+            datetime.fromisoformat(source_end) if isinstance(source_end, str) else source_end
+        )
+        if end_at <= start_at:
+            continue
+        allocations.append(
+            {
+                "session_id": str(item.get("session_id") or ""),
+                "start_at": start_at,
+                "end_at": end_at,
+                "remaining_seconds": min(
+                    approved_seconds,
+                    int((end_at - start_at).total_seconds()),
+                ),
+            }
+        )
+    return allocations
+
+
+def _apply_approved_idle_allocations(
+    intervals: list[dict],
+    adjustments: list[dict] | None,
+) -> list[dict]:
+    allocations = _approved_idle_allocations(adjustments)
+    if not allocations:
+        return intervals
+
+    result: list[dict] = []
+    for interval in intervals:
+        segments = [interval]
+        for allocation in allocations:
+            if (
+                allocation["remaining_seconds"] <= 0
+                or interval["type"] != "idle"
+                or str(interval.get("session_id") or "") != allocation["session_id"]
+            ):
                 continue
-            if segment_start < excluded_start:
-                next_segments.append((segment_start, excluded_start))
-            if excluded_end < segment_end:
-                next_segments.append((excluded_end, segment_end))
-        segments = next_segments
-    return segments
+            split_segments: list[dict] = []
+            for segment in segments:
+                if segment["type"] != "idle" or allocation["remaining_seconds"] <= 0:
+                    split_segments.append(segment)
+                    continue
+                approved_start = max(segment["started_at"], allocation["start_at"])
+                approved_limit = min(segment["ended_at"], allocation["end_at"])
+                if approved_limit <= approved_start:
+                    split_segments.append(segment)
+                    continue
+                approved_end = min(
+                    approved_limit,
+                    approved_start + timedelta(seconds=allocation["remaining_seconds"]),
+                )
+                if segment["started_at"] < approved_start:
+                    split_segments.append(
+                        {
+                            **segment,
+                            "ended_at": approved_start,
+                            "is_current": False,
+                        }
+                    )
+                split_segments.append(
+                    {
+                        **segment,
+                        "type": "manual",
+                        "source": "approved_manual",
+                        "started_at": approved_start,
+                        "ended_at": approved_end,
+                        "is_current": False,
+                        "work_category": None,
+                    }
+                )
+                allocation["remaining_seconds"] -= int(
+                    (approved_end - approved_start).total_seconds()
+                )
+                if approved_end < segment["ended_at"]:
+                    split_segments.append(
+                        {
+                            **segment,
+                            "started_at": approved_end,
+                        }
+                    )
+            segments = split_segments
+        result.extend(segments)
+    return result
 
 
 def scope_timeline_to_schedule(
@@ -92,6 +168,7 @@ def scope_timeline_to_schedule(
     shift_start: datetime | None,
     shift_end: datetime | None,
     scheduled_breaks: list[dict] | None = None,
+    approved_idle_adjustments: list[dict] | None = None,
     now: datetime | None = None,
 ) -> dict:
     """Return the attendance view of a raw activity timeline.
@@ -105,8 +182,12 @@ def scope_timeline_to_schedule(
     normalized_shift_start = _utc(shift_start) if shift_start else None
     normalized_shift_end = _utc(shift_end) if shift_end else None
     has_shift = bool(normalized_shift_start and normalized_shift_end)
-    excluded_windows = [
-        (_utc(item["start_at"]), _utc(item["end_at"]))
+    normalized_breaks = [
+        {
+            **item,
+            "start_at": _utc(item["start_at"]),
+            "end_at": _utc(item["end_at"]),
+        }
         for item in scheduled_breaks or []
         if item.get("start_at") and item.get("end_at")
     ]
@@ -120,36 +201,52 @@ def scope_timeline_to_schedule(
             if item.get("ended_at")
             else now_utc
         )
+        raw_interval_end = interval_end
         if interval_end <= interval_start:
             continue
 
-        if item["type"] == "worked":
-            boundaries = [interval_start, interval_end]
-            if has_shift:
-                if interval_start < normalized_shift_start < interval_end:
-                    boundaries.append(normalized_shift_start)
-                if interval_start < normalized_shift_end < interval_end:
-                    boundaries.append(normalized_shift_end)
-            boundaries.sort()
-            segments = list(zip(boundaries, boundaries[1:], strict=False))
-        else:
+        if item["type"] != "worked":
             if not has_shift or approved_leave:
                 continue
-            visible_start = max(interval_start, normalized_shift_start)
-            visible_end = min(interval_end, normalized_shift_end)
-            if visible_end <= visible_start:
+            interval_start = max(interval_start, normalized_shift_start)
+            interval_end = min(interval_end, normalized_shift_end)
+            if interval_end <= interval_start:
                 continue
-            segments = _without_excluded_windows(
-                visible_start,
-                visible_end,
-                excluded_windows,
-            )
+
+        boundaries = [interval_start, interval_end]
+        if has_shift:
+            if interval_start < normalized_shift_start < interval_end:
+                boundaries.append(normalized_shift_start)
+            if interval_start < normalized_shift_end < interval_end:
+                boundaries.append(normalized_shift_end)
+        if has_shift and not approved_leave:
+            for scheduled_break in normalized_breaks:
+                if interval_start < scheduled_break["start_at"] < interval_end:
+                    boundaries.append(scheduled_break["start_at"])
+                if interval_start < scheduled_break["end_at"] < interval_end:
+                    boundaries.append(scheduled_break["end_at"])
+        boundaries = sorted(set(boundaries))
+        segments = list(zip(boundaries, boundaries[1:], strict=False))
 
         for segment_start, segment_end in segments:
             if segment_end <= segment_start:
                 continue
+            scheduled_break = next(
+                (
+                    entry
+                    for entry in normalized_breaks
+                    if entry["start_at"] <= segment_start and segment_end <= entry["end_at"]
+                ),
+                None,
+            )
             work_category = item.get("work_category")
-            if item["type"] == "worked" and (
+            interval_type = item["type"]
+            interval_source = item.get("source")
+            if scheduled_break is not None and has_shift and not approved_leave:
+                interval_type = "break"
+                interval_source = "scheduled_break"
+                work_category = None
+            elif item["type"] == "worked" and (
                 approved_leave
                 or not has_shift
                 or segment_start < normalized_shift_start
@@ -159,16 +256,25 @@ def scope_timeline_to_schedule(
             scoped.append(
                 {
                     **item,
+                    "type": interval_type,
+                    "source": interval_source,
                     "started_at": segment_start,
                     "ended_at": segment_end,
                     "duration_seconds": int((segment_end - segment_start).total_seconds()),
                     "is_current": bool(
-                        item.get("is_current") and segment_end == interval_end
+                        item.get("is_current") and segment_end == raw_interval_end
                     ),
                     "work_category": work_category,
+                    "break_name": scheduled_break.get("name") if scheduled_break else None,
+                    "break_paid": scheduled_break.get("paid") if scheduled_break else None,
                 }
             )
 
+    scoped = _apply_approved_idle_allocations(scoped, approved_idle_adjustments)
+    for interval in scoped:
+        interval["duration_seconds"] = int(
+            (interval["ended_at"] - interval["started_at"]).total_seconds()
+        )
     merged: list[dict] = []
     for interval in scoped:
         previous = merged[-1] if merged else None
@@ -183,6 +289,8 @@ def scope_timeline_to_schedule(
             and previous.get("task_name") == interval.get("task_name")
             and previous.get("project_name") == interval.get("project_name")
             and previous.get("work_category") == interval.get("work_category")
+            and previous.get("break_name") == interval.get("break_name")
+            and previous.get("break_paid") == interval.get("break_paid")
         ):
             previous["ended_at"] = interval["ended_at"]
             previous["duration_seconds"] += interval["duration_seconds"]
@@ -190,7 +298,14 @@ def scope_timeline_to_schedule(
         else:
             merged.append(interval)
 
-    totals = {"worked": 0, "idle": 0, "locked": 0, "sleeping": 0}
+    totals = {
+        "worked": 0,
+        "idle": 0,
+        "locked": 0,
+        "sleeping": 0,
+        "break": 0,
+        "manual": 0,
+    }
     for interval in merged:
         totals[interval["type"]] += interval["duration_seconds"]
 
@@ -229,6 +344,8 @@ def scope_timeline_to_schedule(
         "idle_seconds": 0 if approved_leave else totals["idle"],
         "locked_seconds": totals["locked"],
         "sleeping_seconds": totals["sleeping"],
+        "break_seconds": totals["break"],
+        "manual_seconds": totals["manual"],
         "leave_seconds": 0,
         "intervals": serialized,
     }

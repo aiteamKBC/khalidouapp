@@ -435,6 +435,14 @@ function TeamDetailPage() {
                   tone="warning"
                 />
               </MetricLink>
+              <MetricLink label="View employees on break" onClick={() => setActiveTab("live")}>
+                <StatCard
+                  label="On break now"
+                  value={stats.data.onBreak}
+                  icon={Coffee}
+                  tone="info"
+                />
+              </MetricLink>
               <MetricLink label="View offline employees" onClick={() => setActiveTab("live")}>
                 <StatCard
                   label="Offline people"

@@ -12,7 +12,7 @@ from app.api.v1.team_auth import accessible_employee_ids_statement
 from app.core.responses import success_response
 from app.database.session import get_db
 from app.models import AdminUser, Device, Employee, Screenshot, WorkSession
-from app.services.attendance import is_currently_accountable_idle
+from app.services.attendance import current_idle_context
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
@@ -84,11 +84,15 @@ def summary(
         )
     ).one()
     idle_candidates = db.scalars(idle_candidates_query).unique().all()
-    idle_employees = sum(
-        is_currently_accountable_idle(db, employee=employee)
-        for employee in idle_candidates
+    idle_contexts = [
+        current_idle_context(db, employee=employee) for employee in idle_candidates
+    ]
+    idle_employees = sum(context == "accountable" for context in idle_contexts)
+    on_break_employees = sum(context == "on_break" for context in idle_contexts)
+    off_shift_employees = max(
+        0,
+        len(idle_candidates) - idle_employees - on_break_employees,
     )
-    off_shift_employees = max(0, len(idle_candidates) - idle_employees)
     online_employees = max(0, int(connected_employees or 0) - off_shift_employees)
     from app.api.v1.timesheets import timesheet_rows
 
@@ -107,6 +111,7 @@ def summary(
             "total_employees": total_employees,
             "online_employees": online_employees,
             "idle_employees": idle_employees,
+            "on_break_employees": on_break_employees,
             "off_shift_employees": off_shift_employees,
             "offline_employees": max(0, total_employees - int(connected_employees or 0)),
             "total_hours_today": round(tracked_seconds / 3600, 2),

@@ -50,7 +50,7 @@ from app.services.audit import record_audit_log
 from app.services.activity_timeline import local_today
 from app.services.attendance import (
     accountable_idle_seconds,
-    is_currently_accountable_idle,
+    current_idle_context,
     refresh_daily_attendance_range,
 )
 from app.services.email import (
@@ -431,11 +431,12 @@ def list_employee_overviews(
             accountable_idle_seconds(attendance_today) if attendance_today is not None else 0
         )
         activity_status = session_status if session_id and online else "offline"
-        if (
-            activity_status in {"idle", "locked", "sleeping"}
-            and not is_currently_accountable_idle(db, employee=employee)
-        ):
-            activity_status = "off_shift"
+        if activity_status in {"idle", "locked", "sleeping"}:
+            idle_context = current_idle_context(db, employee=employee)
+            if idle_context == "on_break":
+                activity_status = "on_break"
+            elif idle_context == "off_shift":
+                activity_status = "off_shift"
         data.append(
             {
                 "employee": employee_data,
@@ -940,11 +941,12 @@ def employee_status(
     )
     idle_seconds = max(0, int(canonical_today["idle_seconds"])) if canonical_today else 0
     activity_status = current.status if current and online else "offline"
-    if (
-        activity_status in {"idle", "locked", "sleeping"}
-        and not is_currently_accountable_idle(db, employee=employee)
-    ):
-        activity_status = "off_shift"
+    if activity_status in {"idle", "locked", "sleeping"}:
+        idle_context = current_idle_context(db, employee=employee)
+        if idle_context == "on_break":
+            activity_status = "on_break"
+        elif idle_context == "off_shift":
+            activity_status = "off_shift"
     return success_response(
         data={
             "employee": serialize_employee(employee),

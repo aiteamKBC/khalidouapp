@@ -5,6 +5,7 @@ type BackendDashboardSummary = {
   total_employees: number;
   online_employees: number;
   idle_employees: number;
+  on_break_employees?: number;
   off_shift_employees: number;
   offline_employees: number;
   total_hours_today: number;
@@ -16,14 +17,16 @@ export async function getDashboardSummary(scopedTeamIds?: string[]): Promise<Das
   const summary = await apiFetch<BackendDashboardSummary>(
     withQuery("/dashboard/summary", { team_id: teamId }),
   );
+  const onBreakEmployees = summary.on_break_employees ?? 0;
   return {
     totalEmployees: summary.total_employees,
     onlineEmployees: summary.online_employees,
     activeEmployees: Math.max(
       0,
-      summary.online_employees - summary.idle_employees,
+      summary.online_employees - summary.idle_employees - onBreakEmployees,
     ),
     idleEmployees: summary.idle_employees,
+    onBreakEmployees,
     offShiftEmployees: summary.off_shift_employees,
     offlineEmployees: summary.offline_employees,
     teams: 0,

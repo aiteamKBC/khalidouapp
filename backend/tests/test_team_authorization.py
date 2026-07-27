@@ -2054,6 +2054,22 @@ def test_idle_request_period_is_clipped_at_shift_end_and_tracks_remaining_time(
     assert outside_shift_request.status_code == 422
     assert outside_shift_request.json()["error"]["code"] == "IDLE_PERIOD_NOT_FOUND"
 
+    approved = client.patch(
+        f"/api/v1/time-adjustment-requests/{first_request.json()['data']['id']}",
+        headers=data["general_headers"],
+        json={"status": "approved", "approved_minutes": 30},
+    )
+    approved_summary = client.get(
+        "/api/v1/agent/summary",
+        headers=data["device_headers"],
+    )
+    approved_timeline = approved_summary.json()["data"]["today_timeline"]
+    assert approved.status_code == 200
+    assert approved_timeline["idle_seconds"] == 29 * 60
+    assert approved_timeline["manual_seconds"] == 30 * 60
+    assert any(item["type"] == "manual" for item in approved_timeline["intervals"])
+    assert approved_summary.json()["data"]["today"]["idle_seconds"] == 29 * 60
+
 
 def test_workday_timeline_splits_work_idle_and_locked_periods(team_client):
     client, data = team_client
@@ -2563,7 +2579,7 @@ def test_employee_overview_uses_materialized_attendance_totals(team_client):
     assert overview["idle_seconds"] == 90
 
 
-def test_employee_overview_labels_idle_outside_shift_as_off_shift(team_client, monkeypatch):
+def test_employee_overview_distinguishes_idle_break_and_off_shift(team_client, monkeypatch):
     client, data = team_client
     with data["session_factory"]() as db:
         session = db.get(WorkSession, data["session_a"].id)
@@ -2573,8 +2589,8 @@ def test_employee_overview_labels_idle_outside_shift_as_off_shift(team_client, m
         db.commit()
 
     monkeypatch.setattr(
-        "app.api.v1.employees.is_currently_accountable_idle",
-        lambda *_args, **_kwargs: False,
+        "app.api.v1.employees.current_idle_context",
+        lambda *_args, **_kwargs: "off_shift",
     )
     outside_shift = client.get(
         f"/api/v1/employees-overview?employee_id={data['employee_a'].id}",
@@ -2585,8 +2601,20 @@ def test_employee_overview_labels_idle_outside_shift_as_off_shift(team_client, m
     assert outside_shift.json()["data"][0]["activity_status"] == "off_shift"
 
     monkeypatch.setattr(
-        "app.api.v1.employees.is_currently_accountable_idle",
-        lambda *_args, **_kwargs: True,
+        "app.api.v1.employees.current_idle_context",
+        lambda *_args, **_kwargs: "on_break",
+    )
+    on_break = client.get(
+        f"/api/v1/employees-overview?employee_id={data['employee_a'].id}",
+        headers=data["general_headers"],
+    )
+
+    assert on_break.status_code == 200
+    assert on_break.json()["data"][0]["activity_status"] == "on_break"
+
+    monkeypatch.setattr(
+        "app.api.v1.employees.current_idle_context",
+        lambda *_args, **_kwargs: "accountable",
     )
     inside_shift = client.get(
         f"/api/v1/employees-overview?employee_id={data['employee_a'].id}",

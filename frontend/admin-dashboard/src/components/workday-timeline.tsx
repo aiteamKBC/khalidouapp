@@ -1,4 +1,4 @@
-import { Activity, CalendarDays, Coffee, LockKeyhole, Moon } from "lucide-react";
+import { Activity, CalendarDays, CircleCheck, Coffee, LockKeyhole, Moon } from "lucide-react";
 
 import type { WorkdayIntervalType, WorkdayTimeline as WorkdayTimelineData } from "@/types";
 import { formatAttendanceStart, formatClock } from "@/lib/format";
@@ -26,6 +26,18 @@ const intervalStyles: Record<
     bar: "bg-amber-400",
     badge: "bg-amber-400/15 text-amber-800",
     icon: Coffee,
+  },
+  break: {
+    label: "Break",
+    bar: "bg-violet-400",
+    badge: "bg-violet-500/15 text-violet-700 dark:text-violet-300",
+    icon: Coffee,
+  },
+  manual: {
+    label: "Manual approved",
+    bar: "bg-sky-500",
+    badge: "bg-sky-500/15 text-sky-700 dark:text-sky-300",
+    icon: CircleCheck,
   },
   locked: {
     label: "Locked",

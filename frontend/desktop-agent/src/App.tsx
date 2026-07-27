@@ -124,6 +124,8 @@ type KIconName =
   | "briefcase"
   | "worked"
   | "idle"
+  | "break"
+  | "manual"
   | "locked"
   | "sleeping"
   | "settings";
@@ -193,6 +195,19 @@ function KIcon({
         <path d="M12 7v5" />
         <path d="M8 17h8" />
         <path d="M12 22a8 8 0 1 0 0-16 8 8 0 0 0 0 16Z" />
+      </>
+    ),
+    break: (
+      <>
+        <path d="M5 8h11v6a5 5 0 0 1-5 5H10a5 5 0 0 1-5-5Z" />
+        <path d="M16 10h1a3 3 0 0 1 0 6h-2" />
+        <path d="M8 3v2M12 3v2" />
+      </>
+    ),
+    manual: (
+      <>
+        <path d="M9 12l2 2 4-5" />
+        <circle cx="12" cy="12" r="9" />
       </>
     ),
     locked: (
@@ -1322,7 +1337,8 @@ function App() {
 
     if (result.isConfirmed) {
       const resumeResult = await window.khaliduo?.resumeAutomaticIdle();
-      if (resumeResult?.message) setTrackingControlMessage(resumeResult.message);
+      if (resumeResult?.message)
+        setTrackingControlMessage(resumeResult.message);
       const nextStatus = await window.khaliduo?.getAgentStatus();
       if (nextStatus) setStatus(nextStatus);
     } else if (result.isDenied) {
@@ -1335,7 +1351,8 @@ function App() {
       result.dismiss === Swal.DismissReason.cancel
     ) {
       const resumeResult = await window.khaliduo?.resumeAutomaticIdle();
-      if (resumeResult?.message) setTrackingControlMessage(resumeResult.message);
+      if (resumeResult?.message)
+        setTrackingControlMessage(resumeResult.message);
       setExpandedRequest("idle");
       setActiveView("requests");
       setTimeRequestMinutes(lostMinutes);
@@ -1410,13 +1427,14 @@ function App() {
                 : "is-paused"
             }`}
             title={
-              status.screenshotCaptureActive && status.connectionStatus === "offline"
+              status.screenshotCaptureActive &&
+              status.connectionStatus === "offline"
                 ? "Screenshots are captured locally and queued until the API connection returns"
                 : status.screenshotCaptureActive
                   ? "Workplace screenshots are active and syncing"
-                : status.powerSource === "battery"
-                  ? "Screenshots pause while this device is on battery"
-                  : "Screenshot monitoring is temporarily paused"
+                  : status.powerSource === "battery"
+                    ? "Screenshots pause while this device is on battery"
+                    : "Screenshot monitoring is temporarily paused"
             }
           >
             <span aria-hidden="true">●</span>
@@ -2277,6 +2295,8 @@ function Timeline({
     idle: "Idle",
     locked: "Locked",
     sleeping: "Sleeping",
+    break: "Break",
+    manual: "Manual approved",
     extra: "Overtime",
     leave: "Leave",
   } as const;
@@ -2307,7 +2327,9 @@ function Timeline({
                   {formatClock(option.startedAt, timeline.timezone)} -{" "}
                   {formatClock(option.endedAt, timeline.timezone)}
                 </span>
-                <small>{formatDuration(option.durationSeconds)} idle period</small>
+                <small>
+                  {formatDuration(option.durationSeconds)} idle period
+                </small>
                 <b>Explain up to {requestableIdleMinutes(option)} min</b>
               </button>
             ))}
@@ -3504,7 +3526,9 @@ function SettingsView({
               This employee account is linked to this Windows device.
             </p>
           </div>
-          <span className={`k-connection-badge ${status.enrolled ? "online" : "offline"}`}>
+          <span
+            className={`k-connection-badge ${status.enrolled ? "online" : "offline"}`}
+          >
             {status.enrolled ? "Enrolled" : "Not enrolled"}
           </span>
         </div>

@@ -700,16 +700,18 @@ function DashboardPage() {
                 </span>
               </div>
               <div className="flex flex-wrap gap-1.5">
-                {(["all", "active", "idle", "off_shift", "offline"] as const).map((filter) => (
-                  <button
-                    key={filter}
-                    type="button"
-                    onClick={() => setActivityFilter(filter)}
-                    className={`rounded-full border px-3 py-1.5 text-[11px] font-bold capitalize transition ${activityFilter === filter ? "border-[#e5185d] bg-[#fce3ec] text-[#e5185d] dark:bg-[#38142b] dark:text-[#f0538b]" : "bg-card text-muted-foreground hover:border-[#e5185d]/40"}`}
-                  >
-                    {filter}
-                  </button>
-                ))}
+                {(["all", "active", "idle", "on_break", "off_shift", "offline"] as const).map(
+                  (filter) => (
+                    <button
+                      key={filter}
+                      type="button"
+                      onClick={() => setActivityFilter(filter)}
+                      className={`rounded-full border px-3 py-1.5 text-[11px] font-bold capitalize transition ${activityFilter === filter ? "border-[#e5185d] bg-[#fce3ec] text-[#e5185d] dark:bg-[#38142b] dark:text-[#f0538b]" : "bg-card text-muted-foreground hover:border-[#e5185d]/40"}`}
+                    >
+                      {filter}
+                    </button>
+                  ),
+                )}
               </div>
             </CardHeader>
             <CardContent className="space-y-3 p-[18px]">
@@ -872,8 +874,9 @@ function DashboardPage() {
                 <span className="text-xs text-muted-foreground">
                   {online.length} online /{" "}
                   {emps.data.filter((employee) => employee.status === "idle").length} idle /{" "}
-                  {emps.data.filter((employee) => employee.status === "off_shift").length} off shift /{" "}
-                  {emps.data.filter((employee) => employee.status === "offline").length} offline
+                  {emps.data.filter((employee) => employee.status === "on_break").length} on break /{" "}
+                  {emps.data.filter((employee) => employee.status === "off_shift").length} off shift
+                  / {emps.data.filter((employee) => employee.status === "offline").length} offline
                 </span>
               )}
             </CardHeader>
@@ -1128,9 +1131,11 @@ function OnlineRow({ employee }: { employee: Employee }) {
     ? "Live now"
     : employee.status === "idle"
       ? "Idle online"
-      : employee.status === "off_shift"
-        ? "Off shift"
-        : "Online";
+      : employee.status === "on_break"
+        ? "On break"
+        : employee.status === "off_shift"
+          ? "Off shift"
+          : "Online";
   const statusClasses = isActive
     ? "bg-success/12 text-success ring-success/20"
     : "bg-warning/15 text-warning-foreground ring-warning/20";
