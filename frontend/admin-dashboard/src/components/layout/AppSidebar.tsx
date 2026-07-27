@@ -42,6 +42,12 @@ const navGroups: { label: string; items: NavItem[] }[] = [
     label: "Monitor",
     items: [
       {
+        to: "/dashboard",
+        label: "Overview",
+        icon: LayoutDashboard,
+        permission: permissions.dashboardView,
+      },
+      {
         to: "/attendance",
         label: "Attendance",
         icon: CalendarCheck2,
@@ -52,12 +58,6 @@ const navGroups: { label: string; items: NavItem[] }[] = [
         label: "Employee monitoring",
         icon: MonitorCheck,
         permission: permissions.timesheetsView,
-      },
-      {
-        to: "/dashboard",
-        label: "Overview",
-        icon: LayoutDashboard,
-        permission: permissions.dashboardView,
       },
       { to: "/teams", label: "Teams", icon: Users, permission: permissions.teamsView },
       { to: "/people", label: "People", icon: UsersRound, permission: permissions.peopleView },
