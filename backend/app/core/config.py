@@ -85,6 +85,11 @@ class Settings(BaseSettings):
     smtp_from: str = Field(default="", alias="SMTP_FROM")
     smtp_use_tls: bool = Field(default=True, alias="SMTP_USE_TLS")
     email_cooldown_minutes: int = Field(default=15, alias="EMAIL_COOLDOWN_MINUTES")
+    password_reset_email_cooldown_seconds: int = Field(
+        default=30,
+        ge=1,
+        alias="PASSWORD_RESET_EMAIL_COOLDOWN_SECONDS",
+    )
     password_reset_expire_minutes: int = Field(default=30, alias="PASSWORD_RESET_EXPIRE_MINUTES")
     employee_invitation_expire_hours: int = Field(
         default=24, alias="EMPLOYEE_INVITATION_EXPIRE_HOURS"

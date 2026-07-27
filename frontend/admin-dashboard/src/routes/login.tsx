@@ -1,5 +1,5 @@
 import { createFileRoute, Navigate, useNavigate } from "@tanstack/react-router";
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -28,7 +28,18 @@ function LoginPage() {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [remember, setRemember] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [sendingReset, setSendingReset] = useState(false);
+  const [resetCooldownSeconds, setResetCooldownSeconds] = useState(0);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (resetCooldownSeconds <= 0) return;
+    const timer = window.setTimeout(
+      () => setResetCooldownSeconds((seconds) => Math.max(0, seconds - 1)),
+      1_000,
+    );
+    return () => window.clearTimeout(timer);
+  }, [resetCooldownSeconds]);
 
   if (user) return <Navigate to="/dashboard" replace />;
 
@@ -174,23 +185,32 @@ function LoginPage() {
                 <Label htmlFor="password">Password</Label>
                 <button
                   type="button"
+                  disabled={sendingReset || resetCooldownSeconds > 0}
                   onClick={async () => {
                     if (!email.includes("@")) {
                       toast.error("Enter your email first.");
                       return;
                     }
+                    setSendingReset(true);
                     try {
                       await forgotPassword(email);
+                      setResetCooldownSeconds(30);
                       toast.success("If the account exists, a password reset link was emailed.");
                     } catch (error) {
                       toast.error(
                         error instanceof Error ? error.message : "Could not send reset email.",
                       );
+                    } finally {
+                      setSendingReset(false);
                     }
                   }}
-                  className="text-xs text-primary hover:underline"
+                  className="text-xs text-primary hover:underline disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  Forgot password?
+                  {sendingReset
+                    ? "Sending..."
+                    : resetCooldownSeconds > 0
+                      ? `Resend in ${resetCooldownSeconds}s`
+                      : "Forgot password?"}
                 </button>
               </div>
               <PasswordInput

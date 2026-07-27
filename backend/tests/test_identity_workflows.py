@@ -218,7 +218,7 @@ def test_admin_login_is_case_insensitive_for_legacy_mixed_case_email(identity_cl
     assert lowercase_login.status_code == 200
 
 
-def test_each_password_reset_click_creates_a_new_link_and_revokes_the_previous_one(
+def test_each_allowed_password_reset_click_creates_a_new_link_and_silently_throttles_rapid_resends(
     identity_client,
     monkeypatch,
 ):
@@ -238,12 +238,30 @@ def test_each_password_reset_click_creates_a_new_link_and_revokes_the_previous_o
         "/api/v1/auth/forgot-password",
         json={"email": "general@kentconsultancy.co"},
     )
-    second = client.post(
+    rapid_resend = client.post(
         "/api/v1/auth/forgot-password",
         json={"email": "general@kentconsultancy.co"},
     )
 
     db: Session = data["session_factory"]()
+    try:
+        first_delivery = db.scalar(
+            select(EmailDelivery).where(EmailDelivery.category == "admin_password_reset")
+        )
+        first_delivery.created_at = datetime.now(UTC) - timedelta(
+            seconds=settings.password_reset_email_cooldown_seconds + 1
+        )
+        db.add(first_delivery)
+        db.commit()
+    finally:
+        db.close()
+
+    second = client.post(
+        "/api/v1/auth/forgot-password",
+        json={"email": "general@kentconsultancy.co"},
+    )
+
+    db = data["session_factory"]()
     try:
         reset_rows = db.scalars(
             select(AdminPasswordResetToken).order_by(AdminPasswordResetToken.created_at)
@@ -274,6 +292,7 @@ def test_each_password_reset_click_creates_a_new_link_and_revokes_the_previous_o
     )
 
     assert first.status_code == 200
+    assert rapid_resend.status_code == 200
     assert second.status_code == 200
     assert len(reset_rows) == 2
     assert reset_rows[0].used_at is not None

@@ -22,7 +22,7 @@ from app.schemas.auth import (
 )
 from app.core.exceptions import ApiError
 from app.core.security import hash_password, hash_token, verify_password
-from app.services.email import enqueue_admin_password_reset_link_email
+from app.services.email import enqueue_admin_password_reset_link_email, ensure_email_allowed
 from app.services.admin_auth import (
     authenticate_admin,
     create_admin_token_pair,
@@ -155,13 +155,26 @@ def forgot_password(
     background_tasks: BackgroundTasks,
     db: Annotated[Session, Depends(get_db)],
 ):
-    enforce_rate_limit(request, action="admin-forgot-password", limit=30, window_seconds=60)
+    enforce_rate_limit(request, action="admin-forgot-password", limit=10, window_seconds=300)
     admin = db.scalar(
         select(AdminUser).where(
             func.lower(AdminUser.email) == payload.email.lower(), AdminUser.status == "active"
         ).with_for_update()
     )
     if admin is not None:
+        try:
+            ensure_email_allowed(
+                db,
+                to=admin.email,
+                category="admin_password_reset",
+                cooldown_seconds=settings.password_reset_email_cooldown_seconds,
+            )
+        except ApiError as exc:
+            if exc.code != "EMAIL_COOLDOWN":
+                raise
+            return success_response(
+                data={"message": "If the account exists, reset instructions were sent."}
+            )
         raw_token = secrets.token_urlsafe(48)
         now = datetime.now(UTC)
         db.execute(
