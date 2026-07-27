@@ -89,6 +89,8 @@ export type WorkdayTimeline = {
   last_ended_at: string | null;
   last_activity_at: string | null;
   is_running: boolean;
+  continued_from_previous_day?: boolean;
+  continued_session_started_at?: string | null;
   worked_seconds: number;
   idle_seconds: number;
   locked_seconds: number;

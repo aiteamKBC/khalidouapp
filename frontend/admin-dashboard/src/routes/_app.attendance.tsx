@@ -40,7 +40,7 @@ import {
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAuth } from "@/lib/auth";
-import { formatClock } from "@/lib/format";
+import { formatAttendanceStart, formatClock } from "@/lib/format";
 
 export const Route = createFileRoute("/_app/attendance")({ component: AttendancePage });
 
@@ -268,8 +268,13 @@ function AttendancePage() {
                           {formatClock(row.scheduledEndAt, row.timezone)}
                         </TableCell>
                         <TableCell className="text-xs">
-                          {formatClock(row.actualFirstActivityAt, row.timezone)} –{" "}
-                          {formatClock(row.actualLastActivityAt, row.timezone)}
+                          {formatAttendanceStart(
+                            row.actualFirstActivityAt,
+                            row.timezone,
+                            row.continuedFromPreviousDay,
+                            row.continuedSessionStartedAt,
+                          )}{" "}
+                          – {formatClock(row.actualLastActivityAt, row.timezone)}
                           <span
                             className={`block text-[10px] ${
                               row.isRunning
@@ -576,7 +581,12 @@ function AttendancePage() {
               <div className="grid gap-2 sm:grid-cols-3 lg:grid-cols-6">
                 <Small
                   label="Started"
-                  value={formatClock(detail.data.actualFirstActivityAt, detail.data.timezone)}
+                  value={formatAttendanceStart(
+                    detail.data.actualFirstActivityAt,
+                    detail.data.timezone,
+                    detail.data.continuedFromPreviousDay,
+                    detail.data.continuedSessionStartedAt,
+                  )}
                 />
                 <Small
                   label="Last activity"

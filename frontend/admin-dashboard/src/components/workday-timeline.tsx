@@ -1,7 +1,7 @@
 import { Activity, CalendarDays, Coffee, LockKeyhole, Moon } from "lucide-react";
 
 import type { WorkdayIntervalType, WorkdayTimeline as WorkdayTimelineData } from "@/types";
-import { formatClock } from "@/lib/format";
+import { formatAttendanceStart, formatClock } from "@/lib/format";
 
 type DisplayIntervalType = WorkdayIntervalType | "extra" | "leave";
 
@@ -18,8 +18,7 @@ const intervalStyles: Record<
   extra: {
     label: "Overtime",
     bar: "bg-fuchsia-500 dark:bg-pink-400",
-    badge:
-      "bg-fuchsia-500/15 text-fuchsia-700 dark:bg-pink-500/15 dark:text-pink-300",
+    badge: "bg-fuchsia-500/15 text-fuchsia-700 dark:bg-pink-500/15 dark:text-pink-300",
     icon: Activity,
   },
   idle: {
@@ -81,7 +80,12 @@ export function WorkdayTimeline({ timeline }: { timeline?: WorkdayTimelineData }
       <div className="grid grid-cols-2 gap-3 text-sm md:grid-cols-5">
         <Metric
           label="First start"
-          value={formatClock(timeline.firstStartedAt, timeline.timezone)}
+          value={formatAttendanceStart(
+            timeline.firstStartedAt,
+            timeline.timezone,
+            timeline.continuedFromPreviousDay,
+            timeline.continuedSessionStartedAt,
+          )}
         />
         <Metric
           label="Last activity"

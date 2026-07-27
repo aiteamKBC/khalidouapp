@@ -52,7 +52,7 @@ import {
   type DailyAttendance,
 } from "@/api/attendance";
 import { useAuth } from "@/lib/auth";
-import { formatClock as attendanceClock, formatMinutes } from "@/lib/format";
+import { formatAttendanceStart, formatClock as attendanceClock, formatMinutes } from "@/lib/format";
 import { WorkdayTimeline } from "@/components/workday-timeline";
 import { PageHeader } from "@/components/ui/page-header";
 import { StatCard } from "@/components/ui/stat-card";
@@ -820,9 +820,11 @@ function MonthlyAttendanceDialog({
               <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-5">
                 <MiniMetric
                   label="Started"
-                  value={attendanceClock(
+                  value={formatAttendanceStart(
                     dayDetail.data.actualFirstActivityAt,
                     dayDetail.data.timezone,
+                    dayDetail.data.continuedFromPreviousDay,
+                    dayDetail.data.continuedSessionStartedAt,
                   )}
                 />
                 <MiniMetric
@@ -896,8 +898,13 @@ function MonthlyAttendanceRow({
         {attendanceClock(row.scheduledEndAt, row.timezone)}
       </TableCell>
       <TableCell className="whitespace-nowrap text-xs">
-        {attendanceClock(row.actualFirstActivityAt, row.timezone)} –{" "}
-        {attendanceClock(row.actualLastActivityAt, row.timezone)}
+        {formatAttendanceStart(
+          row.actualFirstActivityAt,
+          row.timezone,
+          row.continuedFromPreviousDay,
+          row.continuedSessionStartedAt,
+        )}{" "}
+        – {attendanceClock(row.actualLastActivityAt, row.timezone)}
         <span
           className={`block text-[10px] ${
             row.isRunning ? "font-semibold text-emerald-700" : "text-muted-foreground"

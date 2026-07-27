@@ -507,6 +507,12 @@ def calculate_daily_attendance(
         "calculation_sources": {
             "session_ids": sorted({item[0]["session_id"] for item in intervals}),
             "is_running": bool(timeline["is_running"]),
+            "continued_from_previous_day": bool(
+                timeline.get("continued_from_previous_day", False)
+            ),
+            "continued_session_started_at": timeline.get(
+                "continued_session_started_at"
+            ),
             "adjustment_ids": [str(item.id) for item in adjustments],
             "overtime_ids": [str(item.id) for item in overtime_rows],
             "leave_request_id": str(leave.id) if leave else None,
@@ -555,6 +561,16 @@ def serialize_daily_attendance(row: DailyAttendance, *, timeline: dict | None = 
             timeline["is_running"]
             if timeline is not None
             else calculation_sources.get("is_running", False)
+        ),
+        "continued_from_previous_day": bool(
+            timeline.get("continued_from_previous_day", False)
+            if timeline is not None
+            else calculation_sources.get("continued_from_previous_day", False)
+        ),
+        "continued_session_started_at": (
+            timeline.get("continued_session_started_at")
+            if timeline is not None
+            else calculation_sources.get("continued_session_started_at")
         ),
         "normal_worked_seconds": row.normal_worked_seconds,
         "paid_break_seconds": row.paid_break_seconds,

@@ -19,6 +19,8 @@ export type DailyAttendance = {
   actualLastActivityAt?: string | null;
   actualSignOutAt?: string | null;
   isRunning: boolean;
+  continuedFromPreviousDay: boolean;
+  continuedSessionStartedAt?: string | null;
   normalWorkedSeconds: number;
   paidBreakSeconds: number;
   unpaidBreakSeconds: number;
@@ -66,6 +68,8 @@ type BackendAttendance = {
   actual_last_activity_at?: string | null;
   actual_sign_out_at?: string | null;
   is_running?: boolean;
+  continued_from_previous_day?: boolean;
+  continued_session_started_at?: string | null;
   normal_worked_seconds: number;
   paid_break_seconds: number;
   unpaid_break_seconds: number;
@@ -114,6 +118,8 @@ function mapAttendance(row: BackendAttendance): DailyAttendance {
     actualLastActivityAt: row.actual_last_activity_at,
     actualSignOutAt: row.actual_sign_out_at,
     isRunning: row.is_running ?? false,
+    continuedFromPreviousDay: row.continued_from_previous_day ?? false,
+    continuedSessionStartedAt: row.continued_session_started_at,
     normalWorkedSeconds: row.normal_worked_seconds,
     paidBreakSeconds: row.paid_break_seconds,
     unpaidBreakSeconds: row.unpaid_break_seconds,

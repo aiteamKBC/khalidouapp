@@ -136,6 +136,8 @@ def _empty_attendance_item(
         "actual_last_activity_at": None,
         "actual_sign_out_at": None,
         "is_running": False,
+        "continued_from_previous_day": False,
+        "continued_session_started_at": None,
         "normal_worked_seconds": 0,
         "paid_break_seconds": 0,
         "unpaid_break_seconds": 0,

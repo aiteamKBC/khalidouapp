@@ -43,6 +43,8 @@ export type PortalSummary = {
     actual_last_activity_at?: string | null;
     actual_sign_out_at?: string | null;
     is_running?: boolean;
+    continued_from_previous_day?: boolean;
+    continued_session_started_at?: string | null;
     normal_worked_seconds: number;
     paid_break_seconds: number;
     idle_seconds: number;

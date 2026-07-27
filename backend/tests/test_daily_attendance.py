@@ -323,6 +323,70 @@ def test_active_reconnected_session_clears_an_earlier_sign_out(
     assert serialize_daily_attendance(row)["is_running"] is True
 
 
+def test_session_continued_from_previous_day_keeps_daily_boundary_and_real_start(
+    attendance_context,
+):
+    db, employee, device, _ = attendance_context
+    work_date = date(2026, 7, 21)
+    session_start = datetime(2026, 7, 20, 23, 30, tzinfo=UTC)
+    now = datetime(2026, 7, 21, 10, 0, tzinfo=UTC)
+    active = WorkSession(
+        company_id=employee.company_id,
+        employee_id=employee.id,
+        device_id=device.id,
+        started_at=session_start,
+        status="active",
+        active_seconds=10 * 3600 + 30 * 60,
+        idle_seconds=0,
+    )
+    db.add(active)
+    db.flush()
+    db.add_all(
+        [
+            ActivityEvent(
+                company_id=employee.company_id,
+                employee_id=employee.id,
+                device_id=device.id,
+                session_id=active.id,
+                event_type="session_started",
+                event_timestamp=session_start,
+                idempotency_key="continued-session-started",
+            ),
+            ActivityEvent(
+                company_id=employee.company_id,
+                employee_id=employee.id,
+                device_id=device.id,
+                session_id=active.id,
+                event_type="heartbeat",
+                event_timestamp=now,
+                idempotency_key="continued-session-heartbeat",
+            ),
+        ]
+    )
+    db.commit()
+
+    row, timeline = calculate_daily_attendance(
+        db,
+        employee=employee,
+        work_date=work_date,
+        now=now,
+    )
+
+    assert row.actual_first_activity_at.replace(tzinfo=UTC) == datetime(
+        2026, 7, 21, 0, 0, tzinfo=UTC
+    )
+    assert timeline["continued_from_previous_day"] is True
+    assert timeline["continued_session_started_at"] == session_start.isoformat()
+
+    live_payload = serialize_daily_attendance(row, timeline=timeline)
+    assert live_payload["continued_from_previous_day"] is True
+    assert live_payload["continued_session_started_at"] == session_start.isoformat()
+
+    cached_payload = serialize_daily_attendance(row)
+    assert cached_payload["continued_from_previous_day"] is True
+    assert cached_payload["continued_session_started_at"] == session_start.isoformat()
+
+
 def test_late_grace_only_counts_time_after_the_first_fifteen_minutes(
     attendance_context,
 ):

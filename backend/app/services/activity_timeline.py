@@ -306,6 +306,7 @@ def build_workday_timeline(
 
     intervals: list[dict] = []
     has_open_session = False
+    continued_session_starts: list[datetime] = []
     for session in sessions:
         session_start = _utc(session.started_at)
         session_events = events_by_session[session.id]
@@ -356,6 +357,7 @@ def build_workday_timeline(
         cursor = visible_start
         terminated = False
         context = session_context[session.id]
+        interval_count_before_session = len(intervals)
 
         for event in session_events:
             if event.event_type == "heartbeat":
@@ -407,6 +409,9 @@ def build_workday_timeline(
                     **context,
                 }
             )
+
+        if len(intervals) > interval_count_before_session and session_start < day_start:
+            continued_session_starts.append(session_start)
 
         if (
             session.ended_at is None
@@ -513,6 +518,10 @@ def build_workday_timeline(
         else None,
         "last_activity_at": last_visible_end.isoformat() if last_visible_end else None,
         "is_running": has_open_session,
+        "continued_from_previous_day": bool(continued_session_starts),
+        "continued_session_started_at": (
+            min(continued_session_starts).isoformat() if continued_session_starts else None
+        ),
         "worked_seconds": totals["worked"],
         "idle_seconds": 0 if approved_leave else totals["idle"],
         "locked_seconds": totals["locked"],

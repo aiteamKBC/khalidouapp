@@ -29,6 +29,31 @@ export function formatClock(value?: string | null, timezone?: string | null): st
   }).format(date);
 }
 
+export function formatAttendanceStart(
+  actualFirstActivityAt?: string | null,
+  timezone?: string | null,
+  continuedFromPreviousDay = false,
+  continuedSessionStartedAt?: string | null,
+): string {
+  if (!continuedFromPreviousDay) {
+    return formatClock(actualFirstActivityAt, timezone);
+  }
+  const originalStart = continuedSessionStartedAt || actualFirstActivityAt;
+  if (!originalStart) {
+    return "Continued from previous day";
+  }
+  const date = new Date(originalStart);
+  if (Number.isNaN(date.getTime())) {
+    return "Continued from previous day";
+  }
+  const day = new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    timeZone: timezone || undefined,
+  }).format(date);
+  return `Continued from ${day}, ${formatClock(originalStart, timezone)}`;
+}
+
 export function formatTimeOfDay(value?: string | null): string {
   if (!value) return "—";
   const match = /^(\d{1,2}):(\d{2})(?::\d{2}(?:\.\d+)?)?$/.exec(value.trim());

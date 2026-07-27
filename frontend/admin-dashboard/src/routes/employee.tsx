@@ -56,7 +56,7 @@ import {
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { WorkdayTimeline } from "@/components/workday-timeline";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
-import { formatClock, formatDateTime, formatTimeOfDay } from "@/lib/format";
+import { formatAttendanceStart, formatClock, formatDateTime, formatTimeOfDay } from "@/lib/format";
 
 export const Route = createFileRoute("/employee")({ component: EmployeePortalPage });
 
@@ -556,9 +556,11 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
                 <div className="rounded-lg border p-3">
                   <p className="text-xs text-muted-foreground">First / last activity</p>
                   <p className="mt-1 font-semibold">
-                    {formatClock(
+                    {formatAttendanceStart(
                       summary.data?.daily_attendance.actual_first_activity_at,
                       summary.data?.daily_attendance.timezone,
+                      summary.data?.daily_attendance.continued_from_previous_day,
+                      summary.data?.daily_attendance.continued_session_started_at,
                     )}
                     {" / "}
                     {formatClock(

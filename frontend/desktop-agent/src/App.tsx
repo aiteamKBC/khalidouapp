@@ -249,6 +249,24 @@ function formatClock(value: string | null, timezone: string) {
   }).format(new Date(value));
 }
 
+function formatTimelineStart(timeline: WorkdayTimeline) {
+  if (!timeline.continued_from_previous_day) {
+    return formatClock(timeline.first_started_at, timeline.timezone);
+  }
+  const originalStart =
+    timeline.continued_session_started_at ?? timeline.first_started_at;
+  if (!originalStart) {
+    return "Continued from previous day";
+  }
+  const startedAt = new Date(originalStart);
+  const day = new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    timeZone: timeline.timezone,
+  }).format(startedAt);
+  return `Continued from ${day}, ${formatClock(originalStart, timeline.timezone)}`;
+}
+
 function localDateKey(value = new Date()) {
   const year = value.getFullYear();
   const month = String(value.getMonth() + 1).padStart(2, "0");
@@ -2074,10 +2092,7 @@ function HomeView({
             <span>Started at</span>
             <strong>
               {status.todayTimeline?.first_started_at
-                ? formatClock(
-                    status.todayTimeline.first_started_at,
-                    status.todayTimeline.timezone,
-                  )
+                ? formatTimelineStart(status.todayTimeline)
                 : "Not started"}
             </strong>
           </div>

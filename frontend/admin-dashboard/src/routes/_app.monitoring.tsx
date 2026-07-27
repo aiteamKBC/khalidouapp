@@ -42,7 +42,7 @@ import {
 import { StatusBadge } from "@/components/ui/status-badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAuth } from "@/lib/auth";
-import { formatClock, formatDateTime } from "@/lib/format";
+import { formatAttendanceStart, formatClock, formatDateTime } from "@/lib/format";
 import { permissions } from "@/lib/permissions";
 import { cn } from "@/lib/utils";
 import type { Screenshot } from "@/types";
@@ -567,7 +567,12 @@ function DailyAttendanceTab({
         />
         <AttendanceMetric
           label="First activity"
-          value={formatClock(row.actualFirstActivityAt, row.timezone)}
+          value={formatAttendanceStart(
+            row.actualFirstActivityAt,
+            row.timezone,
+            row.continuedFromPreviousDay,
+            row.continuedSessionStartedAt,
+          )}
         />
         <AttendanceMetric
           label="Last activity"

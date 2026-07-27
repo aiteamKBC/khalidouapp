@@ -84,7 +84,13 @@ import { listTimesheets } from "@/api/timesheets";
 import { listDevices } from "@/api/devices";
 import { listTeams } from "@/api/teams";
 import { listTasks } from "@/api/projects";
-import { formatClock, formatDateTime, formatMinutes, formatRelative } from "@/lib/format";
+import {
+  formatAttendanceStart,
+  formatClock,
+  formatDateTime,
+  formatMinutes,
+  formatRelative,
+} from "@/lib/format";
 import { useAuth } from "@/lib/auth";
 import { permissions } from "@/lib/permissions";
 
@@ -589,8 +595,13 @@ function EmployeeDetailPage() {
                         {formatClock(row.scheduledEndAt, row.timezone)}
                       </TableCell>
                       <TableCell>
-                        {formatClock(row.actualFirstActivityAt, row.timezone)} –{" "}
-                        {formatClock(row.actualLastActivityAt, row.timezone)}
+                        {formatAttendanceStart(
+                          row.actualFirstActivityAt,
+                          row.timezone,
+                          row.continuedFromPreviousDay,
+                          row.continuedSessionStartedAt,
+                        )}{" "}
+                        – {formatClock(row.actualLastActivityAt, row.timezone)}
                         <span
                           className={`block text-xs ${
                             row.isRunning
@@ -985,9 +996,11 @@ function EmployeeDetailPage() {
                 />
                 <CompactMetric
                   label="Started"
-                  value={formatClock(
+                  value={formatAttendanceStart(
                     attendanceDetail.data.actualFirstActivityAt,
                     attendanceDetail.data.timezone,
+                    attendanceDetail.data.continuedFromPreviousDay,
+                    attendanceDetail.data.continuedSessionStartedAt,
                   )}
                 />
                 <CompactMetric

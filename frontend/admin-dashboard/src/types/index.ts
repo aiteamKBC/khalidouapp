@@ -195,6 +195,8 @@ export interface WorkdayTimeline {
   lastEndedAt?: string;
   lastActivityAt?: string;
   isRunning: boolean;
+  continuedFromPreviousDay: boolean;
+  continuedSessionStartedAt?: string;
   workedSeconds: number;
   idleSeconds: number;
   lockedSeconds: number;

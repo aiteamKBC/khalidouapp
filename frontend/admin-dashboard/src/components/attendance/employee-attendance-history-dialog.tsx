@@ -26,7 +26,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { formatClock } from "@/lib/format";
+import { formatAttendanceStart, formatClock } from "@/lib/format";
 
 type EmployeeAttendanceHistoryDialogProps = {
   employeeId: string | null;
@@ -203,7 +203,12 @@ export function EmployeeAttendanceHistoryDialog({
               <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-5">
                 <MiniMetric
                   label="Started"
-                  value={formatClock(dayDetail.data.actualFirstActivityAt, dayDetail.data.timezone)}
+                  value={formatAttendanceStart(
+                    dayDetail.data.actualFirstActivityAt,
+                    dayDetail.data.timezone,
+                    dayDetail.data.continuedFromPreviousDay,
+                    dayDetail.data.continuedSessionStartedAt,
+                  )}
                 />
                 <MiniMetric
                   label="Last activity"
@@ -289,8 +294,13 @@ function AttendanceDayRow({
         {formatClock(row.scheduledEndAt, row.timezone)}
       </TableCell>
       <TableCell className="whitespace-nowrap text-xs">
-        {formatClock(row.actualFirstActivityAt, row.timezone)} –{" "}
-        {formatClock(row.actualLastActivityAt, row.timezone)}
+        {formatAttendanceStart(
+          row.actualFirstActivityAt,
+          row.timezone,
+          row.continuedFromPreviousDay,
+          row.continuedSessionStartedAt,
+        )}{" "}
+        – {formatClock(row.actualLastActivityAt, row.timezone)}
         <span
           className={`block text-[10px] ${
             row.isRunning ? "font-semibold text-emerald-700" : "text-muted-foreground"
