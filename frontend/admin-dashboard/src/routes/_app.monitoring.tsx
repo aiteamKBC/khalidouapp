@@ -284,14 +284,15 @@ function EmployeeMonitoringPage() {
           <div className="mt-4 border-t pt-4">
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
               <div>
-                <p className="text-sm font-bold">Quick employee picker</p>
+                <p className="text-sm font-bold">Employees</p>
                 <p className="text-xs text-muted-foreground">
-                  Choose a profile to open that employee's monitoring view.
+                  Pick a person to open their attendance, screenshots, and app activity.
                 </p>
               </div>
               {!employees.isLoading && (
-                <span className="rounded-full bg-muted px-2.5 py-1 text-xs font-semibold text-muted-foreground">
-                  {filteredEmployees.length} of {teamEmployees.length}
+                <span className="rounded-full border bg-background px-2.5 py-1 text-xs font-semibold text-muted-foreground">
+                  {filteredEmployees.length}{" "}
+                  {filteredEmployees.length === 1 ? "employee" : "employees"}
                 </span>
               )}
             </div>
@@ -373,7 +374,7 @@ function EmployeeMonitoringPage() {
                   )}
                 </div>
               ) : (
-                <div className="grid max-h-[310px] gap-3 overflow-y-auto pr-1 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+                <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-2 pt-1">
                   {filteredEmployees.map((employee) => {
                     const isSelected = employee.id === employeeId;
                     const employeeTeams = employee.teamIds
@@ -387,35 +388,42 @@ function EmployeeMonitoringPage() {
                         aria-pressed={isSelected}
                         onClick={() => updateSearch({ employeeId: employee.id })}
                         className={cn(
-                          "group relative flex min-w-0 items-center gap-3 rounded-xl border bg-card p-3 text-left transition duration-200",
-                          "hover:-translate-y-0.5 hover:border-primary/35 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                          isSelected &&
-                            "border-primary/45 bg-primary/[0.04] ring-2 ring-primary/15",
+                          "group relative flex w-[176px] shrink-0 flex-col items-center rounded-2xl px-3 py-3 text-center transition duration-200",
+                          "hover:-translate-y-0.5 hover:bg-muted/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                          isSelected && "bg-primary/[0.07] shadow-sm ring-2 ring-primary/25",
                         )}
                       >
-                        <Avatar className="h-12 w-12 border-2 border-background shadow-sm">
-                          <AvatarFallback className="bg-gradient-to-br from-primary/20 to-violet-500/15 text-sm font-extrabold text-primary">
-                            {initials(employee.name)}
-                          </AvatarFallback>
-                        </Avatar>
-                        <span className="min-w-0 flex-1">
-                          <span className="flex min-w-0 items-center gap-2">
-                            <span className="truncate text-sm font-bold">{employee.name}</span>
-                            {isSelected && (
-                              <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-primary text-primary-foreground">
-                                <Check className="h-3 w-3" />
-                              </span>
+                        {isSelected && (
+                          <span className="absolute right-2.5 top-2.5 grid h-5 w-5 place-items-center rounded-full bg-primary text-primary-foreground shadow-sm">
+                            <Check className="h-3 w-3" />
+                          </span>
+                        )}
+                        <span className="relative">
+                          <Avatar className="h-14 w-14 border-2 border-background shadow-sm">
+                            <AvatarFallback className="bg-gradient-to-br from-primary/20 to-violet-500/15 text-base font-extrabold text-primary">
+                              {initials(employee.name)}
+                            </AvatarFallback>
+                          </Avatar>
+                          <span
+                            className={cn(
+                              "absolute bottom-0 right-0 h-3.5 w-3.5 rounded-full border-2 border-background",
+                              statusDotClass(employeeDisplayStatus(employee)),
                             )}
-                          </span>
-                          <span className="mt-0.5 block truncate text-xs text-muted-foreground">
-                            {employee.jobTitle || "No job title"}
-                          </span>
-                          <span className="mt-1 flex min-w-0 items-center gap-2">
-                            <StatusBadge status={employeeDisplayStatus(employee)} />
-                            <span className="truncate text-[11px] text-muted-foreground">
-                              {employeeTeams || "No team"}
-                            </span>
-                          </span>
+                            aria-hidden="true"
+                          />
+                        </span>
+                        <span className="mt-2.5 block w-full truncate text-sm font-extrabold">
+                          {employee.name}
+                        </span>
+                        <span className="mt-0.5 block w-full truncate text-xs text-muted-foreground">
+                          {employee.jobTitle || "No job title"}
+                        </span>
+                        <span className="mt-2 flex max-w-full items-center gap-1.5">
+                          <StatusBadge status={employeeDisplayStatus(employee)} />
+                        </span>
+                        <span className="mt-1.5 flex w-full items-center justify-center gap-1 text-[11px] text-muted-foreground">
+                          <Users className="h-3 w-3 shrink-0" />
+                          <span className="truncate">{employeeTeams || "No team"}</span>
                         </span>
                       </button>
                     );
@@ -853,6 +861,16 @@ function ScreenshotsTab({
       </Dialog>
     </div>
   );
+}
+
+function statusDotClass(status: string) {
+  if (status === "active") return "bg-emerald-500";
+  if (status === "idle") return "bg-amber-400";
+  if (status === "locked" || status === "inactive") return "bg-slate-400";
+  if (status === "sleeping") return "bg-indigo-400";
+  if (status === "invited") return "bg-sky-500";
+  if (status === "app_pending") return "bg-violet-500";
+  return "bg-rose-500";
 }
 
 function isMonitoringTab(value: unknown): value is MonitoringTab {
