@@ -1538,7 +1538,7 @@ function startForegroundActivityMonitoring() {
   void foregroundActivityTick();
 }
 
-async function heartbeatTick() {
+async function heartbeatTick(options: { refreshMetadata?: boolean } = {}) {
   if (!currentSessionId || !runtimeStatus.enrolled) {
     return;
   }
@@ -1576,7 +1576,10 @@ async function heartbeatTick() {
       runtimeStatus.trackingStatus = latestLocalStatus;
     }
     applyPauseState(result.pause);
-    if (Date.now() - lastFullSummaryRefreshAt > 60 * 1000) {
+    if (
+      options.refreshMetadata !== false &&
+      Date.now() - lastFullSummaryRefreshAt > 60 * 1000
+    ) {
       lastFullSummaryRefreshAt = Date.now();
       await refreshWorkedTodayTotal();
     }
@@ -1622,7 +1625,10 @@ async function heartbeatTick() {
     }
     log.warn("Heartbeat failed", error);
   } finally {
-    if (Date.now() - lastMetadataRefreshAt > 60 * 1000) {
+    if (
+      options.refreshMetadata !== false &&
+      Date.now() - lastMetadataRefreshAt > 60 * 1000
+    ) {
       lastMetadataRefreshAt = Date.now();
       void refreshTrackingConfig();
       void refreshTasks();
@@ -2698,29 +2704,21 @@ async function checkForUpdates(manual = false) {
   }
 }
 
-async function finishTrackingBeforeUpdate() {
+async function preserveTrackingBeforeUpdate() {
   recalculateWorkedTime();
-  clearRuntimeTimers();
-  const sessionId = currentSessionId;
-  currentSessionId = null;
-  runtimeStatus.sessionStartedAt = null;
-  updateDisplaySleepBlocker();
-
-  if (sessionId) {
+  await flushForegroundActivitySegment();
+  if (currentSessionId && runtimeStatus.enrolled) {
     try {
-      await endSession({
-        sessionId,
-        activeSeconds: runtimeStatus.activeSeconds,
-        idleSeconds: runtimeStatus.idleSeconds,
-        reason: "Khaliduo update installation",
-      });
+      // Persist the latest counters without ending the work session. After the
+      // updater restarts Khaliduo, automatic startup reconnects to this same
+      // open session instead of creating a sign-out/sign-in break.
+      await heartbeatTick({ refreshMetadata: false });
     } catch (error) {
-      log.warn(
-        "Could not close the active work session before installing the update",
-        error,
-      );
+      log.warn("Could not persist the active session before installing the update", error);
     }
   }
+  clearRuntimeTimers();
+  updateDisplaySleepBlocker();
 }
 
 async function installDownloadedUpdate() {
@@ -2731,7 +2729,7 @@ async function installDownloadedUpdate() {
   setUpdateAttention(false);
   if (updateCheckTimer) clearInterval(updateCheckTimer);
   if (initialUpdateCheckTimer) clearTimeout(initialUpdateCheckTimer);
-  await finishTrackingBeforeUpdate();
+  await preserveTrackingBeforeUpdate();
   isQuitting = true;
   quitNotificationSent = true;
   autoUpdater.quitAndInstall(true, true);
