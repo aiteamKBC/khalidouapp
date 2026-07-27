@@ -19,6 +19,7 @@ import { BrandLogo } from "@/components/ui/brand-logo";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { PasswordInput } from "@/components/ui/password-input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { StatusBadge } from "@/components/ui/status-badge";
@@ -182,10 +183,9 @@ function EmployeeLogin({
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="employee-credential">Password</Label>
-              <Input
+              <PasswordInput
                 id="employee-credential"
                 name="khaliduo-employee-credential"
-                type="password"
                 autoCapitalize="none"
                 autoComplete="off"
                 spellCheck={false}

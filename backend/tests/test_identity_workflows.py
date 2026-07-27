@@ -195,6 +195,96 @@ def test_password_reset_uses_one_time_link_and_revokes_old_sessions(identity_cli
     assert reused.status_code == 400
 
 
+def test_admin_login_is_case_insensitive_for_legacy_mixed_case_email(identity_client):
+    client, data = identity_client
+    db: Session = data["session_factory"]()
+    try:
+        admin = db.get(AdminUser, data["general_admin"].id)
+        admin.email = "General.Admin@KentConsultancy.co"
+        db.add(admin)
+        db.commit()
+    finally:
+        db.close()
+
+    mixed_case_login = client.post(
+        "/api/v1/auth/login",
+        json={"email": "General.Admin@KentConsultancy.co", "password": "OldPassword123!"},
+    )
+    lowercase_login = client.post(
+        "/api/v1/auth/login",
+        json={"email": "general.admin@kentconsultancy.co", "password": "OldPassword123!"},
+    )
+
+    assert mixed_case_login.status_code == 200
+    assert lowercase_login.status_code == 200
+
+
+def test_each_password_reset_click_creates_a_new_link_and_revokes_the_previous_one(
+    identity_client,
+    monkeypatch,
+):
+    client, data = identity_client
+    raw_tokens = iter(
+        [
+            "first-password-reset-token-with-enough-length-123456789",
+            "second-password-reset-token-with-enough-length-987654321",
+        ]
+    )
+    monkeypatch.setattr(
+        "app.api.v1.auth.secrets.token_urlsafe",
+        lambda _length: next(raw_tokens),
+    )
+
+    first = client.post(
+        "/api/v1/auth/forgot-password",
+        json={"email": "general@kentconsultancy.co"},
+    )
+    second = client.post(
+        "/api/v1/auth/forgot-password",
+        json={"email": "general@kentconsultancy.co"},
+    )
+
+    db: Session = data["session_factory"]()
+    try:
+        reset_rows = db.scalars(
+            select(AdminPasswordResetToken).order_by(AdminPasswordResetToken.created_at)
+        ).all()
+        deliveries = db.scalars(
+            select(EmailDelivery).where(EmailDelivery.category == "admin_password_reset")
+        ).all()
+    finally:
+        db.close()
+
+    old_link = client.post(
+        "/api/v1/auth/reset-password",
+        json={
+            "token": "first-password-reset-token-with-enough-length-123456789",
+            "new_password": "OldLinkPassword123!",
+        },
+    )
+    newest_link = client.post(
+        "/api/v1/auth/reset-password",
+        json={
+            "token": "second-password-reset-token-with-enough-length-987654321",
+            "new_password": "NewestLinkPassword456!",
+        },
+    )
+    login = client.post(
+        "/api/v1/auth/login",
+        json={"email": "general@kentconsultancy.co", "password": "NewestLinkPassword456!"},
+    )
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert len(reset_rows) == 2
+    assert reset_rows[0].used_at is not None
+    assert reset_rows[1].used_at is None
+    assert len(deliveries) == 2
+    assert old_link.status_code == 400
+    assert newest_link.status_code == 200
+    assert login.status_code == 200
+
+
 def test_unknown_password_reset_is_non_enumerating(identity_client):
     client, data = identity_client
     response = client.post(

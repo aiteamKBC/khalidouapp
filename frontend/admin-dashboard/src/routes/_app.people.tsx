@@ -50,6 +50,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { PasswordInput } from "@/components/ui/password-input";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -1339,9 +1340,8 @@ function PeopleDirectory({
                 )}
                 <div className="space-y-1.5">
                   <Label htmlFor="edit-password">Reset password</Label>
-                  <Input
+                  <PasswordInput
                     id="edit-password"
-                    type="password"
                     value={editPassword}
                     onChange={(event) => setEditPassword(event.target.value)}
                     minLength={editPassword ? 8 : undefined}

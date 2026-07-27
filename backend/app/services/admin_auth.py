@@ -2,7 +2,7 @@ from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 import jwt
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -12,7 +12,10 @@ from app.models import AdminRefreshToken, AdminUser
 
 
 def authenticate_admin(db: Session, email: str, password: str) -> AdminUser:
-    admin = db.scalar(select(AdminUser).where(AdminUser.email == email.lower()))
+    normalized_email = email.strip().lower()
+    admin = db.scalar(
+        select(AdminUser).where(func.lower(AdminUser.email) == normalized_email)
+    )
     if (
         admin is None
         or admin.status != "active"
