@@ -152,7 +152,7 @@ def list_screenshot_folders(
     ]
     | None = None,
     page: int = Query(default=1, ge=1),
-    page_size: int = Query(default=8, ge=1, le=50),
+    page_size: int = Query(default=8, ge=1, le=250),
 ):
     """Return one folder per visible employee, including employees with no captures."""
     require_capability(current_admin, "screenshots.view")

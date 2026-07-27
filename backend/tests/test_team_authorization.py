@@ -1116,7 +1116,7 @@ def test_screenshot_folders_include_empty_employees_for_selected_day(team_client
     day = datetime.now(UTC).date().isoformat()
 
     response = client.get(
-        f"/api/v1/screenshots/folders?day={day}&page_size=10",
+        f"/api/v1/screenshots/folders?day={day}&page_size=250",
         headers=data["general_headers"],
     )
 

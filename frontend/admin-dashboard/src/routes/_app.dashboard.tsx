@@ -32,7 +32,7 @@ import { ProtectedImage } from "@/components/ProtectedImage";
 import { useAuth } from "@/lib/auth";
 import { listDailyAttendance } from "@/api/attendance";
 import { employeeIsOnline, listEmployees } from "@/api/employees";
-import { listScreenshots } from "@/api/screenshots";
+import { listScreenshotFolderPage } from "@/api/screenshots";
 import { listTimesheets } from "@/api/timesheets";
 import { listTeams } from "@/api/teams";
 import { listDevices } from "@/api/devices";
@@ -168,8 +168,14 @@ function DashboardPage() {
   }, [primaryReady, scopeKey]);
 
   const shots = useQuery({
-    queryKey: ["screenshots", scope, "dashboard-recent"],
-    queryFn: () => listScreenshots(scope, { pageSize: 24 }),
+    queryKey: ["screenshot-folders", scope, "dashboard", dashboardDay],
+    queryFn: () =>
+      listScreenshotFolderPage({
+        scopedTeamIds: scope,
+        page: 1,
+        pageSize: 250,
+        day: dashboardDay,
+      }),
     enabled: loadMedia,
     staleTime: 45_000,
     refetchInterval: MEDIA_REFRESH_MS,
@@ -287,8 +293,8 @@ function DashboardPage() {
   // from screenshots hid offline employees because they often have no recent
   // capture, which made the Offline filter incorrectly show zero.
   const byEmployee = new Map<string, Screenshot[]>();
-  for (const shot of shots.data ?? []) {
-    byEmployee.set(shot.employeeId, [...(byEmployee.get(shot.employeeId) ?? []), shot]);
+  for (const folder of shots.data?.items ?? []) {
+    byEmployee.set(folder.employeeId, folder.previews);
   }
   const memberActivity = (emps.data ?? [])
     .filter((employee) => employee.currentDeviceId || byEmployee.has(employee.id))
