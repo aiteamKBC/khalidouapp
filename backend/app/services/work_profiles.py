@@ -1,6 +1,7 @@
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from uuid import UUID
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -392,7 +393,39 @@ def payroll_preview(
     active_seconds = sum(
         max(0, session.active_seconds - session.deducted_seconds) for session in sessions
     )
-    idle_seconds = sum(session.idle_seconds for session in sessions)
+    from app.services.attendance import accountable_idle_seconds, calculate_daily_attendance
+
+    try:
+        employee_zone = ZoneInfo(employee.timezone or "UTC")
+    except (ZoneInfoNotFoundError, ValueError):
+        employee_zone = ZoneInfo("UTC")
+    now = datetime.now(UTC)
+    session_days = {
+        (
+            session.started_at.replace(tzinfo=UTC)
+            if session.started_at.tzinfo is None
+            else session.started_at
+        )
+        .astimezone(employee_zone)
+        .date()
+        for session in sessions
+    }
+    attendance_rows = [
+        calculate_daily_attendance(
+            db,
+            employee=employee,
+            work_date=work_date,
+            now=now,
+            persist=False,
+        )[0]
+        for work_date in sorted(session_days)
+    ]
+    if attendance_rows:
+        active_seconds = sum(
+            row.normal_worked_seconds + row.recorded_overtime_seconds
+            for row in attendance_rows
+        )
+    idle_seconds = sum(accountable_idle_seconds(row) for row in attendance_rows)
     required_daily = profile.required_daily_minutes or 480
     break_minutes = schedule_minutes(profile)
     if break_minutes["payable"]:
@@ -407,7 +440,11 @@ def payroll_preview(
     required_seconds = required_days * required_daily * 60
     paid_break_seconds = required_days * break_minutes["paid_break"] * 60
     unpaid_break_seconds = required_days * break_minutes["unpaid_break"] * 60
-    overtime_seconds = max(0, active_seconds - required_seconds) if profile.overtime_enabled else 0
+    overtime_seconds = (
+        sum(row.recorded_overtime_seconds for row in attendance_rows)
+        if profile.overtime_enabled
+        else 0
+    )
     configured_salary = Decimal(profile.salary_amount or 0)
     # Keep salary/hourly conversion on a fixed 30-day payroll month. Calendar
     # months and custom payroll ranges must not change the monthly salary basis.

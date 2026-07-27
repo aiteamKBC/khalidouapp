@@ -873,7 +873,6 @@ def task_workspace(
         select(
             WorkSession.employee_id,
             func.coalesce(func.sum(WorkSession.active_seconds), 0),
-            func.coalesce(func.sum(WorkSession.idle_seconds), 0),
             func.min(WorkSession.started_at),
             func.max(WorkSession.ended_at),
         )
@@ -948,7 +947,7 @@ def task_workspace(
                     "started_at": started_at.isoformat() if started_at else None,
                     "ended_at": ended_at.isoformat() if ended_at else None,
                 }
-                for employee_id, active_seconds, idle_seconds, started_at, ended_at in work_rows
+                for employee_id, _active_seconds, started_at, ended_at in work_rows
             ],
             "history": [
                 {
