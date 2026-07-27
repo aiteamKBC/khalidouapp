@@ -2354,6 +2354,56 @@ def test_employee_time_adjustment_request_can_be_approved_and_added_to_timesheet
     assert repeated_review.status_code == 409
 
 
+def test_only_super_admin_can_review_their_own_time_request(team_client):
+    client, data = team_client
+
+    owner_request = client.post(
+        "/api/v1/agent/time-adjustment-requests",
+        headers=data["device_headers"],
+        json={
+            "requested_date": data["session_a"].started_at.date().isoformat(),
+            "requested_minutes": 10,
+            "reason": "Customer meeting continued while the timer was idle.",
+        },
+    )
+    owner_review = client.patch(
+        f"/api/v1/time-adjustment-requests/{owner_request.json()['data']['id']}",
+        headers=data["owner_headers"],
+        json={"status": "approved", "approved_minutes": 10},
+    )
+
+    with data["session_factory"]() as db:
+        general_admin = db.get(AdminUser, data["general_admin"].id)
+        employee = db.get(Employee, data["employee_b"].id)
+        general_admin.employee_id = employee.id
+        request = TimeAdjustmentRequest(
+            company_id=employee.company_id,
+            employee_id=employee.id,
+            request_type="manual_time",
+            requested_date=data["session_a"].started_at.date(),
+            requested_seconds=10 * 60,
+            reason="Super admin correction for a completed customer meeting.",
+            status="pending",
+        )
+        db.add_all([general_admin, request])
+        db.commit()
+        request_id = request.id
+
+    super_admin_review = client.patch(
+        f"/api/v1/time-adjustment-requests/{request_id}",
+        headers=data["general_headers"],
+        json={"status": "approved", "approved_minutes": 10},
+    )
+
+    assert owner_review.status_code == 403
+    assert owner_review.json()["error"]["code"] == "SELF_REVIEW_FORBIDDEN"
+    assert super_admin_review.status_code == 200
+    assert super_admin_review.json()["data"]["status"] == "approved"
+    assert super_admin_review.json()["data"]["reviewed_by_admin_user_id"] == str(
+        data["general_admin"].id
+    )
+
+
 def test_employee_overview_includes_all_assigned_team_managers(team_client):
     client, data = team_client
 
