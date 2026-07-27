@@ -286,12 +286,21 @@ function TeamDetailPage() {
   const ownerCandidates = useMemo(() => {
     const currentOwnerIds = new Set((ownerUsers.data ?? []).map((owner) => owner.id));
     return (adminUsers.data ?? [])
-      .filter((user) => user.status === "active")
+      .filter((user) => user.status === "active" || user.status === "invited")
       .filter(
         (user) => user.role === "team_owner" || user.role === "general_admin" || user.role === "hr",
       )
       .filter((user) => !currentOwnerIds.has(user.id));
   }, [adminUsers.data, ownerUsers.data]);
+  const adminUsersByEmployeeId = useMemo(
+    () =>
+      new Map(
+        (adminUsers.data ?? [])
+          .filter((user) => user.employeeId)
+          .map((user) => [user.employeeId!, user] as const),
+      ),
+    [adminUsers.data],
+  );
   const editingLinkedAdmin = useMemo(
     () =>
       editingEmployee
@@ -520,6 +529,13 @@ function TeamDetailPage() {
                     {memberCandidates.map((employee) => (
                       <SelectItem key={employee.id} value={employee.id}>
                         {employee.name}
+                        {adminUsersByEmployeeId.has(employee.id)
+                          ? ` · ${roleLabel(adminUsersByEmployeeId.get(employee.id)!.role)}${
+                              adminUsersByEmployeeId.get(employee.id)!.status === "invited"
+                                ? " · Invited"
+                                : ""
+                            }`
+                          : ""}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -1128,6 +1144,7 @@ function TeamStructure({
                           ownerCandidates.map((user) => (
                             <SelectItem key={user.id} value={user.id}>
                               {user.name} · {roleLabel(user.role)}
+                              {user.status === "invited" ? " · Invited" : ""}
                             </SelectItem>
                           ))
                         )}

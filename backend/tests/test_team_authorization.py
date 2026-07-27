@@ -2404,6 +2404,85 @@ def test_only_super_admin_can_review_their_own_time_request(team_client):
     )
 
 
+def test_invited_hr_can_manage_a_team_or_join_with_a_member_role(team_client):
+    client, data = team_client
+    with data["session_factory"]() as db:
+        employee = Employee(
+            company_id=data["employee_a"].company_id,
+            name="Invited HR",
+            email="invited.hr@example.com",
+            employee_code="HR-INVITED",
+            job_title="HR Manager",
+            timezone="UTC",
+            status="invited",
+        )
+        db.add(employee)
+        db.flush()
+        admin = AdminUser(
+            company_id=employee.company_id,
+            employee_id=employee.id,
+            name=employee.name,
+            email=employee.email,
+            password_hash=hash_password("ExamplePassword123!"),
+            role="hr",
+            status="invited",
+            data_scope="company",
+        )
+        db.add(admin)
+        db.commit()
+        admin_id = admin.id
+        employee_id = employee.id
+
+    manager_response = client.post(
+        f"/api/v1/teams/{data['team_a'].id}/owners",
+        headers=data["general_headers"],
+        json={"admin_user_id": str(admin_id)},
+    )
+    lead_response = client.post(
+        f"/api/v1/teams/{data['team_b'].id}/members",
+        headers=data["general_headers"],
+        json={"employee_id": str(employee_id), "status": "active", "role": "team_lead"},
+    )
+    member_response = client.patch(
+        f"/api/v1/teams/{data['team_b'].id}/members/{employee_id}",
+        headers=data["general_headers"],
+        json={"role": "member"},
+    )
+    owners_response = client.get(
+        f"/api/v1/teams/{data['team_a'].id}/owners",
+        headers=data["general_headers"],
+    )
+
+    assert manager_response.status_code == 200
+    assert lead_response.status_code == 200
+    assert member_response.status_code == 200
+    assert owners_response.status_code == 200
+    invited_owner = next(
+        owner for owner in owners_response.json()["data"] if owner["id"] == str(admin_id)
+    )
+    assert invited_owner["role"] == "hr"
+    assert invited_owner["status"] == "invited"
+
+    with data["session_factory"]() as db:
+        manager_membership = db.scalar(
+            select(TeamMember).where(
+                TeamMember.team_id == data["team_a"].id,
+                TeamMember.employee_id == employee_id,
+            )
+        )
+        member_membership = db.scalar(
+            select(TeamMember).where(
+                TeamMember.team_id == data["team_b"].id,
+                TeamMember.employee_id == employee_id,
+            )
+        )
+        assert manager_membership is not None
+        assert manager_membership.status == "active"
+        assert manager_membership.role == "team_manager"
+        assert member_membership is not None
+        assert member_membership.role == "member"
+
+
 def test_employee_overview_includes_all_assigned_team_managers(team_client):
     client, data = team_client
 

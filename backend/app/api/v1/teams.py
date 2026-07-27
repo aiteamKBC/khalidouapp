@@ -398,6 +398,18 @@ def add_team_owner(
     )
     if owner is None:
         raise ApiError("ADMIN_NOT_FOUND", "Admin user was not found.", 404)
+    if owner.status not in {"active", "invited"}:
+        raise ApiError(
+            "TEAM_MANAGER_UNAVAILABLE",
+            "Only active or invited admin, HR, or team-manager accounts can manage a team.",
+            409,
+        )
+    if owner.role not in {"general_admin", "hr", "team_owner"}:
+        raise ApiError(
+            "TEAM_MANAGER_ROLE_REQUIRED",
+            "Only admin, HR, or team-manager accounts can manage a team.",
+            409,
+        )
     if (
         db.scalar(
             select(TeamOwner).where(
