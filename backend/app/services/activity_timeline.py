@@ -5,7 +5,7 @@ from datetime import UTC, date, datetime, time, timedelta
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.models import ActivityEvent, LeaveRequest, Project, Task, TrackingSettings, WorkSession
@@ -24,7 +24,6 @@ EVENT_STATES = {
 }
 TERMINAL_EVENTS = {"agent_stopped", "session_ended"}
 TIMELINE_EVENTS = set(EVENT_STATES) | TERMINAL_EVENTS
-SIGNAL_EVENTS = TIMELINE_EVENTS | {"heartbeat"}
 
 
 def _utc(value: datetime) -> datetime:
@@ -410,20 +409,41 @@ def build_workday_timeline(
     }
 
     events_by_session: dict[UUID, list[ActivityEvent]] = defaultdict(list)
+    last_heartbeat_by_session: dict[UUID, datetime] = {}
     if sessions:
+        session_ids = [session.id for session in sessions]
         events = db.scalars(
             select(ActivityEvent)
             .where(
                 ActivityEvent.company_id == company_id,
                 ActivityEvent.employee_id == employee_id,
-                ActivityEvent.session_id.in_([session.id for session in sessions]),
-                ActivityEvent.event_type.in_(SIGNAL_EVENTS),
+                ActivityEvent.session_id.in_(session_ids),
+                ActivityEvent.event_type.in_(TIMELINE_EVENTS),
                 ActivityEvent.event_timestamp < day_end,
             )
             .order_by(ActivityEvent.event_timestamp, ActivityEvent.created_at)
         ).all()
         for event in events:
             events_by_session[event.session_id].append(event)
+        heartbeat_rows = db.execute(
+            select(
+                ActivityEvent.session_id,
+                func.max(ActivityEvent.event_timestamp),
+            )
+            .where(
+                ActivityEvent.company_id == company_id,
+                ActivityEvent.employee_id == employee_id,
+                ActivityEvent.session_id.in_(session_ids),
+                ActivityEvent.event_type == "heartbeat",
+                ActivityEvent.event_timestamp < day_end,
+            )
+            .group_by(ActivityEvent.session_id)
+        ).all()
+        last_heartbeat_by_session = {
+            session_id: _utc(last_heartbeat_at)
+            for session_id, last_heartbeat_at in heartbeat_rows
+            if last_heartbeat_at is not None
+        }
 
     offline_threshold_minutes = (
         db.scalar(
@@ -442,12 +462,8 @@ def build_workday_timeline(
         session_start = _utc(session.started_at)
         session_events = events_by_session[session.id]
         continued_session_start = _continued_session_started_at(session_events)
-        heartbeat_times = [
-            _utc(event.event_timestamp)
-            for event in session_events
-            if event.event_type == "heartbeat"
-        ]
-        if heartbeat_times:
+        last_heartbeat_at = last_heartbeat_by_session.get(session.id)
+        if last_heartbeat_at is not None:
             # A terminal event can arrive hours or days after the desktop's
             # last heartbeat when a stale session is closed on the next app
             # launch.  It proves when the row was closed, not that the employee
@@ -457,7 +473,7 @@ def build_workday_timeline(
                 for event in session_events
                 if event.event_type not in TERMINAL_EVENTS
             ]
-            last_signal_at = max([session_start, *live_signal_times])
+            last_signal_at = max([session_start, last_heartbeat_at, *live_signal_times])
         else:
             recorded_end = _utc(session.ended_at) if session.ended_at else now_utc
             last_signal_at = (

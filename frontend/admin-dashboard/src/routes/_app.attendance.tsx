@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   AlertTriangle,
   CalendarCheck2,
@@ -55,6 +55,18 @@ const duration = (seconds: number) => {
   const minutes = Math.floor((seconds % 3600) / 60);
   return hours ? `${hours}h ${minutes}m` : `${minutes}m`;
 };
+
+function useDebouncedValue<T>(value: T, delay = 300) {
+  const [debouncedValue, setDebouncedValue] = useState(value);
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => setDebouncedValue(value), delay);
+    return () => window.clearTimeout(timeout);
+  }, [delay, value]);
+
+  return debouncedValue;
+}
+
 function AttendancePage() {
   const { scopedTeamIds } = useAuth();
   const scope = scopedTeamIds();
@@ -75,31 +87,51 @@ function AttendancePage() {
     id: string;
     name: string;
   } | null>(null);
-  const teams = useQuery({ queryKey: ["teams", scope], queryFn: () => listTeams(scope) });
+  const debouncedQuery = useDebouncedValue(q);
+  const debouncedHistoryQuery = useDebouncedValue(historyQuery);
+  const teams = useQuery({
+    queryKey: ["teams", scope],
+    queryFn: () => listTeams(scope),
+    staleTime: 5 * 60_000,
+  });
   const attendance = useQuery({
-    queryKey: ["daily-attendance", day, teamId, status, issue, q],
-    queryFn: () => listDailyAttendance({ day, teamId, status, issue, q }),
-    refetchInterval: 30_000,
+    queryKey: ["daily-attendance", day, teamId, status, issue, debouncedQuery],
+    queryFn: () => listDailyAttendance({ day, teamId, status, issue, q: debouncedQuery }),
+    staleTime: 55_000,
+    refetchInterval: 60_000,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: false,
     placeholderData: (previous) => previous,
   });
   const detail = useQuery({
     queryKey: ["daily-attendance-detail", selectedEmployeeId, day],
     queryFn: () => getDailyAttendance(selectedEmployeeId!, day),
     enabled: Boolean(selectedEmployeeId),
-    refetchInterval: selectedEmployeeId ? 15_000 : false,
+    staleTime: 55_000,
+    refetchInterval: selectedEmployeeId ? 60_000 : false,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: false,
   });
   const historyRoster = useQuery({
-    queryKey: ["attendance-employee-history-roster", historyEndDate, historyTeamId, historyQuery],
+    queryKey: [
+      "attendance-employee-history-roster",
+      historyEndDate,
+      historyTeamId,
+      debouncedHistoryQuery,
+    ],
     queryFn: () =>
       listDailyAttendance({
         day: historyEndDate,
         teamId: historyTeamId,
         status: "all",
         issue: "all",
-        q: historyQuery,
+        q: debouncedHistoryQuery,
       }),
     enabled: activeTab === "employee-history" && Boolean(historyEndDate),
-    refetchInterval: activeTab === "employee-history" ? 30_000 : false,
+    staleTime: 55_000,
+    refetchInterval: activeTab === "employee-history" ? 60_000 : false,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: false,
     placeholderData: (previous) => previous,
   });
   const rows = attendance.data ?? [];

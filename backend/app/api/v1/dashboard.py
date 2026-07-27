@@ -12,7 +12,7 @@ from app.api.v1.team_auth import accessible_employee_ids_statement
 from app.core.responses import success_response
 from app.database.session import get_db
 from app.models import AdminUser, Device, Employee, Screenshot, WorkSession
-from app.services.attendance import current_idle_context
+from app.services.attendance import current_idle_contexts
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
@@ -84,9 +84,9 @@ def summary(
         )
     ).one()
     idle_candidates = db.scalars(idle_candidates_query).unique().all()
-    idle_contexts = [
-        current_idle_context(db, employee=employee) for employee in idle_candidates
-    ]
+    idle_contexts = list(
+        current_idle_contexts(db, employees=idle_candidates).values()
+    )
     idle_employees = sum(context == "accountable" for context in idle_contexts)
     on_break_employees = sum(context == "on_break" for context in idle_contexts)
     off_shift_employees = max(

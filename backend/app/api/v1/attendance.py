@@ -30,6 +30,7 @@ from app.models import (
     TimeAdjustmentRequest,
     WorkSession,
 )
+from app.services.activity_timeline import local_today
 from app.services.audit import record_audit_log
 from app.services.attendance import (
     cached_daily_attendance,
@@ -37,7 +38,10 @@ from app.services.attendance import (
     serialize_daily_attendance,
 )
 from app.services.permissions import require_capability
-from app.services.schedules import effective_schedules_for_range
+from app.services.schedules import (
+    effective_schedules_for_employees,
+    effective_schedules_for_range,
+)
 from app.services.work_profiles import get_or_create_work_profile
 
 router = APIRouter(prefix="/attendance", tags=["attendance"])
@@ -250,32 +254,115 @@ def daily_attendance(
             )
         ).all()
     }
+    missing_employees = [
+        employee for employee in employees if employee.id not in attendance_by_employee
+    ]
+    missing_employee_ids = [employee.id for employee in missing_employees]
+    source_employee_ids: set[UUID] = set()
+    leave_by_employee: dict[UUID, LeaveRequest] = {}
+    schedules_by_employee: dict[UUID, dict] = {}
+    calculated_at = datetime.now(UTC)
+    if missing_employee_ids:
+        broad_start = datetime.combine(
+            selected_day - timedelta(days=1),
+            time.min,
+            tzinfo=UTC,
+        )
+        broad_end = datetime.combine(
+            selected_day + timedelta(days=2),
+            time.min,
+            tzinfo=UTC,
+        )
+        source_employee_ids.update(
+            db.scalars(
+                select(WorkSession.employee_id)
+                .where(
+                    WorkSession.company_id == current_admin.company_id,
+                    WorkSession.employee_id.in_(missing_employee_ids),
+                    WorkSession.started_at < broad_end,
+                    or_(WorkSession.ended_at.is_(None), WorkSession.ended_at > broad_start),
+                )
+                .distinct()
+            ).all()
+        )
+        for model in (TimeAdjustmentRequest, AttendanceCorrection, OvertimeRecord):
+            date_column = (
+                model.requested_date
+                if model is TimeAdjustmentRequest
+                else model.work_date
+            )
+            source_employee_ids.update(
+                db.scalars(
+                    select(model.employee_id)
+                    .where(
+                        model.company_id == current_admin.company_id,
+                        model.employee_id.in_(missing_employee_ids),
+                        date_column == selected_day,
+                    )
+                    .distinct()
+                ).all()
+            )
+        leaves = db.scalars(
+            select(LeaveRequest).where(
+                LeaveRequest.company_id == current_admin.company_id,
+                LeaveRequest.employee_id.in_(missing_employee_ids),
+                LeaveRequest.status == "approved",
+                LeaveRequest.start_date <= selected_day,
+                LeaveRequest.end_date >= selected_day,
+            )
+        ).all()
+        leave_by_employee = {leave.employee_id: leave for leave in leaves}
+        schedules_by_employee = effective_schedules_for_employees(
+            db,
+            missing_employees,
+            selected_day,
+            profiles={
+                employee.id: employee.work_profile
+                for employee in missing_employees
+                if employee.work_profile is not None
+            },
+        )
+
     rows = []
     for employee in employees:
-        attendance, _ = cached_daily_attendance(
-            db,
-            employee=employee,
-            work_date=selected_day,
-            now=datetime.now(UTC),
-            max_age_seconds=45,
-            existing_attendance=attendance_by_employee.get(employee.id),
-            profile=employee.work_profile,
-        )
-        if status and attendance.status != status:
+        attendance = attendance_by_employee.get(employee.id)
+        if attendance is not None:
+            data = serialize_daily_attendance(attendance)
+        elif employee.id in source_employee_ids:
+            attendance, _ = cached_daily_attendance(
+                db,
+                employee=employee,
+                work_date=selected_day,
+                now=calculated_at,
+                max_age_seconds=45,
+                existing_attendance=None,
+                profile=employee.work_profile,
+            )
+            data = serialize_daily_attendance(attendance)
+        else:
+            data = _empty_attendance_item(
+                employee=employee,
+                work_date=selected_day,
+                schedule=schedules_by_employee[employee.id],
+                leave=leave_by_employee.get(employee.id),
+                employee_today=local_today(employee.timezone, calculated_at),
+                calculated_at=calculated_at,
+            )
+
+        if status and data["status"] != status:
             continue
-        if late_only and attendance.deductible_late_seconds <= 0:
+        if late_only and int(data["deductible_late_seconds"]) <= 0:
             continue
         if missing_check_in and not any(
-            item.get("code") == "missing_check_in" for item in attendance.issues or []
+            item.get("code") == "missing_check_in" for item in data["issues"]
         ):
             continue
-        if overtime_only and attendance.recorded_overtime_seconds <= 0:
+        if overtime_only and int(data["recorded_overtime_seconds"]) <= 0:
             continue
-        if unexplained_idle and attendance.idle_seconds <= 0:
+        if unexplained_idle and int(data["idle_seconds"]) <= 0:
             continue
-        if leave_only and not attendance.leave_status:
+        if leave_only and not data["leave_status"]:
             continue
-        data = serialize_daily_attendance(attendance)
         data.update(
             {
                 "employee_name": employee.name,

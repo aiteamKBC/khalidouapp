@@ -47,7 +47,7 @@ from app.schemas.admin import (
     TeamUpdate,
 )
 from app.services.audit import record_audit_log
-from app.services.attendance import accountable_idle_totals, current_idle_context
+from app.services.attendance import accountable_idle_totals, current_idle_contexts
 from app.services.projects import ensure_general_work_project
 from app.services.screenshots import serialize_screenshot
 
@@ -532,9 +532,9 @@ def team_summary(
         )
     ).one()
     idle_candidates = db.scalars(idle_candidates_query).unique().all()
-    idle_contexts = [
-        current_idle_context(db, employee=employee) for employee in idle_candidates
-    ]
+    idle_contexts = list(
+        current_idle_contexts(db, employees=idle_candidates).values()
+    )
     idle_employees = sum(context == "accountable" for context in idle_contexts)
     on_break_employees = sum(context == "on_break" for context in idle_contexts)
     off_shift_employees = max(

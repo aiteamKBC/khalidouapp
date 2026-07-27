@@ -85,6 +85,89 @@ def effective_schedule(
     )
 
 
+def effective_schedules_for_employees(
+    db: Session,
+    employees: list[Employee],
+    work_date: date,
+    *,
+    profiles: dict | None = None,
+) -> dict:
+    """Resolve one workday for many employees with two shared queries."""
+    if not employees:
+        return {}
+
+    employee_ids = [employee.id for employee in employees]
+    memberships_by_employee: dict = {employee_id: [] for employee_id in employee_ids}
+    membership_rows = db.execute(
+        select(TeamMember.employee_id, TeamMember.team_id).where(
+            TeamMember.employee_id.in_(employee_ids),
+            TeamMember.status == "active",
+        )
+    ).all()
+    for employee_id, team_id in membership_rows:
+        memberships_by_employee.setdefault(employee_id, []).append(team_id)
+    team_ids = {team_id for _employee_id, team_id in membership_rows}
+    company_ids = {employee.company_id for employee in employees}
+
+    scope_conditions = [
+        WorkScheduleOverride.employee_id.in_(employee_ids),
+        (WorkScheduleOverride.team_id.in_(team_ids) if team_ids else false()),
+        (
+            (WorkScheduleOverride.scope == "company")
+            & WorkScheduleOverride.employee_id.is_(None)
+            & WorkScheduleOverride.team_id.is_(None)
+        ),
+    ]
+    overrides = db.scalars(
+        select(WorkScheduleOverride)
+        .where(
+            WorkScheduleOverride.company_id.in_(company_ids),
+            WorkScheduleOverride.permanent.is_(False),
+            WorkScheduleOverride.effective_date == work_date,
+            or_(*scope_conditions),
+        )
+        .order_by(WorkScheduleOverride.created_at.desc())
+    ).all()
+
+    employee_overrides: dict = {}
+    company_overrides: dict = {}
+    for override in overrides:
+        if override.employee_id is not None:
+            employee_overrides.setdefault(override.employee_id, override)
+        elif override.team_id is None:
+            company_overrides.setdefault(override.company_id, override)
+
+    schedules = {}
+    for employee in employees:
+        profile = (profiles or {}).get(employee.id) or employee.work_profile
+        if profile is None:
+            from app.services.work_profiles import get_or_create_work_profile
+
+            profile = get_or_create_work_profile(db, employee)
+        employee_team_ids = set(memberships_by_employee.get(employee.id, []))
+        team_override = next(
+            (
+                override
+                for override in overrides
+                if override.team_id is not None
+                and override.team_id in employee_team_ids
+            ),
+            None,
+        )
+        override = (
+            employee_overrides.get(employee.id)
+            or team_override
+            or company_overrides.get(employee.company_id)
+        )
+        schedules[employee.id] = _schedule_from_override(
+            employee,
+            profile,
+            work_date,
+            override,
+        )
+    return schedules
+
+
 def _schedule_from_override(
     employee: Employee,
     profile: EmployeeWorkProfile,

@@ -50,7 +50,7 @@ from app.services.audit import record_audit_log
 from app.services.activity_timeline import local_today
 from app.services.attendance import (
     accountable_idle_seconds,
-    current_idle_context,
+    current_idle_contexts,
     refresh_daily_attendance_range,
 )
 from app.services.email import (
@@ -258,79 +258,127 @@ def list_employee_overviews(
 ):
     """Return the employee list and live status without per-employee API calls.
 
-    The correlated subqueries run inside PostgreSQL, so the remote database is
-    reached once for status data instead of several times for every employee.
+    Windowed and grouped subqueries load the latest device/session plus today's
+    totals in one database round trip instead of querying once per employee.
     """
 
     today_start, today_end = day_bounds(date.today())
     settings = get_company_settings(db, current_admin.company_id)
-    cutoff = datetime.now(UTC) - timedelta(minutes=settings.offline_threshold_minutes)
+    now = datetime.now(UTC)
+    cutoff = now - timedelta(minutes=settings.offline_threshold_minutes)
 
-    def latest_device(column):
-        return (
-            select(column)
-            .where(
-                Device.company_id == current_admin.company_id,
-                Device.employee_id == Employee.id,
+    device_ranked = (
+        select(
+            Device.employee_id.label("employee_id"),
+            Device.id.label("device_id"),
+            Device.device_name.label("device_name"),
+            Device.status.label("device_status"),
+            Device.last_seen_at.label("device_last_seen"),
+            func.row_number()
+            .over(
+                partition_by=Device.employee_id,
+                order_by=(
+                    Device.last_seen_at.desc().nullslast(),
+                    Device.registered_at.desc(),
+                ),
             )
-            .order_by(Device.last_seen_at.desc().nullslast(), Device.registered_at.desc())
-            .limit(1)
-            .correlate(Employee)
-            .scalar_subquery()
+            .label("rank"),
         )
-
-    def current_session(column):
-        return (
-            select(column)
-            .where(
-                WorkSession.company_id == current_admin.company_id,
-                WorkSession.employee_id == Employee.id,
-                WorkSession.ended_at.is_(None),
+        .where(Device.company_id == current_admin.company_id)
+        .subquery()
+    )
+    latest_device = (
+        select(device_ranked)
+        .where(device_ranked.c.rank == 1)
+        .subquery()
+    )
+    session_ranked = (
+        select(
+            WorkSession.employee_id.label("employee_id"),
+            WorkSession.id.label("session_id"),
+            WorkSession.team_id.label("session_team_id"),
+            WorkSession.project_id.label("session_project_id"),
+            WorkSession.task_id.label("session_task_id"),
+            WorkSession.status.label("session_status"),
+            WorkSession.started_at.label("session_started_at"),
+            func.row_number()
+            .over(
+                partition_by=WorkSession.employee_id,
+                order_by=WorkSession.started_at.desc(),
             )
-            .order_by(WorkSession.started_at.desc())
-            .limit(1)
-            .correlate(Employee)
-            .scalar_subquery()
+            .label("rank"),
         )
-
-    def today_total(column):
-        return (
-            select(func.coalesce(func.sum(column), 0))
-            .where(
-                WorkSession.company_id == current_admin.company_id,
-                WorkSession.employee_id == Employee.id,
-                WorkSession.started_at.between(today_start, today_end),
-            )
-            .correlate(Employee)
-            .scalar_subquery()
+        .where(
+            WorkSession.company_id == current_admin.company_id,
+            WorkSession.ended_at.is_(None),
         )
-
-    last_screenshot = (
-        select(func.max(Screenshot.captured_at))
+        .subquery()
+    )
+    latest_session = (
+        select(session_ranked)
+        .where(session_ranked.c.rank == 1)
+        .subquery()
+    )
+    today_totals = (
+        select(
+            WorkSession.employee_id.label("employee_id"),
+            func.coalesce(func.sum(WorkSession.active_seconds), 0).label(
+                "active_seconds"
+            ),
+            func.coalesce(func.sum(WorkSession.idle_seconds), 0).label(
+                "idle_seconds"
+            ),
+            func.coalesce(func.sum(WorkSession.deducted_seconds), 0).label(
+                "deducted_seconds"
+            ),
+        )
+        .where(
+            WorkSession.company_id == current_admin.company_id,
+            WorkSession.started_at.between(today_start, today_end),
+        )
+        .group_by(WorkSession.employee_id)
+        .subquery()
+    )
+    latest_screenshot = (
+        select(
+            Screenshot.employee_id.label("employee_id"),
+            func.max(Screenshot.captured_at).label("captured_at"),
+        )
         .where(
             Screenshot.company_id == current_admin.company_id,
-            Screenshot.employee_id == Employee.id,
             Screenshot.deleted_at.is_(None),
         )
-        .correlate(Employee)
-        .scalar_subquery()
+        .group_by(Screenshot.employee_id)
+        .subquery()
     )
     statement = select(
         Employee,
-        latest_device(Device.id),
-        latest_device(Device.device_name),
-        latest_device(Device.status),
-        latest_device(Device.last_seen_at),
-        current_session(WorkSession.id),
-        current_session(WorkSession.team_id),
-        current_session(WorkSession.project_id),
-        current_session(WorkSession.task_id),
-        current_session(WorkSession.status),
-        current_session(WorkSession.started_at),
-        today_total(WorkSession.active_seconds),
-        today_total(WorkSession.idle_seconds),
-        today_total(WorkSession.deducted_seconds),
-        last_screenshot,
+        latest_device.c.device_id,
+        latest_device.c.device_name,
+        latest_device.c.device_status,
+        latest_device.c.device_last_seen,
+        latest_session.c.session_id,
+        latest_session.c.session_team_id,
+        latest_session.c.session_project_id,
+        latest_session.c.session_task_id,
+        latest_session.c.session_status,
+        latest_session.c.session_started_at,
+        today_totals.c.active_seconds,
+        today_totals.c.idle_seconds,
+        today_totals.c.deducted_seconds,
+        latest_screenshot.c.captured_at,
+    ).outerjoin(
+        latest_device,
+        latest_device.c.employee_id == Employee.id,
+    ).outerjoin(
+        latest_session,
+        latest_session.c.employee_id == Employee.id,
+    ).outerjoin(
+        today_totals,
+        today_totals.c.employee_id == Employee.id,
+    ).outerjoin(
+        latest_screenshot,
+        latest_screenshot.c.employee_id == Employee.id,
     ).where(
         Employee.company_id == current_admin.company_id,
         Employee.status != "deleted",
@@ -340,6 +388,28 @@ def list_employee_overviews(
         statement = statement.where(Employee.id == employee_id)
     statement = statement.order_by(Employee.name)
     rows = db.execute(statement).all()
+    idle_candidates = []
+    for row in rows:
+        employee = row[0]
+        device_id = row[1]
+        device_status = row[3]
+        normalized_last_seen = _as_utc(row[4])
+        session_id = row[5]
+        session_status = row[9]
+        if (
+            session_status in {"idle", "locked", "sleeping"}
+            and session_id
+            and device_id
+            and device_status != "revoked"
+            and normalized_last_seen
+            and normalized_last_seen >= cutoff
+        ):
+            idle_candidates.append(employee)
+    idle_context_by_employee = current_idle_contexts(
+        db,
+        employees=idle_candidates,
+        now=now,
+    )
 
     employee_ids = [row[0].id for row in rows]
     attendance_today_by_employee: dict[UUID, DailyAttendance] = {}
@@ -432,7 +502,7 @@ def list_employee_overviews(
         )
         activity_status = session_status if session_id and online else "offline"
         if activity_status in {"idle", "locked", "sleeping"}:
-            idle_context = current_idle_context(db, employee=employee)
+            idle_context = idle_context_by_employee.get(employee.id, "off_shift")
             if idle_context == "on_break":
                 activity_status = "on_break"
             elif idle_context == "off_shift":
@@ -922,7 +992,8 @@ def employee_status(
         .order_by(Screenshot.captured_at.desc())
     )
     settings = get_company_settings(db, current_admin.company_id)
-    cutoff = datetime.now(UTC) - timedelta(minutes=settings.offline_threshold_minutes)
+    now = datetime.now(UTC)
+    cutoff = now - timedelta(minutes=settings.offline_threshold_minutes)
     normalized_last_seen = _as_utc(device.last_seen_at if device else None)
     online = bool(
         device
@@ -942,7 +1013,11 @@ def employee_status(
     idle_seconds = max(0, int(canonical_today["idle_seconds"])) if canonical_today else 0
     activity_status = current.status if current and online else "offline"
     if activity_status in {"idle", "locked", "sleeping"}:
-        idle_context = current_idle_context(db, employee=employee)
+        idle_context = current_idle_contexts(
+            db,
+            employees=[employee],
+            now=now,
+        ).get(employee.id, "off_shift")
         if idle_context == "on_break":
             activity_status = "on_break"
         elif idle_context == "off_shift":

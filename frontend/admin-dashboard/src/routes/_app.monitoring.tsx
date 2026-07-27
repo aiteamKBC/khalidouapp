@@ -92,12 +92,17 @@ function EmployeeMonitoringPage() {
   const employees = useQuery({
     queryKey: ["employees", scope],
     queryFn: () => listEmployees(scope),
-    staleTime: 30_000,
+    staleTime: 55_000,
+    refetchInterval: 60_000,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: false,
+    placeholderData: (previous) => previous,
   });
   const teams = useQuery({
     queryKey: ["teams", scope],
     queryFn: () => listTeams(scope),
-    staleTime: 60_000,
+    staleTime: 5 * 60_000,
+    refetchOnWindowFocus: false,
   });
   const requestedEmployeeExists =
     Boolean(search.employeeId) &&
@@ -500,8 +505,10 @@ function DailyAttendanceTab({
     queryKey: ["daily-attendance", employeeId, day],
     queryFn: () => getDailyAttendance(employeeId, day),
     enabled: enabled && Boolean(employeeId && day),
-    staleTime: 30_000,
-    refetchInterval: enabled ? 30_000 : false,
+    staleTime: 55_000,
+    refetchInterval: enabled ? 60_000 : false,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: false,
   });
 
   if (attendance.isLoading) {
@@ -694,8 +701,10 @@ function ScreenshotsTab({
         day,
       }),
     enabled: enabled && Boolean(employeeId && day),
-    staleTime: 30_000,
-    refetchInterval: enabled ? 30_000 : false,
+    staleTime: 55_000,
+    refetchInterval: enabled ? 60_000 : false,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: false,
   });
 
   useEffect(() => {

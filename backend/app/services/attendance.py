@@ -22,7 +22,11 @@ from app.services.activity_timeline import (
     local_today,
     scope_timeline_to_schedule,
 )
-from app.services.schedules import effective_schedule, overlap_seconds
+from app.services.schedules import (
+    effective_schedule,
+    effective_schedules_for_employees,
+    overlap_seconds,
+)
 from app.services.work_profiles import get_or_create_work_profile
 
 DAILY_PAID_IDLE_GRACE_SECONDS = 15 * 60
@@ -668,40 +672,90 @@ def current_idle_context(
     now: datetime | None = None,
 ) -> Literal["accountable", "on_break", "off_shift"]:
     """Classify a live non-working device state against the employee schedule."""
+    return current_idle_contexts(db, employees=[employee], now=now).get(
+        employee.id,
+        "off_shift",
+    )
+
+
+def current_idle_contexts(
+    db: Session,
+    *,
+    employees: list[Employee],
+    now: datetime | None = None,
+) -> dict[UUID, Literal["accountable", "on_break", "off_shift"]]:
+    """Classify many live idle employees without rebuilding their timelines."""
+    if not employees:
+        return {}
+
     at = _utc(now or datetime.now(UTC))
-    work_date = local_today(employee.timezone, at)
-    profile = get_or_create_work_profile(db, employee)
-    schedule = effective_schedule(
-        db,
-        employee,
-        profile,
-        work_date,
-        timezone_name=employee.timezone,
-    )
-    raw_timeline = build_workday_timeline(
-        db,
-        company_id=employee.company_id,
-        employee_id=employee.id,
-        timezone_name=schedule["timezone"],
-        target_date=work_date,
-        now=at,
-    )
-    timeline = scope_timeline_to_schedule(
-        raw_timeline,
-        shift_start=schedule["start_at"],
-        shift_end=schedule["end_at"],
-        scheduled_breaks=schedule["breaks"],
-        now=at,
-    )
-    current = next(
-        (item for item in timeline["intervals"] if item.get("is_current")),
-        None,
-    )
-    if current and current.get("type") == "break":
-        return "on_break"
-    if current and current.get("type") in {"idle", "locked", "sleeping"}:
-        return "accountable"
-    return "off_shift"
+    employee_ids = [employee.id for employee in employees]
+    profiles = {
+        profile.employee_id: profile
+        for profile in db.scalars(
+            select(EmployeeWorkProfile).where(
+                EmployeeWorkProfile.employee_id.in_(employee_ids)
+            )
+        ).all()
+    }
+    for employee in employees:
+        if employee.id not in profiles:
+            profiles[employee.id] = get_or_create_work_profile(db, employee)
+
+    work_date_by_employee = {
+        employee.id: local_today(employee.timezone, at) for employee in employees
+    }
+    schedules = {}
+    for work_date in set(work_date_by_employee.values()):
+        day_employees = [
+            employee
+            for employee in employees
+            if work_date_by_employee[employee.id] == work_date
+        ]
+        schedules.update(
+            effective_schedules_for_employees(
+                db,
+                day_employees,
+                work_date,
+                profiles=profiles,
+            )
+        )
+
+    min_date = min(work_date_by_employee.values())
+    max_date = max(work_date_by_employee.values())
+    approved_leave_employee_ids = {
+        leave.employee_id
+        for leave in db.scalars(
+            select(LeaveRequest).where(
+                LeaveRequest.employee_id.in_(employee_ids),
+                LeaveRequest.status == "approved",
+                LeaveRequest.start_date <= max_date,
+                LeaveRequest.end_date >= min_date,
+            )
+        ).all()
+        if leave.start_date
+        <= work_date_by_employee.get(leave.employee_id, min_date)
+        <= leave.end_date
+    }
+
+    contexts: dict[UUID, Literal["accountable", "on_break", "off_shift"]] = {}
+    for employee in employees:
+        schedule = schedules[employee.id]
+        shift_start = schedule["start_at"]
+        shift_end = schedule["end_at"]
+        if (
+            employee.id in approved_leave_employee_ids
+            or shift_start is None
+            or shift_end is None
+            or not (shift_start <= at < shift_end)
+        ):
+            contexts[employee.id] = "off_shift"
+            continue
+        if any(item["start_at"] <= at < item["end_at"] for item in schedule["breaks"]):
+            contexts[employee.id] = "on_break"
+            continue
+        contexts[employee.id] = "accountable"
+    return contexts
 
 
 def is_currently_accountable_idle(

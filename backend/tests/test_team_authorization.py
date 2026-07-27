@@ -393,6 +393,90 @@ def test_daily_attendance_includes_start_grace_for_dashboard_alerts(team_client)
     assert employee_row["late_grace_minutes"] == 15
 
 
+def test_daily_attendance_list_reuses_materialized_row(team_client, monkeypatch):
+    client, data = team_client
+    today = local_today("UTC")
+    with data["session_factory"]() as db:
+        db.add(
+            DailyAttendance(
+                company_id=data["employee_a"].company_id,
+                employee_id=data["employee_a"].id,
+                work_date=today,
+                timezone="UTC",
+                normal_worked_seconds=321,
+                status="present",
+                issues=[],
+                calculation_sources={"test": "materialized"},
+                calculated_at=datetime.now(UTC) - timedelta(hours=1),
+            )
+        )
+        db.commit()
+
+    def unexpected_recalculation(*_args, **_kwargs):
+        raise AssertionError("The daily roster must not recalculate a stored employee row")
+
+    monkeypatch.setattr(
+        attendance_api,
+        "cached_daily_attendance",
+        unexpected_recalculation,
+    )
+    response = client.get(
+        "/api/v1/attendance/daily",
+        params={
+            "day": today.isoformat(),
+            "employee_id": str(data["employee_a"].id),
+        },
+        headers=data["general_headers"],
+    )
+
+    assert response.status_code == 200
+    rows = response.json()["data"]["rows"]
+    assert len(rows) == 1
+    assert rows[0]["normal_worked_seconds"] == 321
+    assert rows[0]["calculation_sources"] == {"test": "materialized"}
+
+
+def test_daily_attendance_empty_roster_has_bounded_query_count(team_client):
+    client, data = team_client
+    with data["session_factory"]() as db:
+        engine = db.get_bind()
+        for index in range(20):
+            employee = Employee(
+                company_id=data["employee_a"].company_id,
+                name=f"Roster Perf {index:02d}",
+                email=f"roster-perf-{index:02d}@example.com",
+                employee_code=f"ROSTER-PERF-{index:02d}",
+                timezone="UTC",
+                status="active",
+            )
+            db.add(employee)
+            db.flush()
+            get_or_create_work_profile(db, employee)
+        db.commit()
+
+    statements = []
+
+    def count_statement(*_args):
+        statements.append(1)
+
+    event.listen(engine, "before_cursor_execute", count_statement)
+    try:
+        response = client.get(
+            "/api/v1/attendance/daily",
+            params={
+                "day": local_today("UTC").isoformat(),
+                "q": "Roster Perf",
+            },
+            headers=data["general_headers"],
+        )
+    finally:
+        event.remove(engine, "before_cursor_execute", count_statement)
+
+    assert response.status_code == 200
+    assert len(response.json()["data"]["rows"]) == 20
+    assert len(statements) <= 20
+
+
 def test_attendance_range_stops_at_employee_today(team_client):
     client, data = team_client
     today = local_today("UTC")
@@ -2589,8 +2673,10 @@ def test_employee_overview_distinguishes_idle_break_and_off_shift(team_client, m
         db.commit()
 
     monkeypatch.setattr(
-        "app.api.v1.employees.current_idle_context",
-        lambda *_args, **_kwargs: "off_shift",
+        "app.api.v1.employees.current_idle_contexts",
+        lambda *_args, employees, **_kwargs: {
+            employee.id: "off_shift" for employee in employees
+        },
     )
     outside_shift = client.get(
         f"/api/v1/employees-overview?employee_id={data['employee_a'].id}",
@@ -2601,8 +2687,10 @@ def test_employee_overview_distinguishes_idle_break_and_off_shift(team_client, m
     assert outside_shift.json()["data"][0]["activity_status"] == "off_shift"
 
     monkeypatch.setattr(
-        "app.api.v1.employees.current_idle_context",
-        lambda *_args, **_kwargs: "on_break",
+        "app.api.v1.employees.current_idle_contexts",
+        lambda *_args, employees, **_kwargs: {
+            employee.id: "on_break" for employee in employees
+        },
     )
     on_break = client.get(
         f"/api/v1/employees-overview?employee_id={data['employee_a'].id}",
@@ -2613,8 +2701,10 @@ def test_employee_overview_distinguishes_idle_break_and_off_shift(team_client, m
     assert on_break.json()["data"][0]["activity_status"] == "on_break"
 
     monkeypatch.setattr(
-        "app.api.v1.employees.current_idle_context",
-        lambda *_args, **_kwargs: "accountable",
+        "app.api.v1.employees.current_idle_contexts",
+        lambda *_args, employees, **_kwargs: {
+            employee.id: "accountable" for employee in employees
+        },
     )
     inside_shift = client.get(
         f"/api/v1/employees-overview?employee_id={data['employee_a'].id}",
