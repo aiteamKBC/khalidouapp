@@ -17,8 +17,9 @@ const intervalStyles: Record<
   },
   extra: {
     label: "Overtime",
-    bar: "bg-orange-500",
-    badge: "bg-orange-500/15 text-orange-800",
+    bar: "bg-fuchsia-500 dark:bg-pink-400",
+    badge:
+      "bg-fuchsia-500/15 text-fuchsia-700 dark:bg-pink-500/15 dark:text-pink-300",
     icon: Activity,
   },
   idle: {
