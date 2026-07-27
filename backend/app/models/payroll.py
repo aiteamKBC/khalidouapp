@@ -7,6 +7,7 @@ from sqlalchemy import (
     Date,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     JSON,
     Numeric,
@@ -157,6 +158,14 @@ class PayrollAdjustment(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
 class WorkScheduleOverride(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "work_schedule_overrides"
+    __table_args__ = (
+        Index(
+            "ix_work_schedule_overrides_company_date_permanent",
+            "company_id",
+            "effective_date",
+            "permanent",
+        ),
+    )
 
     company_id: Mapped[UUID] = mapped_column(ForeignKey("companies.id"), nullable=False, index=True)
     employee_id: Mapped[UUID | None] = mapped_column(

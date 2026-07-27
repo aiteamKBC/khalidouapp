@@ -30,7 +30,7 @@ import {
 import { useAuth } from "@/lib/auth";
 import { permissions } from "@/lib/permissions";
 import { addTeamMember, addTeamOwner, createTeam, listTeams } from "@/api/teams";
-import { listEmployees } from "@/api/employees";
+import { employeeIsOnline, listEmployees } from "@/api/employees";
 import { listUsers } from "@/api/users";
 import { formatMinutes, formatRelative } from "@/lib/format";
 import { toast } from "sonner";
@@ -168,7 +168,7 @@ function TeamsList() {
         />
         <MetricTile
           icon={UsersRound}
-          value={(emps.data ?? []).filter((employee) => employee.status !== "offline").length}
+          value={(emps.data ?? []).filter(employeeIsOnline).length}
           label="People online"
           hint="Live right now"
           tone="blue"
@@ -271,7 +271,7 @@ function TeamsList() {
             const members = (emps.data ?? []).filter((employee) =>
               employee.teamIds.includes(team.id),
             );
-            const online = members.filter((employee) => employee.status !== "offline").length;
+            const online = members.filter(employeeIsOnline).length;
             const workedMinutes = members.reduce(
               (sum, employee) => sum + employee.workedTodayMinutes,
               0,
@@ -379,7 +379,7 @@ function TeamsList() {
               const members = (emps.data ?? []).filter((employee) =>
                 employee.teamIds.includes(team.id),
               );
-              const online = members.filter((employee) => employee.status !== "offline").length;
+              const online = members.filter(employeeIsOnline).length;
               const workedMinutes = members.reduce(
                 (sum, employee) => sum + employee.workedTodayMinutes,
                 0,

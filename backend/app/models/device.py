@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import DateTime, ForeignKey, String, UniqueConstraint
+from sqlalchemy import DateTime, ForeignKey, Index, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database.base import Base
@@ -12,6 +12,12 @@ class Device(UUIDPrimaryKeyMixin, Base):
     __tablename__ = "devices"
     __table_args__ = (
         UniqueConstraint("company_id", "installation_id", name="uq_devices_company_installation"),
+        Index(
+            "ix_devices_company_employee_last_seen",
+            "company_id",
+            "employee_id",
+            "last_seen_at",
+        ),
     )
 
     company_id: Mapped[UUID] = mapped_column(ForeignKey("companies.id"), nullable=False, index=True)

@@ -238,6 +238,16 @@ def daily_attendance(
         ).limit(limit)
     ).all()
     team_names = _team_names(db, [employee.id for employee in employees])
+    attendance_by_employee = {
+        attendance.employee_id: attendance
+        for attendance in db.scalars(
+            select(DailyAttendance).where(
+                DailyAttendance.company_id == current_admin.company_id,
+                DailyAttendance.employee_id.in_([employee.id for employee in employees]),
+                DailyAttendance.work_date == selected_day,
+            )
+        ).all()
+    }
     rows = []
     for employee in employees:
         attendance, _ = cached_daily_attendance(
@@ -245,7 +255,9 @@ def daily_attendance(
             employee=employee,
             work_date=selected_day,
             now=datetime.now(UTC),
-            max_age_seconds=20,
+            max_age_seconds=45,
+            existing_attendance=attendance_by_employee.get(employee.id),
+            profile=employee.work_profile,
         )
         if status and attendance.status != status:
             continue
@@ -515,7 +527,12 @@ def employee_attendance_range(
         )
     ).all()
     for captured_at in captured_values:
-        local_day = captured_at.astimezone(timezone).date()
+        captured_utc = (
+            captured_at.replace(tzinfo=UTC)
+            if captured_at.tzinfo is None
+            else captured_at.astimezone(UTC)
+        )
+        local_day = captured_utc.astimezone(timezone).date()
         screenshot_days[local_day] = screenshot_days.get(local_day, 0) + 1
 
     now = datetime.now(UTC)
@@ -630,6 +647,8 @@ def employee_attendance_range(
                 work_date=cursor,
                 now=now,
                 max_age_seconds=5,
+                existing_attendance=attendance,
+                profile=profile,
             )
             item = serialize_daily_attendance(attendance)
         else:

@@ -10,6 +10,7 @@ from app.models import (
     AttendanceCorrection,
     DailyAttendance,
     Employee,
+    EmployeeWorkProfile,
     LeaveRequest,
     OvertimeRecord,
     TimeAdjustmentRequest,
@@ -24,6 +25,7 @@ from app.services.schedules import effective_schedule, overlap_seconds
 from app.services.work_profiles import get_or_create_work_profile
 
 DAILY_PAID_IDLE_GRACE_SECONDS = 15 * 60
+_ATTENDANCE_NOT_LOADED = object()
 
 
 def _utc(value: datetime) -> datetime:
@@ -79,6 +81,8 @@ def cached_daily_attendance(
     max_age_seconds: int = 30,
     timezone_name: str | None = None,
     device_id: UUID | None = None,
+    existing_attendance: DailyAttendance | None | object = _ATTENDANCE_NOT_LOADED,
+    profile: EmployeeWorkProfile | None = None,
 ) -> tuple[DailyAttendance, dict | None]:
     """Return a recent materialized day, recalculating only when needed.
 
@@ -88,13 +92,34 @@ def cached_daily_attendance(
     employee timeline on every request.
     """
     at = _utc(now or datetime.now(UTC))
-    row = db.scalar(
-        select(DailyAttendance).where(
-            DailyAttendance.company_id == employee.company_id,
-            DailyAttendance.employee_id == employee.id,
-            DailyAttendance.work_date == work_date,
+    row = (
+        db.scalar(
+            select(DailyAttendance).where(
+                DailyAttendance.company_id == employee.company_id,
+                DailyAttendance.employee_id == employee.id,
+                DailyAttendance.work_date == work_date,
+            )
         )
+        if existing_attendance is _ATTENDANCE_NOT_LOADED
+        else existing_attendance
     )
+    if row is not None and not isinstance(row, DailyAttendance):
+        raise TypeError("existing_attendance must be a DailyAttendance row or None")
+
+    # Fresh snapshots already carry the timezone used to calculate them. Most
+    # dashboard polls can return here without another work-session lookup.
+    cached_timezone = timezone_name or (row.timezone if row is not None else None)
+    cached_employee_today = local_today(
+        cached_timezone or employee.timezone or "UTC",
+        at,
+    )
+    if row is not None and work_date < cached_employee_today:
+        return row, None
+    if row is not None and row.calculated_at is not None:
+        age = max(0, int((at - _utc(row.calculated_at)).total_seconds()))
+        if age < max_age_seconds:
+            return row, None
+
     effective_timezone = attendance_timezone(
         db,
         employee=employee,
@@ -102,13 +127,6 @@ def cached_daily_attendance(
         timezone_name=timezone_name,
         device_id=device_id,
     )
-    employee_today = local_today(effective_timezone, at)
-    if row is not None and work_date < employee_today:
-        return row, None
-    if row is not None and row.calculated_at is not None:
-        age = max(0, int((at - _utc(row.calculated_at)).total_seconds()))
-        if age < max_age_seconds:
-            return row, None
     return calculate_daily_attendance(
         db,
         employee=employee,
@@ -116,6 +134,8 @@ def cached_daily_attendance(
         now=at,
         timezone_name=effective_timezone,
         device_id=device_id,
+        existing_attendance=row,
+        profile=profile,
     )
 
 
@@ -128,6 +148,8 @@ def calculate_daily_attendance(
     persist: bool = True,
     timezone_name: str | None = None,
     device_id: UUID | None = None,
+    existing_attendance: DailyAttendance | None | object = _ATTENDANCE_NOT_LOADED,
+    profile: EmployeeWorkProfile | None = None,
 ) -> tuple[DailyAttendance, dict]:
     effective_timezone = attendance_timezone(
         db,
@@ -136,7 +158,7 @@ def calculate_daily_attendance(
         timezone_name=timezone_name,
         device_id=device_id,
     )
-    profile = get_or_create_work_profile(db, employee)
+    profile = profile or get_or_create_work_profile(db, employee)
     schedule = effective_schedule(
         db,
         employee,
@@ -428,13 +450,19 @@ def calculate_daily_attendance(
     else:
         status = "present"
 
-    row = db.scalar(
-        select(DailyAttendance).where(
-            DailyAttendance.company_id == employee.company_id,
-            DailyAttendance.employee_id == employee.id,
-            DailyAttendance.work_date == work_date,
+    row = (
+        db.scalar(
+            select(DailyAttendance).where(
+                DailyAttendance.company_id == employee.company_id,
+                DailyAttendance.employee_id == employee.id,
+                DailyAttendance.work_date == work_date,
+            )
         )
+        if existing_attendance is _ATTENDANCE_NOT_LOADED
+        else existing_attendance
     )
+    if row is not None and not isinstance(row, DailyAttendance):
+        raise TypeError("existing_attendance must be a DailyAttendance row or None")
     if row is None:
         row = DailyAttendance(
             company_id=employee.company_id,

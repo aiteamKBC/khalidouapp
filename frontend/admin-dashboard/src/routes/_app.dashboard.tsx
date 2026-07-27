@@ -31,8 +31,7 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { ProtectedImage } from "@/components/ProtectedImage";
 import { useAuth } from "@/lib/auth";
 import { listDailyAttendance } from "@/api/attendance";
-import { getDashboardSummary } from "@/api/dashboard";
-import { listEmployees } from "@/api/employees";
+import { employeeIsOnline, listEmployees } from "@/api/employees";
 import { listScreenshots } from "@/api/screenshots";
 import { listTimesheets } from "@/api/timesheets";
 import { listTeams } from "@/api/teams";
@@ -137,22 +136,12 @@ function DashboardPage() {
   const scopeKey = scope?.join(",") ?? "all";
   const dashboardDay = isoDate(new Date());
 
-  const summary = useQuery({
-    queryKey: ["dashboard", scope],
-    queryFn: () => getDashboardSummary(scope),
-    staleTime: 10_000,
-    refetchInterval: LIVE_REFRESH_MS,
-    refetchIntervalInBackground: false,
-    refetchOnWindowFocus: "always",
-    placeholderData: (previous) => previous,
-  });
   const emps = useQuery({
     queryKey: ["employees", scope],
     queryFn: () => listEmployees(scope),
     staleTime: 10_000,
     refetchInterval: LIVE_REFRESH_MS,
     refetchIntervalInBackground: false,
-    refetchOnWindowFocus: "always",
     placeholderData: (previous) => previous,
   });
   const month = useQuery({
@@ -161,10 +150,9 @@ function DashboardPage() {
     staleTime: 30_000,
     refetchInterval: ACTION_REFRESH_MS,
     refetchIntervalInBackground: false,
-    refetchOnWindowFocus: "always",
     placeholderData: (previous) => previous,
   });
-  const primaryReady = summary.isFetched && emps.isFetched;
+  const primaryReady = emps.isFetched;
   useEffect(() => {
     setLoadActions(false);
     setLoadMedia(false);
@@ -186,7 +174,6 @@ function DashboardPage() {
     staleTime: 45_000,
     refetchInterval: MEDIA_REFRESH_MS,
     refetchIntervalInBackground: false,
-    refetchOnWindowFocus: "always",
     placeholderData: (previous) => previous,
   });
   const teams = useQuery({
@@ -196,7 +183,6 @@ function DashboardPage() {
     staleTime: 30_000,
     refetchInterval: ACTION_REFRESH_MS,
     refetchIntervalInBackground: false,
-    refetchOnWindowFocus: "always",
     placeholderData: (previous) => previous,
   });
   const devices = useQuery({
@@ -206,7 +192,6 @@ function DashboardPage() {
     staleTime: 10_000,
     refetchInterval: LIVE_REFRESH_MS,
     refetchIntervalInBackground: false,
-    refetchOnWindowFocus: "always",
     placeholderData: (previous) => previous,
   });
   const requests = useQuery({
@@ -216,7 +201,6 @@ function DashboardPage() {
     staleTime: 30_000,
     refetchInterval: ACTION_REFRESH_MS,
     refetchIntervalInBackground: false,
-    refetchOnWindowFocus: "always",
     placeholderData: (previous) => previous,
   });
   const todayAttendance = useQuery({
@@ -230,7 +214,6 @@ function DashboardPage() {
     staleTime: 20_000,
     refetchInterval: ACTION_REFRESH_MS,
     refetchIntervalInBackground: false,
-    refetchOnWindowFocus: "always",
     placeholderData: (previous) => previous,
   });
 
@@ -329,13 +312,13 @@ function DashboardPage() {
   const filteredActivity = matchingActivity.slice(0, 5);
 
   const online = (emps.data ?? [])
-    .filter((e) => e.status !== "offline")
+    .filter(employeeIsOnline)
     .sort((a, b) => (a.status === "active" ? -1 : 1) - (b.status === "active" ? -1 : 1));
   const onlinePreview = online.slice(0, 4);
   const hiddenOnlineCount = Math.max(0, online.length - onlinePreview.length);
 
   const dateRange = `${fmtDay(thisMonday)} - ${fmtDay(sunday)}`;
-  const loading = month.isLoading || summary.isLoading;
+  const loading = month.isLoading || emps.isLoading;
   const offlineDevices = (devices.data ?? []).filter((device) => device.status === "offline");
   const lateStarts = (todayAttendance.data ?? []).filter((attendance) => {
     if (
@@ -381,7 +364,6 @@ function DashboardPage() {
   ].filter((item) => item.count > 0);
   const attentionCount = actionItems.reduce((total, item) => total + item.count, 0);
   const hasDataError =
-    summary.isError ||
     emps.isError ||
     month.isError ||
     teams.isError ||
@@ -522,7 +504,6 @@ function DashboardPage() {
             variant="outline"
             size="sm"
             onClick={() => {
-              summary.refetch();
               emps.refetch();
               month.refetch();
               teams.refetch();
@@ -629,9 +610,7 @@ function DashboardPage() {
                 const members = (emps.data ?? []).filter((employee) =>
                   employee.teamIds.includes(team.id),
                 );
-                const connected = members.filter(
-                  (employee) => employee.status !== "offline",
-                ).length;
+                const connected = members.filter(employeeIsOnline).length;
                 return (
                   <Link
                     key={team.id}
@@ -889,11 +868,12 @@ function DashboardPage() {
               <CardTitle className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                 Who's online
               </CardTitle>
-              {summary.data && (
+              {emps.data && (
                 <span className="text-xs text-muted-foreground">
-                  {summary.data.onlineEmployees} online / {summary.data.idleEmployees} idle /{" "}
-                  {summary.data.offShiftEmployees} off shift / {summary.data.offlineEmployees}{" "}
-                  offline
+                  {online.length} online /{" "}
+                  {emps.data.filter((employee) => employee.status === "idle").length} idle /{" "}
+                  {emps.data.filter((employee) => employee.status === "off_shift").length} off shift /{" "}
+                  {emps.data.filter((employee) => employee.status === "offline").length} offline
                 </span>
               )}
             </CardHeader>

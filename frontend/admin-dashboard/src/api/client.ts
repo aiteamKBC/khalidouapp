@@ -51,6 +51,40 @@ const AUTH_REFRESHED_EVENT = "khaliduo:auth-refreshed";
 const AUTH_EXPIRED_EVENT = "khaliduo:auth-expired";
 
 let refreshInFlight: Promise<RefreshedTokens> | null = null;
+const inFlightGetRequests = new Map<string, Promise<unknown>>();
+
+function requestDedupeKey(
+  responseKind: "data" | "meta",
+  path: string,
+  init: RequestInit,
+  token?: string,
+) {
+  const method = (init.method ?? "GET").toUpperCase();
+  if (method !== "GET" || init.body || init.signal) return null;
+
+  const headerKey = [...new Headers(init.headers).entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, value]) => `${key}:${value}`)
+    .join("|");
+  return `${responseKind}\u0000${token ?? "anonymous"}\u0000${path}\u0000${headerKey}`;
+}
+
+async function coalesceInFlight<T>(key: string | null, execute: () => Promise<T>): Promise<T> {
+  if (!key) return execute();
+
+  const existing = inFlightGetRequests.get(key) as Promise<T> | undefined;
+  if (existing) return existing;
+
+  const pending = execute();
+  inFlightGetRequests.set(key, pending);
+  try {
+    return await pending;
+  } finally {
+    if (inFlightGetRequests.get(key) === pending) {
+      inFlightGetRequests.delete(key);
+    }
+  }
+}
 
 function accessTokenExpiresAt(token: string) {
   try {
@@ -257,21 +291,25 @@ export async function apiFetch<T>(
 ): Promise<T> {
   const authLocation = readAuth();
   const token = tokenOverride ?? authLocation?.auth.accessToken;
-  let { res, body } = await request<T>(path, init, token);
+  const execute = async () => {
+    let { res, body } = await request<T>(path, init, token);
 
-  if (res.status === 401 && authLocation && shouldRefresh(path, tokenOverride)) {
-    const tokens = await refreshAuthTokens(authLocation);
-    ({ res, body } = await request<T>(path, init, tokens.access_token));
-  }
+    if (res.status === 401 && authLocation && shouldRefresh(path, tokenOverride)) {
+      const tokens = await refreshAuthTokens(authLocation);
+      ({ res, body } = await request<T>(path, init, tokens.access_token));
+    }
 
-  if (!res.ok || body?.success === false) {
-    throw new ApiClientError(
-      apiErrorMessage(res, body),
-      body?.error?.code ?? "API_ERROR",
-      res.status,
-    );
-  }
-  return (body?.data ?? ({} as T)) as T;
+    if (!res.ok || body?.success === false) {
+      throw new ApiClientError(
+        apiErrorMessage(res, body),
+        body?.error?.code ?? "API_ERROR",
+        res.status,
+      );
+    }
+    return (body?.data ?? ({} as T)) as T;
+  };
+
+  return coalesceInFlight(requestDedupeKey("data", path, init, token), execute);
 }
 
 export async function apiFetchWithMeta<T>(
@@ -279,19 +317,24 @@ export async function apiFetchWithMeta<T>(
   init: RequestInit = {},
 ): Promise<{ data: T; meta: Record<string, unknown> }> {
   const authLocation = readAuth();
-  let { res, body } = await request<T>(path, init, authLocation?.auth.accessToken);
-  if (res.status === 401 && authLocation && shouldRefresh(path)) {
-    const tokens = await refreshAuthTokens(authLocation);
-    ({ res, body } = await request<T>(path, init, tokens.access_token));
-  }
-  if (!res.ok || body?.success === false) {
-    throw new ApiClientError(
-      apiErrorMessage(res, body),
-      body?.error?.code ?? "API_ERROR",
-      res.status,
-    );
-  }
-  return { data: (body?.data ?? ({} as T)) as T, meta: body?.meta ?? {} };
+  const token = authLocation?.auth.accessToken;
+  const execute = async () => {
+    let { res, body } = await request<T>(path, init, token);
+    if (res.status === 401 && authLocation && shouldRefresh(path)) {
+      const tokens = await refreshAuthTokens(authLocation);
+      ({ res, body } = await request<T>(path, init, tokens.access_token));
+    }
+    if (!res.ok || body?.success === false) {
+      throw new ApiClientError(
+        apiErrorMessage(res, body),
+        body?.error?.code ?? "API_ERROR",
+        res.status,
+      );
+    }
+    return { data: (body?.data ?? ({} as T)) as T, meta: body?.meta ?? {} };
+  };
+
+  return coalesceInFlight(requestDedupeKey("meta", path, init, token), execute);
 }
 
 export async function apiFile(path: string): Promise<Blob> {
