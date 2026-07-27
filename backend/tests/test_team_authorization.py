@@ -3,7 +3,7 @@ from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, delete, event, select
+from sqlalchemy import create_engine, delete, event, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -2369,6 +2369,69 @@ def test_employee_overview_includes_all_assigned_team_managers(team_client):
         manager["teams"] == [{"id": str(data["team_a"].id), "name": "Team A"}]
         for manager in managers
     )
+
+
+def test_timesheets_do_not_load_encrypted_payroll_fields(team_client):
+    client, data = team_client
+    with data["session_factory"]() as db:
+        employee = db.get(Employee, data["employee_a"].id)
+        profile = get_or_create_work_profile(db, employee)
+        profile_id = profile.id
+        db.commit()
+        db.execute(
+            text(
+                "UPDATE employee_work_profiles "
+                "SET salary_amount = :invalid_value "
+                "WHERE id = :profile_id"
+            ),
+            {
+                "invalid_value": b"invalid-encrypted-payroll-value",
+                "profile_id": profile_id.hex,
+            },
+        )
+        db.commit()
+
+    response = client.get(
+        "/api/v1/timesheets/daily",
+        headers=data["general_headers"],
+        params={"day": local_today("UTC").isoformat()},
+    )
+
+    assert response.status_code == 200
+    assert any(
+        row["employee_id"] == str(data["employee_a"].id) for row in response.json()["data"]
+    )
+
+
+def test_employee_overview_uses_materialized_attendance_totals(team_client):
+    client, data = team_client
+    with data["session_factory"]() as db:
+        db.add(
+            DailyAttendance(
+                company_id=data["employee_a"].company_id,
+                employee_id=data["employee_a"].id,
+                work_date=local_today("UTC"),
+                timezone="UTC",
+                normal_worked_seconds=300,
+                pre_shift_extra_seconds=60,
+                post_shift_extra_seconds=30,
+                approved_manual_seconds=120,
+                idle_seconds=90,
+                calculated_at=datetime.now(UTC),
+            )
+        )
+        db.commit()
+
+    response = client.get(
+        f"/api/v1/employees-overview?employee_id={data['employee_a'].id}",
+        headers=data["general_headers"],
+    )
+
+    assert response.status_code == 200
+    overview = response.json()["data"][0]
+    assert overview["worked_today_seconds"] == 510
+    assert overview["active_seconds"] == 510
+    assert overview["idle_seconds"] == 90
 
 
 def test_employee_overview_labels_idle_outside_shift_as_off_shift(team_client, monkeypatch):

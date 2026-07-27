@@ -28,6 +28,7 @@ from app.models import (
     ActivityEvent,
     AdminUser,
     AuditLog,
+    DailyAttendance,
     Device,
     Employee,
     EmployeeWorkProfile,
@@ -48,6 +49,7 @@ from app.schemas.admin import (
 from app.services.audit import record_audit_log
 from app.services.activity_timeline import local_today
 from app.services.attendance import (
+    accountable_idle_seconds,
     is_currently_accountable_idle,
     refresh_daily_attendance_range,
 )
@@ -340,30 +342,27 @@ def list_employee_overviews(
     rows = db.execute(statement).all()
 
     employee_ids = [row[0].id for row in rows]
-    canonical_today_by_employee: dict[UUID, dict] = {}
-    if rows:
-        # Live employee cards are work indicators, so they must use the same
-        # shift-aware totals as Timesheets and Attendance. Session counters
-        # remain available on the session APIs for diagnostics only.
-        from app.api.v1.timesheets import timesheet_rows
-
-        local_days = {local_today(employee.timezone) for employee, *_rest in rows}
-        canonical_rows = timesheet_rows(
-            db,
-            current_admin.company_id,
-            min(local_days),
-            max(local_days),
-            team_id=team_id,
-            current_admin=current_admin,
-        )
+    attendance_today_by_employee: dict[UUID, DailyAttendance] = {}
+    if employee_ids:
+        # Heartbeats refresh DailyAttendance at most once per minute. Reading
+        # those materialized rows in one query keeps employee/team polling fast
+        # and avoids rebuilding every employee timeline on each page load.
         expected_day_by_employee = {
             employee.id: local_today(employee.timezone) for employee, *_rest in rows
         }
-        canonical_today_by_employee = {
-            UUID(item["employee_id"]): item
-            for item in canonical_rows
-            if date.fromisoformat(item["date"])
-            == expected_day_by_employee.get(UUID(item["employee_id"]))
+        local_days = set(expected_day_by_employee.values())
+        attendance_rows = db.scalars(
+            select(DailyAttendance).where(
+                DailyAttendance.company_id == current_admin.company_id,
+                DailyAttendance.employee_id.in_(employee_ids),
+                DailyAttendance.work_date >= min(local_days),
+                DailyAttendance.work_date <= max(local_days),
+            )
+        ).all()
+        attendance_today_by_employee = {
+            attendance.employee_id: attendance
+            for attendance in attendance_rows
+            if attendance.work_date == expected_day_by_employee.get(attendance.employee_id)
         }
     invitations_by_employee = latest_employee_invitations(db, employee_ids)
     managers_by_employee = employee_manager_summaries(db, employee_ids)
@@ -414,20 +413,22 @@ def list_employee_overviews(
             and normalized_last_seen
             and normalized_last_seen >= cutoff
         )
-        canonical_today = canonical_today_by_employee.get(employee.id)
-        active_seconds = (
-            max(
-                0,
-                int(canonical_today["active_seconds"])
-                - int(canonical_today["adjustment_seconds"]),
-            )
-            if canonical_today
-            else max(0, int(raw_active_seconds or 0) - int(deducted_seconds or 0))
+        raw_worked_seconds = max(
+            0,
+            int(raw_active_seconds or 0) - int(deducted_seconds or 0),
         )
-        idle_seconds = (
-            max(0, int(canonical_today["idle_seconds"]))
-            if canonical_today
+        attendance_today = attendance_today_by_employee.get(employee.id)
+        materialized_worked_seconds = (
+            int(attendance_today.normal_worked_seconds or 0)
+            + int(attendance_today.pre_shift_extra_seconds or 0)
+            + int(attendance_today.post_shift_extra_seconds or 0)
+            + int(attendance_today.approved_manual_seconds or 0)
+            if attendance_today
             else 0
+        )
+        active_seconds = max(raw_worked_seconds, materialized_worked_seconds)
+        idle_seconds = (
+            accountable_idle_seconds(attendance_today) if attendance_today is not None else 0
         )
         activity_status = session_status if session_id and online else "offline"
         if (

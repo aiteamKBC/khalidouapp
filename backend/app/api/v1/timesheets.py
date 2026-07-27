@@ -16,6 +16,7 @@ from app.models import (
     AdminUser,
     DailyAttendance,
     Employee,
+    EmployeeWorkProfile,
     Screenshot,
     TeamMember,
     TimeAdjustmentRequest,
@@ -90,7 +91,17 @@ def timesheet_rows(
             employee.id: employee
             for employee in db.scalars(
                 select(Employee)
-                .options(selectinload(Employee.work_profile))
+                .options(
+                    selectinload(Employee.work_profile).load_only(
+                        EmployeeWorkProfile.id,
+                        EmployeeWorkProfile.employee_id,
+                        EmployeeWorkProfile.shift_start,
+                        EmployeeWorkProfile.shift_end,
+                        EmployeeWorkProfile.working_days,
+                        EmployeeWorkProfile.break_rules,
+                        EmployeeWorkProfile.late_grace_minutes,
+                    )
+                )
                 .where(
                     Employee.company_id == company_id,
                     Employee.id.in_(employee_ids),
