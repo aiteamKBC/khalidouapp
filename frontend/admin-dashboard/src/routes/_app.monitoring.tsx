@@ -1,26 +1,30 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   AppWindow,
   CalendarCheck2,
   Camera,
+  Check,
   ChevronLeft,
   ChevronRight,
   Download,
   ExternalLink,
   ImageOff,
   Images,
-  MonitorCheck,
+  Search,
+  Users,
 } from "lucide-react";
 import { toast } from "sonner";
 
 import { getDailyAttendance, type DailyAttendance } from "@/api/attendance";
-import { listEmployees } from "@/api/employees";
+import { employeeDisplayStatus, listEmployees } from "@/api/employees";
 import { downloadScreenshot, listScreenshotPage } from "@/api/screenshots";
+import { listTeams } from "@/api/teams";
 import { ApplicationHistoryPanel } from "@/components/application-history-panel";
 import { ProtectedImage } from "@/components/ProtectedImage";
 import { WorkdayTimeline } from "@/components/workday-timeline";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
@@ -40,9 +44,20 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAuth } from "@/lib/auth";
 import { formatClock, formatDateTime } from "@/lib/format";
 import { permissions } from "@/lib/permissions";
+import { cn } from "@/lib/utils";
 import type { Screenshot } from "@/types";
 
 type MonitoringTab = "attendance" | "screenshots" | "applications";
+type MonitoringEmployeeStatus =
+  | "all"
+  | "active"
+  | "idle"
+  | "locked"
+  | "sleeping"
+  | "offline"
+  | "invited"
+  | "app_pending"
+  | "inactive";
 
 export const Route = createFileRoute("/_app/monitoring")({
   validateSearch: (
@@ -51,11 +66,17 @@ export const Route = createFileRoute("/_app/monitoring")({
     employeeId?: string;
     day?: string;
     tab?: MonitoringTab;
+    q?: string;
+    team?: string;
+    status?: MonitoringEmployeeStatus;
   } => ({
     employeeId:
       typeof search.employeeId === "string" && search.employeeId ? search.employeeId : undefined,
     day: isIsoDay(search.day) ? search.day : undefined,
     tab: isMonitoringTab(search.tab) ? search.tab : undefined,
+    q: typeof search.q === "string" && search.q.trim() ? search.q : undefined,
+    team: typeof search.team === "string" && search.team ? search.team : undefined,
+    status: isMonitoringEmployeeStatus(search.status) ? search.status : undefined,
   }),
   component: EmployeeMonitoringPage,
 });
@@ -71,6 +92,11 @@ function EmployeeMonitoringPage() {
     queryFn: () => listEmployees(scope),
     staleTime: 30_000,
   });
+  const teams = useQuery({
+    queryKey: ["teams", scope],
+    queryFn: () => listTeams(scope),
+    staleTime: 60_000,
+  });
   const requestedEmployeeExists =
     Boolean(search.employeeId) &&
     employees.data?.some((employee) => employee.id === search.employeeId);
@@ -84,7 +110,36 @@ function EmployeeMonitoringPage() {
     search.tab === "screenshots" && !canViewScreenshots
       ? "attendance"
       : (search.tab ?? "attendance");
+  const query = search.q ?? "";
+  const team = search.team ?? "all";
+  const status = search.status ?? "all";
   const selectedEmployee = employees.data?.find((employee) => employee.id === employeeId);
+  const teamNames = useMemo(
+    () => new Map((teams.data ?? []).map((item) => [item.id, item.name])),
+    [teams.data],
+  );
+  const teamEmployees = useMemo(
+    () =>
+      (employees.data ?? []).filter(
+        (employee) => team === "all" || employee.teamIds.includes(team),
+      ),
+    [employees.data, team],
+  );
+  const filteredEmployees = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    return teamEmployees.filter((employee) => {
+      if (
+        needle &&
+        !`${employee.name} ${employee.email} ${employee.code} ${employee.jobTitle}`
+          .toLowerCase()
+          .includes(needle)
+      ) {
+        return false;
+      }
+      if (status !== "all" && employeeDisplayStatus(employee) !== status) return false;
+      return true;
+    });
+  }, [query, status, teamEmployees]);
 
   useEffect(() => {
     if (
@@ -92,20 +147,62 @@ function EmployeeMonitoringPage() {
       (search.employeeId !== employeeId || search.day !== day || search.tab !== tab)
     ) {
       void navigate({
-        search: { employeeId: employeeId || undefined, day, tab },
+        search: {
+          employeeId: employeeId || undefined,
+          day,
+          tab,
+          q: query || undefined,
+          team: team === "all" ? undefined : team,
+          status: status === "all" ? undefined : status,
+        },
         replace: true,
       });
     }
-  }, [day, employeeId, employees.data, navigate, search.day, search.employeeId, search.tab, tab]);
+  }, [
+    day,
+    employeeId,
+    employees.data,
+    navigate,
+    query,
+    search.day,
+    search.employeeId,
+    search.tab,
+    status,
+    tab,
+    team,
+  ]);
 
-  const updateSearch = (next: Partial<{ employeeId: string; day: string; tab: MonitoringTab }>) => {
+  const updateSearch = (
+    next: Partial<{
+      employeeId: string;
+      day: string;
+      tab: MonitoringTab;
+      q: string;
+      team: string;
+      status: MonitoringEmployeeStatus;
+    }>,
+  ) => {
+    const nextQuery = next.q ?? query;
+    const nextTeam = next.team ?? team;
+    const nextStatus = next.status ?? status;
     void navigate({
       search: {
-        employeeId: next.employeeId ?? employeeId,
+        employeeId: (next.employeeId ?? employeeId) || undefined,
         day: next.day ?? day,
         tab: next.tab ?? tab,
+        q: nextQuery || undefined,
+        team: nextTeam === "all" ? undefined : nextTeam,
+        status: nextStatus === "all" ? undefined : nextStatus,
       },
       replace: true,
+    });
+  };
+  const updateTeam = (nextTeam: string) => {
+    const employeeBelongsToTeam =
+      nextTeam === "all" || Boolean(selectedEmployee?.teamIds.includes(nextTeam));
+    updateSearch({
+      team: nextTeam,
+      employeeId: employeeBelongsToTeam ? employeeId : "",
     });
   };
 
@@ -126,60 +223,211 @@ function EmployeeMonitoringPage() {
         }
       />
 
-      <Card className="mb-4">
-        <CardContent className="grid gap-4 p-4 md:grid-cols-[minmax(240px,1fr)_220px] md:items-end">
-          <div className="space-y-1.5">
-            <Label htmlFor="monitoring-employee">Employee</Label>
-            <Select
-              value={employeeId || undefined}
-              onValueChange={(value) => updateSearch({ employeeId: value })}
-            >
-              <SelectTrigger id="monitoring-employee">
-                <SelectValue
-                  placeholder={employees.isLoading ? "Loading employees..." : "Choose an employee"}
-                />
-              </SelectTrigger>
-              <SelectContent>
-                {(employees.data ?? []).map((employee) => (
-                  <SelectItem key={employee.id} value={employee.id}>
-                    {employee.name}
-                    {employee.jobTitle ? ` · ${employee.jobTitle}` : ""}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+      <Card className="mb-4 overflow-hidden">
+        <CardContent className="p-4">
+          <div className="grid gap-4 md:grid-cols-2 md:items-end xl:grid-cols-[240px_minmax(280px,1fr)_220px]">
+            <div className="space-y-1.5">
+              <Label htmlFor="monitoring-team">Team</Label>
+              <Select value={team} onValueChange={updateTeam}>
+                <SelectTrigger id="monitoring-team">
+                  <SelectValue placeholder={teams.isLoading ? "Loading teams..." : "All teams"} />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All teams</SelectItem>
+                  {(teams.data ?? []).map((item) => (
+                    <SelectItem key={item.id} value={item.id}>
+                      {item.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="monitoring-employee">Employee</Label>
+              <Select
+                value={employeeId || undefined}
+                onValueChange={(value) => updateSearch({ employeeId: value })}
+              >
+                <SelectTrigger id="monitoring-employee">
+                  <SelectValue
+                    placeholder={
+                      employees.isLoading ? "Loading employees..." : "Choose an employee"
+                    }
+                  />
+                </SelectTrigger>
+                <SelectContent>
+                  {teamEmployees.map((employee) => (
+                    <SelectItem key={employee.id} value={employee.id}>
+                      {employee.name}
+                      {employee.jobTitle ? ` · ${employee.jobTitle}` : ""}
+                    </SelectItem>
+                  ))}
+                  {!employees.isLoading && teamEmployees.length === 0 && (
+                    <SelectItem value="no-employees" disabled>
+                      No employees in this team
+                    </SelectItem>
+                  )}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5 md:col-span-2 xl:col-span-1">
+              <Label htmlFor="monitoring-day">Workday</Label>
+              <Input
+                id="monitoring-day"
+                type="date"
+                value={day}
+                onChange={(event) => updateSearch({ day: event.target.value })}
+              />
+            </div>
           </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="monitoring-day">Workday</Label>
-            <Input
-              id="monitoring-day"
-              type="date"
-              value={day}
-              onChange={(event) => updateSearch({ day: event.target.value })}
-            />
+
+          <div className="mt-4 border-t pt-4">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <p className="text-sm font-bold">Quick employee picker</p>
+                <p className="text-xs text-muted-foreground">
+                  Choose a profile to open that employee's monitoring view.
+                </p>
+              </div>
+              {!employees.isLoading && (
+                <span className="rounded-full bg-muted px-2.5 py-1 text-xs font-semibold text-muted-foreground">
+                  {filteredEmployees.length} of {teamEmployees.length}
+                </span>
+              )}
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-[minmax(240px,1fr)_220px]">
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  aria-label="Search employees"
+                  placeholder="Search by name, email, code, or job title..."
+                  value={query}
+                  onChange={(event) => updateSearch({ q: event.target.value })}
+                  className="pl-9"
+                />
+              </div>
+              <Select
+                value={status}
+                onValueChange={(value) =>
+                  updateSearch({ status: value as MonitoringEmployeeStatus })
+                }
+              >
+                <SelectTrigger aria-label="Filter by status">
+                  <SelectValue placeholder="Status" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All statuses</SelectItem>
+                  <SelectItem value="active">Active</SelectItem>
+                  <SelectItem value="idle">Idle</SelectItem>
+                  <SelectItem value="locked">Locked</SelectItem>
+                  <SelectItem value="sleeping">Sleeping</SelectItem>
+                  <SelectItem value="offline">Offline</SelectItem>
+                  <SelectItem value="invited">Invited</SelectItem>
+                  <SelectItem value="app_pending">App pending</SelectItem>
+                  <SelectItem value="inactive">Inactive</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="mt-3">
+              {employees.isLoading ? (
+                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+                  {Array.from({ length: 4 }).map((_, index) => (
+                    <div key={index} className="h-[88px] animate-pulse rounded-xl bg-muted" />
+                  ))}
+                </div>
+              ) : employees.isError ? (
+                <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-dashed p-4">
+                  <p className="text-sm text-muted-foreground">
+                    Employees couldn't be loaded. Check the connection and try again.
+                  </p>
+                  <Button variant="outline" size="sm" onClick={() => employees.refetch()}>
+                    Retry
+                  </Button>
+                </div>
+              ) : employees.data?.length === 0 ? (
+                <div className="flex flex-col items-center rounded-xl border border-dashed px-4 py-6 text-center">
+                  <Users className="mb-2 h-5 w-5 text-muted-foreground" />
+                  <p className="text-sm font-bold">No employees available</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Add an employee before opening daily monitoring.
+                  </p>
+                </div>
+              ) : filteredEmployees.length === 0 ? (
+                <div className="flex flex-col items-center rounded-xl border border-dashed px-4 py-6 text-center">
+                  <Users className="mb-2 h-5 w-5 text-muted-foreground" />
+                  <p className="text-sm font-bold">No employees match these filters</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Try another search, team, or status.
+                  </p>
+                  {(query || team !== "all" || status !== "all") && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="mt-2"
+                      onClick={() => updateSearch({ q: "", team: "all", status: "all" })}
+                    >
+                      Clear filters
+                    </Button>
+                  )}
+                </div>
+              ) : (
+                <div className="grid max-h-[310px] gap-3 overflow-y-auto pr-1 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+                  {filteredEmployees.map((employee) => {
+                    const isSelected = employee.id === employeeId;
+                    const employeeTeams = employee.teamIds
+                      .map((id) => teamNames.get(id))
+                      .filter(Boolean)
+                      .join(", ");
+                    return (
+                      <button
+                        key={employee.id}
+                        type="button"
+                        aria-pressed={isSelected}
+                        onClick={() => updateSearch({ employeeId: employee.id })}
+                        className={cn(
+                          "group relative flex min-w-0 items-center gap-3 rounded-xl border bg-card p-3 text-left transition duration-200",
+                          "hover:-translate-y-0.5 hover:border-primary/35 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                          isSelected &&
+                            "border-primary/45 bg-primary/[0.04] ring-2 ring-primary/15",
+                        )}
+                      >
+                        <Avatar className="h-12 w-12 border-2 border-background shadow-sm">
+                          <AvatarFallback className="bg-gradient-to-br from-primary/20 to-violet-500/15 text-sm font-extrabold text-primary">
+                            {initials(employee.name)}
+                          </AvatarFallback>
+                        </Avatar>
+                        <span className="min-w-0 flex-1">
+                          <span className="flex min-w-0 items-center gap-2">
+                            <span className="truncate text-sm font-bold">{employee.name}</span>
+                            {isSelected && (
+                              <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-primary text-primary-foreground">
+                                <Check className="h-3 w-3" />
+                              </span>
+                            )}
+                          </span>
+                          <span className="mt-0.5 block truncate text-xs text-muted-foreground">
+                            {employee.jobTitle || "No job title"}
+                          </span>
+                          <span className="mt-1 flex min-w-0 items-center gap-2">
+                            <StatusBadge status={employeeDisplayStatus(employee)} />
+                            <span className="truncate text-[11px] text-muted-foreground">
+                              {employeeTeams || "No team"}
+                            </span>
+                          </span>
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           </div>
         </CardContent>
       </Card>
 
-      {!employeeId ? (
-        <EmptyState
-          icon={MonitorCheck}
-          title={
-            employees.isLoading
-              ? "Loading employees..."
-              : employees.data?.length
-                ? "Choose an employee"
-                : "No employee available"
-          }
-          description={
-            employees.isLoading
-              ? "The employee directory is loading."
-              : employees.data?.length
-                ? "Select an employee name above to view attendance, screenshots, and app history."
-                : "Add an employee before opening daily monitoring."
-          }
-        />
-      ) : (
+      {employeeId && (
         <Tabs value={tab} onValueChange={(value) => updateSearch({ tab: value as MonitoringTab })}>
           <TabsList className="mb-4 h-auto w-full justify-start overflow-x-auto p-1.5 sm:w-auto">
             <TabsTrigger value="attendance" className="gap-2 py-2">
@@ -611,6 +859,20 @@ function isMonitoringTab(value: unknown): value is MonitoringTab {
   return value === "attendance" || value === "screenshots" || value === "applications";
 }
 
+function isMonitoringEmployeeStatus(value: unknown): value is MonitoringEmployeeStatus {
+  return (
+    value === "all" ||
+    value === "active" ||
+    value === "idle" ||
+    value === "locked" ||
+    value === "sleeping" ||
+    value === "offline" ||
+    value === "invited" ||
+    value === "app_pending" ||
+    value === "inactive"
+  );
+}
+
 function isIsoDay(value: unknown): value is string {
   return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value);
 }
@@ -619,6 +881,16 @@ function todayIsoDate() {
   const now = new Date();
   const local = new Date(now.getTime() - now.getTimezoneOffset() * 60_000);
   return local.toISOString().slice(0, 10);
+}
+
+function initials(name: string) {
+  return name
+    .trim()
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((part) => part[0])
+    .join("")
+    .toUpperCase();
 }
 
 function duration(value: number) {
