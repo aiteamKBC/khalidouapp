@@ -1794,7 +1794,7 @@ def test_desktop_summary_recovers_elapsed_work_when_an_update_started_a_new_sess
     assert timeline["last_activity_at"] is not None
 
 
-def test_desktop_today_shows_actual_idle_on_an_off_day(team_client):
+def test_desktop_today_excludes_idle_on_an_off_day(team_client):
     client, data = team_client
     now = datetime.now(UTC)
     with data["session_factory"]() as db:
@@ -1839,13 +1839,13 @@ def test_desktop_today_shows_actual_idle_on_an_off_day(team_client):
 
     assert response.status_code == 200
     summary = response.json()["data"]
-    assert summary["today_timeline"]["idle_seconds"] == 15 * 60
-    assert summary["today"]["idle_seconds"] == 15 * 60
+    assert summary["today_timeline"]["idle_seconds"] == 0
+    assert summary["today"]["idle_seconds"] == 0
     assert summary["today"]["eligible_idle_seconds"] == 0
     timesheet_row = next(
         row for row in timesheet.json()["data"] if row["employee_id"] == str(data["employee_a"].id)
     )
-    assert timesheet_row["idle_seconds"] == 15 * 60
+    assert timesheet_row["idle_seconds"] == 0
 
 
 def test_idle_request_period_is_clipped_at_shift_end_and_tracks_remaining_time(
@@ -2253,7 +2253,8 @@ def test_employee_time_adjustment_request_can_be_approved_and_added_to_timesheet
     row = next(item for item in rows if item["employee_id"] == str(data["employee_a"].id))
     assert row["adjustment_seconds"] == 1200
     assert row["active_seconds"] == 1320
-    assert row["total_tracked_seconds"] == 1330
+    assert row["idle_seconds"] == 0
+    assert row["total_tracked_seconds"] == 1320
 
     repeated_review = client.patch(
         f"/api/v1/time-adjustment-requests/{request_id}",

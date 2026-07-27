@@ -97,7 +97,7 @@ from app.services.task_workflow import (
     validate_employee_stage_change,
     stop_task_tracking,
 )
-from app.services.activity_timeline import build_workday_timeline, local_today
+from app.services.activity_timeline import local_today
 from app.services.leave_management import (
     requested_workdays,
     serialize_balance,
@@ -114,7 +114,7 @@ from app.services.work_profiles import (
     resolve_day_policy,
 )
 from app.services.rate_limit import enforce_rate_limit, request_client_ip
-from app.services.attendance import cached_daily_attendance
+from app.services.attendance import cached_daily_attendance, calculate_daily_attendance
 from app.services.device_location import refresh_device_location
 
 router = APIRouter(prefix="/agent", tags=["desktop-agent"])
@@ -380,13 +380,14 @@ def agent_period_summary(context: DeviceAuthContext, db: Session) -> dict:
             manual_request_status_seconds(db, employee, start, end),
         )
 
-    timeline = build_workday_timeline(
+    _, timeline = calculate_daily_attendance(
         db,
-        company_id=context.device.company_id,
-        employee_id=context.device.employee_id,
-        timezone_name=device_timezone,
+        employee=employee,
+        work_date=today,
+        now=datetime.now(UTC),
+        persist=False,
         device_id=context.device.id,
-        session_timezone_name=device_timezone,
+        timezone_name=device_timezone,
     )
     today_summary = reconcile_today_summary_with_timeline(summarize(today, today), timeline)
     today_summary["eligible_idle_seconds"] = _eligible_idle_seconds(
@@ -397,9 +398,8 @@ def agent_period_summary(context: DeviceAuthContext, db: Session) -> dict:
         timeline,
         timezone_name=device_timezone,
     )
-    # The visible Today total must describe what actually happened in the
-    # timeline, even on an off day. Eligibility is a separate policy value used
-    # only when the employee asks for an idle-time adjustment.
+    # Device idle outside the employee's scheduled shift is a live device state,
+    # not accountable attendance idle.
     today_summary["idle_seconds"] = int(timeline.get("idle_seconds", 0))
     today_summary["tracked_seconds"] = (
         today_summary["active_seconds"] + today_summary["idle_seconds"]

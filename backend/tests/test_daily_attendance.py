@@ -575,7 +575,7 @@ def test_idle_outside_shift_is_not_deductible_or_paid_idle(attendance_context):
     )
     db.commit()
 
-    row, _ = calculate_daily_attendance(
+    row, timeline = calculate_daily_attendance(
         db,
         employee=employee,
         work_date=work_date,
@@ -585,6 +585,100 @@ def test_idle_outside_shift_is_not_deductible_or_paid_idle(attendance_context):
     assert row.idle_seconds == 0
     assert row.calculation_sources["raw_idle_seconds"] == 0
     assert row.recorded_overtime_seconds == 3 * 3600
+    assert row.raw_late_seconds == 0
+    assert row.early_leave_seconds == 0
+    assert timeline["idle_seconds"] == 0
+    assert timeline["worked_seconds"] == 3 * 3600
+    assert all(item["work_category"] == "extra" for item in timeline["intervals"])
+
+
+def test_only_outside_shift_idle_does_not_create_attendance_or_timeline(
+    attendance_context,
+):
+    db, employee, device, _ = attendance_context
+    work_date = date(2026, 7, 21)
+    session = _session(
+        db,
+        employee,
+        device,
+        datetime(2026, 7, 21, 0, 0, tzinfo=UTC),
+        datetime(2026, 7, 21, 0, 16, tzinfo=UTC),
+    )
+    db.add_all(
+        [
+            ActivityEvent(
+                company_id=employee.company_id,
+                employee_id=employee.id,
+                device_id=device.id,
+                session_id=session.id,
+                event_type="idle_started",
+                event_timestamp=datetime(2026, 7, 21, 0, 0, tzinfo=UTC),
+                idempotency_key="before-shift-idle-start",
+            ),
+            ActivityEvent(
+                company_id=employee.company_id,
+                employee_id=employee.id,
+                device_id=device.id,
+                session_id=session.id,
+                event_type="idle_ended",
+                event_timestamp=datetime(2026, 7, 21, 0, 16, tzinfo=UTC),
+                idempotency_key="before-shift-idle-end",
+            ),
+        ]
+    )
+    db.commit()
+
+    row, timeline = calculate_daily_attendance(
+        db,
+        employee=employee,
+        work_date=work_date,
+        now=datetime(2026, 7, 22, tzinfo=UTC),
+    )
+
+    assert row.status == "absent"
+    assert row.idle_seconds == 0
+    assert row.raw_late_seconds == 0
+    assert row.early_leave_seconds == 0
+    assert row.recorded_overtime_seconds == 0
+    assert row.actual_first_activity_at is None
+    assert row.actual_last_activity_at is None
+    assert timeline["worked_seconds"] == 0
+    assert timeline["idle_seconds"] == 0
+    assert timeline["intervals"] == []
+
+
+def test_only_outside_shift_work_is_overtime_not_shift_attendance(
+    attendance_context,
+):
+    db, employee, device, _ = attendance_context
+    work_date = date(2026, 7, 21)
+    _session(
+        db,
+        employee,
+        device,
+        datetime(2026, 7, 21, 0, 0, tzinfo=UTC),
+        datetime(2026, 7, 21, 0, 16, tzinfo=UTC),
+    )
+    db.commit()
+
+    row, timeline = calculate_daily_attendance(
+        db,
+        employee=employee,
+        work_date=work_date,
+        now=datetime(2026, 7, 22, tzinfo=UTC),
+    )
+
+    assert row.status == "absent"
+    assert row.idle_seconds == 0
+    assert row.raw_late_seconds == 0
+    assert row.early_leave_seconds == 0
+    assert row.recorded_overtime_seconds == 16 * 60
+    assert row.pre_shift_extra_seconds == 16 * 60
+    assert row.post_shift_extra_seconds == 0
+    assert timeline["worked_seconds"] == 16 * 60
+    assert timeline["idle_seconds"] == 0
+    assert len(timeline["intervals"]) == 1
+    assert timeline["intervals"][0]["work_category"] == "extra"
 
 
 def test_manual_pause_does_not_consume_paid_idle_grace(attendance_context):

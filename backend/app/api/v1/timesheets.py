@@ -1,5 +1,5 @@
 from calendar import monthrange
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Annotated
 from uuid import UUID
 
@@ -14,13 +14,15 @@ from app.core.responses import success_response
 from app.database.session import get_db
 from app.models import (
     AdminUser,
+    DailyAttendance,
     Employee,
     Screenshot,
     TeamMember,
     TimeAdjustmentRequest,
     WorkSession,
 )
-from app.services.activity_timeline import build_workday_timeline, local_today
+from app.services.activity_timeline import local_today
+from app.services.attendance import cached_daily_attendance
 
 router = APIRouter(prefix="/timesheets", tags=["timesheets"])
 
@@ -82,6 +84,42 @@ def timesheet_rows(
             "adjustment_seconds": 0,
         }
 
+    employee_ids = {key[0] for key in result_by_key}
+    employees_by_id = (
+        {
+            employee.id: employee
+            for employee in db.scalars(
+                select(Employee).where(
+                    Employee.company_id == company_id,
+                    Employee.id.in_(employee_ids),
+                )
+            ).all()
+        }
+        if employee_ids
+        else {}
+    )
+    stored_idle_by_key: dict[tuple[UUID, date], int] = {}
+    if employee_ids:
+        for attendance in db.scalars(
+            select(DailyAttendance).where(
+                DailyAttendance.company_id == company_id,
+                DailyAttendance.employee_id.in_(employee_ids),
+                DailyAttendance.work_date >= start_day,
+                DailyAttendance.work_date <= end_day,
+            )
+        ).all():
+            sources = attendance.calculation_sources or {}
+            stored_idle_by_key[(attendance.employee_id, attendance.work_date)] = int(
+                sources.get("raw_idle_seconds", attendance.idle_seconds)
+            )
+
+    # Raw session idle is a device state, not necessarily accountable idle.
+    # Historical timesheets use the canonical attendance snapshot and default
+    # to zero when an old row has no schedule-aware snapshot, so time outside a
+    # shift can never be charged to an employee.
+    for key, item in result_by_key.items():
+        item["idle_seconds"] = max(0, stored_idle_by_key.get(key, 0))
+
     # A live session can have authoritative activity events before its
     # cumulative counters are persisted by the next heartbeat. Reconcile only
     # each employee's current local day so daily/weekly/monthly views agree with
@@ -90,22 +128,31 @@ def timesheet_rows(
         timezone_name = str(item["timezone"])
         if work_date != local_today(timezone_name):
             continue
-        timeline = build_workday_timeline(
+        employee = employees_by_id.get(row_employee_id)
+        if employee is None:
+            continue
+        attendance, timeline = cached_daily_attendance(
             db,
-            company_id=company_id,
-            employee_id=row_employee_id,
-            timezone_name=timezone_name,
-            target_date=work_date,
+            employee=employee,
+            work_date=work_date,
+            now=datetime.now(UTC),
+            max_age_seconds=30,
             device_id=device_id,
-            session_timezone_name=timezone_name if device_id else None,
+            timezone_name=timezone_name,
         )
-        item["active_seconds"] = max(
-            int(item["active_seconds"]),
-            max(0, int(timeline["worked_seconds"]) - int(item["deducted_seconds"])),
-        )
+        if timeline is not None:
+            item["active_seconds"] = max(
+                int(item["active_seconds"]),
+                max(0, int(timeline["worked_seconds"]) - int(item["deducted_seconds"])),
+            )
         item["idle_seconds"] = max(
-            int(item["idle_seconds"]),
-            int(timeline["idle_seconds"]),
+            0,
+            int(
+                (attendance.calculation_sources or {}).get(
+                    "raw_idle_seconds",
+                    timeline["idle_seconds"] if timeline is not None else attendance.idle_seconds,
+                )
+            ),
         )
 
     adjustment_statement = (

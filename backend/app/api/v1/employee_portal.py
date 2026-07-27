@@ -60,7 +60,7 @@ from app.services.task_workflow import (
     stop_task_tracking,
 )
 from app.services.screenshots import serialize_screenshot
-from app.services.activity_timeline import build_workday_timeline, local_today
+from app.services.activity_timeline import local_today
 from app.services.attendance import calculate_daily_attendance, serialize_daily_attendance
 from app.services.time_adjustments import serialize_time_adjustment_request
 from app.services.work_profiles import (
@@ -232,12 +232,11 @@ def summary(
         current_employee.id,
     )
     monthly_rows = apply_work_profile_idle_rules(monthly_rows, profile)
-    today_timeline = build_workday_timeline(
+    daily_attendance, today_timeline = calculate_daily_attendance(
         db,
-        company_id=current_employee.company_id,
-        employee_id=current_employee.id,
-        timezone_name=current_employee.timezone,
-        target_date=today,
+        employee=current_employee,
+        work_date=today,
+        now=datetime.now(UTC),
     )
     today_summary = reconcile_today_summary_with_timeline(
         period_summary(
@@ -245,12 +244,6 @@ def summary(
             manual_request_status_seconds(db, current_employee, today, today),
         ),
         today_timeline,
-    )
-    daily_attendance, _ = calculate_daily_attendance(
-        db,
-        employee=current_employee,
-        work_date=today,
-        now=datetime.now(UTC),
     )
     db.commit()
     return success_response(

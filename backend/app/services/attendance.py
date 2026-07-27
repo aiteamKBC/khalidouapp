@@ -15,7 +15,11 @@ from app.models import (
     TimeAdjustmentRequest,
     WorkSession,
 )
-from app.services.activity_timeline import build_workday_timeline, local_today
+from app.services.activity_timeline import (
+    build_workday_timeline,
+    local_today,
+    scope_timeline_to_schedule,
+)
 from app.services.schedules import effective_schedule, overlap_seconds
 from app.services.work_profiles import get_or_create_work_profile
 
@@ -152,6 +156,13 @@ def calculate_daily_attendance(
     )
     start_at = schedule["start_at"]
     end_at = schedule["end_at"]
+    timeline = scope_timeline_to_schedule(
+        timeline,
+        shift_start=start_at,
+        shift_end=end_at,
+        scheduled_breaks=schedule["breaks"],
+        now=now,
+    )
     intervals = []
     for item in timeline["intervals"]:
         item_start = _parsed(item["started_at"])
@@ -160,8 +171,15 @@ def calculate_daily_attendance(
             intervals.append((item, _utc(item_start), _utc(item_end)))
 
     activity_intervals = [item for item in intervals if item[0]["type"] in {"worked", "idle"}]
+    scheduled_activity_intervals = [
+        item
+        for item in activity_intervals
+        if item[0]["type"] != "worked" or item[0].get("work_category") != "extra"
+    ]
     raw_first_at = min((item[1] for item in activity_intervals), default=None)
     raw_last_at = max((item[2] for item in activity_intervals), default=None)
+    scheduled_first_at = min((item[1] for item in scheduled_activity_intervals), default=None)
+    scheduled_last_at = max((item[2] for item in scheduled_activity_intervals), default=None)
     correction = db.scalar(
         select(AttendanceCorrection).where(
             AttendanceCorrection.company_id == employee.company_id,
@@ -172,12 +190,12 @@ def calculate_daily_attendance(
     first_at = (
         _utc(correction.corrected_start_at)
         if correction and correction.corrected_start_at
-        else raw_first_at
+        else scheduled_first_at
     )
     last_at = (
         _utc(correction.corrected_end_at)
         if correction and correction.corrected_end_at
-        else raw_last_at
+        else scheduled_last_at
     )
     actual_sign_out_at = (
         None if timeline["is_running"] else _parsed(timeline["last_ended_at"])
@@ -193,7 +211,11 @@ def calculate_daily_attendance(
             # It must never consume the paid leave entitlement or appear as
             # normal shift time, even when it falls inside the configured shift.
             if item.get("work_category") == "extra":
-                post_shift_extra += int((interval_end - interval_start).total_seconds())
+                extra_seconds = int((interval_end - interval_start).total_seconds())
+                if start_at and interval_end <= start_at:
+                    pre_shift_extra += extra_seconds
+                else:
+                    post_shift_extra += extra_seconds
                 continue
             if start_at and end_at:
                 worked_in_shift = overlap_seconds(interval_start, interval_end, start_at, end_at)
@@ -289,7 +311,8 @@ def calculate_daily_attendance(
                 paid_break += attended_break_seconds
             else:
                 unpaid_break += attended_break_seconds
-    attended = bool(activity_intervals or approved_manual or correction)
+    attended = bool(scheduled_activity_intervals or approved_manual or correction)
+    tracked_work = any(item[0]["type"] == "worked" for item in activity_intervals)
 
     raw_late = (
         max(0, int((first_at - start_at).total_seconds()))
@@ -394,7 +417,7 @@ def calculate_daily_attendance(
     if leave:
         status = "approved_leave"
     elif not schedule["scheduled_day"]:
-        status = "off_day" if not attended else "worked_off_day"
+        status = "worked_off_day" if tracked_work or approved_manual or correction else "off_day"
     elif not attended:
         employee_today = local_today(schedule["timezone"], now)
         status = "not_started" if work_date >= employee_today else "absent"
@@ -423,8 +446,16 @@ def calculate_daily_attendance(
         "timezone": schedule["timezone"],
         "scheduled_start_at": start_at,
         "scheduled_end_at": end_at,
-        "actual_first_activity_at": first_at,
-        "actual_last_activity_at": last_at,
+        "actual_first_activity_at": (
+            _utc(correction.corrected_start_at)
+            if correction and correction.corrected_start_at
+            else raw_first_at
+        ),
+        "actual_last_activity_at": (
+            _utc(correction.corrected_end_at)
+            if correction and correction.corrected_end_at
+            else raw_last_at
+        ),
         "actual_sign_out_at": actual_sign_out_at,
         "normal_worked_seconds": normal_worked,
         "paid_break_seconds": paid_break,

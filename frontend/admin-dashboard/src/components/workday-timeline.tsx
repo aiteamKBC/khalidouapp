@@ -112,7 +112,9 @@ export function WorkdayTimeline({ timeline }: { timeline?: WorkdayTimelineData }
             ? interval.type === "worked"
               ? "extra"
               : "leave"
-            : interval.type;
+            : interval.type === "worked" && interval.workCategory === "extra"
+              ? "extra"
+              : interval.type;
           return (
             <span
               key={`${interval.sessionId}-${interval.startedAt}-${index}`}
@@ -130,7 +132,9 @@ export function WorkdayTimeline({ timeline }: { timeline?: WorkdayTimelineData }
             ? interval.type === "worked"
               ? "extra"
               : "leave"
-            : interval.type;
+            : interval.type === "worked" && interval.workCategory === "extra"
+              ? "extra"
+              : interval.type;
           const style = intervalStyles[displayType];
           const Icon = style.icon;
           return (

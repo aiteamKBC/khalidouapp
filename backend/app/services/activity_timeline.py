@@ -52,6 +52,172 @@ def _day_bounds(value: date, timezone_name: str) -> tuple[datetime, datetime, Zo
     return local_start.astimezone(UTC), (local_start + timedelta(days=1)).astimezone(UTC), zone
 
 
+def _without_excluded_windows(
+    start_at: datetime,
+    end_at: datetime,
+    excluded_windows: list[tuple[datetime, datetime]],
+) -> list[tuple[datetime, datetime]]:
+    segments = [(start_at, end_at)]
+    for excluded_start, excluded_end in excluded_windows:
+        next_segments: list[tuple[datetime, datetime]] = []
+        for segment_start, segment_end in segments:
+            if excluded_end <= segment_start or excluded_start >= segment_end:
+                next_segments.append((segment_start, segment_end))
+                continue
+            if segment_start < excluded_start:
+                next_segments.append((segment_start, excluded_start))
+            if excluded_end < segment_end:
+                next_segments.append((excluded_end, segment_end))
+        segments = next_segments
+    return segments
+
+
+def scope_timeline_to_schedule(
+    timeline: dict,
+    *,
+    shift_start: datetime | None,
+    shift_end: datetime | None,
+    scheduled_breaks: list[dict] | None = None,
+    now: datetime | None = None,
+) -> dict:
+    """Return the attendance view of a raw activity timeline.
+
+    Worked time outside the scheduled shift remains visible and is classified
+    as extra work. Non-working states outside the shift, during scheduled
+    breaks, on off days, or on approved leave are not attendance idle and must
+    not affect activity, lateness, early-leave, or payroll calculations.
+    """
+    now_utc = _utc(now or datetime.now(UTC))
+    normalized_shift_start = _utc(shift_start) if shift_start else None
+    normalized_shift_end = _utc(shift_end) if shift_end else None
+    has_shift = bool(normalized_shift_start and normalized_shift_end)
+    excluded_windows = [
+        (_utc(item["start_at"]), _utc(item["end_at"]))
+        for item in scheduled_breaks or []
+        if item.get("start_at") and item.get("end_at")
+    ]
+    approved_leave = bool(timeline.get("approved_leave"))
+    scoped: list[dict] = []
+
+    for item in timeline.get("intervals", []):
+        interval_start = _utc(datetime.fromisoformat(item["started_at"]))
+        interval_end = (
+            _utc(datetime.fromisoformat(item["ended_at"]))
+            if item.get("ended_at")
+            else now_utc
+        )
+        if interval_end <= interval_start:
+            continue
+
+        if item["type"] == "worked":
+            boundaries = [interval_start, interval_end]
+            if has_shift:
+                if interval_start < normalized_shift_start < interval_end:
+                    boundaries.append(normalized_shift_start)
+                if interval_start < normalized_shift_end < interval_end:
+                    boundaries.append(normalized_shift_end)
+            boundaries.sort()
+            segments = list(zip(boundaries, boundaries[1:], strict=False))
+        else:
+            if not has_shift or approved_leave:
+                continue
+            visible_start = max(interval_start, normalized_shift_start)
+            visible_end = min(interval_end, normalized_shift_end)
+            if visible_end <= visible_start:
+                continue
+            segments = _without_excluded_windows(
+                visible_start,
+                visible_end,
+                excluded_windows,
+            )
+
+        for segment_start, segment_end in segments:
+            if segment_end <= segment_start:
+                continue
+            work_category = item.get("work_category")
+            if item["type"] == "worked" and (
+                approved_leave
+                or not has_shift
+                or segment_start < normalized_shift_start
+                or segment_end > normalized_shift_end
+            ):
+                work_category = "extra"
+            scoped.append(
+                {
+                    **item,
+                    "started_at": segment_start,
+                    "ended_at": segment_end,
+                    "duration_seconds": int((segment_end - segment_start).total_seconds()),
+                    "is_current": bool(
+                        item.get("is_current") and segment_end == interval_end
+                    ),
+                    "work_category": work_category,
+                }
+            )
+
+    merged: list[dict] = []
+    for interval in scoped:
+        previous = merged[-1] if merged else None
+        if (
+            previous
+            and previous["type"] == interval["type"]
+            and previous.get("source") == interval.get("source")
+            and previous["ended_at"] == interval["started_at"]
+            and previous["session_id"] == interval["session_id"]
+            and previous.get("task_name") == interval.get("task_name")
+            and previous.get("project_name") == interval.get("project_name")
+            and previous.get("work_category") == interval.get("work_category")
+        ):
+            previous["ended_at"] = interval["ended_at"]
+            previous["duration_seconds"] += interval["duration_seconds"]
+            previous["is_current"] = interval["is_current"]
+        else:
+            merged.append(interval)
+
+    totals = {"worked": 0, "idle": 0, "locked": 0, "sleeping": 0}
+    for interval in merged:
+        totals[interval["type"]] += interval["duration_seconds"]
+
+    is_running = any(item["is_current"] for item in merged)
+    first_started_at = min(
+        (item["started_at"] for item in merged),
+        default=None,
+    )
+    last_activity_at = max(
+        (item["ended_at"] for item in merged),
+        default=None,
+    )
+    serialized = []
+    for item in merged:
+        serialized.append(
+            {
+                **item,
+                "started_at": item["started_at"].isoformat(),
+                "ended_at": None if item["is_current"] else item["ended_at"].isoformat(),
+            }
+        )
+
+    return {
+        **timeline,
+        "first_started_at": first_started_at.isoformat() if first_started_at else None,
+        "last_ended_at": (
+            None
+            if is_running
+            else last_activity_at.isoformat()
+            if last_activity_at
+            else None
+        ),
+        "last_activity_at": last_activity_at.isoformat() if last_activity_at else None,
+        "is_running": is_running,
+        "worked_seconds": totals["worked"],
+        "idle_seconds": 0 if approved_leave else totals["idle"],
+        "locked_seconds": totals["locked"],
+        "sleeping_seconds": totals["sleeping"],
+        "leave_seconds": 0,
+        "intervals": serialized,
+    }
+
+
 def build_workday_timeline(
     db: Session,
     *,
