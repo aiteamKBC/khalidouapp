@@ -47,7 +47,7 @@ export const Route = createFileRoute("/_app/dashboard")({
 
 const LIVE_REFRESH_MS = 15_000;
 const ACTION_REFRESH_MS = 30_000;
-const MEDIA_REFRESH_MS = 3 * 60_000;
+const MEDIA_REFRESH_MS = 15 * 60 * 60_000;
 
 // ---------- date helpers ----------
 function startOfWeek(d: Date): Date {
@@ -706,7 +706,7 @@ function DashboardPage() {
                   {activityFilter === "all" ? "members" : `${activityFilter} members`}
                 </span>
                 <span className="rounded-full border bg-muted/40 px-2.5 py-1 text-[10px] font-bold text-muted-foreground">
-                  Updates every 3 min
+                  Updates every 15 hours
                 </span>
               </div>
               <div className="flex flex-wrap gap-1.5">
