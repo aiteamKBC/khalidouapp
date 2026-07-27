@@ -196,6 +196,57 @@ def test_duplicate_session_end_keeps_original_end_state(tracking_context):
     assert end_event.idempotency_key == str(first_event_id)
 
 
+def test_update_installation_checkpoints_without_ending_session(tracking_context):
+    db, device = tracking_context
+    session = WorkSession(
+        company_id=device.company_id,
+        employee_id=device.employee_id,
+        device_id=device.id,
+        started_at=datetime.now(UTC) - timedelta(minutes=10),
+        status="active",
+        active_seconds=120,
+        idle_seconds=10,
+    )
+    db.add(session)
+    db.commit()
+
+    checkpoint_at = datetime.now(UTC)
+    response = end_session(
+        db,
+        device=device,
+        session_id=session.id,
+        payload=SessionEndRequest(
+            event_id=uuid4(),
+            ended_at=checkpoint_at,
+            active_seconds=321,
+            idle_seconds=45,
+            reason="Khaliduo update installation",
+        ),
+    )["session"]
+
+    db.refresh(session)
+    db.refresh(device)
+    assert response["id"] == str(session.id)
+    assert response["status"] == "active"
+    assert response["ended_at"] is None
+    assert session.ended_at is None
+    assert session.active_seconds == 321
+    assert session.idle_seconds == 45
+    assert device.last_seen_at is not None
+    assert get_current_session(db, device).id == session.id
+    assert (
+        db.scalar(
+            select(func.count())
+            .select_from(ActivityEvent)
+            .where(
+                ActivityEvent.session_id == session.id,
+                ActivityEvent.event_type == "session_ended",
+            )
+        )
+        == 0
+    )
+
+
 def test_session_can_start_again_after_end(tracking_context):
     db, device = tracking_context
     first_started_at = datetime.now(UTC) - timedelta(minutes=5)

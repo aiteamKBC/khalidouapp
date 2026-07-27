@@ -1084,6 +1084,21 @@ def end_session(
         return {"session": serialize_session(session)}
 
     ended_at = utc(payload.ended_at)
+    if (payload.reason or "").strip().casefold() == "khaliduo update installation":
+        # Desktop releases before 1.1.64 attempted to end the active session
+        # before installing an update. Treat that legacy request as a final
+        # checkpoint so those clients can upgrade without creating an
+        # attendance sign-out/sign-in break.
+        if payload.active_seconds is not None:
+            session.active_seconds = max(session.active_seconds, payload.active_seconds)
+        if payload.idle_seconds is not None:
+            session.idle_seconds = max(session.idle_seconds, payload.idle_seconds)
+        device.last_seen_at = ended_at
+        sync_session_time_buckets(db, session, at=ended_at)
+        db.commit()
+        db.refresh(session)
+        return session_response(db, session)
+
     session.ended_at = ended_at
     session.status = "ended"
     if payload.active_seconds is not None:
