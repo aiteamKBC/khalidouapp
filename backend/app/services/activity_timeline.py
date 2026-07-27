@@ -33,6 +33,20 @@ def _utc(value: datetime) -> datetime:
     return value.astimezone(UTC)
 
 
+def _continued_session_started_at(events: list[ActivityEvent]) -> datetime | None:
+    for event in events:
+        if event.event_type != "session_started" or not isinstance(event.payload, dict):
+            continue
+        value = event.payload.get("continued_session_started_at")
+        if not isinstance(value, str):
+            continue
+        try:
+            return _utc(datetime.fromisoformat(value))
+        except ValueError:
+            return None
+    return None
+
+
 def _timezone(name: str) -> ZoneInfo:
     try:
         return ZoneInfo(name)
@@ -310,6 +324,7 @@ def build_workday_timeline(
     for session in sessions:
         session_start = _utc(session.started_at)
         session_events = events_by_session[session.id]
+        continued_session_start = _continued_session_started_at(session_events)
         heartbeat_times = [
             _utc(event.event_timestamp)
             for event in session_events
@@ -410,8 +425,11 @@ def build_workday_timeline(
                 }
             )
 
-        if len(intervals) > interval_count_before_session and session_start < day_start:
-            continued_session_starts.append(session_start)
+        if len(intervals) > interval_count_before_session:
+            if session_start < day_start:
+                continued_session_starts.append(session_start)
+            elif continued_session_start is not None and continued_session_start < day_start:
+                continued_session_starts.append(continued_session_start)
 
         if (
             session.ended_at is None

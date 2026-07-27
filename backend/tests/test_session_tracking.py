@@ -35,6 +35,7 @@ from app.services.session_tracking import (
     start_paid_pause,
     start_or_get_session,
 )
+from app.services.activity_timeline import build_workday_timeline
 
 
 @pytest.fixture()
@@ -357,6 +358,196 @@ def test_heartbeat_after_local_day_changes_restarts_session(tracking_context):
     assert result["session"]["active_seconds"] == 0
     assert stale.status == "ended"
     assert stale.ended_at.replace(tzinfo=UTC) == datetime(2026, 7, 17, 0, 0, tzinfo=UTC)
+    next_session = get_current_session(db, device)
+    assert next_session is not None
+    started_event = db.scalar(
+        select(ActivityEvent).where(
+            ActivityEvent.session_id == next_session.id,
+            ActivityEvent.event_type == "session_started",
+        )
+    )
+    assert started_event is not None
+    assert started_event.payload["source"] == "daily_rollover"
+    assert started_event.payload["continued_from_previous_day"] is True
+    assert started_event.payload["continued_session_started_at"] == started_at.isoformat()
+
+    timeline = build_workday_timeline(
+        db,
+        company_id=device.company_id,
+        employee_id=device.employee_id,
+        timezone_name="UTC",
+        target_date=heartbeat_at.date(),
+        now=heartbeat_at + timedelta(minutes=1),
+        device_id=device.id,
+    )
+    assert timeline["continued_from_previous_day"] is True
+    assert timeline["continued_session_started_at"] == started_at.isoformat()
+
+
+def test_idle_gap_over_four_hours_starts_a_new_sign_in(tracking_context):
+    db, device = tracking_context
+    session_started_at = datetime(2026, 7, 21, 9, 0, tzinfo=UTC)
+    idle_started_at = datetime(2026, 7, 21, 10, 0, tzinfo=UTC)
+    returned_at = idle_started_at + timedelta(hours=4, seconds=1)
+    started = start_or_get_session(
+        db,
+        device,
+        SessionStartRequest(started_at=session_started_at),
+    )
+    previous_session_id = UUID(started["session"]["id"])
+    record_agent_event(
+        db,
+        device=device,
+        session_id=previous_session_id,
+        payload=ActivityEventRequest(
+            event_id=uuid4(),
+            event_type="idle_started",
+            event_timestamp=idle_started_at,
+            payload={"idle_seconds": 120},
+        ),
+    )
+    previous_session = db.get(WorkSession, previous_session_id)
+    previous_session.idle_seconds = 4 * 60 * 60
+    db.commit()
+
+    return_event_id = uuid4()
+    return_payload = ActivityEventRequest(
+        event_id=return_event_id,
+        event_type="idle_ended",
+        event_timestamp=returned_at,
+        payload={"idle_seconds": 4 * 60 * 60},
+    )
+    resumed = record_agent_event(
+        db,
+        device=device,
+        session_id=previous_session_id,
+        payload=return_payload,
+    )
+
+    db.refresh(previous_session)
+    assert resumed["restarted"] is True
+    assert resumed["restart_reason"] == "long_idle"
+    assert resumed["session"]["id"] != str(previous_session_id)
+    assert resumed["session"]["started_at"] == returned_at.isoformat()
+    assert resumed["session"]["active_seconds"] == 0
+    assert resumed["session"]["idle_seconds"] == 0
+    assert previous_session.status == "ended"
+    assert previous_session.ended_at.replace(tzinfo=UTC) == idle_started_at
+    assert previous_session.idle_seconds == 120
+    assert get_current_session(db, device).id == UUID(resumed["session"]["id"])
+
+    retried = record_agent_event(
+        db,
+        device=device,
+        session_id=previous_session_id,
+        payload=return_payload,
+    )
+    assert retried["duplicate"] is True
+    assert retried["session"]["id"] == resumed["session"]["id"]
+
+
+def test_idle_gap_of_exactly_four_hours_keeps_the_same_session(tracking_context):
+    db, device = tracking_context
+    session_started_at = datetime(2026, 7, 21, 9, 0, tzinfo=UTC)
+    idle_started_at = datetime(2026, 7, 21, 10, 0, tzinfo=UTC)
+    returned_at = idle_started_at + timedelta(hours=4)
+    started = start_or_get_session(
+        db,
+        device,
+        SessionStartRequest(started_at=session_started_at),
+    )
+    session_id = UUID(started["session"]["id"])
+    record_agent_event(
+        db,
+        device=device,
+        session_id=session_id,
+        payload=ActivityEventRequest(
+            event_id=uuid4(),
+            event_type="idle_started",
+            event_timestamp=idle_started_at,
+            payload={"idle_seconds": 0},
+        ),
+    )
+
+    resumed = record_agent_event(
+        db,
+        device=device,
+        session_id=session_id,
+        payload=ActivityEventRequest(
+            event_id=uuid4(),
+            event_type="idle_ended",
+            event_timestamp=returned_at,
+            payload={"idle_seconds": 4 * 60 * 60},
+        ),
+    )
+
+    assert resumed["session"]["id"] == str(session_id)
+    assert resumed["session"]["status"] == "active"
+    assert resumed["session"]["ended_at"] is None
+
+
+def test_long_idle_across_midnight_signs_out_at_idle_start(tracking_context):
+    db, device = tracking_context
+    session_started_at = datetime(2026, 7, 20, 22, 0, tzinfo=UTC)
+    idle_started_at = datetime(2026, 7, 20, 23, 0, tzinfo=UTC)
+    idle_heartbeat_at = datetime(2026, 7, 21, 2, 0, tzinfo=UTC)
+    returned_at = datetime(2026, 7, 21, 3, 0, 1, tzinfo=UTC)
+    started = start_or_get_session(
+        db,
+        device,
+        SessionStartRequest(started_at=session_started_at),
+    )
+    session_id = UUID(started["session"]["id"])
+    record_agent_event(
+        db,
+        device=device,
+        session_id=session_id,
+        payload=ActivityEventRequest(
+            event_id=uuid4(),
+            event_type="idle_started",
+            event_timestamp=idle_started_at,
+            payload={"idle_seconds": 60},
+        ),
+    )
+
+    idle_heartbeat = record_heartbeat(
+        db,
+        device=device,
+        session_id=session_id,
+        payload=HeartbeatRequest(
+            event_id=uuid4(),
+            timestamp=idle_heartbeat_at,
+            status="idle",
+            active_seconds=3600,
+            idle_seconds=3 * 60 * 60,
+            agent_version="1.0.0",
+        ),
+    )
+    assert idle_heartbeat.get("restarted") is not True
+    assert idle_heartbeat["session"]["id"] == str(session_id)
+
+    resumed = record_agent_event(
+        db,
+        device=device,
+        session_id=session_id,
+        payload=ActivityEventRequest(
+            event_id=uuid4(),
+            event_type="idle_ended",
+            event_timestamp=returned_at,
+            payload={
+                "idle_started_at": idle_started_at.isoformat(),
+                "idle_gap_seconds": 4 * 60 * 60 + 1,
+                "idle_seconds_before_gap": 60,
+            },
+        ),
+    )
+
+    previous_session = db.get(WorkSession, session_id)
+    assert previous_session.status == "ended"
+    assert previous_session.ended_at.replace(tzinfo=UTC) == idle_started_at
+    assert previous_session.idle_seconds == 60
+    assert resumed["restarted"] is True
+    assert resumed["session"]["started_at"] == returned_at.isoformat()
 
 
 def test_paid_pause_auto_resumes_and_consumes_daily_balance(tracking_context):

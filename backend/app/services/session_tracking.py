@@ -36,6 +36,7 @@ ACTIVE_SESSION_STATUSES = {"active", "idle", "locked", "sleeping"}
 UNENDED_SESSION_STATUSES = ACTIVE_SESSION_STATUSES | {"offline"}
 DEFAULT_REQUIRED_DAILY_SECONDS = 8 * 60 * 60
 DEFAULT_DAILY_PAUSE_SECONDS = 10 * 60
+LONG_IDLE_SESSION_SPLIT_SECONDS = 4 * 60 * 60
 
 
 def utc(value: datetime | None = None) -> datetime:
@@ -85,6 +86,25 @@ def next_local_midnight(started_at: datetime, zone: ZoneInfo) -> datetime:
         tzinfo=zone,
     )
     return local_midnight.astimezone(UTC)
+
+
+def session_chain_started_at(db: Session, session: WorkSession) -> datetime:
+    started_event = db.scalar(
+        select(ActivityEvent)
+        .where(
+            ActivityEvent.session_id == session.id,
+            ActivityEvent.event_type == "session_started",
+        )
+        .order_by(ActivityEvent.event_timestamp, ActivityEvent.created_at)
+    )
+    source = started_event.payload if started_event and isinstance(started_event.payload, dict) else {}
+    continued_at = source.get("continued_session_started_at")
+    if isinstance(continued_at, str):
+        try:
+            return utc(datetime.fromisoformat(continued_at))
+        except ValueError:
+            pass
+    return utc(session.started_at)
 
 
 def close_open_session(
@@ -568,12 +588,17 @@ def apply_session_task(
 
 
 def start_or_get_session(
-    db: Session, device: Device, payload: SessionStartRequest
+    db: Session,
+    device: Device,
+    payload: SessionStartRequest,
+    *,
+    start_source: str = "automatic_start",
 ) -> dict[str, Any]:
     now = utc(payload.started_at)
     device.last_seen_at = now
     zone = employee_zone(db, device)
     current = get_current_session(db, device)
+    continued_session_started_at: datetime | None = None
     if current is not None:
         current_zone = session_zone(db, current)
         if current_zone.key != zone.key:
@@ -586,6 +611,7 @@ def start_or_get_session(
             )
             current = None
         elif not same_local_day(current.started_at, now, current_zone):
+            continued_session_started_at = session_chain_started_at(db, current)
             close_open_session(
                 db,
                 device=device,
@@ -663,7 +689,22 @@ def start_or_get_session(
         event_type="session_started",
         event_timestamp=started_at,
         idempotency_key=f"session-started:{session.id}",
-        payload={"source": "automatic_start", "task": task_context},
+        payload={
+            "source": (
+                "daily_rollover"
+                if continued_session_started_at is not None
+                else start_source
+            ),
+            "task": task_context,
+            **(
+                {
+                    "continued_from_previous_day": True,
+                    "continued_session_started_at": continued_session_started_at.isoformat(),
+                }
+                if continued_session_started_at is not None
+                else {}
+            ),
+        },
     )
     db.commit()
     db.refresh(session)
@@ -842,24 +883,52 @@ def record_heartbeat(
     zone = session_zone(db, session)
     current_device_zone = employee_zone(db, device)
     timezone_changed = zone.key != current_device_zone.key
+    local_day_changed = not same_local_day(session.started_at, heartbeat_at, zone)
+    if (
+        local_day_changed
+        and not timezone_changed
+        and session.status != "offline"
+        and payload.status == "active"
+    ):
+        restarted = start_or_get_session(
+            db,
+            device,
+            SessionStartRequest(started_at=heartbeat_at, task_id=session.task_id),
+        )
+        next_session = get_owned_session(db, device, UUID(restarted["session"]["id"]))
+        event, duplicate = create_activity_event(
+            db,
+            device=device,
+            session=next_session,
+            event_type="heartbeat",
+            event_timestamp=heartbeat_at,
+            idempotency_key=str(payload.event_id),
+            payload=payload.model_dump(mode="json"),
+        )
+        next_session.status = payload.status
+        device.last_seen_at = heartbeat_at
+        device.agent_version = payload.agent_version
+        db.commit()
+        db.refresh(next_session)
+        return {
+            "event_id": str(event.id),
+            "duplicate": duplicate,
+            **session_response(db, next_session),
+            "restarted": True,
+        }
     if (
         session.status == "offline"
         or timezone_changed
-        or not same_local_day(session.started_at, heartbeat_at, zone)
     ):
         close_open_session(
             db,
             device=device,
             session=session,
-            ended_at=(
-                heartbeat_at
-                if timezone_changed
-                else min(heartbeat_at, next_local_midnight(session.started_at, zone))
-            ),
+            ended_at=heartbeat_at,
             reason=(
                 "Device timezone changed"
                 if timezone_changed
-                else "Heartbeat arrived after the local workday changed"
+                else "Previous agent run was offline"
             ),
         )
         db.commit()
@@ -987,6 +1056,83 @@ def switch_session_task(
     return response
 
 
+def latest_automatic_idle_start(
+    db: Session,
+    session: WorkSession,
+    *,
+    ended_at: datetime,
+) -> ActivityEvent | None:
+    return db.scalar(
+        select(ActivityEvent)
+        .where(
+            ActivityEvent.session_id == session.id,
+            ActivityEvent.event_type == "idle_started",
+            ActivityEvent.event_timestamp <= utc(ended_at),
+        )
+        .order_by(ActivityEvent.event_timestamp.desc(), ActivityEvent.created_at.desc())
+    )
+
+
+def restart_session_after_long_idle(
+    db: Session,
+    *,
+    device: Device,
+    session: WorkSession,
+    idle_started_at: datetime,
+    idle_baseline: int | None,
+    payload: ActivityEventRequest,
+) -> dict[str, Any]:
+    idle_started_at = utc(idle_started_at)
+    returned_at = utc(payload.event_timestamp)
+    gap_seconds = max(0, int((returned_at - idle_started_at).total_seconds()))
+    if isinstance(idle_baseline, int) and idle_baseline >= 0:
+        session.idle_seconds = min(session.idle_seconds, idle_baseline)
+
+    previous_task_id = session.task_id
+    previous_session_ended_at = max(utc(session.started_at), idle_started_at)
+    close_open_session(
+        db,
+        device=device,
+        session=session,
+        ended_at=previous_session_ended_at,
+        reason="Employee returned after more than four hours away",
+    )
+    sync_session_time_buckets(db, session, at=previous_session_ended_at)
+    restarted = start_or_get_session(
+        db,
+        device,
+        SessionStartRequest(started_at=returned_at, task_id=previous_task_id),
+        start_source="long_idle_return",
+    )
+    next_session = get_owned_session(db, device, UUID(restarted["session"]["id"]))
+    event, duplicate = create_activity_event(
+        db,
+        device=device,
+        session=next_session,
+        event_type="idle_ended",
+        event_timestamp=returned_at,
+        idempotency_key=str(payload.event_id),
+        payload={
+            **(payload.payload or {}),
+            "started_new_session": True,
+            "idle_gap_seconds": gap_seconds,
+            "previous_session_id": str(session.id),
+        },
+    )
+    next_session.status = "active"
+    db.commit()
+    db.refresh(next_session)
+    response = {
+        "event_id": str(event.id),
+        "duplicate": duplicate,
+        **session_response(db, next_session),
+        "restarted": True,
+        "restart_reason": "long_idle",
+    }
+    db.commit()
+    return response
+
+
 def record_agent_event(
     db: Session,
     *,
@@ -994,6 +1140,22 @@ def record_agent_event(
     session_id: UUID,
     payload: ActivityEventRequest,
 ) -> dict[str, Any]:
+    existing_event = db.scalar(
+        select(ActivityEvent).where(
+            ActivityEvent.company_id == device.company_id,
+            ActivityEvent.idempotency_key == str(payload.event_id),
+        )
+    )
+    if existing_event is not None:
+        existing_session = get_owned_session(db, device, existing_event.session_id)
+        response = {
+            "event_id": str(existing_event.id),
+            "duplicate": True,
+            **session_response(db, existing_session),
+        }
+        db.commit()
+        return response
+
     session = get_owned_session(db, device, session_id)
     event_payload = payload.payload
     if payload.event_type == "foreground_activity":
@@ -1029,6 +1191,63 @@ def record_agent_event(
                 ),
             ),
         }
+    if payload.event_type == "idle_ended":
+        idle_started = latest_automatic_idle_start(
+            db,
+            session,
+            ended_at=payload.event_timestamp,
+        )
+        idle_started_at = (
+            utc(idle_started.event_timestamp) if idle_started is not None else None
+        )
+        idle_baseline = (
+            idle_started.payload.get("idle_seconds")
+            if idle_started is not None and isinstance(idle_started.payload, dict)
+            else None
+        )
+        if idle_started_at is None and isinstance(payload.payload, dict):
+            reported_idle_started_at = payload.payload.get("idle_started_at")
+            if isinstance(reported_idle_started_at, str):
+                try:
+                    idle_started_at = utc(datetime.fromisoformat(reported_idle_started_at))
+                except ValueError:
+                    idle_started_at = None
+            reported_idle_baseline = payload.payload.get("idle_seconds_before_gap")
+            if isinstance(reported_idle_baseline, int):
+                idle_baseline = reported_idle_baseline
+        reported_gap_seconds = (
+            payload.payload.get("idle_gap_seconds")
+            if isinstance(payload.payload, dict)
+            else None
+        )
+        gap_seconds = (
+            reported_gap_seconds
+            if isinstance(reported_gap_seconds, int) and reported_gap_seconds >= 0
+            else (
+                max(
+                    0,
+                    int(
+                        (
+                            utc(payload.event_timestamp) - idle_started_at
+                        ).total_seconds()
+                    ),
+                )
+                if idle_started_at is not None
+                else 0
+            )
+        )
+        if (
+            idle_started_at is not None
+            and gap_seconds > LONG_IDLE_SESSION_SPLIT_SECONDS
+        ):
+            return restart_session_after_long_idle(
+                db,
+                device=device,
+                session=session,
+                idle_started_at=idle_started_at,
+                idle_baseline=idle_baseline,
+                payload=payload,
+            )
     event, duplicate = create_activity_event(
         db,
         device=device,

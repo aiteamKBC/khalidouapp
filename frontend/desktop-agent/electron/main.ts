@@ -211,6 +211,7 @@ type ForegroundActivitySegment = ForegroundActivity & {
 const execFileAsync = promisify(execFile);
 const FOREGROUND_SAMPLE_INTERVAL_MS = 15_000;
 const FOREGROUND_SEGMENT_MAX_MS = 60_000;
+const LONG_IDLE_SESSION_SPLIT_SECONDS = 4 * 60 * 60;
 
 let mainWindow: Electron.BrowserWindow | null = null;
 let tray: Electron.Tray | null = null;
@@ -1163,6 +1164,7 @@ async function refreshTasks() {
 async function sendStateEvent(
   eventType: string,
   status: AgentRuntimeStatus["trackingStatus"],
+  extraPayload: Record<string, unknown> = {},
 ) {
   runtimeStatus.trackingStatus = status;
   notifyRendererStatus();
@@ -1181,6 +1183,7 @@ async function sendStateEvent(
       status,
       idle_seconds: runtimeStatus.idleSeconds,
       agent_version: runtimeStatus.agentVersion,
+      ...extraPayload,
     },
   };
 
@@ -1240,14 +1243,28 @@ function finishAutomaticIdleImmediately() {
     0,
     runtimeStatus.eligibleIdleSeconds - eligibleIdleSecondsBeforeCurrentIdle,
   );
+  const idleStartedAt = new Date(
+    idleWallClockStartedAt ?? Date.now() - lostSeconds * 1000,
+  ).toISOString();
+  const idleSecondsBeforeGap = idleSecondsBeforeCurrentIdle;
   idleSecondsBeforeCurrentIdle = runtimeStatus.idleSeconds;
   eligibleIdleSecondsBeforeCurrentIdle = runtimeStatus.eligibleIdleSeconds;
   idleWallClockStartedAt = null;
   isFinishingAutomaticIdle = true;
-  void sendStateEvent("idle_ended", "active").finally(() => {
+  void sendStateEvent("idle_ended", "active", {
+    idle_started_at: idleStartedAt,
+    idle_gap_seconds: lostSeconds,
+    idle_seconds_before_gap: idleSecondsBeforeGap,
+  }).finally(() => {
     isFinishingAutomaticIdle = false;
   });
-  showIdleLossAlert(lostSeconds, eligibleLostSeconds);
+  if (lostSeconds > LONG_IDLE_SESSION_SPLIT_SECONDS) {
+    runtimeStatus.lastIdleAlert = null;
+    setIdleAlertAttention(false);
+    log.info("Started a new work session after more than four hours away");
+  } else {
+    showIdleLossAlert(lostSeconds, eligibleLostSeconds);
+  }
 }
 
 async function resumeAutomaticIdle() {
