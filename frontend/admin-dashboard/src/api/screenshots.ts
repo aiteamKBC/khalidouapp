@@ -106,6 +106,7 @@ export async function listScreenshotFolderPage(options: {
   day: string;
   workCategory?: string;
   folderStatus?: string;
+  previewLimit?: number;
 }): Promise<{ items: ScreenshotFolder[]; page: number; pages: number; total: number }> {
   const scopedTeamId = options.scopedTeamIds?.length === 1 ? options.scopedTeamIds[0] : undefined;
   const teamId = options.teamId && options.teamId !== "all" ? options.teamId : scopedTeamId;
@@ -118,6 +119,7 @@ export async function listScreenshotFolderPage(options: {
       day: options.day,
       work_category: options.workCategory === "all" ? undefined : options.workCategory,
       folder_status: options.folderStatus === "all" ? undefined : options.folderStatus,
+      preview_limit: options.previewLimit,
     }),
   );
   return {

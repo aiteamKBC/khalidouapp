@@ -47,7 +47,7 @@ export const Route = createFileRoute("/_app/dashboard")({
 
 const LIVE_REFRESH_MS = 15_000;
 const ACTION_REFRESH_MS = 30_000;
-const MEDIA_REFRESH_MS = 60_000;
+const MEDIA_REFRESH_MS = 3 * 60_000;
 
 // ---------- date helpers ----------
 function startOfWeek(d: Date): Date {
@@ -175,9 +175,10 @@ function DashboardPage() {
         page: 1,
         pageSize: 250,
         day: dashboardDay,
+        previewLimit: 1,
       }),
     enabled: loadMedia,
-    staleTime: 45_000,
+    staleTime: MEDIA_REFRESH_MS - 15_000,
     refetchInterval: MEDIA_REFRESH_MS,
     refetchIntervalInBackground: false,
     placeholderData: (previous) => previous,
@@ -744,7 +745,7 @@ function DashboardPage() {
                     <span className="truncate text-[12.5px] font-bold">{employee.name}</span>
                     <StatusBadge status={employee.status} className="ml-auto shrink-0" />
                   </Link>
-                  <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
+                  <div className="grid grid-cols-1 gap-2.5">
                     {images.length === 0 && (
                       <p className="col-span-full rounded-[13px] border border-dashed bg-muted/20 px-4 py-5 text-center text-xs text-muted-foreground">
                         No recent screenshots from this member.
@@ -761,6 +762,13 @@ function DashboardPage() {
                           alt={`Screenshot from ${employee.name}`}
                           className="aspect-video w-full object-cover transition-transform group-hover:scale-[1.03]"
                         />
+                        <div className="border-t px-3 py-2 text-[11px] font-semibold text-muted-foreground">
+                          Latest screenshot ·{" "}
+                          {new Date(shot.capturedAt).toLocaleTimeString([], {
+                            hour: "2-digit",
+                            minute: "2-digit",
+                          })}
+                        </div>
                       </Link>
                     ))}
                   </div>

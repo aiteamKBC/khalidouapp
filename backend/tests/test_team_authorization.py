@@ -1114,9 +1114,31 @@ def test_team_owner_cannot_retrieve_screenshots_from_another_team(team_client):
 def test_screenshot_folders_include_empty_employees_for_selected_day(team_client):
     client, data = team_client
     day = datetime.now(UTC).date().isoformat()
+    with data["session_factory"]() as db:
+        latest = db.get(Screenshot, data["screenshot_a"].id)
+        db.add(
+            Screenshot(
+                company_id=latest.company_id,
+                employee_id=latest.employee_id,
+                device_id=latest.device_id,
+                session_id=latest.session_id,
+                captured_at=latest.captured_at - timedelta(minutes=1),
+                storage_path="a-older.jpg",
+                mime_type="image/jpeg",
+                width=100,
+                height=100,
+                file_size=10,
+                checksum="c" * 64,
+                status="completed",
+                team_id=latest.team_id,
+                project_id=latest.project_id,
+                task_id=latest.task_id,
+            )
+        )
+        db.commit()
 
     response = client.get(
-        f"/api/v1/screenshots/folders?day={day}&page_size=250",
+        f"/api/v1/screenshots/folders?day={day}&page_size=250&preview_limit=1",
         headers=data["general_headers"],
     )
 
@@ -1124,8 +1146,9 @@ def test_screenshot_folders_include_empty_employees_for_selected_day(team_client
     folders = {row["employee_name"]: row for row in response.json()["data"]}
     assert set(folders) == {"Employee A", "Employee B", "Shared Employee"}
     assert folders["Employee A"]["worked"] is True
-    assert folders["Employee A"]["screenshot_count"] == 1
+    assert folders["Employee A"]["screenshot_count"] == 2
     assert len(folders["Employee A"]["previews"]) == 1
+    assert folders["Employee A"]["previews"][0]["id"] == str(data["screenshot_a"].id)
     assert folders["Shared Employee"]["worked"] is False
     assert folders["Shared Employee"]["screenshot_count"] == 0
     assert folders["Shared Employee"]["previews"] == []

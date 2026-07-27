@@ -153,6 +153,7 @@ def list_screenshot_folders(
     | None = None,
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=8, ge=1, le=250),
+    preview_limit: int = Query(default=3, ge=1, le=3),
 ):
     """Return one folder per visible employee, including employees with no captures."""
     require_capability(current_admin, "screenshots.view")
@@ -305,12 +306,12 @@ def list_screenshot_folders(
         preview_rows = db.scalars(
             select(Screenshot)
             .join(ranked_previews, ranked_previews.c.screenshot_id == Screenshot.id)
-            .where(ranked_previews.c.preview_rank <= 3)
+            .where(ranked_previews.c.preview_rank <= preview_limit)
             .order_by(Screenshot.employee_id.asc(), Screenshot.captured_at.desc())
         ).all()
         for screenshot in preview_rows:
             previews = screenshots_by_employee[screenshot.employee_id]
-            if len(previews) < 3:
+            if len(previews) < preview_limit:
                 previews.append(screenshot)
 
         worked_employee_ids = set(
