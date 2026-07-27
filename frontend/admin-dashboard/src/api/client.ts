@@ -52,6 +52,15 @@ const AUTH_EXPIRED_EVENT = "khaliduo:auth-expired";
 
 let refreshInFlight: Promise<RefreshedTokens> | null = null;
 const inFlightGetRequests = new Map<string, Promise<unknown>>();
+let runtimeAuth: PersistedAuthLocation | null = null;
+
+export function rememberAuthTokens(auth: PersistedAuth, storage: Storage) {
+  runtimeAuth = { auth, storage };
+}
+
+export function forgetAuthTokens() {
+  runtimeAuth = null;
+}
 
 function requestDedupeKey(
   responseKind: "data" | "meta",
@@ -144,16 +153,21 @@ function readAuth(): PersistedAuthLocation | null {
     try {
       const auth = JSON.parse(raw) as PersistedAuth;
       if (auth.accessToken && auth.refreshToken) {
-        return { auth, storage };
+        rememberAuthTokens(auth, storage);
+        return runtimeAuth;
       }
     } catch {
       storage.removeItem(AUTH_STORAGE_KEY);
     }
   }
-  return null;
+  // The authenticated React tree can stay mounted briefly while browser
+  // storage is being reconciled. Keep using the live in-memory token pair so
+  // a protected action never reaches the API without its bearer token.
+  return runtimeAuth;
 }
 
 function clearAuth() {
+  forgetAuthTokens();
   if (typeof window === "undefined") return;
   localStorage.removeItem(AUTH_STORAGE_KEY);
   sessionStorage.removeItem(AUTH_STORAGE_KEY);
@@ -225,6 +239,13 @@ async function refreshAuthTokens(authLocation: PersistedAuthLocation): Promise<R
         accessToken: tokens.access_token,
         refreshToken: tokens.refresh_token,
       }),
+    );
+    rememberAuthTokens(
+      {
+        accessToken: tokens.access_token,
+        refreshToken: tokens.refresh_token,
+      },
+      authLocation.storage,
     );
     window.dispatchEvent(
       new CustomEvent(AUTH_REFRESHED_EVENT, {
