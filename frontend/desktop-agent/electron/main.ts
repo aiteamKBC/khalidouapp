@@ -225,7 +225,7 @@ let foregroundActivitySegment: ForegroundActivitySegment | null = null;
 let idleTimer: ReturnType<typeof setInterval> | null = null;
 let idleAttentionTimer: ReturnType<typeof setTimeout> | null = null;
 let idleAlertAttentionActive = false;
-let idleReviewPending = false;
+let isFinishingAutomaticIdle = false;
 let updateAttentionActive = false;
 let screenshotTimer: ReturnType<typeof setTimeout> | null = null;
 let screenshotQueue: number[] = [];
@@ -472,7 +472,6 @@ function resetForDeviceReenrollment() {
   idleSecondsBeforeCurrentIdle = 0;
   eligibleIdleSecondsBeforeCurrentIdle = 0;
   idleWallClockStartedAt = null;
-  idleReviewPending = false;
   Object.assign(runtimeStatus, {
     enrolled: false,
     employeeName: "Not enrolled",
@@ -1224,7 +1223,7 @@ async function sendStateEvent(
 function finishAutomaticIdleImmediately() {
   if (
     unpaidPauseActive ||
-    idleReviewPending ||
+    isFinishingAutomaticIdle ||
     runtimeStatus.trackingStatus !== "idle" ||
     !currentSessionId
   ) {
@@ -1244,17 +1243,24 @@ function finishAutomaticIdleImmediately() {
   idleSecondsBeforeCurrentIdle = runtimeStatus.idleSeconds;
   eligibleIdleSecondsBeforeCurrentIdle = runtimeStatus.eligibleIdleSeconds;
   idleWallClockStartedAt = null;
-  idleReviewPending = lostSeconds > 0;
+  isFinishingAutomaticIdle = true;
+  void sendStateEvent("idle_ended", "active").finally(() => {
+    isFinishingAutomaticIdle = false;
+  });
   showIdleLossAlert(lostSeconds, eligibleLostSeconds);
 }
 
 async function resumeAutomaticIdle() {
-  if (!currentSessionId || runtimeStatus.trackingStatus !== "idle") {
-    idleReviewPending = false;
+  if (!currentSessionId) {
     return { success: false, message: "The idle review is no longer active." };
   }
-  idleReviewPending = false;
   idleWallClockStartedAt = null;
+  if (runtimeStatus.trackingStatus === "active") {
+    return { success: true };
+  }
+  if (runtimeStatus.trackingStatus !== "idle") {
+    return { success: false, message: "The idle review is no longer active." };
+  }
   await sendStateEvent("idle_ended", "active");
   return { success: true };
 }
@@ -2234,7 +2240,6 @@ async function pauseTracking(
   }
 
   recalculateWorkedTime();
-  idleReviewPending = false;
   unpaidPauseActive = true;
   runtimeStatus.trackingPaused = true;
   idleSecondsBeforeCurrentIdle = runtimeStatus.idleSeconds;
@@ -2336,7 +2341,6 @@ async function logoutDevice() {
   idleSecondsBeforeCurrentIdle = 0;
   eligibleIdleSecondsBeforeCurrentIdle = 0;
   idleWallClockStartedAt = null;
-  idleReviewPending = false;
   screenshotQueue = [];
   screenshotWindowEndsAt = null;
   saveScreenshotSchedule(null);
