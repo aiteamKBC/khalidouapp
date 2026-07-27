@@ -36,7 +36,6 @@ from app.models import (
     Team,
     TeamMember,
     TeamOwner,
-    TimeAdjustmentRequest,
     WorkSession,
 )
 from app.schemas.admin import (
@@ -47,6 +46,7 @@ from app.schemas.admin import (
     TeamUpdate,
 )
 from app.services.audit import record_audit_log
+from app.services.attendance import is_currently_accountable_idle
 from app.services.projects import ensure_general_work_project
 from app.services.screenshots import serialize_screenshot
 
@@ -480,31 +480,19 @@ def team_summary(
         Device.last_seen_at >= offline_cutoff,
         Device.revoked_at.is_(None),
     )
-    idle_employees_query = select(func.count(func.distinct(WorkSession.employee_id))).where(
-        WorkSession.company_id == current_admin.company_id,
-        WorkSession.employee_id.in_(employee_ids),
-        WorkSession.status == "idle",
-        WorkSession.ended_at.is_(None),
-    )
-    active_seconds_query = select(
-        func.coalesce(func.sum(WorkSession.active_seconds - WorkSession.deducted_seconds), 0)
-    ).where(
-        WorkSession.company_id == current_admin.company_id,
-        WorkSession.employee_id.in_(employee_ids),
-        WorkSession.started_at.between(start, end),
-    )
-    idle_seconds_query = select(func.coalesce(func.sum(WorkSession.idle_seconds), 0)).where(
-        WorkSession.company_id == current_admin.company_id,
-        WorkSession.employee_id.in_(employee_ids),
-        WorkSession.started_at.between(start, end),
-    )
-    adjustment_seconds_query = select(
-        func.coalesce(func.sum(TimeAdjustmentRequest.approved_seconds), 0)
-    ).where(
-        TimeAdjustmentRequest.company_id == current_admin.company_id,
-        TimeAdjustmentRequest.employee_id.in_(employee_ids),
-        TimeAdjustmentRequest.status == "approved",
-        TimeAdjustmentRequest.requested_date == date.today(),
+    idle_candidates_query = (
+        select(Employee)
+        .join(WorkSession, WorkSession.employee_id == Employee.id)
+        .join(Device, Device.employee_id == Employee.id)
+        .where(
+            WorkSession.company_id == current_admin.company_id,
+            WorkSession.employee_id.in_(employee_ids),
+            WorkSession.status.in_(["idle", "locked", "sleeping"]),
+            WorkSession.ended_at.is_(None),
+            Device.company_id == current_admin.company_id,
+            Device.last_seen_at >= offline_cutoff,
+            Device.revoked_at.is_(None),
+        )
     )
     screenshots_today_query = select(func.count()).where(
         Screenshot.company_id == current_admin.company_id,
@@ -520,33 +508,43 @@ def team_summary(
     (
         total_employees,
         online_employees,
-        idle_employees,
-        active_seconds,
-        idle_seconds,
-        adjustment_seconds,
         screenshots_today,
         screenshot_count,
     ) = db.execute(
         select(
             total_employees_query.scalar_subquery(),
             online_employees_query.scalar_subquery(),
-            idle_employees_query.scalar_subquery(),
-            active_seconds_query.scalar_subquery(),
-            idle_seconds_query.scalar_subquery(),
-            adjustment_seconds_query.scalar_subquery(),
             screenshots_today_query.scalar_subquery(),
             screenshot_count_query.scalar_subquery(),
         )
     ).one()
-    tracked_seconds = int(active_seconds or 0) + int(idle_seconds or 0)
+    idle_candidates = db.scalars(idle_candidates_query).unique().all()
+    idle_employees = sum(
+        is_currently_accountable_idle(db, employee=employee)
+        for employee in idle_candidates
+    )
+    off_shift_employees = max(0, len(idle_candidates) - idle_employees)
+    from app.api.v1.timesheets import timesheet_rows
+
+    canonical_today = timesheet_rows(
+        db,
+        current_admin.company_id,
+        date.today(),
+        date.today(),
+        team_id=team_id,
+        current_admin=current_admin,
+    )
+    active_seconds = sum(int(item["active_seconds"]) for item in canonical_today)
+    idle_seconds = sum(int(item["idle_seconds"]) for item in canonical_today)
     return success_response(
         data={
             "total_employees": int(total_employees or 0),
             "online_employees": int(online_employees or 0),
             "idle_employees": int(idle_employees or 0),
-            "active_seconds": int(active_seconds or 0) + int(adjustment_seconds or 0),
-            "idle_seconds": int(idle_seconds or 0),
-            "total_hours_today": round((tracked_seconds + int(adjustment_seconds or 0)) / 3600, 2),
+            "off_shift_employees": off_shift_employees,
+            "active_seconds": active_seconds,
+            "idle_seconds": idle_seconds,
+            "total_hours_today": round(active_seconds / 3600, 2),
             "screenshots_today": int(screenshots_today or 0),
             "screenshot_count": int(screenshot_count or 0),
         }
@@ -624,29 +622,12 @@ def team_reports(
     db: Annotated[Session, Depends(get_db)],
 ):
     ensure_team_access(db, current_admin, team_id)
+    from app.api.v1.reports import employee_report
+
+    report_rows = employee_report(current_admin, db, team_id)["data"]
+    tracked_seconds = sum(int(item["total_seconds"]) for item in report_rows)
     employee_ids = select(TeamMember.employee_id).where(
         TeamMember.team_id == team_id, TeamMember.status == "active"
-    )
-    tracked_seconds = (
-        db.scalar(
-            select(
-                func.coalesce(func.sum(WorkSession.active_seconds + WorkSession.idle_seconds), 0)
-            ).where(
-                WorkSession.company_id == current_admin.company_id,
-                WorkSession.employee_id.in_(employee_ids),
-            )
-        )
-        or 0
-    )
-    adjustment_seconds = (
-        db.scalar(
-            select(func.coalesce(func.sum(TimeAdjustmentRequest.approved_seconds), 0)).where(
-                TimeAdjustmentRequest.company_id == current_admin.company_id,
-                TimeAdjustmentRequest.employee_id.in_(employee_ids),
-                TimeAdjustmentRequest.status == "approved",
-            )
-        )
-        or 0
     )
     screenshots = (
         db.scalar(
@@ -660,7 +641,7 @@ def team_reports(
     )
     return success_response(
         data={
-            "total_tracked_seconds": int(tracked_seconds) + int(adjustment_seconds),
+            "total_tracked_seconds": tracked_seconds,
             "screenshots": int(screenshots),
         }
     )

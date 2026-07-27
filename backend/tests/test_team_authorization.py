@@ -1122,22 +1122,52 @@ def test_agent_task_list_includes_employee_time_per_task(team_client):
         stage="assigned",
         assignee_key="employee_a",
     )
+    work_day = local_today("UTC")
+    started_at = datetime.combine(work_day, datetime.min.time(), tzinfo=UTC).replace(hour=10)
     db: Session = data["session_factory"]()
     try:
-        db.add(
-            WorkSession(
-                company_id=data["employee_a"].company_id,
-                employee_id=data["employee_a"].id,
-                device_id=data["session_a"].device_id,
-                team_id=data["team_a"].id,
-                project_id=data["project_a"].id,
-                task_id=UUID(task_id),
-                started_at=datetime.now(UTC),
-                status="ended",
-                active_seconds=100,
-                idle_seconds=5,
-                deducted_seconds=20,
-            )
+        employee = db.get(Employee, data["employee_a"].id)
+        profile = get_or_create_work_profile(db, employee)
+        profile.shift_start = datetime.min.time().replace(hour=9)
+        profile.shift_end = datetime.min.time().replace(hour=17)
+        profile.working_days = [work_day.weekday()]
+        session = WorkSession(
+            company_id=data["employee_a"].company_id,
+            employee_id=data["employee_a"].id,
+            device_id=data["session_a"].device_id,
+            team_id=data["team_a"].id,
+            project_id=data["project_a"].id,
+            task_id=UUID(task_id),
+            started_at=started_at,
+            ended_at=started_at + timedelta(minutes=3),
+            status="ended",
+            active_seconds=100,
+            idle_seconds=5,
+            deducted_seconds=20,
+        )
+        db.add(session)
+        db.flush()
+        db.add_all(
+            [
+                ActivityEvent(
+                    company_id=session.company_id,
+                    employee_id=session.employee_id,
+                    device_id=session.device_id,
+                    session_id=session.id,
+                    event_type="idle_started",
+                    event_timestamp=started_at + timedelta(minutes=1),
+                    idempotency_key=str(uuid4()),
+                ),
+                ActivityEvent(
+                    company_id=session.company_id,
+                    employee_id=session.employee_id,
+                    device_id=session.device_id,
+                    session_id=session.id,
+                    event_type="idle_ended",
+                    event_timestamp=started_at + timedelta(minutes=1, seconds=5),
+                    idempotency_key=str(uuid4()),
+                ),
+            ]
         )
         db.commit()
     finally:
@@ -1800,7 +1830,10 @@ def test_desktop_today_excludes_idle_on_an_off_day(team_client):
     with data["session_factory"]() as db:
         session = db.get(WorkSession, data["session_a"].id)
         employee = db.get(Employee, data["employee_a"].id)
+        device = db.get(Device, session.device_id)
         session.started_at = now - timedelta(minutes=30)
+        session.status = "idle"
+        device.last_seen_at = now
         profile = get_or_create_work_profile(db, employee)
         profile.shift_start = datetime.min.time().replace(hour=9)
         profile.shift_end = datetime.min.time().replace(hour=17)
@@ -1814,6 +1847,16 @@ def test_desktop_today_excludes_idle_on_an_off_day(team_client):
                     session_id=session.id,
                     event_type="idle_started",
                     event_timestamp=now - timedelta(minutes=20),
+                    payload=None,
+                    idempotency_key=str(uuid4()),
+                ),
+                ActivityEvent(
+                    company_id=session.company_id,
+                    employee_id=session.employee_id,
+                    device_id=session.device_id,
+                    session_id=session.id,
+                    event_type="idle_started",
+                    event_timestamp=now - timedelta(minutes=4),
                     payload=None,
                     idempotency_key=str(uuid4()),
                 ),
@@ -1836,6 +1879,25 @@ def test_desktop_today_excludes_idle_on_an_off_day(team_client):
         f"/api/v1/timesheets/daily?day={local_today('UTC').isoformat()}",
         headers=data["general_headers"],
     )
+    timeline_response = client.get(
+        "/api/v1/activity/timeline",
+        params={
+            "employee_id": str(data["employee_a"].id),
+            "day": local_today("UTC").isoformat(),
+        },
+        headers=data["general_headers"],
+    )
+    employee_overview = client.get(
+        "/api/v1/employees-overview",
+        params={"employee_id": str(data["employee_a"].id)},
+        headers=data["general_headers"],
+    )
+    dashboard = client.get("/api/v1/dashboard/summary", headers=data["general_headers"])
+    team_summary = client.get(
+        f"/api/v1/teams/{data['team_a'].id}/summary",
+        headers=data["general_headers"],
+    )
+    employee_report = client.get("/api/v1/reports/employees", headers=data["general_headers"])
 
     assert response.status_code == 200
     summary = response.json()["data"]
@@ -1846,6 +1908,21 @@ def test_desktop_today_excludes_idle_on_an_off_day(team_client):
         row for row in timesheet.json()["data"] if row["employee_id"] == str(data["employee_a"].id)
     )
     assert timesheet_row["idle_seconds"] == 0
+    assert timeline_response.json()["data"]["idle_seconds"] == 0
+    overview_row = employee_overview.json()["data"][0]
+    assert overview_row["idle_seconds"] == 0
+    assert overview_row["worked_today_seconds"] == overview_row["active_seconds"]
+    assert overview_row["activity_status"] == "off_shift"
+    assert dashboard.status_code == 200
+    assert dashboard.json()["data"]["off_shift_employees"] >= 1
+    assert team_summary.json()["data"]["idle_seconds"] == 0
+    assert team_summary.json()["data"]["off_shift_employees"] >= 1
+    report_row = next(
+        row
+        for row in employee_report.json()["data"]
+        if row["employee_id"] == str(data["employee_a"].id)
+    )
+    assert report_row["idle_seconds"] == 0
 
 
 def test_idle_request_period_is_clipped_at_shift_end_and_tracks_remaining_time(
@@ -2279,6 +2356,40 @@ def test_employee_overview_includes_all_assigned_team_managers(team_client):
         manager["teams"] == [{"id": str(data["team_a"].id), "name": "Team A"}]
         for manager in managers
     )
+
+
+def test_employee_overview_labels_idle_outside_shift_as_off_shift(team_client, monkeypatch):
+    client, data = team_client
+    with data["session_factory"]() as db:
+        session = db.get(WorkSession, data["session_a"].id)
+        device = db.get(Device, session.device_id)
+        session.status = "idle"
+        device.last_seen_at = datetime.now(UTC)
+        db.commit()
+
+    monkeypatch.setattr(
+        "app.api.v1.employees.is_currently_accountable_idle",
+        lambda *_args, **_kwargs: False,
+    )
+    outside_shift = client.get(
+        f"/api/v1/employees-overview?employee_id={data['employee_a'].id}",
+        headers=data["general_headers"],
+    )
+
+    assert outside_shift.status_code == 200
+    assert outside_shift.json()["data"][0]["activity_status"] == "off_shift"
+
+    monkeypatch.setattr(
+        "app.api.v1.employees.is_currently_accountable_idle",
+        lambda *_args, **_kwargs: True,
+    )
+    inside_shift = client.get(
+        f"/api/v1/employees-overview?employee_id={data['employee_a'].id}",
+        headers=data["general_headers"],
+    )
+
+    assert inside_shift.status_code == 200
+    assert inside_shift.json()["data"][0]["activity_status"] == "idle"
 
 
 def test_request_recipients_include_all_managers_and_company_hr(team_client):

@@ -64,7 +64,6 @@ from app.services.activity_timeline import local_today
 from app.services.attendance import calculate_daily_attendance, serialize_daily_attendance
 from app.services.time_adjustments import serialize_time_adjustment_request
 from app.services.work_profiles import (
-    DEFAULT_WORKING_DAYS,
     get_or_create_work_profile,
     payroll_preview,
     serialize_work_profile,
@@ -109,38 +108,6 @@ def participant_task(db: Session, employee: Employee, task_id: UUID) -> tuple[Ta
     if row is None:
         raise ApiError("TASK_NOT_FOUND", "Your assigned task was not found.", 404)
     return row
-
-
-def _is_profile_workday(profile, target_day: date) -> bool:
-    working_days = profile.working_days or DEFAULT_WORKING_DAYS
-    off_days = profile.weekly_off_days or []
-    weekday = target_day.weekday()
-    return weekday in working_days and weekday not in off_days
-
-
-def _idle_limit_for_day(profile, target_day: date, active_seconds: int) -> int:
-    if not _is_profile_workday(profile, target_day):
-        return 0
-    required_seconds = int(profile.required_daily_minutes or 480) * 60
-    return max(0, required_seconds - active_seconds)
-
-
-def apply_work_profile_idle_rules(rows: list[dict], profile) -> list[dict]:
-    adjusted_rows = []
-    for row in rows:
-        adjusted = dict(row)
-        try:
-            row_day = date.fromisoformat(str(adjusted["date"]))
-        except (KeyError, ValueError):
-            adjusted_rows.append(adjusted)
-            continue
-        active_seconds = int(adjusted.get("active_seconds", 0))
-        idle_seconds = int(adjusted.get("idle_seconds", 0))
-        adjusted["idle_seconds"] = min(
-            idle_seconds, _idle_limit_for_day(profile, row_day, active_seconds)
-        )
-        adjusted_rows.append(adjusted)
-    return adjusted_rows
 
 
 def period_summary(rows: list[dict], manual_status_seconds: dict[str, int] | None = None) -> dict:
@@ -211,10 +178,12 @@ def summary(
     week_start = today - timedelta(days=today.weekday())
     month_start = today.replace(day=1)
     month_end = today.replace(day=monthrange(today.year, today.month)[1])
-    profile = get_or_create_work_profile(db, current_employee)
-    daily_rows = apply_work_profile_idle_rules(
-        timesheet_rows(db, current_employee.company_id, today, today, current_employee.id),
-        profile,
+    daily_rows = timesheet_rows(
+        db,
+        current_employee.company_id,
+        today,
+        today,
+        current_employee.id,
     )
     weekly_rows = timesheet_rows(
         db,
@@ -223,7 +192,6 @@ def summary(
         week_start + timedelta(days=6),
         current_employee.id,
     )
-    weekly_rows = apply_work_profile_idle_rules(weekly_rows, profile)
     monthly_rows = timesheet_rows(
         db,
         current_employee.company_id,
@@ -231,7 +199,6 @@ def summary(
         month_end,
         current_employee.id,
     )
-    monthly_rows = apply_work_profile_idle_rules(monthly_rows, profile)
     daily_attendance, today_timeline = calculate_daily_attendance(
         db,
         employee=current_employee,

@@ -164,6 +164,8 @@ def scope_timeline_to_schedule(
             and previous.get("source") == interval.get("source")
             and previous["ended_at"] == interval["started_at"]
             and previous["session_id"] == interval["session_id"]
+            and previous.get("task_id") == interval.get("task_id")
+            and previous.get("project_id") == interval.get("project_id")
             and previous.get("task_name") == interval.get("task_name")
             and previous.get("project_name") == interval.get("project_name")
             and previous.get("work_category") == interval.get("work_category")
@@ -267,7 +269,12 @@ def build_workday_timeline(
     rows = db.execute(session_statement).all()
     sessions = [row[0] for row in rows]
     session_context = {
-        session.id: {"project_name": project_name, "task_name": task_name}
+        session.id: {
+            "project_id": session.project_id,
+            "task_id": session.task_id,
+            "project_name": project_name,
+            "task_name": task_name,
+        }
         for session, project_name, task_name in rows
     }
 
@@ -444,6 +451,8 @@ def build_workday_timeline(
             and previous["type"] == interval["type"]
             and previous["source"] == interval["source"]
             and previous["ended_at"] == interval["started_at"]
+            and previous.get("task_id") == interval.get("task_id")
+            and previous.get("project_id") == interval.get("project_id")
             and previous["task_name"] == interval["task_name"]
             and previous["project_name"] == interval["project_name"]
         ):
@@ -470,6 +479,10 @@ def build_workday_timeline(
                 "ended_at": None if is_current else interval["ended_at"].isoformat(),
                 "duration_seconds": duration_seconds,
                 "session_id": str(interval["session_id"]),
+                "project_id": (
+                    str(interval["project_id"]) if interval.get("project_id") else None
+                ),
+                "task_id": str(interval["task_id"]) if interval.get("task_id") else None,
                 "project_name": interval["project_name"],
                 "task_name": interval["task_name"],
                 "is_current": is_current,

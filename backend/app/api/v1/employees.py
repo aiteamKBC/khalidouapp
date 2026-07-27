@@ -47,7 +47,10 @@ from app.schemas.admin import (
 )
 from app.services.audit import record_audit_log
 from app.services.activity_timeline import local_today
-from app.services.attendance import refresh_daily_attendance_range
+from app.services.attendance import (
+    is_currently_accountable_idle,
+    refresh_daily_attendance_range,
+)
 from app.services.email import (
     enqueue_employee_invitation_email,
 )
@@ -87,6 +90,12 @@ FINANCIAL_WORK_PROFILE_UPDATE_FIELDS = FINANCIAL_WORK_PROFILE_FIELDS | {
     "overtime_enabled",
     "overtime_basis",
 }
+
+
+def _as_utc(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
 
 
 def serialize_work_profile_for_admin(profile: EmployeeWorkProfile, admin: AdminUser) -> dict:
@@ -331,6 +340,31 @@ def list_employee_overviews(
     rows = db.execute(statement).all()
 
     employee_ids = [row[0].id for row in rows]
+    canonical_today_by_employee: dict[UUID, dict] = {}
+    if rows:
+        # Live employee cards are work indicators, so they must use the same
+        # shift-aware totals as Timesheets and Attendance. Session counters
+        # remain available on the session APIs for diagnostics only.
+        from app.api.v1.timesheets import timesheet_rows
+
+        local_days = {local_today(employee.timezone) for employee, *_rest in rows}
+        canonical_rows = timesheet_rows(
+            db,
+            current_admin.company_id,
+            min(local_days),
+            max(local_days),
+            team_id=team_id,
+            current_admin=current_admin,
+        )
+        expected_day_by_employee = {
+            employee.id: local_today(employee.timezone) for employee, *_rest in rows
+        }
+        canonical_today_by_employee = {
+            UUID(item["employee_id"]): item
+            for item in canonical_rows
+            if date.fromisoformat(item["date"])
+            == expected_day_by_employee.get(UUID(item["employee_id"]))
+        }
     invitations_by_employee = latest_employee_invitations(db, employee_ids)
     managers_by_employee = employee_manager_summaries(db, employee_ids)
     teams_by_employee: dict[UUID, list[str]] = {item: [] for item in employee_ids}
@@ -373,19 +407,39 @@ def list_employee_overviews(
             invitation,
             desktop_app_linked=device_id is not None,
         )
+        normalized_last_seen = _as_utc(device_last_seen)
         online = bool(
             device_id
             and device_status != "revoked"
-            and device_last_seen
-            and device_last_seen >= cutoff
+            and normalized_last_seen
+            and normalized_last_seen >= cutoff
         )
-        active_seconds = max(0, int(raw_active_seconds or 0) - int(deducted_seconds or 0))
-        idle_seconds = int(idle_seconds or 0)
+        canonical_today = canonical_today_by_employee.get(employee.id)
+        active_seconds = (
+            max(
+                0,
+                int(canonical_today["active_seconds"])
+                - int(canonical_today["adjustment_seconds"]),
+            )
+            if canonical_today
+            else max(0, int(raw_active_seconds or 0) - int(deducted_seconds or 0))
+        )
+        idle_seconds = (
+            max(0, int(canonical_today["idle_seconds"]))
+            if canonical_today
+            else 0
+        )
+        activity_status = session_status if session_id and online else "offline"
+        if (
+            activity_status in {"idle", "locked", "sleeping"}
+            and not is_currently_accountable_idle(db, employee=employee)
+        ):
+            activity_status = "off_shift"
         data.append(
             {
                 "employee": employee_data,
                 "online_status": "online" if online else "offline",
-                "activity_status": session_status if session_id and online else "offline",
+                "activity_status": activity_status,
                 "current_session": (
                     {
                         "id": str(session_id),
@@ -399,7 +453,7 @@ def list_employee_overviews(
                 "session_start_time": session_started_at.isoformat()
                 if session_started_at
                 else None,
-                "worked_today_seconds": active_seconds + idle_seconds,
+                "worked_today_seconds": active_seconds,
                 "active_seconds": active_seconds,
                 "idle_seconds": idle_seconds,
                 "last_heartbeat": device_last_seen.isoformat() if device_last_seen else None,
@@ -844,18 +898,18 @@ def employee_status(
         )
         .order_by(WorkSession.started_at.desc())
     )
-    today_start, today_end = day_bounds(date.today())
-    totals = db.execute(
-        select(
-            func.coalesce(func.sum(WorkSession.active_seconds), 0),
-            func.coalesce(func.sum(WorkSession.idle_seconds), 0),
-            func.coalesce(func.sum(WorkSession.deducted_seconds), 0),
-        ).where(
-            WorkSession.company_id == current_admin.company_id,
-            WorkSession.employee_id == employee.id,
-            WorkSession.started_at.between(today_start, today_end),
-        )
-    ).one_or_none()
+    employee_today = local_today(employee.timezone)
+    from app.api.v1.timesheets import timesheet_rows
+
+    canonical_rows = timesheet_rows(
+        db,
+        current_admin.company_id,
+        employee_today,
+        employee_today,
+        employee_id=employee.id,
+        current_admin=current_admin,
+    )
+    canonical_today = canonical_rows[0] if canonical_rows else None
     last_screenshot = db.scalar(
         select(Screenshot)
         .where(
@@ -867,15 +921,29 @@ def employee_status(
     )
     settings = get_company_settings(db, current_admin.company_id)
     cutoff = datetime.now(UTC) - timedelta(minutes=settings.offline_threshold_minutes)
+    normalized_last_seen = _as_utc(device.last_seen_at if device else None)
     online = bool(
         device
         and device.status != "revoked"
-        and device.last_seen_at
-        and device.last_seen_at >= cutoff
+        and normalized_last_seen
+        and normalized_last_seen >= cutoff
     )
-    active_seconds = max(0, int(totals[0] if totals else 0) - int(totals[2] if totals else 0))
-    idle_seconds = int(totals[1] if totals else 0)
+    active_seconds = (
+        max(
+            0,
+            int(canonical_today["active_seconds"])
+            - int(canonical_today["adjustment_seconds"]),
+        )
+        if canonical_today
+        else 0
+    )
+    idle_seconds = max(0, int(canonical_today["idle_seconds"])) if canonical_today else 0
     activity_status = current.status if current and online else "offline"
+    if (
+        activity_status in {"idle", "locked", "sleeping"}
+        and not is_currently_accountable_idle(db, employee=employee)
+    ):
+        activity_status = "off_shift"
     return success_response(
         data={
             "employee": serialize_employee(employee),

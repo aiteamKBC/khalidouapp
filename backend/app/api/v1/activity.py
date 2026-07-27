@@ -18,7 +18,8 @@ from app.api.v1.team_auth import apply_employee_scope, ensure_employee_access
 from app.core.responses import success_response
 from app.database.session import get_db
 from app.models import ActivityEvent, AdminUser
-from app.services.activity_timeline import build_workday_timeline
+from app.services.activity_timeline import local_today
+from app.services.attendance import calculate_daily_attendance
 from app.services.permissions import require_capability
 
 router = APIRouter(prefix="/activity", tags=["activity"])
@@ -165,14 +166,16 @@ def employee_timeline(
     team_id: UUID | None = None,
 ):
     employee = ensure_employee_access(db, current_admin, employee_id, team_id)
+    selected_day = day or local_today(employee.timezone)
+    _, timeline = calculate_daily_attendance(
+        db,
+        employee=employee,
+        work_date=selected_day,
+        now=datetime.now(UTC),
+        persist=False,
+    )
     return success_response(
-        data=build_workday_timeline(
-            db,
-            company_id=current_admin.company_id,
-            employee_id=employee_id,
-            timezone_name=employee.timezone,
-            target_date=day,
-        )
+        data=timeline
     )
 
 

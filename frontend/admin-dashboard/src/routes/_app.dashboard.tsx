@@ -721,7 +721,7 @@ function DashboardPage() {
                 </span>
               </div>
               <div className="flex flex-wrap gap-1.5">
-                {(["all", "active", "idle", "offline"] as const).map((filter) => (
+                {(["all", "active", "idle", "off_shift", "offline"] as const).map((filter) => (
                   <button
                     key={filter}
                     type="button"
@@ -892,7 +892,8 @@ function DashboardPage() {
               {summary.data && (
                 <span className="text-xs text-muted-foreground">
                   {summary.data.onlineEmployees} online / {summary.data.idleEmployees} idle /{" "}
-                  {summary.data.offlineEmployees} offline
+                  {summary.data.offShiftEmployees} off shift / {summary.data.offlineEmployees}{" "}
+                  offline
                 </span>
               )}
             </CardHeader>
@@ -1143,7 +1144,13 @@ function MemberList({
 
 function OnlineRow({ employee }: { employee: Employee }) {
   const isActive = employee.status === "active";
-  const statusLabel = isActive ? "Live now" : employee.status === "idle" ? "Idle online" : "Online";
+  const statusLabel = isActive
+    ? "Live now"
+    : employee.status === "idle"
+      ? "Idle online"
+      : employee.status === "off_shift"
+        ? "Off shift"
+        : "Online";
   const statusClasses = isActive
     ? "bg-success/12 text-success ring-success/20"
     : "bg-warning/15 text-warning-foreground ring-warning/20";

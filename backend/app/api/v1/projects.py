@@ -45,6 +45,7 @@ from app.schemas.admin import (
 )
 from app.services.audit import record_audit_log
 from app.services.projects import (
+    employee_task_time_totals,
     get_project_or_404,
     get_task_or_404,
     serialize_project,
@@ -365,28 +366,53 @@ def task_metrics(
     db: Annotated[Session, Depends(get_db)],
     team_id: UUID | None = None,
 ):
-    statement = (
-        select(
-            WorkSession.task_id,
-            func.coalesce(func.sum(WorkSession.active_seconds), 0),
-            func.coalesce(func.sum(WorkSession.idle_seconds), 0),
-        )
+    task_statement = (
+        select(Task.id)
+        .join(Project, Project.id == Task.project_id)
+        .where(Task.company_id == current_admin.company_id)
+    )
+    employee_statement = (
+        select(WorkSession.employee_id)
         .join(Task, Task.id == WorkSession.task_id)
         .join(Project, Project.id == Task.project_id)
         .where(WorkSession.company_id == current_admin.company_id, WorkSession.task_id.is_not(None))
+        .distinct()
     )
     if team_id:
         ensure_team_access(db, current_admin, team_id)
-        statement = statement.where(Project.team_id == team_id)
+        task_statement = task_statement.where(Project.team_id == team_id)
+        employee_statement = employee_statement.where(Project.team_id == team_id)
     else:
-        statement = statement.where(
+        accessible_teams = accessible_team_ids_statement(current_admin)
+        task_statement = task_statement.where(Project.team_id.in_(accessible_teams))
+        employee_statement = employee_statement.where(
             Project.team_id.in_(accessible_team_ids_statement(current_admin))
         )
-    rows = db.execute(statement.group_by(WorkSession.task_id)).all()
+    task_ids = list(db.scalars(task_statement).all())
+    totals = {
+        task_id: {"active_seconds": 0, "idle_seconds": 0, "tracked_seconds": 0}
+        for task_id in task_ids
+    }
+    for employee_id in db.scalars(employee_statement).all():
+        employee_totals = employee_task_time_totals(
+            db,
+            company_id=current_admin.company_id,
+            employee_id=employee_id,
+            task_ids=task_ids,
+        )
+        for task_id, metric in employee_totals.items():
+            totals[task_id]["active_seconds"] += metric["active_seconds"]
+            totals[task_id]["idle_seconds"] += metric["idle_seconds"]
+            totals[task_id]["tracked_seconds"] += metric["tracked_seconds"]
     return success_response(
         data=[
-            {"task_id": str(task_id), "active_seconds": active, "idle_seconds": idle}
-            for task_id, active, idle in rows
+            {
+                "task_id": str(task_id),
+                "active_seconds": metric["active_seconds"],
+                "idle_seconds": metric["idle_seconds"],
+            }
+            for task_id, metric in totals.items()
+            if metric["tracked_seconds"] > 0
         ]
     )
 
@@ -854,6 +880,15 @@ def task_workspace(
         .where(WorkSession.task_id == task.id)
         .group_by(WorkSession.employee_id)
     ).all()
+    work_metrics = {
+        employee_id: employee_task_time_totals(
+            db,
+            company_id=current_admin.company_id,
+            employee_id=employee_id,
+            task_ids=[task.id],
+        ).get(task.id, {"active_seconds": 0, "idle_seconds": 0})
+        for employee_id, *_rest in work_rows
+    }
     history = db.scalars(
         select(TaskActivity)
         .where(TaskActivity.company_id == current_admin.company_id, TaskActivity.task_id == task.id)
@@ -908,8 +943,8 @@ def task_workspace(
                         if db.get(Employee, employee_id)
                         else "Employee"
                     ),
-                    "active_seconds": active_seconds,
-                    "idle_seconds": idle_seconds,
+                    "active_seconds": work_metrics[employee_id]["active_seconds"],
+                    "idle_seconds": work_metrics[employee_id]["idle_seconds"],
                     "started_at": started_at.isoformat() if started_at else None,
                     "ended_at": ended_at.isoformat() if ended_at else None,
                 }

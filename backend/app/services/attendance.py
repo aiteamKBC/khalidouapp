@@ -571,6 +571,74 @@ def serialize_daily_attendance(row: DailyAttendance, *, timeline: dict | None = 
     return result
 
 
+def accountable_idle_seconds(row: DailyAttendance) -> int:
+    """Idle recorded inside an attendance obligation before grace/deductions."""
+    sources = row.calculation_sources or {}
+    return max(0, int(sources.get("raw_idle_seconds", row.idle_seconds)))
+
+
+def accountable_idle_totals(
+    db: Session,
+    *,
+    company_id: UUID,
+    employee_ids: set[UUID] | None = None,
+    start_date: date | None = None,
+    end_date: date | None = None,
+) -> dict[UUID, int]:
+    statement = select(DailyAttendance).where(DailyAttendance.company_id == company_id)
+    if employee_ids is not None:
+        if not employee_ids:
+            return {}
+        statement = statement.where(DailyAttendance.employee_id.in_(employee_ids))
+    if start_date is not None:
+        statement = statement.where(DailyAttendance.work_date >= start_date)
+    if end_date is not None:
+        statement = statement.where(DailyAttendance.work_date <= end_date)
+
+    totals: dict[UUID, int] = {}
+    for row in db.scalars(statement).all():
+        totals[row.employee_id] = totals.get(row.employee_id, 0) + accountable_idle_seconds(row)
+    return totals
+
+
+def is_currently_accountable_idle(
+    db: Session,
+    *,
+    employee: Employee,
+    now: datetime | None = None,
+) -> bool:
+    """Whether the current non-working device state is inside the paid shift."""
+    at = _utc(now or datetime.now(UTC))
+    work_date = local_today(employee.timezone, at)
+    profile = get_or_create_work_profile(db, employee)
+    schedule = effective_schedule(
+        db,
+        employee,
+        profile,
+        work_date,
+        timezone_name=employee.timezone,
+    )
+    raw_timeline = build_workday_timeline(
+        db,
+        company_id=employee.company_id,
+        employee_id=employee.id,
+        timezone_name=schedule["timezone"],
+        target_date=work_date,
+        now=at,
+    )
+    timeline = scope_timeline_to_schedule(
+        raw_timeline,
+        shift_start=schedule["start_at"],
+        shift_end=schedule["end_at"],
+        scheduled_breaks=schedule["breaks"],
+        now=at,
+    )
+    return any(
+        item.get("is_current") and item.get("type") in {"idle", "locked", "sleeping"}
+        for item in timeline["intervals"]
+    )
+
+
 def refresh_daily_attendance_range(
     db: Session,
     *,

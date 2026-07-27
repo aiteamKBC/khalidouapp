@@ -40,6 +40,7 @@ const styles: Record<string, string> = {
   in_progress: "bg-info/15 text-info ring-info/30",
   locked: "bg-muted text-muted-foreground ring-border",
   sleeping: "bg-muted text-muted-foreground ring-border",
+  off_shift: "bg-info/15 text-info ring-info/30",
   inactive: "bg-muted text-muted-foreground ring-border",
   archived: "bg-muted text-muted-foreground ring-border",
   used: "bg-muted text-muted-foreground ring-border",
@@ -95,9 +96,14 @@ export function StatusBadge({ status, className }: { status: AnyStatus; classNam
             "late",
             "left_early",
           ].includes(status),
-          "bg-info": ["in_progress", "invited", "draft", "off_day", "worked_off_day"].includes(
-            status,
-          ),
+          "bg-info": [
+            "in_progress",
+            "invited",
+            "draft",
+            "off_day",
+            "worked_off_day",
+            "off_shift",
+          ].includes(status),
           "bg-muted-foreground": ["locked", "sleeping", "inactive", "archived", "used"].includes(
             status,
           ),

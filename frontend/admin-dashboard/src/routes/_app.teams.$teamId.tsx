@@ -434,6 +434,14 @@ function TeamDetailPage() {
                   tone="destructive"
                 />
               </MetricLink>
+              <MetricLink label="View off-shift employees" onClick={() => setActiveTab("live")}>
+                <StatCard
+                  label="Off shift now"
+                  value={stats.data.offShift}
+                  icon={Clock}
+                  tone="info"
+                />
+              </MetricLink>
               <StatCard
                 label="Worked today"
                 value={formatMinutes(Math.round(stats.data.hoursToday * 60))}

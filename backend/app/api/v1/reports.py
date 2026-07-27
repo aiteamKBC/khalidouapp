@@ -1,4 +1,5 @@
 import csv
+from datetime import date
 from io import StringIO
 from typing import Annotated
 from uuid import UUID
@@ -13,6 +14,7 @@ from app.api.v1.team_auth import accessible_employee_ids_statement, apply_employ
 from app.core.responses import success_response
 from app.database.session import get_db
 from app.models import AdminUser, Employee, Screenshot, TimeAdjustmentRequest, WorkSession
+from app.services.attendance import accountable_idle_totals
 from app.services.permissions import require_capability
 
 router = APIRouter(prefix="/reports", tags=["reports"])
@@ -34,19 +36,6 @@ def summary(
             else statement
         )
 
-    tracked_query = scoped(
-        select(
-            func.coalesce(func.sum(WorkSession.active_seconds + WorkSession.idle_seconds), 0)
-        ).where(WorkSession.company_id == current_admin.company_id),
-        WorkSession.employee_id,
-    )
-    adjustment_query = scoped(
-        select(func.coalesce(func.sum(TimeAdjustmentRequest.approved_seconds), 0)).where(
-            TimeAdjustmentRequest.company_id == current_admin.company_id,
-            TimeAdjustmentRequest.status == "approved",
-        ),
-        TimeAdjustmentRequest.employee_id,
-    )
     screenshots_query = scoped(
         select(func.count()).where(
             Screenshot.company_id == current_admin.company_id,
@@ -54,16 +43,11 @@ def summary(
         ),
         Screenshot.employee_id,
     )
-    tracked_seconds, adjustment_seconds, screenshots = db.execute(
-        select(
-            tracked_query.scalar_subquery(),
-            adjustment_query.scalar_subquery(),
-            screenshots_query.scalar_subquery(),
-        )
-    ).one()
+    screenshots = db.scalar(screenshots_query) or 0
+    report_rows = employee_report(current_admin, db, team_id)["data"]
     return success_response(
         data={
-            "total_tracked_seconds": int(tracked_seconds or 0) + int(adjustment_seconds or 0),
+            "total_tracked_seconds": sum(int(item["total_seconds"]) for item in report_rows),
             "screenshots": int(screenshots or 0),
         }
     )
@@ -82,7 +66,6 @@ def employee_report(
             Employee.name,
             Employee.email,
             func.coalesce(func.sum(WorkSession.active_seconds), 0),
-            func.coalesce(func.sum(WorkSession.idle_seconds), 0),
         )
         .outerjoin(WorkSession, WorkSession.employee_id == Employee.id)
         .where(Employee.company_id == current_admin.company_id)
@@ -91,6 +74,21 @@ def employee_report(
     )
     statement = apply_employee_scope(statement, db, current_admin, Employee.id, team_id)
     rows = db.execute(statement).all()
+    from app.api.v1.timesheets import timesheet_rows
+
+    timesheet_rows(
+        db,
+        current_admin.company_id,
+        date.today(),
+        date.today(),
+        team_id=team_id,
+        current_admin=current_admin,
+    )
+    idle_by_employee = accountable_idle_totals(
+        db,
+        company_id=current_admin.company_id,
+        employee_ids={row[0] for row in rows},
+    )
     adjustment_statement = (
         select(
             TimeAdjustmentRequest.employee_id,
@@ -117,8 +115,12 @@ def employee_report(
                 "name": row[1],
                 "email": row[2],
                 "active_seconds": int(row[3]) + adjustments.get(row[0], 0),
-                "idle_seconds": int(row[4]),
-                "total_seconds": int(row[3]) + adjustments.get(row[0], 0) + int(row[4]),
+                "idle_seconds": idle_by_employee.get(row[0], 0),
+                "total_seconds": (
+                    int(row[3])
+                    + adjustments.get(row[0], 0)
+                    + idle_by_employee.get(row[0], 0)
+                ),
             }
             for row in rows
         ]

@@ -22,7 +22,7 @@ from app.models import (
     WorkSession,
 )
 from app.services.activity_timeline import local_today
-from app.services.attendance import cached_daily_attendance
+from app.services.attendance import accountable_idle_seconds, cached_daily_attendance
 
 router = APIRouter(prefix="/timesheets", tags=["timesheets"])
 
@@ -108,9 +108,8 @@ def timesheet_rows(
                 DailyAttendance.work_date <= end_day,
             )
         ).all():
-            sources = attendance.calculation_sources or {}
-            stored_idle_by_key[(attendance.employee_id, attendance.work_date)] = int(
-                sources.get("raw_idle_seconds", attendance.idle_seconds)
+            stored_idle_by_key[(attendance.employee_id, attendance.work_date)] = (
+                accountable_idle_seconds(attendance)
             )
 
     # Raw session idle is a device state, not necessarily accountable idle.
@@ -145,15 +144,7 @@ def timesheet_rows(
                 int(item["active_seconds"]),
                 max(0, int(timeline["worked_seconds"]) - int(item["deducted_seconds"])),
             )
-        item["idle_seconds"] = max(
-            0,
-            int(
-                (attendance.calculation_sources or {}).get(
-                    "raw_idle_seconds",
-                    timeline["idle_seconds"] if timeline is not None else attendance.idle_seconds,
-                )
-            ),
-        )
+        item["idle_seconds"] = accountable_idle_seconds(attendance)
 
     adjustment_statement = (
         select(

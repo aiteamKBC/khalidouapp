@@ -171,7 +171,13 @@ export type PayrollPreview = {
 };
 
 function normalizeEmployeeStatus(value?: string | null): EmployeeStatus {
-  if (value === "idle" || value === "locked" || value === "sleeping" || value === "offline")
+  if (
+    value === "idle" ||
+    value === "locked" ||
+    value === "sleeping" ||
+    value === "off_shift" ||
+    value === "offline"
+  )
     return value;
   return "active";
 }

@@ -11,7 +11,8 @@ from app.api.v1.admin_utils import day_bounds, get_company_settings
 from app.api.v1.team_auth import accessible_employee_ids_statement
 from app.core.responses import success_response
 from app.database.session import get_db
-from app.models import AdminUser, Device, Employee, Screenshot, TimeAdjustmentRequest, WorkSession
+from app.models import AdminUser, Device, Employee, Screenshot, WorkSession
+from app.services.attendance import is_currently_accountable_idle
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
@@ -49,30 +50,19 @@ def summary(
         ),
         Device.employee_id,
     )
-    idle_employees_query = scoped(
-        select(func.count(func.distinct(WorkSession.employee_id))).where(
+    idle_candidates_query = scoped(
+        select(Employee)
+        .join(WorkSession, WorkSession.employee_id == Employee.id)
+        .join(Device, Device.employee_id == Employee.id)
+        .where(
             WorkSession.company_id == current_admin.company_id,
-            WorkSession.status == "idle",
+            WorkSession.status.in_(["idle", "locked", "sleeping"]),
             WorkSession.ended_at.is_(None),
+            Device.company_id == current_admin.company_id,
+            Device.last_seen_at >= offline_cutoff,
+            Device.revoked_at.is_(None),
         ),
-        WorkSession.employee_id,
-    )
-    tracked_seconds_query = scoped(
-        select(
-            func.coalesce(func.sum(WorkSession.active_seconds + WorkSession.idle_seconds), 0)
-        ).where(
-            WorkSession.company_id == current_admin.company_id,
-            WorkSession.started_at.between(start, end),
-        ),
-        WorkSession.employee_id,
-    )
-    adjustment_seconds_query = scoped(
-        select(func.coalesce(func.sum(TimeAdjustmentRequest.approved_seconds), 0)).where(
-            TimeAdjustmentRequest.company_id == current_admin.company_id,
-            TimeAdjustmentRequest.status == "approved",
-            TimeAdjustmentRequest.requested_date == date.today(),
-        ),
-        TimeAdjustmentRequest.employee_id,
+        Employee.id,
     )
     screenshots_today_query = scoped(
         select(func.count()).where(
@@ -85,28 +75,40 @@ def summary(
     (
         total_employees,
         online_employees,
-        idle_employees,
-        tracked_seconds,
-        adjustment_seconds,
         screenshots_today,
     ) = db.execute(
         select(
             total_employees_query.scalar_subquery(),
             online_employees_query.scalar_subquery(),
-            idle_employees_query.scalar_subquery(),
-            tracked_seconds_query.scalar_subquery(),
-            adjustment_seconds_query.scalar_subquery(),
             screenshots_today_query.scalar_subquery(),
         )
     ).one()
+    idle_candidates = db.scalars(idle_candidates_query).unique().all()
+    idle_employees = sum(
+        is_currently_accountable_idle(db, employee=employee)
+        for employee in idle_candidates
+    )
+    off_shift_employees = max(0, len(idle_candidates) - idle_employees)
+    from app.api.v1.timesheets import timesheet_rows
+
+    canonical_today = timesheet_rows(
+        db,
+        current_admin.company_id,
+        date.today(),
+        date.today(),
+        team_id=team_id,
+        current_admin=current_admin,
+    )
+    tracked_seconds = sum(int(item["total_tracked_seconds"]) for item in canonical_today)
 
     return success_response(
         data={
             "total_employees": total_employees,
             "online_employees": online_employees,
             "idle_employees": idle_employees,
+            "off_shift_employees": off_shift_employees,
             "offline_employees": max(0, total_employees - online_employees),
-            "total_hours_today": round((tracked_seconds + adjustment_seconds) / 3600, 2),
+            "total_hours_today": round(tracked_seconds / 3600, 2),
             "screenshots_today": screenshots_today,
         }
     )

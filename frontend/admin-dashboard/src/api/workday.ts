@@ -19,6 +19,8 @@ export type BackendWorkdayTimeline = {
     ended_at?: string | null;
     duration_seconds: number;
     session_id: string;
+    project_id?: string | null;
+    task_id?: string | null;
     project_name?: string | null;
     task_name?: string | null;
     is_current: boolean;
@@ -46,6 +48,8 @@ export function mapWorkdayTimeline(row: BackendWorkdayTimeline): WorkdayTimeline
       endedAt: interval.ended_at ?? undefined,
       durationSeconds: interval.duration_seconds,
       sessionId: interval.session_id,
+      projectId: interval.project_id ?? undefined,
+      taskId: interval.task_id ?? undefined,
       projectName: interval.project_name ?? undefined,
       taskName: interval.task_name ?? undefined,
       isCurrent: interval.is_current,
