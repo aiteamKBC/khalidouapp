@@ -230,6 +230,8 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
     onLogout();
   };
   const [screenshotDay, setScreenshotDay] = useState(() => localDateKey());
+  const [loadSecondary, setLoadSecondary] = useState(false);
+  const [loadMedia, setLoadMedia] = useState(false);
   const me = useQuery({
     queryKey: [...employeePortalQueryKey, "me"],
     queryFn: () => employeeMe(token),
@@ -239,27 +241,41 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
     queryKey: [...employeePortalQueryKey, "summary"],
     queryFn: () => employeeSummary(token),
     refetchInterval: 15_000,
-    refetchOnWindowFocus: true,
   });
+  const primaryReady = me.isFetched && summary.isFetched;
+  useEffect(() => {
+    setLoadSecondary(false);
+    setLoadMedia(false);
+  }, [token]);
+  useEffect(() => {
+    if (!primaryReady) return;
+    const secondaryTimer = window.setTimeout(() => setLoadSecondary(true), 100);
+    const mediaTimer = window.setTimeout(() => setLoadMedia(true), 400);
+    return () => {
+      window.clearTimeout(secondaryTimer);
+      window.clearTimeout(mediaTimer);
+    };
+  }, [primaryReady, token]);
   const workProfile = useQuery({
     queryKey: [...employeePortalQueryKey, "work-profile"],
     queryFn: () => employeeWorkProfile(token),
+    enabled: loadSecondary,
   });
   const tasks = useQuery({
     queryKey: [...employeePortalQueryKey, "tasks"],
     queryFn: () => employeeTasks(token),
     refetchInterval: 15_000,
-    refetchOnWindowFocus: true,
   });
   const projects = useQuery({
     queryKey: [...employeePortalQueryKey, "projects"],
     queryFn: () => employeeProjects(token),
+    enabled: loadSecondary,
   });
   const screenshots = useQuery({
     queryKey: [...employeePortalQueryKey, "screenshots", screenshotDay],
     queryFn: () => employeeScreenshots(token, screenshotDay),
+    enabled: loadMedia,
     refetchInterval: 30_000,
-    refetchOnWindowFocus: true,
   });
   useEffect(() => {
     if (new URLSearchParams(window.location.search).get("view") !== "screenshots") return;
@@ -270,14 +286,17 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
   const requests = useQuery({
     queryKey: [...employeePortalQueryKey, "requests"],
     queryFn: () => employeeTimeRequests(token),
+    enabled: loadSecondary,
   });
   const leaveRequests = useQuery({
     queryKey: [...employeePortalQueryKey, "leave-requests"],
     queryFn: () => employeeLeaveRequests(token),
+    enabled: loadSecondary,
   });
   const notifications = useQuery({
     queryKey: [...employeePortalQueryKey, "notifications"],
     queryFn: () => employeeNotifications(token),
+    enabled: loadSecondary,
     refetchInterval: 30_000,
   });
   const [minutes, setMinutes] = useState(30);

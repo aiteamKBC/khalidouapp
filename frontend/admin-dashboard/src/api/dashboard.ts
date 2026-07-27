@@ -21,7 +21,7 @@ export async function getDashboardSummary(scopedTeamIds?: string[]): Promise<Das
     onlineEmployees: summary.online_employees,
     activeEmployees: Math.max(
       0,
-      summary.online_employees - summary.idle_employees - summary.off_shift_employees,
+      summary.online_employees - summary.idle_employees,
     ),
     idleEmployees: summary.idle_employees,
     offShiftEmployees: summary.off_shift_employees,

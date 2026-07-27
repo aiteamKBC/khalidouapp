@@ -1922,9 +1922,13 @@ def test_desktop_today_excludes_idle_on_an_off_day(team_client):
     assert overview_row["worked_today_seconds"] == overview_row["active_seconds"]
     assert overview_row["activity_status"] == "off_shift"
     assert dashboard.status_code == 200
-    assert dashboard.json()["data"]["off_shift_employees"] >= 1
+    dashboard_data = dashboard.json()["data"]
+    assert dashboard_data["off_shift_employees"] >= 1
+    assert dashboard_data["online_employees"] == 0
     assert team_summary.json()["data"]["idle_seconds"] == 0
-    assert team_summary.json()["data"]["off_shift_employees"] >= 1
+    team_summary_data = team_summary.json()["data"]
+    assert team_summary_data["off_shift_employees"] >= 1
+    assert team_summary_data["online_employees"] == 0
     report_row = next(
         row
         for row in employee_report.json()["data"]

@@ -162,7 +162,10 @@ export async function teamStats(id: string) {
     online: summary.online_employees,
     idle: summary.idle_employees,
     offShift: summary.off_shift_employees,
-    offline: Math.max(0, summary.total_employees - summary.online_employees),
+    offline: Math.max(
+      0,
+      summary.total_employees - summary.online_employees - summary.off_shift_employees,
+    ),
     hoursToday: summary.total_hours_today,
     activeMin: toMinutes(summary.active_seconds),
     idleMin: toMinutes(summary.idle_seconds),

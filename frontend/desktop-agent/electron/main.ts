@@ -251,6 +251,10 @@ let hasPromptedForDownloadedUpdate = false;
 let lastFullSummaryRefreshAt = 0;
 let lastMetadataRefreshAt = 0;
 let isRefreshingTrackingConfig = false;
+let isRefreshingWorkedSummary = false;
+let isRefreshingTasks = false;
+let isRefreshingTimeAdjustments = false;
+let isRefreshingLeaveRequests = false;
 let paidPauseTimer: ReturnType<typeof setTimeout> | null = null;
 let displaySleepBlockerId: number | null = null;
 let onAcPower = true;
@@ -1023,6 +1027,10 @@ async function refreshWorkedTodayTotal() {
     runtimeStatus.workedTodaySeconds = 0;
     return;
   }
+  if (isRefreshingWorkedSummary) {
+    return;
+  }
+  isRefreshingWorkedSummary = true;
   try {
     const previousTimelineDate = runtimeStatus.todayTimeline?.date ?? null;
     const summary = await getAgentSummary();
@@ -1060,6 +1068,8 @@ async function refreshWorkedTodayTotal() {
     );
   } catch (error) {
     log.warn("Failed to refresh today's worked time", error);
+  } finally {
+    isRefreshingWorkedSummary = false;
   }
 }
 
@@ -1085,10 +1095,16 @@ async function refreshTimeAdjustmentRequests() {
     runtimeStatus.timeAdjustmentRequests = [];
     return;
   }
+  if (isRefreshingTimeAdjustments) {
+    return;
+  }
+  isRefreshingTimeAdjustments = true;
   try {
     runtimeStatus.timeAdjustmentRequests = await listTimeAdjustmentRequests();
   } catch (error) {
     log.warn("Failed to refresh time adjustment requests", error);
+  } finally {
+    isRefreshingTimeAdjustments = false;
   }
 }
 
@@ -1097,10 +1113,16 @@ async function refreshLeaveRequests() {
     runtimeStatus.leaveRequests = null;
     return;
   }
+  if (isRefreshingLeaveRequests) {
+    return;
+  }
+  isRefreshingLeaveRequests = true;
   try {
     runtimeStatus.leaveRequests = await listLeaveRequests();
   } catch (error) {
     log.warn("Failed to refresh leave requests", error);
+  } finally {
+    isRefreshingLeaveRequests = false;
   }
 }
 
@@ -1111,6 +1133,10 @@ async function refreshTasks() {
     runtimeStatus.recentTasks = [];
     return;
   }
+  if (isRefreshingTasks) {
+    return;
+  }
+  isRefreshingTasks = true;
   try {
     const [tasks, projects] = await Promise.all([
       listAgentTasks(),
@@ -1130,6 +1156,8 @@ async function refreshTasks() {
     selectRuntimeTask(runtimeStatus.selectedTask?.id ?? null);
   } catch (error) {
     log.warn("Failed to refresh tasks", error);
+  } finally {
+    isRefreshingTasks = false;
   }
 }
 
@@ -1627,10 +1655,7 @@ function startTimers() {
 function startScreenshotMonitoring() {
   scheduleNextScreenshot();
   if (!syncTimer) {
-    syncTimer = setInterval(() => {
-      void syncPendingQueues();
-      void refreshTrackingConfig();
-    }, 15_000);
+    syncTimer = setInterval(() => void syncPendingQueues(), 15_000);
   }
 }
 

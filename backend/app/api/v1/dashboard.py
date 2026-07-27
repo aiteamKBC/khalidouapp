@@ -74,7 +74,7 @@ def summary(
     )
     (
         total_employees,
-        online_employees,
+        connected_employees,
         screenshots_today,
     ) = db.execute(
         select(
@@ -89,6 +89,7 @@ def summary(
         for employee in idle_candidates
     )
     off_shift_employees = max(0, len(idle_candidates) - idle_employees)
+    online_employees = max(0, int(connected_employees or 0) - off_shift_employees)
     from app.api.v1.timesheets import timesheet_rows
 
     canonical_today = timesheet_rows(
@@ -107,7 +108,7 @@ def summary(
             "online_employees": online_employees,
             "idle_employees": idle_employees,
             "off_shift_employees": off_shift_employees,
-            "offline_employees": max(0, total_employees - online_employees),
+            "offline_employees": max(0, total_employees - int(connected_employees or 0)),
             "total_hours_today": round(tracked_seconds / 3600, 2),
             "screenshots_today": screenshots_today,
         }

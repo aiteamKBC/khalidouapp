@@ -147,7 +147,6 @@ function EmployeeDetailPage() {
     staleTime: 45_000,
     placeholderData: (previous) => previous,
     refetchInterval: activeTab === "screenshots" ? 30_000 : false,
-    refetchOnWindowFocus: true,
   });
   const ts = useQuery({
     queryKey: ["emp-ts", employeeId],

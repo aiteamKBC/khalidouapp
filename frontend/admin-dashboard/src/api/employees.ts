@@ -191,6 +191,10 @@ export function employeeDisplayStatus(employee: Employee): EmployeeStatus | Empl
   return employee.accountStatus === "active" ? employee.status : employee.accountStatus;
 }
 
+export function employeeIsOnline(employee: Employee): boolean {
+  return employee.status !== "offline" && employee.status !== "off_shift";
+}
+
 function mapEmployee(status: BackendEmployeeStatus, teamIds: string[]): Employee {
   const employee = status.employee;
   return {

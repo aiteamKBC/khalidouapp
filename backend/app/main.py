@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from contextlib import asynccontextmanager, suppress
+from time import perf_counter
 from uuid import uuid4
 
 from fastapi import FastAPI, Request
@@ -59,7 +60,9 @@ def create_app() -> FastAPI:
 
     @app.middleware("http")
     async def add_security_headers(request: Request, call_next):
+        started_at = perf_counter()
         response = await call_next(request)
+        duration_ms = (perf_counter() - started_at) * 1000
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         response.headers.setdefault("X-Frame-Options", "DENY")
         response.headers.setdefault("Referrer-Policy", "no-referrer")
@@ -68,8 +71,17 @@ def create_app() -> FastAPI:
             "camera=(), microphone=(), geolocation=(), payment=()",
         )
         response.headers.setdefault("X-Request-ID", uuid4().hex)
+        response.headers.setdefault("Server-Timing", f"app;dur={duration_ms:.1f}")
         if request.url.path.startswith(("/api/v1/auth", "/api/v1/employee-auth")):
             response.headers["Cache-Control"] = "no-store"
+        if duration_ms >= 750:
+            logger.warning(
+                "Slow API request method=%s path=%s status=%s duration_ms=%.1f",
+                request.method,
+                request.url.path,
+                response.status_code,
+                duration_ms,
+            )
         return response
 
     @app.exception_handler(Exception)

@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database.base import Base
@@ -10,6 +10,20 @@ from app.models.mixins import TimestampMixin, UUIDPrimaryKeyMixin
 
 class WorkSession(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "work_sessions"
+    __table_args__ = (
+        Index(
+            "ix_work_sessions_company_employee_started",
+            "company_id",
+            "employee_id",
+            "started_at",
+        ),
+        Index(
+            "ix_work_sessions_company_employee_open",
+            "company_id",
+            "employee_id",
+            "ended_at",
+        ),
+    )
 
     company_id: Mapped[UUID] = mapped_column(ForeignKey("companies.id"), nullable=False, index=True)
     employee_id: Mapped[UUID] = mapped_column(

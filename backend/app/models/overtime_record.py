@@ -1,7 +1,7 @@
 from datetime import date
 from uuid import UUID
 
-from sqlalchemy import Boolean, Date, ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy import Boolean, Date, ForeignKey, Index, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database.base import Base
@@ -10,7 +10,16 @@ from app.models.mixins import TimestampMixin, UUIDPrimaryKeyMixin
 
 class OvertimeRecord(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "overtime_records"
-    __table_args__ = (UniqueConstraint("work_session_id", name="uq_overtime_records_work_session"),)
+    __table_args__ = (
+        UniqueConstraint("work_session_id", name="uq_overtime_records_work_session"),
+        Index(
+            "ix_overtime_records_company_employee_date_status",
+            "company_id",
+            "employee_id",
+            "work_date",
+            "status",
+        ),
+    )
 
     company_id: Mapped[UUID] = mapped_column(ForeignKey("companies.id"), nullable=False, index=True)
     employee_id: Mapped[UUID] = mapped_column(

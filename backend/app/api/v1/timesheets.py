@@ -5,7 +5,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.api.deps import get_current_admin
 from app.api.v1.admin_utils import day_bounds
@@ -89,7 +89,9 @@ def timesheet_rows(
         {
             employee.id: employee
             for employee in db.scalars(
-                select(Employee).where(
+                select(Employee)
+                .options(selectinload(Employee.work_profile))
+                .where(
                     Employee.company_id == company_id,
                     Employee.id.in_(employee_ids),
                 )
@@ -98,7 +100,7 @@ def timesheet_rows(
         if employee_ids
         else {}
     )
-    stored_idle_by_key: dict[tuple[UUID, date], int] = {}
+    stored_attendance_by_key: dict[tuple[UUID, date], DailyAttendance] = {}
     if employee_ids:
         for attendance in db.scalars(
             select(DailyAttendance).where(
@@ -108,16 +110,17 @@ def timesheet_rows(
                 DailyAttendance.work_date <= end_day,
             )
         ).all():
-            stored_idle_by_key[(attendance.employee_id, attendance.work_date)] = (
-                accountable_idle_seconds(attendance)
-            )
+            stored_attendance_by_key[(attendance.employee_id, attendance.work_date)] = attendance
 
     # Raw session idle is a device state, not necessarily accountable idle.
     # Historical timesheets use the canonical attendance snapshot and default
     # to zero when an old row has no schedule-aware snapshot, so time outside a
     # shift can never be charged to an employee.
     for key, item in result_by_key.items():
-        item["idle_seconds"] = max(0, stored_idle_by_key.get(key, 0))
+        stored_attendance = stored_attendance_by_key.get(key)
+        item["idle_seconds"] = (
+            accountable_idle_seconds(stored_attendance) if stored_attendance is not None else 0
+        )
 
     # A live session can have authoritative activity events before its
     # cumulative counters are persisted by the next heartbeat. Reconcile only
@@ -138,6 +141,8 @@ def timesheet_rows(
             max_age_seconds=30,
             device_id=device_id,
             timezone_name=timezone_name,
+            existing_attendance=stored_attendance_by_key.get((row_employee_id, work_date)),
+            profile=employee.work_profile,
         )
         if timeline is not None:
             item["active_seconds"] = max(

@@ -508,7 +508,7 @@ def team_summary(
     )
     (
         total_employees,
-        online_employees,
+        connected_employees,
         screenshots_today,
         screenshot_count,
     ) = db.execute(
@@ -525,6 +525,7 @@ def team_summary(
         for employee in idle_candidates
     )
     off_shift_employees = max(0, len(idle_candidates) - idle_employees)
+    online_employees = max(0, int(connected_employees or 0) - off_shift_employees)
     from app.api.v1.timesheets import timesheet_rows
 
     canonical_today = timesheet_rows(
