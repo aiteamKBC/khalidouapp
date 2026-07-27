@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ImgHTMLAttributes } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { apiFile } from "@/api/client";
+import { apiImageFile } from "@/api/client";
 import { cn } from "@/lib/utils";
 
 type ProtectedImageProps = Omit<ImgHTMLAttributes<HTMLImageElement>, "src"> & {
@@ -44,19 +44,25 @@ export function ProtectedImage({
 
   const image = useQuery({
     queryKey: ["protected-image", src],
-    queryFn: () => apiFile(src),
+    queryFn: ({ signal }) => apiImageFile(src, signal),
     enabled: visible && Boolean(src),
     staleTime: Number.POSITIVE_INFINITY,
-    gcTime: 5 * 60_000,
+    gcTime: 30 * 60_000,
+    meta: { suppressGlobalLoading: true },
     retry: false,
   });
 
   useEffect(() => {
+    setObjectUrl(undefined);
     if (!image.data) return;
     const nextUrl = URL.createObjectURL(image.data);
     setObjectUrl(nextUrl);
     return () => URL.revokeObjectURL(nextUrl);
   }, [image.data]);
+
+  useEffect(() => {
+    errorReported.current = false;
+  }, [src]);
 
   useEffect(() => {
     if (!image.isError || errorReported.current) return;

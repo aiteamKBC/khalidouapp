@@ -71,6 +71,11 @@ import {
   markPendingScreenshotFailed,
   markPendingScreenshotUploaded,
 } from "./services/localDb.js";
+import {
+  hasReachedIdleThreshold,
+  IDLE_THRESHOLD_MINUTES,
+  IDLE_THRESHOLD_SECONDS,
+} from "./services/idlePolicy.js";
 
 const { nativeImage, shell } = electronCommon;
 const {
@@ -396,6 +401,7 @@ dotenv.config({
 function normalizeTrackingConfig(config: TrackingConfig): TrackingConfig {
   return {
     ...config,
+    idle_threshold_minutes: IDLE_THRESHOLD_MINUTES,
     screenshot_interval_minutes: Math.max(
       1,
       Math.min(240, config.screenshot_interval_minutes ?? 10),
@@ -1282,6 +1288,33 @@ async function resumeAutomaticIdle() {
   return { success: true };
 }
 
+function showIdleStartedNotification() {
+  const title = "You are now idle";
+  const body =
+    `No keyboard or mouse activity was detected for ${IDLE_THRESHOLD_MINUTES} minutes. ` +
+    "Idle time starts now.";
+
+  if (Notification.isSupported()) {
+    const notification = new Notification({
+      title,
+      body,
+      icon: getAppIconPath(),
+    });
+    notification.on("click", () =>
+      showMainWindow({
+        forceForeground: true,
+        centerOnPointerDisplay: true,
+      }),
+    );
+    notification.show();
+    return;
+  }
+
+  if (process.platform === "win32") {
+    tray?.displayBalloon({ title, content: body, iconType: "warning" });
+  }
+}
+
 function startIdleMonitor() {
   if (idleTimer) {
     return;
@@ -1290,17 +1323,17 @@ function startIdleMonitor() {
   idleTimer = setInterval(() => {
     if (
       !runtimeStatus.enrolled ||
+      !currentSessionId ||
+      runtimeStatus.trackingPaused ||
       unpaidPauseActive ||
-      runtimeStatus.trackingStatus === "locked" ||
-      runtimeStatus.trackingStatus === "sleeping"
+      !["starting", "active", "idle"].includes(runtimeStatus.trackingStatus)
     ) {
       return;
     }
 
     const idleSeconds = powerMonitor.getSystemIdleTime();
-    const thresholdSeconds = trackingConfig.idle_threshold_minutes * 60;
     if (
-      idleSeconds >= thresholdSeconds &&
+      hasReachedIdleThreshold(idleSeconds) &&
       runtimeStatus.trackingStatus !== "idle"
     ) {
       recalculateWorkedTime();
@@ -1308,8 +1341,9 @@ function startIdleMonitor() {
       eligibleIdleSecondsBeforeCurrentIdle = runtimeStatus.eligibleIdleSeconds;
       idleWallClockStartedAt = Date.now();
       void sendStateEvent("idle_started", "idle");
+      showIdleStartedNotification();
     } else if (
-      idleSeconds < thresholdSeconds &&
+      idleSeconds < IDLE_THRESHOLD_SECONDS &&
       runtimeStatus.trackingStatus === "idle"
     ) {
       finishAutomaticIdleImmediately();
@@ -1737,8 +1771,7 @@ function screenshotCaptureBlockReason(): string | null {
   if (
     !trackingConfig.capture_during_idle &&
     (runtimeStatus.trackingStatus === "idle" ||
-      systemIdleSeconds >=
-        Math.max(60, trackingConfig.idle_threshold_minutes * 60))
+      hasReachedIdleThreshold(systemIdleSeconds))
   ) {
     return "no_user_activity";
   }
@@ -1903,7 +1936,7 @@ async function captureAndUploadScreenshot() {
   }
   rebuildTrayMenu();
   if (uploaded + queued > 0) {
-    showScreenshotCapturedNotification();
+    showScreenshotCapturedNotification(uploaded, queued);
   }
   log.info("Display screenshots processed", {
     displays: sources.length,
@@ -1912,9 +1945,15 @@ async function captureAndUploadScreenshot() {
   });
 }
 
-function showScreenshotCapturedNotification() {
-  const title = "Screenshot captured";
-  const body = "Khaliduo took a screenshot to document your work and effort.";
+function showScreenshotCapturedNotification(uploaded: number, queued: number) {
+  const waitingForSync = queued > 0;
+  const title = waitingForSync ? "Screenshot saved" : "Screenshot captured";
+  const body =
+    queued > 0 && uploaded > 0
+      ? "Some screens were uploaded. The rest are saved securely and waiting to sync."
+      : queued > 0
+        ? "The screenshot is saved securely on this device and waiting to sync."
+        : "Khaliduo uploaded the screenshot to document your work and effort.";
 
   if (Notification.isSupported()) {
     const notification = new Notification({
@@ -1933,12 +1972,12 @@ function showScreenshotCapturedNotification() {
   }
 }
 
-async function syncPendingQueues(forcePendingEvents = false) {
+async function syncPendingQueues(forcePendingQueues = false) {
   if (!runtimeStatus.enrolled) {
     return;
   }
 
-  for (const event of getDuePendingEvents(25, { force: forcePendingEvents })) {
+  for (const event of getDuePendingEvents(25, { force: forcePendingQueues })) {
     try {
       await sendQueuedRequest(
         event.method,
@@ -1956,7 +1995,9 @@ async function syncPendingQueues(forcePendingEvents = false) {
     }
   }
 
-  for (const screenshot of getDuePendingScreenshots()) {
+  for (const screenshot of getDuePendingScreenshots(10, {
+    force: forcePendingQueues,
+  })) {
     try {
       const metadata = JSON.parse(
         screenshot.metadataJson,
@@ -1978,7 +2019,17 @@ async function syncPendingQueues(forcePendingEvents = false) {
       runtimeStatus.connectionStatus = "online";
       runtimeStatus.lastSuccessfulSyncAt = new Date().toISOString();
     } catch (error) {
-      markPendingScreenshotFailed(screenshot.screenshotId, screenshot.attempts);
+      const responseStatus = axios.isAxiosError(error)
+        ? error.response?.status
+        : undefined;
+      const permanentlyRejected =
+        responseStatus !== undefined &&
+        [400, 403, 404, 413, 422].includes(responseStatus);
+      markPendingScreenshotFailed(
+        screenshot.screenshotId,
+        screenshot.attempts,
+        permanentlyRejected,
+      );
       runtimeStatus.connectionStatus = "offline";
       log.warn("Pending screenshot sync failed", error);
       continue;

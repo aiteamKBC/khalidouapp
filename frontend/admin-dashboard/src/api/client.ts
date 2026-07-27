@@ -53,6 +53,36 @@ const AUTH_EXPIRED_EVENT = "khaliduo:auth-expired";
 let refreshInFlight: Promise<RefreshedTokens> | null = null;
 const inFlightGetRequests = new Map<string, Promise<unknown>>();
 let runtimeAuth: PersistedAuthLocation | null = null;
+const MAX_CONCURRENT_IMAGE_REQUESTS = 4;
+let activeImageRequests = 0;
+
+type QueuedImageRequest = {
+  run: () => void;
+  signal?: AbortSignal;
+  reject: (reason?: unknown) => void;
+  abort: () => void;
+};
+
+const queuedImageRequests: QueuedImageRequest[] = [];
+
+function abortError(signal?: AbortSignal) {
+  if (signal?.reason instanceof Error) return signal.reason;
+  return new DOMException("The image request was cancelled.", "AbortError");
+}
+
+function drainImageQueue() {
+  while (activeImageRequests < MAX_CONCURRENT_IMAGE_REQUESTS && queuedImageRequests.length > 0) {
+    const request = queuedImageRequests.shift();
+    if (!request) return;
+    request.signal?.removeEventListener("abort", request.abort);
+    if (request.signal?.aborted) {
+      request.reject(abortError(request.signal));
+      continue;
+    }
+    activeImageRequests += 1;
+    request.run();
+  }
+}
 
 export function rememberAuthTokens(auth: PersistedAuth, storage: Storage) {
   runtimeAuth = { auth, storage };
@@ -358,11 +388,12 @@ export async function apiFetchWithMeta<T>(
   return coalesceInFlight(requestDedupeKey("meta", path, init, token), execute);
 }
 
-export async function apiFile(path: string): Promise<Blob> {
+export async function apiFile(path: string, signal?: AbortSignal): Promise<Blob> {
   const authLocation = readAuth();
   const fetchFile = (token?: string) =>
     fetchWithTimeout(apiUrl(path), {
       headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      signal,
     });
 
   let res = await fetchFile(authLocation?.auth.accessToken);
@@ -379,6 +410,41 @@ export async function apiFile(path: string): Promise<Blob> {
     );
   }
   return res.blob();
+}
+
+/**
+ * Keep protected screenshot grids from opening dozens of authenticated file
+ * requests at once. Queued requests are cancelled after navigation or paging.
+ */
+export function apiImageFile(path: string, signal?: AbortSignal): Promise<Blob> {
+  return new Promise<Blob>((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(abortError(signal));
+      return;
+    }
+
+    const request: QueuedImageRequest = {
+      signal,
+      reject,
+      abort: () => {
+        const index = queuedImageRequests.indexOf(request);
+        if (index >= 0) queuedImageRequests.splice(index, 1);
+        reject(abortError(signal));
+      },
+      run: () => {
+        apiFile(path, signal)
+          .then(resolve, reject)
+          .finally(() => {
+            activeImageRequests = Math.max(0, activeImageRequests - 1);
+            drainImageQueue();
+          });
+      },
+    };
+
+    signal?.addEventListener("abort", request.abort, { once: true });
+    queuedImageRequests.push(request);
+    drainImageQueue();
+  });
 }
 
 export function withQuery(

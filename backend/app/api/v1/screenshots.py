@@ -2,10 +2,11 @@ from datetime import UTC, date, datetime, timedelta
 from shutil import disk_usage
 from typing import Annotated, Literal
 from uuid import UUID
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import FileResponse
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_admin
@@ -32,10 +33,80 @@ from app.models import AdminUser, Device, Employee, Screenshot, ScreenshotCaptur
 from app.services.audit import record_audit_log
 from app.services.permissions import require_capability
 from app.services.projects import get_project_or_404, get_task_or_404
-from app.services.screenshots import serialize_screenshot
+from app.services.screenshots import build_thumbnail, serialize_screenshot
 from app.storage.local import LocalScreenshotStorage
 
 router = APIRouter(prefix="/screenshots", tags=["screenshots"])
+
+
+def _local_day_bounds(value: date, timezone_name: str | None) -> tuple[datetime, datetime]:
+    try:
+        timezone = ZoneInfo(timezone_name or "UTC")
+    except (ZoneInfoNotFoundError, ValueError):
+        timezone = ZoneInfo("UTC")
+    local_start = datetime.combine(value, datetime.min.time(), tzinfo=timezone)
+    return local_start.astimezone(UTC), (local_start + timedelta(days=1)).astimezone(UTC)
+
+
+def _employee_timezone_rows(
+    db: Session,
+    company_id: UUID,
+    employee_ids: list[UUID] | None = None,
+) -> list[tuple[UUID, str]]:
+    statement = select(Employee.id, Employee.timezone).where(Employee.company_id == company_id)
+    if employee_ids is not None:
+        statement = statement.where(Employee.id.in_(employee_ids))
+    return [
+        (employee_id, timezone_name or "UTC")
+        for employee_id, timezone_name in db.execute(statement)
+    ]
+
+
+def _local_day_condition(
+    value: date,
+    employee_rows: list[tuple[UUID, str]],
+    *,
+    employee_column,
+    timestamp_column,
+):
+    employees_by_timezone: dict[str, list[UUID]] = {}
+    for employee_id, timezone_name in employee_rows:
+        employees_by_timezone.setdefault(timezone_name, []).append(employee_id)
+    conditions = []
+    for timezone_name, employee_ids in employees_by_timezone.items():
+        start, end = _local_day_bounds(value, timezone_name)
+        conditions.append(
+            and_(
+                employee_column.in_(employee_ids),
+                timestamp_column >= start,
+                timestamp_column < end,
+            )
+        )
+    return or_(*conditions) if conditions else employee_column.is_(None)
+
+
+def _local_day_overlap_condition(
+    value: date,
+    employee_rows: list[tuple[UUID, str]],
+    *,
+    employee_column,
+    started_column,
+    ended_column,
+):
+    employees_by_timezone: dict[str, list[UUID]] = {}
+    for employee_id, timezone_name in employee_rows:
+        employees_by_timezone.setdefault(timezone_name, []).append(employee_id)
+    conditions = []
+    for timezone_name, employee_ids in employees_by_timezone.items():
+        start, end = _local_day_bounds(value, timezone_name)
+        conditions.append(
+            and_(
+                employee_column.in_(employee_ids),
+                started_column < end,
+                or_(ended_column.is_(None), ended_column >= start),
+            )
+        )
+    return or_(*conditions) if conditions else employee_column.is_(None)
 
 
 def get_screenshot_or_404(db: Session, company_id: UUID, screenshot_id: UUID) -> Screenshot:
@@ -66,11 +137,9 @@ def get_accessible_screenshot_or_404(
 def serialize_with_url(screenshot: Screenshot) -> dict:
     data = serialize_screenshot(screenshot)
     data["temporary_url"] = temporary_screenshot_url(screenshot)
-    data["thumbnail_url"] = (
-        f"/api/v1/screenshots/{screenshot.id}/thumbnail"
-        if screenshot.thumbnail_path
-        else data["temporary_url"]
-    )
+    # The thumbnail endpoint also creates a compact preview for legacy captures
+    # on first access; never make a grid silently fall back to the full file.
+    data["thumbnail_url"] = f"/api/v1/screenshots/{screenshot.id}/thumbnail"
     return data
 
 
@@ -106,8 +175,10 @@ def list_screenshots(
                 Screenshot.team_id.in_(accessible_team_ids_statement(current_admin)),
             )
         )
+    selected_employee_rows: list[tuple[UUID, str]] | None = None
     if employee_id:
-        ensure_employee_access(db, current_admin, employee_id, team_id)
+        employee = ensure_employee_access(db, current_admin, employee_id, team_id)
+        selected_employee_rows = [(employee.id, employee.timezone or "UTC")]
         statement = statement.where(Screenshot.employee_id == employee_id)
     if session_id:
         statement = statement.where(Screenshot.session_id == session_id)
@@ -118,12 +189,32 @@ def list_screenshots(
         get_task_or_404(db, current_admin, task_id)
         statement = statement.where(Screenshot.task_id == task_id)
     if day:
-        start, end = day_bounds(day)
-        statement = statement.where(Screenshot.captured_at.between(start, end))
+        employee_rows = selected_employee_rows or _employee_timezone_rows(
+            db,
+            current_admin.company_id,
+        )
+        statement = statement.where(
+            _local_day_condition(
+                day,
+                employee_rows,
+                employee_column=Screenshot.employee_id,
+                timestamp_column=Screenshot.captured_at,
+            )
+        )
     if start_time:
-        statement = statement.where(Screenshot.captured_at >= day_bounds(start_time)[0])
+        start = (
+            _local_day_bounds(start_time, selected_employee_rows[0][1])[0]
+            if selected_employee_rows
+            else day_bounds(start_time)[0]
+        )
+        statement = statement.where(Screenshot.captured_at >= start)
     if end_time:
-        statement = statement.where(Screenshot.captured_at <= day_bounds(end_time)[1])
+        end = (
+            _local_day_bounds(end_time, selected_employee_rows[0][1])[1]
+            if selected_employee_rows
+            else day_bounds(end_time)[1]
+        )
+        statement = statement.where(Screenshot.captured_at < end)
     if work_category:
         statement = statement.where(Screenshot.work_category == work_category)
     statement = statement.order_by(Screenshot.captured_at.desc())
@@ -157,13 +248,18 @@ def list_screenshot_folders(
 ):
     """Return one folder per visible employee, including employees with no captures."""
     require_capability(current_admin, "screenshots.view")
-    start, end = day_bounds(day)
+    company_employee_rows = _employee_timezone_rows(db, current_admin.company_id)
 
     screenshot_match_filters = [
         Screenshot.company_id == current_admin.company_id,
         Screenshot.employee_id == Employee.id,
         Screenshot.deleted_at.is_(None),
-        Screenshot.captured_at.between(start, end),
+        _local_day_condition(
+            day,
+            company_employee_rows,
+            employee_column=Screenshot.employee_id,
+            timestamp_column=Screenshot.captured_at,
+        ),
     ]
     if team_id:
         screenshot_match_filters.append(
@@ -185,8 +281,13 @@ def list_screenshot_folders(
         .where(
             WorkSession.company_id == current_admin.company_id,
             WorkSession.employee_id == Employee.id,
-            WorkSession.started_at <= end,
-            or_(WorkSession.ended_at.is_(None), WorkSession.ended_at >= start),
+            _local_day_overlap_condition(
+                day,
+                company_employee_rows,
+                employee_column=WorkSession.employee_id,
+                started_column=WorkSession.started_at,
+                ended_column=WorkSession.ended_at,
+            ),
         )
         .exists()
     )
@@ -257,11 +358,19 @@ def list_screenshot_folders(
     active_employee_ids: set[UUID] = set()
 
     if employee_ids:
+        selected_employee_rows = [
+            (employee.id, employee.timezone or "UTC") for employee in employees
+        ]
         screenshot_filters = [
             Screenshot.company_id == current_admin.company_id,
             Screenshot.employee_id.in_(employee_ids),
             Screenshot.deleted_at.is_(None),
-            Screenshot.captured_at.between(start, end),
+            _local_day_condition(
+                day,
+                selected_employee_rows,
+                employee_column=Screenshot.employee_id,
+                timestamp_column=Screenshot.captured_at,
+            ),
         ]
         if team_id:
             screenshot_filters.append(
@@ -320,8 +429,13 @@ def list_screenshot_folders(
                 .where(
                     WorkSession.company_id == current_admin.company_id,
                     WorkSession.employee_id.in_(employee_ids),
-                    WorkSession.started_at <= end,
-                    or_(WorkSession.ended_at.is_(None), WorkSession.ended_at >= start),
+                    _local_day_overlap_condition(
+                        day,
+                        selected_employee_rows,
+                        employee_column=WorkSession.employee_id,
+                        started_column=WorkSession.started_at,
+                        ended_column=WorkSession.ended_at,
+                    ),
                 )
                 .distinct()
             ).all()
@@ -382,12 +496,24 @@ def list_capture_events(
         current_admin,
         ScreenshotCaptureEvent.employee_id,
     )
+    selected_employee_rows: list[tuple[UUID, str]] | None = None
     if employee_id:
-        ensure_employee_access(db, current_admin, employee_id)
+        employee = ensure_employee_access(db, current_admin, employee_id)
+        selected_employee_rows = [(employee.id, employee.timezone or "UTC")]
         statement = statement.where(ScreenshotCaptureEvent.employee_id == employee_id)
     if day:
-        start, end = day_bounds(day)
-        statement = statement.where(ScreenshotCaptureEvent.occurred_at.between(start, end))
+        employee_rows = selected_employee_rows or _employee_timezone_rows(
+            db,
+            current_admin.company_id,
+        )
+        statement = statement.where(
+            _local_day_condition(
+                day,
+                employee_rows,
+                employee_column=ScreenshotCaptureEvent.employee_id,
+                timestamp_column=ScreenshotCaptureEvent.occurred_at,
+            )
+        )
     if outcome:
         statement = statement.where(ScreenshotCaptureEvent.outcome == outcome)
     if reason:
@@ -472,12 +598,42 @@ def get_screenshot_thumbnail(
     db: Annotated[Session, Depends(get_db)],
 ):
     screenshot = get_accessible_screenshot_or_404(db, current_admin, screenshot_id)
-    relative_path = screenshot.thumbnail_path or screenshot.storage_path
-    path = (settings.screenshot_storage_path / relative_path).resolve()
-    if not path.exists():
+    storage = LocalScreenshotStorage()
+    original_path = (settings.screenshot_storage_path / screenshot.storage_path).resolve()
+    thumbnail_path = (
+        (settings.screenshot_storage_path / screenshot.thumbnail_path).resolve()
+        if screenshot.thumbnail_path
+        else None
+    )
+
+    # Older captures predate stored thumbnails. Materialize a compact preview on
+    # the first request so every subsequent grid view avoids the full original.
+    if thumbnail_path is None or not thumbnail_path.is_file():
+        if not original_path.is_file():
+            raise ApiError(
+                "SCREENSHOT_FILE_NOT_FOUND",
+                "Screenshot preview was not found.",
+                404,
+            )
+        thumbnail = build_thumbnail(original_path.read_bytes(), screenshot.storage_path)
+        if thumbnail is not None:
+            screenshot.thumbnail_path, thumbnail_content = thumbnail
+            thumbnail_path = storage.save(screenshot.thumbnail_path, thumbnail_content)
+            db.add(screenshot)
+            db.commit()
+
+    path = thumbnail_path if thumbnail_path and thumbnail_path.is_file() else original_path
+    if not path.is_file():
         raise ApiError("SCREENSHOT_FILE_NOT_FOUND", "Screenshot preview was not found.", 404)
-    media_type = "image/jpeg" if screenshot.thumbnail_path else screenshot.mime_type
-    return FileResponse(path, media_type=media_type)
+    media_type = "image/jpeg" if path == thumbnail_path else screenshot.mime_type
+    return FileResponse(
+        path,
+        media_type=media_type,
+        headers={
+            "Cache-Control": "private, max-age=1800",
+            "Vary": "Authorization",
+        },
+    )
 
 
 @router.delete("/{screenshot_id}")

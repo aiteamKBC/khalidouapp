@@ -108,6 +108,11 @@ class TrackingSettingsUpdate(BaseModel):
     offline_threshold_minutes: int | None = Field(default=None, ge=1, le=60)
     screenshot_retention_days: int | None = Field(default=None, ge=1, le=3650)
 
+    @field_validator("idle_threshold_minutes")
+    @classmethod
+    def enforce_idle_threshold(cls, value: int | None) -> int | None:
+        return 10 if value is not None else None
+
 
 class TeamCreate(BaseModel):
     name: str = Field(min_length=1, max_length=255)

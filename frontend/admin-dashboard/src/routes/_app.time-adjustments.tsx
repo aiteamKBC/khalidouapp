@@ -47,6 +47,9 @@ function TimeAdjustmentsPage() {
   const [teamId, setTeamId] = useState("all");
   const [employeeId, setEmployeeId] = useState("all");
   const [status, setStatus] = useState<TimeAdjustmentStatus | "all">("pending");
+  const [reviewingRequests, setReviewingRequests] = useState<
+    Record<string, "approved" | "rejected">
+  >({});
 
   const teams = useQuery({ queryKey: ["teams", scope], queryFn: () => listTeams(scope) });
   const employees = useQuery({
@@ -79,6 +82,9 @@ function TimeAdjustmentsPage() {
         status: nextStatus,
         approvedMinutes,
       }),
+    onMutate: ({ id, nextStatus }) => {
+      setReviewingRequests((current) => ({ ...current, [id]: nextStatus }));
+    },
     onSuccess: async (_, variables) => {
       toast.success(variables.nextStatus === "approved" ? "Request approved" : "Request rejected");
       await Promise.all([
@@ -90,6 +96,13 @@ function TimeAdjustmentsPage() {
     },
     onError: (error) =>
       toast.error(error instanceof Error ? error.message : "Failed to review request"),
+    onSettled: (_, __, variables) => {
+      setReviewingRequests((current) => {
+        const next = { ...current };
+        delete next[variables.id];
+        return next;
+      });
+    },
   });
 
   const canReview = can(permissions.timeRequestsManage);
@@ -168,70 +181,73 @@ function TimeAdjustmentsPage() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {(requests.data ?? []).map((request) => (
-              <TableRow key={request.id}>
-                <TableCell className="font-medium">{request.employeeName}</TableCell>
-                <TableCell>
-                  <div className="font-medium">
-                    {requestTypeLabel[request.requestType ?? "manual_time"] ?? "Manual time"}
-                  </div>
-                  {request.sourceStartAt && request.sourceEndAt ? (
-                    <div className="text-xs text-muted-foreground">
-                      {formatDateTime(request.sourceStartAt)} →{" "}
-                      {formatDateTime(request.sourceEndAt)}
+            {(requests.data ?? []).map((request) => {
+              const reviewingStatus = reviewingRequests[request.id];
+              return (
+                <TableRow key={request.id}>
+                  <TableCell className="font-medium">{request.employeeName}</TableCell>
+                  <TableCell>
+                    <div className="font-medium">
+                      {requestTypeLabel[request.requestType ?? "manual_time"] ?? "Manual time"}
                     </div>
-                  ) : null}
-                </TableCell>
-                <TableCell>{formatDate(request.requestedDate)}</TableCell>
-                <TableCell>{formatMinutes(request.requestedMinutes)}</TableCell>
-                <TableCell className="max-w-md text-sm text-muted-foreground">
-                  {request.reason}
-                </TableCell>
-                <TableCell>
-                  <StatusBadge status={request.status} />
-                </TableCell>
-                <TableCell className="text-sm text-muted-foreground">
-                  {request.reviewedAt
-                    ? `${request.reviewedByName ?? "Admin"} at ${formatDateTime(request.reviewedAt)}`
-                    : "-"}
-                </TableCell>
-                <TableCell className="text-right">
-                  {canReview && request.status === "pending" ? (
-                    <div className="flex justify-end gap-2">
-                      <Button
-                        size="sm"
-                        loading={reviewMutation.isPending}
-                        disabled={reviewMutation.isPending}
-                        onClick={() =>
-                          reviewMutation.mutate({
-                            id: request.id,
-                            nextStatus: "approved",
-                            approvedMinutes: request.requestedMinutes,
-                          })
-                        }
-                      >
-                        <Check className="h-4 w-4 mr-1" />
-                        Approve
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        loading={reviewMutation.isPending}
-                        disabled={reviewMutation.isPending}
-                        onClick={() =>
-                          reviewMutation.mutate({ id: request.id, nextStatus: "rejected" })
-                        }
-                      >
-                        <X className="h-4 w-4 mr-1" />
-                        Reject
-                      </Button>
-                    </div>
-                  ) : (
-                    <span className="text-sm text-muted-foreground">-</span>
-                  )}
-                </TableCell>
-              </TableRow>
-            ))}
+                    {request.sourceStartAt && request.sourceEndAt ? (
+                      <div className="text-xs text-muted-foreground">
+                        {formatDateTime(request.sourceStartAt)} →{" "}
+                        {formatDateTime(request.sourceEndAt)}
+                      </div>
+                    ) : null}
+                  </TableCell>
+                  <TableCell>{formatDate(request.requestedDate)}</TableCell>
+                  <TableCell>{formatMinutes(request.requestedMinutes)}</TableCell>
+                  <TableCell className="max-w-md text-sm text-muted-foreground">
+                    {request.reason}
+                  </TableCell>
+                  <TableCell>
+                    <StatusBadge status={request.status} />
+                  </TableCell>
+                  <TableCell className="text-sm text-muted-foreground">
+                    {request.reviewedAt
+                      ? `${request.reviewedByName ?? "Admin"} at ${formatDateTime(request.reviewedAt)}`
+                      : "-"}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    {canReview && request.status === "pending" ? (
+                      <div className="flex justify-end gap-2">
+                        <Button
+                          size="sm"
+                          loading={reviewingStatus === "approved"}
+                          disabled={Boolean(reviewingStatus)}
+                          onClick={() =>
+                            reviewMutation.mutate({
+                              id: request.id,
+                              nextStatus: "approved",
+                              approvedMinutes: request.requestedMinutes,
+                            })
+                          }
+                        >
+                          <Check className="h-4 w-4 mr-1" />
+                          Approve
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          loading={reviewingStatus === "rejected"}
+                          disabled={Boolean(reviewingStatus)}
+                          onClick={() =>
+                            reviewMutation.mutate({ id: request.id, nextStatus: "rejected" })
+                          }
+                        >
+                          <X className="h-4 w-4 mr-1" />
+                          Reject
+                        </Button>
+                      </div>
+                    ) : (
+                      <span className="text-sm text-muted-foreground">-</span>
+                    )}
+                  </TableCell>
+                </TableRow>
+              );
+            })}
           </TableBody>
         </Table>
       </Card>

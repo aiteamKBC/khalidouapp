@@ -1,8 +1,10 @@
 from datetime import UTC, datetime, timedelta
+from io import BytesIO
 from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
+from PIL import Image
 from sqlalchemy import create_engine, delete, event, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
@@ -1166,6 +1168,65 @@ def test_screenshot_folders_respect_team_owner_scope(team_client):
     assert response.status_code == 200
     names = {row["employee_name"] for row in response.json()["data"]}
     assert names == {"Employee A", "Shared Employee"}
+
+
+def test_screenshot_day_uses_employee_timezone_across_monitoring_views(team_client):
+    client, data = team_client
+    with data["session_factory"]() as db:
+        employee = db.get(Employee, data["employee_a"].id)
+        screenshot = db.get(Screenshot, data["screenshot_a"].id)
+        employee.timezone = "Africa/Cairo"
+        # 22:30 UTC on July 26 is 01:30 on the employee's July 27 workday.
+        screenshot.captured_at = datetime(2026, 7, 26, 22, 30, tzinfo=UTC)
+        db.add_all([employee, screenshot])
+        db.commit()
+
+    local_day = client.get(
+        f"/api/v1/screenshots?employee_id={data['employee_a'].id}&day=2026-07-27",
+        headers=data["general_headers"],
+    )
+    utc_calendar_day = client.get(
+        f"/api/v1/screenshots?employee_id={data['employee_a'].id}&day=2026-07-26",
+        headers=data["general_headers"],
+    )
+    folders = client.get(
+        f"/api/v1/screenshots/folders?employee_id={data['employee_a'].id}&day=2026-07-27",
+        headers=data["general_headers"],
+    )
+
+    assert local_day.status_code == 200
+    assert local_day.json()["meta"]["total"] == 1
+    assert utc_calendar_day.status_code == 200
+    assert utc_calendar_day.json()["meta"]["total"] == 0
+    assert folders.status_code == 200
+    assert folders.json()["data"][0]["screenshot_count"] == 1
+
+
+def test_thumbnail_endpoint_materializes_legacy_preview(team_client, tmp_path, monkeypatch):
+    client, data = team_client
+    monkeypatch.setattr(settings, "screenshot_storage_path", tmp_path)
+    source = BytesIO()
+    Image.new("RGB", (1920, 1080), color=(25, 50, 75)).save(
+        source,
+        format="JPEG",
+        quality=90,
+    )
+    (tmp_path / "a.jpg").write_bytes(source.getvalue())
+
+    response = client.get(
+        f"/api/v1/screenshots/{data['screenshot_a'].id}/thumbnail",
+        headers=data["general_headers"],
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "image/jpeg"
+    assert response.headers["cache-control"] == "private, max-age=1800"
+    thumbnail = tmp_path / "a.thumb.jpg"
+    assert thumbnail.is_file()
+    assert thumbnail.stat().st_size < len(source.getvalue())
+    with Image.open(BytesIO(response.content)) as preview:
+        assert preview.width <= settings.screenshot_thumbnail_width
+        assert preview.height <= settings.screenshot_thumbnail_width
 
 
 def test_screenshot_folder_smart_filters_are_applied_before_pagination(team_client):
