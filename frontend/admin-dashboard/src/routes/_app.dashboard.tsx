@@ -79,6 +79,19 @@ function initials(name: string): string {
     .toUpperCase();
 }
 
+function randomSeed(): number {
+  return Math.floor(Math.random() * 0x7fffffff);
+}
+
+function seededEmployeeRank(employeeId: string, seed: number): number {
+  let hash = 2166136261 ^ seed;
+  for (let index = 0; index < employeeId.length; index += 1) {
+    hash ^= employeeId.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
 type DayAgg = {
   active: number;
   idle: number;
@@ -131,6 +144,7 @@ function DashboardPage() {
   const [attentionOpen, setAttentionOpen] = useState(false);
   const [loadActions, setLoadActions] = useState(false);
   const [loadMedia, setLoadMedia] = useState(false);
+  const [activityRotationSeed, setActivityRotationSeed] = useState(0);
   const { scopedTeamIds } = useAuth();
   const scope = scopedTeamIds();
   const scopeKey = scope?.join(",") ?? "all";
@@ -183,6 +197,10 @@ function DashboardPage() {
     refetchIntervalInBackground: false,
     placeholderData: (previous) => previous,
   });
+  useEffect(() => {
+    if (shots.dataUpdatedAt === 0) return;
+    setActivityRotationSeed(randomSeed());
+  }, [shots.dataUpdatedAt]);
   const teams = useQuery({
     queryKey: ["teams", scope],
     queryFn: () => listTeams(scope),
@@ -316,7 +334,13 @@ function DashboardPage() {
   const matchingActivity = memberActivity.filter(
     ({ employee }) => activityFilter === "all" || employee?.status === activityFilter,
   );
-  const filteredActivity = matchingActivity.slice(0, 6);
+  const filteredActivity = [...matchingActivity]
+    .sort(
+      (left, right) =>
+        seededEmployeeRank(left.employee.id, activityRotationSeed) -
+        seededEmployeeRank(right.employee.id, activityRotationSeed),
+    )
+    .slice(0, 6);
 
   const online = (emps.data ?? [])
     .filter(employeeIsOnline)
@@ -706,7 +730,7 @@ function DashboardPage() {
                   {activityFilter === "all" ? "members" : `${activityFilter} members`}
                 </span>
                 <span className="rounded-full border bg-muted/40 px-2.5 py-1 text-[10px] font-bold text-muted-foreground">
-                  Updates every 15 min
+                  Random 6 · updates every 15 min
                 </span>
               </div>
               <div className="flex flex-wrap gap-1.5">
