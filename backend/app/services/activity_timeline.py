@@ -33,6 +33,41 @@ def _utc(value: datetime) -> datetime:
     return value.astimezone(UTC)
 
 
+def company_idle_threshold_seconds(db: Session, company_id: UUID) -> int:
+    """The company's idle threshold, the yardstick for 'the employee left'."""
+    minutes = db.scalar(
+        select(TrackingSettings.idle_threshold_minutes).where(
+            TrackingSettings.company_id == company_id
+        )
+    )
+    return max(1, minutes or 10) * 60
+
+
+def sustained_work_start(
+    blocks: list[tuple[str, datetime, datetime]],
+    idle_threshold: int,
+) -> datetime | None:
+    """When the workday really began, given (type, start, end) blocks in order.
+
+    Switching a machine on and touching it for a few minutes before leaving it
+    for hours is not the start of a workday. Such a leading block is skipped
+    when the non-working stretch after it is longer than both the block itself
+    and the idle threshold. A normal lunch break keeps the morning's start
+    because the gap is shorter than the work that preceded it.
+    """
+    worked = [block for block in blocks if block[0] == "worked"]
+    if not worked:
+        return None
+    for index, (_, started_at, ended_at) in enumerate(worked):
+        if index + 1 >= len(worked):
+            return started_at
+        worked_seconds = (ended_at - started_at).total_seconds()
+        gap_seconds = (worked[index + 1][1] - ended_at).total_seconds()
+        if gap_seconds <= idle_threshold or gap_seconds <= worked_seconds:
+            return started_at
+    return worked[-1][1]
+
+
 def _timezone(name: str) -> ZoneInfo:
     try:
         return ZoneInfo(name)
@@ -506,9 +541,19 @@ def build_workday_timeline(
     leave_seconds = (
         totals["idle"] + totals["locked"] + totals["sleeping"] if approved_leave else 0
     )
-    first_started_at = min(
+    first_signal_at = min(
         (interval["started_at"] for interval in merged),
         default=None,
+    )
+    # The day starts where sustained work starts. Touching a machine for a few
+    # minutes and then leaving it for hours used to set the workday start hours
+    # before the employee actually sat down.
+    first_started_at = (
+        sustained_work_start(
+            [(interval["type"], interval["started_at"], interval["ended_at"]) for interval in merged],
+            company_idle_threshold_seconds(db, company_id),
+        )
+        or first_signal_at
     )
     last_visible_end = max((interval["ended_at"] for interval in merged), default=None)
     return {
@@ -516,6 +561,9 @@ def build_workday_timeline(
         "timezone": zone.key,
         "first_started_at": max(first_started_at, day_start).isoformat()
         if first_started_at
+        else None,
+        "first_signal_at": max(first_signal_at, day_start).isoformat()
+        if first_signal_at
         else None,
         "last_ended_at": None
         if has_open_session

@@ -15,7 +15,6 @@ from app.models import (
     OvertimeRecord,
     PauseBalance,
     PauseSession,
-    TrackingSettings,
     WorkScheduleOverride,
     WorkSession,
 )
@@ -27,7 +26,10 @@ from app.schemas.session import (
     SessionTaskUpdateRequest,
     SessionStartRequest,
 )
-from app.services.activity_timeline import build_workday_timeline
+from app.services.activity_timeline import (
+    build_workday_timeline,
+    company_idle_threshold_seconds,
+)
 from app.services.projects import get_employee_task_context, list_employee_tasks
 from app.services.schedules import effective_schedule, overlap_seconds
 from app.services.task_workflow import TRACKABLE_STAGES
@@ -96,16 +98,6 @@ WORKED_EVENT_TYPES = {
     "system_resumed",
 }
 NON_WORKING_SESSION_STATUSES = {"idle", "locked", "sleeping", "offline"}
-
-
-def idle_cutoff_seconds(db: Session, company_id: UUID) -> int:
-    """Seconds of uninterrupted non-working time that end a session outright."""
-    minutes = db.scalar(
-        select(TrackingSettings.idle_threshold_minutes).where(
-            TrackingSettings.company_id == company_id
-        )
-    )
-    return max(1, minutes or 10) * 60
 
 
 def last_worked_activity_at(db: Session, session: WorkSession) -> datetime:
@@ -953,7 +945,7 @@ def record_heartbeat(
         # session ends where they stopped working. Coming back starts a new one.
         stopped_at = max(last_worked_activity_at(db, session), utc(session.started_at))
         away_seconds = int((heartbeat_at - stopped_at).total_seconds())
-        if away_seconds >= idle_cutoff_seconds(db, device.company_id):
+        if away_seconds >= company_idle_threshold_seconds(db, device.company_id):
             close_open_session(
                 db,
                 device=device,
@@ -985,13 +977,20 @@ def record_heartbeat(
         device.last_seen_at = heartbeat_at
         device.agent_version = payload.agent_version
         session.status = payload.status
-        session.idle_seconds = max(session.idle_seconds, payload.idle_seconds)
         next_active_seconds = (
             payload.active_seconds
             if payload.active_seconds is not None
             else max(0, elapsed_seconds - session.idle_seconds)
         )
         session.active_seconds = max(session.active_seconds, next_active_seconds)
+        # Idle is whatever the session has lasted minus the work in it. The agent
+        # counter this used to take a max() of does not accumulate across idle
+        # episodes, so a session with two hours away reported only its longest
+        # single episode - roughly 18 minutes instead of 123.
+        session.idle_seconds = max(
+            session.idle_seconds,
+            max(0, elapsed_seconds - session.active_seconds),
+        )
         finalize_due_pause(db, session, at=heartbeat_at)
         sync_session_time_buckets(db, session, at=heartbeat_at)
 
