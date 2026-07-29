@@ -23,6 +23,7 @@ import { downloadScreenshot, listScreenshotPage } from "@/api/screenshots";
 import { listTeams } from "@/api/teams";
 import { ApplicationHistoryPanel } from "@/components/application-history-panel";
 import { ProtectedImage } from "@/components/ProtectedImage";
+import { SCREENSHOT_REFRESH_INTERVAL_MS } from "@/lib/screenshot-display";
 import { WorkdayTimeline } from "@/components/workday-timeline";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -687,8 +688,8 @@ function ScreenshotsTab({
         day,
       }),
     enabled: enabled && Boolean(employeeId && day),
-    staleTime: 30_000,
-    refetchInterval: enabled ? 30_000 : false,
+    staleTime: SCREENSHOT_REFRESH_INTERVAL_MS,
+    refetchInterval: enabled ? SCREENSHOT_REFRESH_INTERVAL_MS : false,
   });
 
   useEffect(() => {

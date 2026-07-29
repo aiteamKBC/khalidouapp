@@ -29,12 +29,20 @@ export interface User {
   avatarUrl?: string;
 }
 
+export interface TeamOwnerSummary {
+  id: string;
+  name: string;
+  email: string;
+}
+
 export interface Team {
   id: string;
   name: string;
   description?: string;
   status: TeamStatus;
   ownerIds: string[];
+  /** Owner names ship with the team so they render without the user directory. */
+  owners: TeamOwnerSummary[];
   employeeIds: string[];
   createdAt: string;
 }
@@ -172,7 +180,12 @@ export interface ActivityEvent {
   meta?: Record<string, string>;
 }
 
-export type WorkdayIntervalType = "worked" | "idle" | "locked" | "sleeping";
+export type WorkdayIntervalType =
+  | "worked"
+  | "idle"
+  | "locked"
+  | "sleeping"
+  | "break";
 
 export interface WorkdayInterval {
   type: WorkdayIntervalType;
@@ -185,7 +198,7 @@ export interface WorkdayInterval {
   projectName?: string;
   taskName?: string;
   isCurrent: boolean;
-  workCategory?: "extra" | null;
+  workCategory?: "extra" | "break_work" | null;
 }
 
 export interface WorkdayTimeline {

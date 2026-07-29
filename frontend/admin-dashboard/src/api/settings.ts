@@ -17,7 +17,7 @@ function mapSettings(settings: BackendTrackingSettings): TrackingSettings {
     screenshotIntervalMinutes:
       settings.screenshot_interval_minutes as TrackingSettings["screenshotIntervalMinutes"],
     screenshotsPerInterval: settings.screenshots_per_interval,
-    idleThresholdMinutes: settings.idle_threshold_minutes,
+    idleThresholdMinutes: 10,
     captureDuringIdle: settings.capture_during_idle,
     offlineThresholdMinutes: settings.offline_threshold_minutes,
     screenshotRetentionDays: settings.screenshot_retention_days,
@@ -36,7 +36,7 @@ export async function updateTrackingSettings(next: TrackingSettings): Promise<Tr
         screenshot_enabled: next.screenshotsEnabled,
         screenshot_interval_minutes: next.screenshotIntervalMinutes,
         screenshots_per_interval: next.screenshotsPerInterval,
-        idle_threshold_minutes: next.idleThresholdMinutes,
+        idle_threshold_minutes: 10,
         capture_during_idle: next.captureDuringIdle,
         offline_threshold_minutes: next.offlineThresholdMinutes,
         screenshot_retention_days: next.screenshotRetentionDays,

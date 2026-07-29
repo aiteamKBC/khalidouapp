@@ -153,6 +153,35 @@ export async function listScreenshots(
   );
 }
 
+export async function listScreenshotPreviews(options: {
+  employeeIds: string[];
+  day: string;
+  limitPerEmployee?: number;
+}): Promise<Screenshot[]> {
+  const employeeIds = Array.from(new Set(options.employeeIds));
+  if (employeeIds.length === 0) return [];
+
+  const batches: string[][] = [];
+  for (let index = 0; index < employeeIds.length; index += 20) {
+    batches.push(employeeIds.slice(index, index + 20));
+  }
+
+  const batchResults = await Promise.all(
+    batches.map(async (batch) => {
+      const search = new URLSearchParams({
+        day: options.day,
+        limit_per_employee: String(options.limitPerEmployee ?? 3),
+      });
+      batch.forEach((employeeId) => search.append("employee_id", employeeId));
+      return apiFetch<BackendScreenshot[]>(`/screenshots/previews?${search.toString()}`);
+    }),
+  );
+
+  return batchResults
+    .flat()
+    .map((screenshot) => mapScreenshot(screenshot, screenshot.team_id ?? ""));
+}
+
 export async function deleteScreenshot(id: string): Promise<{ deductedMinutes: number }> {
   const result = await apiFetch<{ deleted: boolean; deducted_seconds: number }>(
     `/screenshots/${id}`,

@@ -1,8 +1,10 @@
 from datetime import UTC, datetime, timedelta
+from io import BytesIO
 from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
+from PIL import Image
 from sqlalchemy import create_engine, delete, event, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
@@ -1061,6 +1063,134 @@ def test_screenshot_folders_respect_team_owner_scope(team_client):
     assert names == {"Employee A", "Shared Employee"}
 
 
+def test_screenshot_previews_return_an_even_scoped_set_for_requested_employees(team_client):
+    client, data = team_client
+    day = datetime.now(UTC).date().isoformat()
+    employee_query = (
+        f"employee_id={data['employee_a'].id}&employee_id={data['employee_b'].id}"
+    )
+
+    general = client.get(
+        f"/api/v1/screenshots/previews?day={day}&{employee_query}",
+        headers=data["general_headers"],
+    )
+    owner = client.get(
+        f"/api/v1/screenshots/previews?day={day}&{employee_query}",
+        headers=data["owner_headers"],
+    )
+
+    assert general.status_code == 200
+    assert {row["employee_id"] for row in general.json()["data"]} == {
+        str(data["employee_a"].id),
+        str(data["employee_b"].id),
+    }
+    assert owner.status_code == 200
+    assert {row["employee_id"] for row in owner.json()["data"]} == {
+        str(data["employee_a"].id),
+    }
+    assert all(
+        row["thumbnail_url"].endswith("/thumbnail")
+        for row in general.json()["data"]
+    )
+
+
+def test_screenshot_day_uses_employee_timezone_across_monitoring_views(team_client):
+    client, data = team_client
+    with data["session_factory"]() as db:
+        employee = db.get(Employee, data["employee_a"].id)
+        screenshot = db.get(Screenshot, data["screenshot_a"].id)
+        employee.timezone = "Africa/Cairo"
+        # 22:30 UTC on July 26 is 01:30 on the employee's July 27 workday.
+        screenshot.captured_at = datetime(2026, 7, 26, 22, 30, tzinfo=UTC)
+        db.add_all([employee, screenshot])
+        db.commit()
+
+    local_day = client.get(
+        f"/api/v1/screenshots?employee_id={data['employee_a'].id}&day=2026-07-27",
+        headers=data["general_headers"],
+    )
+    utc_calendar_day = client.get(
+        f"/api/v1/screenshots?employee_id={data['employee_a'].id}&day=2026-07-26",
+        headers=data["general_headers"],
+    )
+    previews = client.get(
+        f"/api/v1/screenshots/previews?employee_id={data['employee_a'].id}&day=2026-07-27",
+        headers=data["general_headers"],
+    )
+    folders = client.get(
+        f"/api/v1/screenshots/folders?employee_id={data['employee_a'].id}&day=2026-07-27",
+        headers=data["general_headers"],
+    )
+
+    assert local_day.status_code == 200
+    assert local_day.json()["meta"]["total"] == 1
+    assert utc_calendar_day.status_code == 200
+    assert utc_calendar_day.json()["meta"]["total"] == 0
+    assert previews.status_code == 200
+    assert len(previews.json()["data"]) == 1
+    assert folders.status_code == 200
+    assert folders.json()["data"][0]["screenshot_count"] == 1
+
+
+def test_thumbnail_endpoint_materializes_legacy_preview(team_client, tmp_path, monkeypatch):
+    client, data = team_client
+    monkeypatch.setattr(settings, "screenshot_storage_path", tmp_path)
+    source = BytesIO()
+    Image.new("RGB", (1920, 1080), color=(25, 50, 75)).save(
+        source,
+        format="JPEG",
+        quality=90,
+    )
+    (tmp_path / "a.jpg").write_bytes(source.getvalue())
+
+    response = client.get(
+        f"/api/v1/screenshots/{data['screenshot_a'].id}/thumbnail",
+        headers=data["general_headers"],
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "image/jpeg"
+    assert response.headers["cache-control"] == "private, max-age=1800"
+    thumbnail = tmp_path / "a.thumb.jpg"
+    assert thumbnail.is_file()
+    assert thumbnail.stat().st_size < len(source.getvalue())
+    with Image.open(BytesIO(response.content)) as preview:
+        assert preview.width <= settings.screenshot_thumbnail_width
+        assert preview.height <= settings.screenshot_thumbnail_width
+
+
+def test_employee_portal_lists_and_caches_thumbnail_preview(team_client, tmp_path, monkeypatch):
+    client, data = team_client
+    monkeypatch.setattr(settings, "screenshot_storage_path", tmp_path)
+    source = BytesIO()
+    Image.new("RGB", (1920, 1080), color=(40, 60, 80)).save(
+        source,
+        format="JPEG",
+        quality=90,
+    )
+    (tmp_path / "a.jpg").write_bytes(source.getvalue())
+    employee_token = create_employee_access_token(
+        employee_id=data["employee_a"].id,
+        company_id=data["employee_a"].company_id,
+    )
+    headers = {"Authorization": f"Bearer {employee_token}"}
+
+    listed = client.get("/api/v1/employee-portal/screenshots", headers=headers)
+
+    assert listed.status_code == 200
+    row = listed.json()["data"][0]
+    assert row["thumbnail_url"].endswith(
+        f"/employee-portal/screenshots/{data['screenshot_a'].id}/thumbnail"
+    )
+
+    preview = client.get(row["thumbnail_url"], headers=headers)
+
+    assert preview.status_code == 200
+    assert preview.headers["content-type"] == "image/jpeg"
+    assert preview.headers["cache-control"] == "private, max-age=1800"
+    assert (tmp_path / "a.thumb.jpg").is_file()
+
+
 def test_screenshot_folder_smart_filters_are_applied_before_pagination(team_client):
     client, data = team_client
     day = datetime.now(UTC).date().isoformat()
@@ -1798,6 +1928,12 @@ def test_desktop_summary_recovers_elapsed_work_when_an_update_started_a_new_sess
     now = datetime.now(UTC)
     db = data["session_factory"]()
     try:
+        employee = db.get(Employee, data["employee_a"].id)
+        current_session = db.get(WorkSession, data["session_a"].id)
+        device = db.get(Device, current_session.device_id)
+        employee.timezone = "Africa/Cairo"
+        device.timezone = "Africa/Cairo"
+        current_session.timezone = "Africa/Cairo"
         prior_session = WorkSession(
             company_id=data["employee_a"].company_id,
             employee_id=data["employee_a"].id,
@@ -1807,6 +1943,7 @@ def test_desktop_summary_recovers_elapsed_work_when_an_update_started_a_new_sess
             status="ended",
             active_seconds=0,
             idle_seconds=0,
+            timezone="Asia/Riyadh",
         )
         db.add(prior_session)
         db.commit()
@@ -2352,6 +2489,56 @@ def test_employee_time_adjustment_request_can_be_approved_and_added_to_timesheet
         json={"status": "rejected", "admin_note": "Too late."},
     )
     assert repeated_review.status_code == 409
+
+
+def test_only_super_admin_can_review_their_own_time_request(team_client):
+    client, data = team_client
+
+    owner_request = client.post(
+        "/api/v1/agent/time-adjustment-requests",
+        headers=data["device_headers"],
+        json={
+            "requested_date": data["session_a"].started_at.date().isoformat(),
+            "requested_minutes": 10,
+            "reason": "Customer meeting continued while the timer was idle.",
+        },
+    )
+    owner_review = client.patch(
+        f"/api/v1/time-adjustment-requests/{owner_request.json()['data']['id']}",
+        headers=data["owner_headers"],
+        json={"status": "approved", "approved_minutes": 10},
+    )
+
+    with data["session_factory"]() as db:
+        general_admin = db.get(AdminUser, data["general_admin"].id)
+        employee = db.get(Employee, data["employee_b"].id)
+        general_admin.employee_id = employee.id
+        request = TimeAdjustmentRequest(
+            company_id=employee.company_id,
+            employee_id=employee.id,
+            request_type="manual_time",
+            requested_date=data["session_a"].started_at.date(),
+            requested_seconds=10 * 60,
+            reason="Super admin correction for a completed customer meeting.",
+            status="pending",
+        )
+        db.add_all([general_admin, request])
+        db.commit()
+        request_id = request.id
+
+    super_admin_review = client.patch(
+        f"/api/v1/time-adjustment-requests/{request_id}",
+        headers=data["general_headers"],
+        json={"status": "approved", "approved_minutes": 10},
+    )
+
+    assert owner_review.status_code == 403
+    assert owner_review.json()["error"]["code"] == "SELF_REVIEW_FORBIDDEN"
+    assert super_admin_review.status_code == 200
+    assert super_admin_review.json()["data"]["status"] == "approved"
+    assert super_admin_review.json()["data"]["reviewed_by_admin_user_id"] == str(
+        data["general_admin"].id
+    )
 
 
 def test_employee_overview_includes_all_assigned_team_managers(team_client):

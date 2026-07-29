@@ -100,7 +100,7 @@ Upload these three files together to `frontend/desktop-agent/release-khaliduo/` 
 - `KhaliduoSetup.exe.blockmap`
 - `latest.yml`
 
-The installer embeds the production API and portal URLs. An enrolled installation starts silently with Windows. When a higher version is published, the app downloads it, shows a required-update message, safely closes active tracking, installs it, and restarts automatically.
+The installer embeds the production API and portal URLs. An enrolled installation starts silently with Windows. When a higher version is published, the app checks immediately after startup, downloads it in the background, preserves the active tracking state, starts installation automatically, and restarts. The manual **Check update** and **Install update** actions remain available as fallbacks.
 
 ## 5. Start or update the stack
 

@@ -11,13 +11,15 @@ from app.models import Device, DeviceToken, Employee, TrackingSettings
 from app.schemas.agent import AgentDeviceInfo
 from app.services.device_location import refresh_device_location
 
+IDLE_THRESHOLD_MINUTES = 10
+
 
 def serialize_tracking_settings(settings_row: TrackingSettings) -> dict[str, Any]:
     return {
         "screenshot_enabled": settings_row.screenshot_enabled,
         "screenshot_interval_minutes": settings_row.screenshot_interval_minutes,
         "screenshots_per_interval": settings_row.screenshots_per_interval,
-        "idle_threshold_minutes": settings_row.idle_threshold_minutes,
+        "idle_threshold_minutes": IDLE_THRESHOLD_MINUTES,
         "capture_during_idle": settings_row.capture_during_idle,
         "offline_threshold_minutes": settings_row.offline_threshold_minutes,
         "screenshot_retention_days": settings_row.screenshot_retention_days,
@@ -35,7 +37,7 @@ def get_or_create_tracking_settings(db: Session, company_id) -> TrackingSettings
         company_id=company_id,
         screenshot_interval_minutes=settings.default_screenshot_interval_minutes,
         screenshots_per_interval=settings.default_screenshots_per_interval,
-        idle_threshold_minutes=settings.default_idle_threshold_minutes,
+        idle_threshold_minutes=IDLE_THRESHOLD_MINUTES,
         offline_threshold_minutes=settings.default_offline_threshold_minutes,
         screenshot_retention_days=settings.default_screenshot_retention_days,
     )
@@ -93,7 +95,14 @@ def enroll_employee_device(
         db.add(device)
         db.flush()
     elif device.revoked_at is not None or device.status == "revoked":
-        raise ApiError("DEVICE_REVOKED", "This device has been revoked.", 403)
+        raise ApiError(
+            "DEVICE_REVOKED",
+            (
+                "This device has been revoked. Ask a general admin to reactivate it "
+                "from Devices, then sign in again."
+            ),
+            403,
+        )
     elif device.employee_id != employee.id:
         raise ApiError(
             "DEVICE_ALREADY_ENROLLED",

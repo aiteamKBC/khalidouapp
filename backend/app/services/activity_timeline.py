@@ -52,26 +52,6 @@ def _day_bounds(value: date, timezone_name: str) -> tuple[datetime, datetime, Zo
     return local_start.astimezone(UTC), (local_start + timedelta(days=1)).astimezone(UTC), zone
 
 
-def _without_excluded_windows(
-    start_at: datetime,
-    end_at: datetime,
-    excluded_windows: list[tuple[datetime, datetime]],
-) -> list[tuple[datetime, datetime]]:
-    segments = [(start_at, end_at)]
-    for excluded_start, excluded_end in excluded_windows:
-        next_segments: list[tuple[datetime, datetime]] = []
-        for segment_start, segment_end in segments:
-            if excluded_end <= segment_start or excluded_start >= segment_end:
-                next_segments.append((segment_start, segment_end))
-                continue
-            if segment_start < excluded_start:
-                next_segments.append((segment_start, excluded_start))
-            if excluded_end < segment_end:
-                next_segments.append((excluded_end, segment_end))
-        segments = next_segments
-    return segments
-
-
 def scope_timeline_to_schedule(
     timeline: dict,
     *,
@@ -91,8 +71,12 @@ def scope_timeline_to_schedule(
     normalized_shift_start = _utc(shift_start) if shift_start else None
     normalized_shift_end = _utc(shift_end) if shift_end else None
     has_shift = bool(normalized_shift_start and normalized_shift_end)
-    excluded_windows = [
-        (_utc(item["start_at"]), _utc(item["end_at"]))
+    normalized_breaks = [
+        {
+            **item,
+            "start_at": _utc(item["start_at"]),
+            "end_at": _utc(item["end_at"]),
+        }
         for item in scheduled_breaks or []
         if item.get("start_at") and item.get("end_at")
     ]
@@ -109,33 +93,57 @@ def scope_timeline_to_schedule(
         if interval_end <= interval_start:
             continue
 
-        if item["type"] == "worked":
-            boundaries = [interval_start, interval_end]
-            if has_shift:
-                if interval_start < normalized_shift_start < interval_end:
-                    boundaries.append(normalized_shift_start)
-                if interval_start < normalized_shift_end < interval_end:
-                    boundaries.append(normalized_shift_end)
-            boundaries.sort()
-            segments = list(zip(boundaries, boundaries[1:], strict=False))
-        else:
+        raw_interval_end = interval_end
+        if item["type"] != "worked":
             if not has_shift or approved_leave:
                 continue
-            visible_start = max(interval_start, normalized_shift_start)
-            visible_end = min(interval_end, normalized_shift_end)
-            if visible_end <= visible_start:
+            interval_start = max(interval_start, normalized_shift_start)
+            interval_end = min(interval_end, normalized_shift_end)
+            if interval_end <= interval_start:
                 continue
-            segments = _without_excluded_windows(
-                visible_start,
-                visible_end,
-                excluded_windows,
-            )
+
+        boundaries = [interval_start, interval_end]
+        if has_shift:
+            if interval_start < normalized_shift_start < interval_end:
+                boundaries.append(normalized_shift_start)
+            if interval_start < normalized_shift_end < interval_end:
+                boundaries.append(normalized_shift_end)
+        if has_shift and not approved_leave:
+            for scheduled_break in normalized_breaks:
+                if interval_start < scheduled_break["start_at"] < interval_end:
+                    boundaries.append(scheduled_break["start_at"])
+                if interval_start < scheduled_break["end_at"] < interval_end:
+                    boundaries.append(scheduled_break["end_at"])
+        boundaries = sorted(set(boundaries))
+        segments = list(zip(boundaries, boundaries[1:], strict=False))
 
         for segment_start, segment_end in segments:
             if segment_end <= segment_start:
                 continue
+            scheduled_break = next(
+                (
+                    entry
+                    for entry in normalized_breaks
+                    if entry["start_at"] <= segment_start
+                    and segment_end <= entry["end_at"]
+                ),
+                None,
+            )
             work_category = item.get("work_category")
-            if item["type"] == "worked" and (
+            interval_type = item["type"]
+            interval_source = item.get("source")
+            if (
+                scheduled_break is not None
+                and has_shift
+                and not approved_leave
+                and item["type"] == "worked"
+            ):
+                work_category = "break_work"
+            elif scheduled_break is not None and has_shift and not approved_leave:
+                interval_type = "break"
+                interval_source = "scheduled_break"
+                work_category = None
+            elif item["type"] == "worked" and (
                 approved_leave
                 or not has_shift
                 or segment_start < normalized_shift_start
@@ -145,13 +153,21 @@ def scope_timeline_to_schedule(
             scoped.append(
                 {
                     **item,
+                    "type": interval_type,
+                    "source": interval_source,
                     "started_at": segment_start,
                     "ended_at": segment_end,
                     "duration_seconds": int((segment_end - segment_start).total_seconds()),
                     "is_current": bool(
-                        item.get("is_current") and segment_end == interval_end
+                        item.get("is_current") and segment_end == raw_interval_end
                     ),
                     "work_category": work_category,
+                    "break_name": (
+                        scheduled_break.get("name") if scheduled_break else None
+                    ),
+                    "break_paid": (
+                        scheduled_break.get("paid") if scheduled_break else None
+                    ),
                 }
             )
 
@@ -169,6 +185,8 @@ def scope_timeline_to_schedule(
             and previous.get("task_name") == interval.get("task_name")
             and previous.get("project_name") == interval.get("project_name")
             and previous.get("work_category") == interval.get("work_category")
+            and previous.get("break_name") == interval.get("break_name")
+            and previous.get("break_paid") == interval.get("break_paid")
         ):
             previous["ended_at"] = interval["ended_at"]
             previous["duration_seconds"] += interval["duration_seconds"]
@@ -176,7 +194,7 @@ def scope_timeline_to_schedule(
         else:
             merged.append(interval)
 
-    totals = {"worked": 0, "idle": 0, "locked": 0, "sleeping": 0}
+    totals = {"worked": 0, "idle": 0, "locked": 0, "sleeping": 0, "break": 0}
     for interval in merged:
         totals[interval["type"]] += interval["duration_seconds"]
 
@@ -215,6 +233,7 @@ def scope_timeline_to_schedule(
         "idle_seconds": 0 if approved_leave else totals["idle"],
         "locked_seconds": totals["locked"],
         "sleeping_seconds": totals["sleeping"],
+        "break_seconds": totals["break"],
         "leave_seconds": 0,
         "intervals": serialized,
     }
@@ -229,7 +248,6 @@ def build_workday_timeline(
     target_date: date | None = None,
     now: datetime | None = None,
     device_id: UUID | None = None,
-    session_timezone_name: str | None = None,
 ) -> dict:
     now_utc = _utc(now or datetime.now(UTC))
     zone = _timezone(timezone_name)
@@ -259,13 +277,6 @@ def build_workday_timeline(
     )
     if device_id is not None:
         session_statement = session_statement.where(WorkSession.device_id == device_id)
-    if session_timezone_name:
-        session_statement = session_statement.where(
-            or_(
-                WorkSession.timezone == session_timezone_name,
-                WorkSession.timezone.is_(None),
-            )
-        )
     rows = db.execute(session_statement).all()
     sessions = [row[0] for row in rows]
     session_context = {

@@ -29,10 +29,11 @@ import { MetricTile } from "@/components/ui/metric-tile";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { ProtectedImage } from "@/components/ProtectedImage";
+import { SCREENSHOT_REFRESH_INTERVAL_MS } from "@/lib/screenshot-display";
 import { useAuth } from "@/lib/auth";
 import { listDailyAttendance } from "@/api/attendance";
 import { employeeIsOnline, listEmployees } from "@/api/employees";
-import { listScreenshots } from "@/api/screenshots";
+import { listScreenshotPreviews } from "@/api/screenshots";
 import { listTimesheets } from "@/api/timesheets";
 import { listTeams } from "@/api/teams";
 import { listDevices } from "@/api/devices";
@@ -45,9 +46,13 @@ export const Route = createFileRoute("/_app/dashboard")({
   component: DashboardPage,
 });
 
-const LIVE_REFRESH_MS = 15_000;
-const ACTION_REFRESH_MS = 30_000;
-const MEDIA_REFRESH_MS = 60_000;
+const LIVE_REFRESH_MS = 3 * 60_000;
+const ACTION_REFRESH_MS = 3 * 60_000;
+const MEDIA_REFRESH_MS = SCREENSHOT_REFRESH_INTERVAL_MS;
+const employeeNameCollator = new Intl.Collator(undefined, {
+  numeric: true,
+  sensitivity: "base",
+});
 
 // ---------- date helpers ----------
 function startOfWeek(d: Date): Date {
@@ -61,6 +66,10 @@ function isoDate(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
     d.getDate(),
   ).padStart(2, "0")}`;
+}
+
+function compareEmployeesByName(left: Employee, right: Employee): number {
+  return employeeNameCollator.compare(left.name, right.name);
 }
 function weekDates(monday: Date): string[] {
   return Array.from({ length: 7 }, (_, i) => {
@@ -128,6 +137,7 @@ function periodTotals(byDate: Map<string, DayAgg>, dates: string[]) {
 
 function DashboardPage() {
   const [activityFilter, setActivityFilter] = useState<"all" | Employee["status"]>("all");
+  const [showAllActivity, setShowAllActivity] = useState(false);
   const [attentionOpen, setAttentionOpen] = useState(false);
   const [loadActions, setLoadActions] = useState(false);
   const [loadMedia, setLoadMedia] = useState(false);
@@ -139,7 +149,7 @@ function DashboardPage() {
   const emps = useQuery({
     queryKey: ["employees", scope],
     queryFn: () => listEmployees(scope),
-    staleTime: 10_000,
+    staleTime: LIVE_REFRESH_MS,
     refetchInterval: LIVE_REFRESH_MS,
     refetchIntervalInBackground: false,
     placeholderData: (previous) => previous,
@@ -147,7 +157,7 @@ function DashboardPage() {
   const month = useQuery({
     queryKey: ["timesheets", "monthly", scope],
     queryFn: () => listTimesheets(scope, "monthly"),
-    staleTime: 30_000,
+    staleTime: ACTION_REFRESH_MS,
     refetchInterval: ACTION_REFRESH_MS,
     refetchIntervalInBackground: false,
     placeholderData: (previous) => previous,
@@ -156,6 +166,7 @@ function DashboardPage() {
   useEffect(() => {
     setLoadActions(false);
     setLoadMedia(false);
+    setShowAllActivity(false);
   }, [scopeKey]);
   useEffect(() => {
     if (!primaryReady) return;
@@ -167,11 +178,28 @@ function DashboardPage() {
     };
   }, [primaryReady, scopeKey]);
 
+  // Select six stable rows first, then request only their previews. Fetching the
+  // latest screenshots company-wide allowed one busy employee to consume the
+  // whole result page and made other rows look empty.
+  const matchingActivityEmployees = (emps.data ?? [])
+    .filter((employee) => employee.currentDeviceId)
+    .filter((employee) => activityFilter === "all" || employee.status === activityFilter)
+    .sort(compareEmployeesByName);
+  const visibleActivityEmployees = showAllActivity
+    ? matchingActivityEmployees
+    : matchingActivityEmployees.slice(0, 6);
+  const previewEmployeeIds = visibleActivityEmployees.map((employee) => employee.id);
+
   const shots = useQuery({
-    queryKey: ["screenshots", scope, "dashboard-recent"],
-    queryFn: () => listScreenshots(scope, { pageSize: 24 }),
-    enabled: loadMedia,
-    staleTime: 45_000,
+    queryKey: ["screenshot-previews", scope, dashboardDay, previewEmployeeIds],
+    queryFn: () =>
+      listScreenshotPreviews({
+        employeeIds: previewEmployeeIds,
+        day: dashboardDay,
+        limitPerEmployee: 3,
+      }),
+    enabled: loadMedia && previewEmployeeIds.length > 0,
+    staleTime: MEDIA_REFRESH_MS,
     refetchInterval: MEDIA_REFRESH_MS,
     refetchIntervalInBackground: false,
     placeholderData: (previous) => previous,
@@ -180,7 +208,7 @@ function DashboardPage() {
     queryKey: ["teams", scope],
     queryFn: () => listTeams(scope),
     enabled: loadActions,
-    staleTime: 30_000,
+    staleTime: ACTION_REFRESH_MS,
     refetchInterval: ACTION_REFRESH_MS,
     refetchIntervalInBackground: false,
     placeholderData: (previous) => previous,
@@ -189,7 +217,7 @@ function DashboardPage() {
     queryKey: ["devices", scope],
     queryFn: () => listDevices(scope),
     enabled: loadActions,
-    staleTime: 10_000,
+    staleTime: LIVE_REFRESH_MS,
     refetchInterval: LIVE_REFRESH_MS,
     refetchIntervalInBackground: false,
     placeholderData: (previous) => previous,
@@ -198,7 +226,7 @@ function DashboardPage() {
     queryKey: ["time-adjustments", scope, "pending"],
     queryFn: () => listTimeAdjustmentRequests({ scopedTeamIds: scope, status: "pending" }),
     enabled: loadActions,
-    staleTime: 30_000,
+    staleTime: ACTION_REFRESH_MS,
     refetchInterval: ACTION_REFRESH_MS,
     refetchIntervalInBackground: false,
     placeholderData: (previous) => previous,
@@ -211,7 +239,7 @@ function DashboardPage() {
         teamId: scope?.length === 1 ? scope[0] : undefined,
       }),
     enabled: loadActions,
-    staleTime: 20_000,
+    staleTime: ACTION_REFRESH_MS,
     refetchInterval: ACTION_REFRESH_MS,
     refetchIntervalInBackground: false,
     placeholderData: (previous) => previous,
@@ -283,37 +311,27 @@ function DashboardPage() {
     idleHours: day.idleHours,
   }));
 
-  // Member activity includes every employee with a registered device. Starting
-  // from screenshots hid offline employees because they often have no recent
-  // capture, which made the Offline filter incorrectly show zero.
+  // Member activity includes every employee with a registered device, including
+  // offline employees that do not have a capture today.
   const byEmployee = new Map<string, Screenshot[]>();
   for (const shot of shots.data ?? []) {
     byEmployee.set(shot.employeeId, [...(byEmployee.get(shot.employeeId) ?? []), shot]);
   }
-  const memberActivity = (emps.data ?? [])
-    .filter((employee) => employee.currentDeviceId || byEmployee.has(employee.id))
-    .map((employee) => {
-      const images = [...(byEmployee.get(employee.id) ?? [])]
-        .sort((a, b) => +new Date(b.capturedAt) - +new Date(a.capturedAt))
-        .slice(0, 3);
-      return {
-        employee,
-        shots: images,
-        latest: Math.max(
-          images[0] ? +new Date(images[0].capturedAt) : 0,
-          employee.lastHeartbeat ? +new Date(employee.lastHeartbeat) : 0,
-        ),
-      };
-    })
-    .sort((a, b) => b.latest - a.latest);
-  const matchingActivity = memberActivity.filter(
-    ({ employee }) => activityFilter === "all" || employee?.status === activityFilter,
-  );
-  const filteredActivity = matchingActivity.slice(0, 5);
+  const filteredActivity = visibleActivityEmployees.map((employee) => {
+    const images = [...(byEmployee.get(employee.id) ?? [])]
+      .sort((a, b) => +new Date(b.capturedAt) - +new Date(a.capturedAt))
+      .slice(0, 3);
+    return {
+      employee,
+      shots: images,
+      latest: Math.max(
+        images[0] ? +new Date(images[0].capturedAt) : 0,
+        employee.lastHeartbeat ? +new Date(employee.lastHeartbeat) : 0,
+      ),
+    };
+  });
 
-  const online = (emps.data ?? [])
-    .filter(employeeIsOnline)
-    .sort((a, b) => (a.status === "active" ? -1 : 1) - (b.status === "active" ? -1 : 1));
+  const online = (emps.data ?? []).filter(employeeIsOnline).sort(compareEmployeesByName);
   const onlinePreview = online.slice(0, 4);
   const hiddenOnlineCount = Math.max(0, online.length - onlinePreview.length);
 
@@ -695,7 +713,7 @@ function DashboardPage() {
               <div className="flex items-center gap-3">
                 <CardTitle className="text-sm font-extrabold">Member activity</CardTitle>
                 <span className="text-[11px] font-bold text-muted-foreground">
-                  {filteredActivity.length} of {matchingActivity.length}{" "}
+                  {filteredActivity.length} of {matchingActivityEmployees.length}{" "}
                   {activityFilter === "all" ? "members" : `${activityFilter} members`}
                 </span>
               </div>
@@ -704,12 +722,26 @@ function DashboardPage() {
                   <button
                     key={filter}
                     type="button"
-                    onClick={() => setActivityFilter(filter)}
+                    onClick={() => {
+                      setActivityFilter(filter);
+                      setShowAllActivity(false);
+                    }}
                     className={`rounded-full border px-3 py-1.5 text-[11px] font-bold capitalize transition ${activityFilter === filter ? "border-[#e5185d] bg-[#fce3ec] text-[#e5185d] dark:bg-[#38142b] dark:text-[#f0538b]" : "bg-card text-muted-foreground hover:border-[#e5185d]/40"}`}
                   >
                     {filter}
                   </button>
                 ))}
+                {matchingActivityEmployees.length > 6 ? (
+                  <button
+                    type="button"
+                    onClick={() => setShowAllActivity((current) => !current)}
+                    className="rounded-full border border-[#e5185d]/30 bg-[#e5185d]/5 px-3 py-1.5 text-[11px] font-extrabold text-[#e5185d] transition hover:bg-[#e5185d]/10"
+                  >
+                    {showAllActivity
+                      ? "Show less"
+                      : `Show all (${matchingActivityEmployees.length})`}
+                  </button>
+                ) : null}
               </div>
             </CardHeader>
             <CardContent className="space-y-3 p-[18px]">
@@ -721,42 +753,48 @@ function DashboardPage() {
                 </p>
               )}
               {filteredActivity.map(({ employee, shots: images }) => (
-                <div
+                <Link
                   key={employee.id}
-                  className="grid items-center gap-3 rounded-[18px] border border-border/80 bg-card/70 p-3 md:grid-cols-[190px_minmax(0,1fr)] 2xl:grid-cols-[220px_minmax(0,1fr)]"
+                  to="/screenshots"
+                  search={{ employeeId: employee.id, day: dashboardDay }}
+                  aria-label={`Open today's screenshot folder for ${employee.name}`}
+                  className="group/member grid items-center gap-3 rounded-[18px] border border-border/80 bg-card/70 p-3 transition hover:border-primary/40 hover:bg-card hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary md:grid-cols-[190px_minmax(0,1fr)] 2xl:grid-cols-[220px_minmax(0,1fr)]"
                 >
-                  <Link
-                    to="/employees/$employeeId"
-                    params={{ employeeId: employee.id }}
-                    className="flex min-w-0 items-center gap-2 rounded-md p-1 transition hover:bg-muted/60"
-                  >
+                  <span className="flex min-w-0 items-center gap-2 rounded-md p-1">
                     <Avatar className="h-9 w-9">
                       <AvatarFallback className="text-xs">{initials(employee.name)}</AvatarFallback>
                     </Avatar>
                     <span className="truncate text-[12.5px] font-bold">{employee.name}</span>
                     <StatusBadge status={employee.status} className="ml-auto shrink-0" />
-                  </Link>
+                  </span>
                   <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
-                    {images.length === 0 && (
-                      <p className="col-span-full rounded-[13px] border border-dashed bg-muted/20 px-4 py-5 text-center text-xs text-muted-foreground">
-                        No recent screenshots from this member.
-                      </p>
-                    )}
+                    {images.length === 0 &&
+                      (!loadMedia || shots.isPending || shots.isPlaceholderData) &&
+                      Array.from({ length: 3 }).map((_, index) => (
+                        <Skeleton key={index} className="aspect-video w-full rounded-[13px]" />
+                      ))}
+                    {images.length === 0 &&
+                      loadMedia &&
+                      !shots.isPending &&
+                      !shots.isPlaceholderData && (
+                        <p className="col-span-full rounded-[13px] border border-dashed bg-muted/20 px-4 py-5 text-center text-xs text-muted-foreground">
+                          No screenshots captured today.
+                        </p>
+                      )}
                     {images.map((shot) => (
-                      <Link
+                      <div
                         key={shot.id}
-                        to="/screenshots"
-                        className="group overflow-hidden rounded-[13px] border border-border bg-background transition hover:border-primary/40 hover:shadow-md"
+                        className="overflow-hidden rounded-[13px] border border-border bg-background transition group-hover/member:border-primary/30"
                       >
                         <ProtectedImage
                           src={shot.thumbnailUrl}
                           alt={`Screenshot from ${employee.name}`}
-                          className="aspect-video w-full object-cover transition-transform group-hover:scale-[1.03]"
+                          className="aspect-video w-full object-cover transition-transform group-hover/member:scale-[1.03]"
                         />
-                      </Link>
+                      </div>
                     ))}
                   </div>
-                </div>
+                </Link>
               ))}
             </CardContent>
           </Card>
@@ -872,8 +910,8 @@ function DashboardPage() {
                 <span className="text-xs text-muted-foreground">
                   {online.length} online /{" "}
                   {emps.data.filter((employee) => employee.status === "idle").length} idle /{" "}
-                  {emps.data.filter((employee) => employee.status === "off_shift").length} off shift /{" "}
-                  {emps.data.filter((employee) => employee.status === "offline").length} offline
+                  {emps.data.filter((employee) => employee.status === "off_shift").length} off shift
+                  / {emps.data.filter((employee) => employee.status === "offline").length} offline
                 </span>
               )}
             </CardHeader>

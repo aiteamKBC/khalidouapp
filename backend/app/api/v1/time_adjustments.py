@@ -16,7 +16,7 @@ from app.models import AdminUser, Employee, TimeAdjustmentRequest
 from app.schemas.admin import TimeAdjustmentReview
 from app.services.audit import record_audit_log
 from app.services.attendance import refresh_daily_attendance_range
-from app.services.permissions import require_capability
+from app.services.permissions import is_super_admin, require_capability
 from app.services.time_adjustments import (
     get_time_adjustment_or_404,
     serialize_time_adjustment_request,
@@ -88,7 +88,7 @@ def review_time_adjustment_request(
             "This time request was already reviewed.",
             409,
         )
-    if current_admin.employee_id == row.employee_id:
+    if current_admin.employee_id == row.employee_id and not is_super_admin(current_admin):
         raise ApiError(
             "SELF_REVIEW_FORBIDDEN",
             "You cannot review your own time request.",

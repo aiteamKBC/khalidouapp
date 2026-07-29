@@ -68,7 +68,7 @@ function nextAttemptAt(attempts: number) {
   return new Date(Date.now() + backoffMs).toISOString();
 }
 
-/** After this many failed attempts, an item stops being retried (status becomes 'dead') so it can no longer block the rest of the queue. */
+/** Non-media events stop retrying eventually so one invalid request cannot block the queue. */
 const MAX_SYNC_ATTEMPTS = 10;
 
 export async function initializeLocalDatabase() {
@@ -213,14 +213,18 @@ export function enqueuePendingScreenshot(options: {
   persist();
 }
 
-export function getDuePendingScreenshots(limit = 10) {
+export function getDuePendingScreenshots(
+  limit = 10,
+  options: { force?: boolean } = {},
+) {
+  const ignoreNextAttempt = options.force === true;
   return rows<PendingScreenshot>(
     `select screenshot_id as screenshotId, metadata_json as metadataJson, file_path as filePath, attempts
      from pending_screenshots
-     where status in ('pending', 'failed') and next_attempt_at <= ?
+     where status in ('pending', 'failed')${ignoreNextAttempt ? '' : ' and next_attempt_at <= ?'}
      order by created_at asc
      limit ?`,
-    [new Date().toISOString(), limit],
+    ignoreNextAttempt ? [limit] : [new Date().toISOString(), limit],
   );
 }
 
@@ -232,9 +236,13 @@ export function markPendingScreenshotUploaded(screenshotId: string) {
   persist();
 }
 
-export function markPendingScreenshotFailed(screenshotId: string, attempts: number) {
+export function markPendingScreenshotFailed(
+  screenshotId: string,
+  attempts: number,
+  permanentlyRejected = false,
+) {
   const nextAttempts = attempts + 1;
-  const status = nextAttempts >= MAX_SYNC_ATTEMPTS ? 'dead' : 'failed';
+  const status = permanentlyRejected ? 'dead' : 'failed';
   database?.run(
     `update pending_screenshots
      set status = ?, attempts = ?, next_attempt_at = ?, updated_at = ?

@@ -7,8 +7,8 @@ import { ApiClientError } from "@/api/client";
 import { BrandLogo } from "@/components/ui/brand-logo";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { PasswordInput } from "@/components/ui/password-input";
 import { formatDateTime } from "@/lib/format";
 
 export const Route = createFileRoute("/accept-invitation")({
@@ -132,9 +132,8 @@ function AcceptInvitationPage() {
           <form className="space-y-4" onSubmit={submit}>
             <div className="space-y-1.5">
               <Label htmlFor="invitation-password">Password</Label>
-              <Input
+              <PasswordInput
                 id="invitation-password"
-                type="password"
                 autoComplete="new-password"
                 minLength={8}
                 value={password}
@@ -144,9 +143,8 @@ function AcceptInvitationPage() {
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="invitation-confirm-password">Confirm password</Label>
-              <Input
+              <PasswordInput
                 id="invitation-confirm-password"
-                type="password"
                 autoComplete="new-password"
                 minLength={8}
                 value={confirmPassword}

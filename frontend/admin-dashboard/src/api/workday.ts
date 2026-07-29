@@ -14,17 +14,17 @@ export type BackendWorkdayTimeline = {
   approved_leave?: boolean;
   leave_seconds?: number;
   intervals: Array<{
-    type: "worked" | "idle" | "locked" | "sleeping";
+    type: "worked" | "idle" | "locked" | "sleeping" | "break";
     started_at: string;
     ended_at?: string | null;
     duration_seconds: number;
-    session_id: string;
+    session_id: string | null;
     project_id?: string | null;
     task_id?: string | null;
     project_name?: string | null;
     task_name?: string | null;
     is_current: boolean;
-    work_category?: "extra" | null;
+    work_category?: "extra" | "break_work" | null;
   }>;
 };
 

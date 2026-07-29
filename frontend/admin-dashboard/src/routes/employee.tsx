@@ -19,6 +19,7 @@ import { BrandLogo } from "@/components/ui/brand-logo";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { PasswordInput } from "@/components/ui/password-input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { StatusBadge } from "@/components/ui/status-badge";
@@ -57,6 +58,8 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { WorkdayTimeline } from "@/components/workday-timeline";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { formatClock, formatDateTime, formatTimeOfDay } from "@/lib/format";
+import { ProtectedImage } from "@/components/ProtectedImage";
+import { SCREENSHOT_REFRESH_INTERVAL_MS } from "@/lib/screenshot-display";
 
 export const Route = createFileRoute("/employee")({ component: EmployeePortalPage });
 
@@ -142,6 +145,7 @@ function EmployeeLogin({
     mutationFn: () => employeeLogin(emailValue, credentialValue),
     onSuccess: (result) => {
       queryClient.removeQueries({ queryKey: ["employee-portal"] });
+      queryClient.removeQueries({ queryKey: ["protected-image", "employee"] });
       saveEmployeeToken(result.access_token);
       onLoggedIn(result.access_token);
     },
@@ -162,6 +166,7 @@ function EmployeeLogin({
               event.preventDefault();
               clearEmployeeToken();
               queryClient.removeQueries({ queryKey: ["employee-portal"] });
+              queryClient.removeQueries({ queryKey: ["protected-image", "employee"] });
               if (!emailValue || !credentialValue) {
                 return;
               }
@@ -182,10 +187,9 @@ function EmployeeLogin({
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="employee-credential">Password</Label>
-              <Input
+              <PasswordInput
                 id="employee-credential"
                 name="khaliduo-employee-credential"
-                type="password"
                 autoCapitalize="none"
                 autoComplete="off"
                 spellCheck={false}
@@ -227,6 +231,7 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
   const handleLogout = () => {
     clearEmployeeToken();
     queryClient.removeQueries({ queryKey: ["employee-portal"] });
+    queryClient.removeQueries({ queryKey: ["protected-image", "employee"] });
     onLogout();
   };
   const [screenshotDay, setScreenshotDay] = useState(() => localDateKey());
@@ -275,7 +280,8 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
     queryKey: [...employeePortalQueryKey, "screenshots", screenshotDay],
     queryFn: () => employeeScreenshots(token, screenshotDay),
     enabled: loadMedia,
-    refetchInterval: 30_000,
+    staleTime: SCREENSHOT_REFRESH_INTERVAL_MS,
+    refetchInterval: SCREENSHOT_REFRESH_INTERVAL_MS,
   });
   useEffect(() => {
     if (new URLSearchParams(window.location.search).get("view") !== "screenshots") return;
@@ -1111,8 +1117,9 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
                     onClick={() => setPreviewScreenshot(shot)}
                     aria-label="Preview screenshot"
                   >
-                    <img
-                      src={shot.imageUrl}
+                    <ProtectedImage
+                      src={shot.thumbnailUrl}
+                      authToken={token}
                       alt="Work screenshot"
                       className="aspect-video w-full object-cover transition hover:opacity-90"
                     />
@@ -1140,8 +1147,10 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
           <DialogTitle className="sr-only">Screenshot preview</DialogTitle>
           {previewScreenshot && (
             <div className="space-y-3">
-              <img
-                src={previewScreenshot.imageUrl}
+              <ProtectedImage
+                src={previewScreenshot.fullUrl}
+                authToken={token}
+                eager
                 alt="Full work screenshot preview"
                 className="max-h-[78vh] w-full rounded-lg object-contain ring-1 ring-border"
               />

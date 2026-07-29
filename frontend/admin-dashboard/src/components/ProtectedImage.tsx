@@ -1,17 +1,25 @@
 import { useEffect, useRef, useState, type ImgHTMLAttributes } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { apiFile } from "@/api/client";
+import { apiImageFile } from "@/api/client";
 import { cn } from "@/lib/utils";
+import {
+  SCREENSHOT_FULL_IMAGE_CACHE_MS,
+  SCREENSHOT_THUMBNAIL_CACHE_MS,
+} from "@/lib/screenshot-display";
 
 type ProtectedImageProps = Omit<ImgHTMLAttributes<HTMLImageElement>, "src"> & {
   src: string;
   eager?: boolean;
+  authToken?: string;
+  cacheTimeMs?: number;
   onLoadError?: () => void;
 };
 
 export function ProtectedImage({
   src,
   eager = false,
+  authToken,
+  cacheTimeMs,
   onLoadError,
   className,
   alt,
@@ -43,20 +51,26 @@ export function ProtectedImage({
   }, [eager, visible]);
 
   const image = useQuery({
-    queryKey: ["protected-image", src],
-    queryFn: () => apiFile(src),
+    queryKey: ["protected-image", authToken ? "employee" : "admin", src],
+    queryFn: ({ signal }) => apiImageFile(src, signal, authToken),
     enabled: visible && Boolean(src),
     staleTime: Number.POSITIVE_INFINITY,
-    gcTime: 5 * 60_000,
+    gcTime: cacheTimeMs ?? (eager ? SCREENSHOT_FULL_IMAGE_CACHE_MS : SCREENSHOT_THUMBNAIL_CACHE_MS),
+    meta: { suppressGlobalLoading: true },
     retry: false,
   });
 
   useEffect(() => {
+    setObjectUrl(undefined);
     if (!image.data) return;
     const nextUrl = URL.createObjectURL(image.data);
     setObjectUrl(nextUrl);
     return () => URL.revokeObjectURL(nextUrl);
   }, [image.data]);
+
+  useEffect(() => {
+    errorReported.current = false;
+  }, [src]);
 
   useEffect(() => {
     if (!image.isError || errorReported.current) return;

@@ -52,6 +52,36 @@ const AUTH_EXPIRED_EVENT = "khaliduo:auth-expired";
 
 let refreshInFlight: Promise<RefreshedTokens> | null = null;
 const inFlightGetRequests = new Map<string, Promise<unknown>>();
+const MAX_CONCURRENT_IMAGE_REQUESTS = 4;
+let activeImageRequests = 0;
+
+type QueuedImageRequest = {
+  run: () => void;
+  signal?: AbortSignal;
+  reject: (reason?: unknown) => void;
+  abort: () => void;
+};
+
+const queuedImageRequests: QueuedImageRequest[] = [];
+
+function abortError(signal?: AbortSignal) {
+  if (signal?.reason instanceof Error) return signal.reason;
+  return new DOMException("The image request was cancelled.", "AbortError");
+}
+
+function drainImageQueue() {
+  while (activeImageRequests < MAX_CONCURRENT_IMAGE_REQUESTS && queuedImageRequests.length > 0) {
+    const request = queuedImageRequests.shift();
+    if (!request) return;
+    request.signal?.removeEventListener("abort", request.abort);
+    if (request.signal?.aborted) {
+      request.reject(abortError(request.signal));
+      continue;
+    }
+    activeImageRequests += 1;
+    request.run();
+  }
+}
 
 function requestDedupeKey(
   responseKind: "data" | "meta",
@@ -337,15 +367,21 @@ export async function apiFetchWithMeta<T>(
   return coalesceInFlight(requestDedupeKey("meta", path, init, token), execute);
 }
 
-export async function apiFile(path: string): Promise<Blob> {
+export async function apiFile(
+  path: string,
+  signal?: AbortSignal,
+  tokenOverride?: string,
+): Promise<Blob> {
   const authLocation = readAuth();
+  const token = tokenOverride ?? authLocation?.auth.accessToken;
   const fetchFile = (token?: string) =>
     fetchWithTimeout(apiUrl(path), {
       headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      signal,
     });
 
-  let res = await fetchFile(authLocation?.auth.accessToken);
-  if (res.status === 401 && authLocation) {
+  let res = await fetchFile(token);
+  if (res.status === 401 && authLocation && !tokenOverride) {
     const tokens = await refreshAuthTokens(authLocation);
     res = await fetchFile(tokens.access_token);
   }
@@ -358,6 +394,46 @@ export async function apiFile(path: string): Promise<Blob> {
     );
   }
   return res.blob();
+}
+
+/**
+ * Keep protected screenshot grids from opening dozens of authenticated file
+ * requests at once. Queued requests are cancelled when React Query no longer
+ * needs the image (for example after paging or navigating away).
+ */
+export function apiImageFile(
+  path: string,
+  signal?: AbortSignal,
+  tokenOverride?: string,
+): Promise<Blob> {
+  return new Promise<Blob>((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(abortError(signal));
+      return;
+    }
+
+    const request: QueuedImageRequest = {
+      signal,
+      reject,
+      abort: () => {
+        const index = queuedImageRequests.indexOf(request);
+        if (index >= 0) queuedImageRequests.splice(index, 1);
+        reject(abortError(signal));
+      },
+      run: () => {
+        apiFile(path, signal, tokenOverride)
+          .then(resolve, reject)
+          .finally(() => {
+            activeImageRequests = Math.max(0, activeImageRequests - 1);
+            drainImageQueue();
+          });
+      },
+    };
+
+    signal?.addEventListener("abort", request.abort, { once: true });
+    queuedImageRequests.push(request);
+    drainImageQueue();
+  });
 }
 
 export function withQuery(

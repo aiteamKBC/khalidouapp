@@ -18,6 +18,8 @@ from app.models import (
     AdminPasswordResetToken,
     AdminUser,
     Company,
+    Device,
+    DeviceToken,
     EmailDelivery,
     Employee,
     EmployeeInvitation,
@@ -193,6 +195,96 @@ def test_password_reset_uses_one_time_link_and_revokes_old_sessions(identity_cli
     assert new_login.status_code == 200
     assert old_refresh.status_code == 401
     assert reused.status_code == 400
+
+
+def test_admin_login_is_case_insensitive_for_legacy_mixed_case_email(identity_client):
+    client, data = identity_client
+    db: Session = data["session_factory"]()
+    try:
+        admin = db.get(AdminUser, data["general_admin"].id)
+        admin.email = "General.Admin@KentConsultancy.co"
+        db.add(admin)
+        db.commit()
+    finally:
+        db.close()
+
+    mixed_case_login = client.post(
+        "/api/v1/auth/login",
+        json={"email": "General.Admin@KentConsultancy.co", "password": "OldPassword123!"},
+    )
+    lowercase_login = client.post(
+        "/api/v1/auth/login",
+        json={"email": "general.admin@kentconsultancy.co", "password": "OldPassword123!"},
+    )
+
+    assert mixed_case_login.status_code == 200
+    assert lowercase_login.status_code == 200
+
+
+def test_each_password_reset_click_creates_a_new_link_and_revokes_the_previous_one(
+    identity_client,
+    monkeypatch,
+):
+    client, data = identity_client
+    raw_tokens = iter(
+        [
+            "first-password-reset-token-with-enough-length-123456789",
+            "second-password-reset-token-with-enough-length-987654321",
+        ]
+    )
+    monkeypatch.setattr(
+        "app.api.v1.auth.secrets.token_urlsafe",
+        lambda _length: next(raw_tokens),
+    )
+
+    first = client.post(
+        "/api/v1/auth/forgot-password",
+        json={"email": "general@kentconsultancy.co"},
+    )
+    second = client.post(
+        "/api/v1/auth/forgot-password",
+        json={"email": "general@kentconsultancy.co"},
+    )
+
+    db: Session = data["session_factory"]()
+    try:
+        reset_rows = db.scalars(
+            select(AdminPasswordResetToken).order_by(AdminPasswordResetToken.created_at)
+        ).all()
+        deliveries = db.scalars(
+            select(EmailDelivery).where(EmailDelivery.category == "admin_password_reset")
+        ).all()
+    finally:
+        db.close()
+
+    old_link = client.post(
+        "/api/v1/auth/reset-password",
+        json={
+            "token": "first-password-reset-token-with-enough-length-123456789",
+            "new_password": "OldLinkPassword123!",
+        },
+    )
+    newest_link = client.post(
+        "/api/v1/auth/reset-password",
+        json={
+            "token": "second-password-reset-token-with-enough-length-987654321",
+            "new_password": "NewestLinkPassword456!",
+        },
+    )
+    login = client.post(
+        "/api/v1/auth/login",
+        json={"email": "general@kentconsultancy.co", "password": "NewestLinkPassword456!"},
+    )
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert len(reset_rows) == 2
+    assert reset_rows[0].used_at is not None
+    assert reset_rows[1].used_at is None
+    assert len(deliveries) == 2
+    assert old_link.status_code == 400
+    assert newest_link.status_code == 200
+    assert login.status_code == 200
 
 
 def test_unknown_password_reset_is_non_enumerating(identity_client):
@@ -983,6 +1075,68 @@ def test_accepted_employee_can_enroll_desktop_with_employee_token(identity_clien
     assert enrolled.json()["data"]["device"]["installation_id"] == "desktop-installation-12345"
     assert enrolled.json()["data"]["device_token"]
     assert enrolled.json()["data"]["token_type"] == "bearer"
+
+
+def test_general_admin_can_reactivate_device_without_restoring_old_tokens(identity_client):
+    client, data = identity_client
+    revoked_at = datetime.now(UTC)
+    db: Session = data["session_factory"]()
+    try:
+        employee = Employee(
+            company_id=data["general_admin"].company_id,
+            name="Revoked Device Employee",
+            email="revoked.device@kentconsultancy.co",
+            employee_code="EMP-REVOKED-DEVICE",
+            job_title="Developer",
+            timezone="Africa/Cairo",
+            status="active",
+            portal_password_hash=hash_password("EmployeePassword123!"),
+        )
+        db.add(employee)
+        db.flush()
+        device = Device(
+            company_id=employee.company_id,
+            employee_id=employee.id,
+            device_name="Revoked Laptop",
+            installation_id="revoked-installation-12345",
+            operating_system="Windows 11",
+            agent_version="1.2.0",
+            status="revoked",
+            revoked_at=revoked_at,
+        )
+        db.add(device)
+        db.flush()
+        old_token = DeviceToken(
+            company_id=employee.company_id,
+            device_id=device.id,
+            token_hash=hash_token("previously-revoked-device-token"),
+            revoked_at=revoked_at,
+        )
+        db.add(old_token)
+        db.commit()
+        device_id = device.id
+        old_token_id = old_token.id
+    finally:
+        db.close()
+
+    response = client.post(
+        f"/api/v1/devices/{device_id}/reactivate",
+        headers=data["general_headers"],
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"]["status"] == "active"
+    assert response.json()["data"]["revoked_at"] is None
+
+    db = data["session_factory"]()
+    try:
+        device = db.get(Device, device_id)
+        old_token = db.get(DeviceToken, old_token_id)
+        assert device.status == "active"
+        assert device.revoked_at is None
+        assert old_token.revoked_at is not None
+    finally:
+        db.close()
 
 
 def test_inviting_an_existing_active_employee_is_a_conflict(identity_client):

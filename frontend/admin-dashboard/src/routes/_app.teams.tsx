@@ -35,6 +35,7 @@ import { listUsers } from "@/api/users";
 import { formatMinutes, formatRelative } from "@/lib/format";
 import { toast } from "sonner";
 import { MetricTile } from "@/components/ui/metric-tile";
+import type { Team, User } from "@/types";
 
 export const Route = createFileRoute("/_app/teams")({
   component: TeamsPage,
@@ -43,6 +44,17 @@ export const Route = createFileRoute("/_app/teams")({
 function TeamsPage() {
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   return pathname !== "/teams" ? <Outlet /> : <TeamsList />;
+}
+
+/**
+ * Owner names come from the team payload so they still render for admins who
+ * cannot read the user directory. The directory is only a fallback for teams
+ * served by a backend that returns owner ids alone.
+ */
+function teamOwnerNames(team: Team, directory: User[]): string[] {
+  return team.owners
+    .map((owner) => owner.name || directory.find((user) => user.id === owner.id)?.name)
+    .filter((name): name is string => Boolean(name));
 }
 
 function TeamsList() {
@@ -281,9 +293,7 @@ function TeamsList() {
               .filter(Boolean)
               .sort()
               .reverse()[0];
-            const ownerNames = team.ownerIds
-              .map((id) => (owners.data ?? []).find((user) => user.id === id)?.name)
-              .filter(Boolean);
+            const ownerNames = teamOwnerNames(team, owners.data ?? []);
             return (
               <Card
                 key={team.id}
@@ -389,10 +399,7 @@ function TeamsList() {
                 .filter(Boolean)
                 .sort()
                 .reverse()[0];
-              const ownerNames = team.ownerIds
-                .map((id) => (owners.data ?? []).find((user) => user.id === id)?.name)
-                .filter(Boolean)
-                .join(", ");
+              const ownerNames = teamOwnerNames(team, owners.data ?? []).join(", ");
               return (
                 <TableRow
                   key={team.id}

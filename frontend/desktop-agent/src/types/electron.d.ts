@@ -21,6 +21,7 @@ export type AgentStatus = {
   workedTodaySeconds: number;
   activeSeconds: number;
   idleSeconds: number;
+  currentIdleSeconds: number;
   eligibleIdleSeconds: number;
   connectionStatus: "online" | "offline";
   lastScreenshotAt: string | null;
@@ -61,6 +62,7 @@ export type AgentStatus = {
     | "available"
     | "downloading"
     | "ready"
+    | "installing"
     | "up-to-date"
     | "error";
   updateVersion: string | null;
@@ -96,15 +98,16 @@ export type WorkdayTimeline = {
   approved_leave?: boolean;
   leave_seconds?: number;
   intervals: Array<{
-    type: "worked" | "idle" | "locked" | "sleeping";
+    type: "worked" | "idle" | "locked" | "sleeping" | "break";
+    source?: "activity" | "manual_pause" | "scheduled_break";
     started_at: string;
     ended_at: string | null;
     duration_seconds: number;
-    session_id: string;
+    session_id: string | null;
     project_name: string | null;
     task_name: string | null;
     is_current: boolean;
-    work_category?: "extra" | null;
+    work_category?: "extra" | "break_work" | null;
   }>;
 };
 

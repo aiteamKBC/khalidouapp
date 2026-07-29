@@ -709,6 +709,7 @@ def test_active_time_before_shift_is_extra_even_without_completed_shift_time(
 
 def test_workday_totals_continue_across_restarted_sessions(tracking_context):
     db, device = tracking_context
+    device.timezone = "Africa/Cairo"
     profile = EmployeeWorkProfile(
         company_id=device.company_id,
         employee_id=device.employee_id,
@@ -736,6 +737,9 @@ def test_workday_totals_continue_across_restarted_sessions(tracking_context):
             reason="Application restarted",
         ),
     )
+    first_session = db.get(WorkSession, UUID(first["session"]["id"]))
+    first_session.timezone = "Asia/Riyadh"
+    db.commit()
     second_started_at = datetime(2026, 7, 21, 12, 0, tzinfo=UTC)
     second = start_or_get_session(
         db,

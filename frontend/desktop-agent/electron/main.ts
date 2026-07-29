@@ -71,6 +71,16 @@ import {
   markPendingScreenshotFailed,
   markPendingScreenshotUploaded,
 } from "./services/localDb.js";
+import {
+  hasReachedIdleThreshold,
+  idleDurationAfterThreshold,
+  IDLE_THRESHOLD_MINUTES,
+  IDLE_THRESHOLD_SECONDS,
+} from "./services/idlePolicy.js";
+import {
+  screenshotCaptureBlockReasonForState,
+  type RuntimeTrackingStatus,
+} from "./services/runtimePolicies.js";
 
 const { nativeImage, shell } = electronCommon;
 const {
@@ -149,6 +159,7 @@ type AgentRuntimeStatus = {
     | "available"
     | "downloading"
     | "ready"
+    | "installing"
     | "up-to-date"
     | "error";
   updateVersion: string | null;
@@ -232,22 +243,25 @@ let screenshotQueue: number[] = [];
 let screenshotWindowEndsAt: number | null = null;
 let syncTimer: ReturnType<typeof setInterval> | null = null;
 let automaticTrackingRetryTimer: ReturnType<typeof setTimeout> | null = null;
+let trackingWatchdogTimer: ReturnType<typeof setInterval> | null = null;
 let isStartingTrackingAutomatically = false;
 let idleSecondsBeforeCurrentIdle = 0;
 let eligibleIdleSecondsBeforeCurrentIdle = 0;
 let idleWallClockStartedAt: number | null = null;
 let lastDurationTickAt: number | null = null;
 let workedTodayBaseSeconds = 0;
+let activeCounterDate: string | null = null;
 let trackingPausedByUser = false;
 let unpaidPauseActive = false;
 let isHandlingWindowClose = false;
 let hasShownMinimizeBalloon = false;
 let updateCheckTimer: ReturnType<typeof setInterval> | null = null;
 let initialUpdateCheckTimer: ReturnType<typeof setTimeout> | null = null;
+let updateRetryTimer: ReturnType<typeof setTimeout> | null = null;
 let manualUpdateCheckRequested = false;
 let isUpdateCheckRunning = false;
 let isInstallingUpdate = false;
-let hasPromptedForDownloadedUpdate = false;
+let consecutiveUpdateFailures = 0;
 let lastFullSummaryRefreshAt = 0;
 let lastMetadataRefreshAt = 0;
 let isRefreshingTrackingConfig = false;
@@ -395,6 +409,7 @@ dotenv.config({
 function normalizeTrackingConfig(config: TrackingConfig): TrackingConfig {
   return {
     ...config,
+    idle_threshold_minutes: IDLE_THRESHOLD_MINUTES,
     screenshot_interval_minutes: Math.max(
       1,
       Math.min(240, config.screenshot_interval_minutes ?? 10),
@@ -469,6 +484,7 @@ function resetForDeviceReenrollment() {
   unpaidPauseActive = false;
   currentSessionId = null;
   workedTodayBaseSeconds = 0;
+  activeCounterDate = null;
   idleSecondsBeforeCurrentIdle = 0;
   eligibleIdleSecondsBeforeCurrentIdle = 0;
   idleWallClockStartedAt = null;
@@ -624,7 +640,9 @@ function rebuildTrayMenu() {
       (runtimeStatus.timeSummary?.today.manual_approved_seconds ?? 0),
   );
   const updateLabel =
-    runtimeStatus.updateStatus === "ready"
+    runtimeStatus.updateStatus === "installing"
+      ? `Installing update ${runtimeStatus.updateVersion ?? ""}`.trim()
+      : runtimeStatus.updateStatus === "ready"
       ? `Update ${runtimeStatus.updateVersion ?? ""} ready to install`.trim()
       : runtimeStatus.updateStatus === "downloading"
         ? `Downloading update: ${Math.round(runtimeStatus.updatePercent ?? 0)}%`
@@ -690,7 +708,11 @@ function rebuildTrayMenu() {
         }
       : {
           label: "Check for Updates",
-          enabled: !isUpdateCheckRunning,
+          enabled:
+            !isUpdateCheckRunning &&
+            !["available", "downloading", "installing"].includes(
+              runtimeStatus.updateStatus,
+            ),
           click: () => void checkForUpdates(true),
         },
     { type: "separator" },
@@ -776,6 +798,52 @@ function saveScreenshotSchedule(nextAt: number | null) {
   );
 }
 
+function localDateKey(at = new Date()) {
+  const timezone =
+    runtimeStatus.requestPolicy?.timezone ||
+    Intl.DateTimeFormat().resolvedOptions().timeZone ||
+    "UTC";
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(at);
+  const part = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((item) => item.type === type)?.value ?? "";
+  return `${part("year")}-${part("month")}-${part("day")}`;
+}
+
+function ensureCurrentCounterDate(now = new Date()) {
+  const nextCounterDate = localDateKey(now);
+  if (activeCounterDate === null) {
+    activeCounterDate = nextCounterDate;
+    return;
+  }
+  if (activeCounterDate === nextCounterDate) {
+    return;
+  }
+
+  activeCounterDate = nextCounterDate;
+  workedTodayBaseSeconds = 0;
+  runtimeStatus.activeSeconds = 0;
+  runtimeStatus.idleSeconds = 0;
+  runtimeStatus.eligibleIdleSeconds = 0;
+  runtimeStatus.normalSeconds = 0;
+  runtimeStatus.extraSeconds = 0;
+  runtimeStatus.workedTodaySeconds = 0;
+  runtimeStatus.dailyTargetProgressPercent = 0;
+  runtimeStatus.activityPercent = 0;
+  runtimeStatus.timeSummary = null;
+  runtimeStatus.todayTimeline = null;
+  runtimeStatus.idleRequestPeriods = [];
+  idleSecondsBeforeCurrentIdle = 0;
+  eligibleIdleSecondsBeforeCurrentIdle = 0;
+  lastDurationTickAt = now.getTime();
+  notifyRendererStatus();
+  rebuildTrayMenu();
+}
+
 function getPendingScreenshotDirectory() {
   return path.join(app.getPath("userData"), "pending-screenshots");
 }
@@ -802,16 +870,21 @@ function syncRuntimeFromSession(session: WorkSession) {
     return;
   }
   const changedSession = currentSessionId !== session.id;
+  const todayCounterDate = localDateKey();
+  const sessionCounterDate = localDateKey(new Date(session.started_at));
+  const sessionBelongsToToday = sessionCounterDate === todayCounterDate;
   const localActiveSeconds = changedSession ? 0 : runtimeStatus.activeSeconds;
   const localIdleSeconds = changedSession ? 0 : runtimeStatus.idleSeconds;
+  activeCounterDate = todayCounterDate;
   currentSessionId = session.id;
   runtimeStatus.sessionStartedAt = session.started_at;
   runtimeStatus.trackingStatus = session.status;
-  runtimeStatus.activeSeconds = Math.max(
-    session.active_seconds,
-    localActiveSeconds,
-  );
-  runtimeStatus.idleSeconds = Math.max(session.idle_seconds, localIdleSeconds);
+  runtimeStatus.activeSeconds = sessionBelongsToToday
+    ? Math.max(session.active_seconds, localActiveSeconds)
+    : 0;
+  runtimeStatus.idleSeconds = sessionBelongsToToday
+    ? Math.max(session.idle_seconds, localIdleSeconds)
+    : 0;
   runtimeStatus.workedTodaySeconds =
     workedTodayBaseSeconds + runtimeStatus.activeSeconds;
   if (changedSession) {
@@ -823,6 +896,14 @@ function syncRuntimeFromSession(session: WorkSession) {
 
 function applyWorkdayState(workday?: WorkdayState | null) {
   if (workday) {
+    if (
+      workday.work_date &&
+      activeCounterDate &&
+      workday.work_date !== activeCounterDate
+    ) {
+      return;
+    }
+    activeCounterDate = workday.work_date ?? activeCounterDate;
     runtimeStatus.dailyTargetSeconds = workday.required_normal_seconds;
     runtimeStatus.normalSeconds = workday.normal_seconds;
     runtimeStatus.extraSeconds = workday.extra_seconds;
@@ -954,6 +1035,7 @@ function activeTimeBucket(at: Date): "normal" | "extra" {
 }
 
 function recalculateWorkedTime() {
+  ensureCurrentCounterDate();
   if (
     !currentSessionId ||
     !runtimeStatus.sessionStartedAt ||
@@ -1273,17 +1355,17 @@ function startIdleMonitor() {
   idleTimer = setInterval(() => {
     if (
       !runtimeStatus.enrolled ||
+      !currentSessionId ||
+      runtimeStatus.trackingPaused ||
       unpaidPauseActive ||
-      runtimeStatus.trackingStatus === "locked" ||
-      runtimeStatus.trackingStatus === "sleeping"
+      !["starting", "active", "idle"].includes(runtimeStatus.trackingStatus)
     ) {
       return;
     }
 
     const idleSeconds = powerMonitor.getSystemIdleTime();
-    const thresholdSeconds = trackingConfig.idle_threshold_minutes * 60;
     if (
-      idleSeconds >= thresholdSeconds &&
+      hasReachedIdleThreshold(idleSeconds) &&
       runtimeStatus.trackingStatus !== "idle"
     ) {
       recalculateWorkedTime();
@@ -1292,7 +1374,7 @@ function startIdleMonitor() {
       idleWallClockStartedAt = Date.now();
       void sendStateEvent("idle_started", "idle");
     } else if (
-      idleSeconds < thresholdSeconds &&
+      idleSeconds < IDLE_THRESHOLD_SECONDS &&
       runtimeStatus.trackingStatus === "idle"
     ) {
       finishAutomaticIdleImmediately();
@@ -1573,6 +1655,7 @@ async function heartbeatTick(options: { refreshMetadata?: boolean } = {}) {
       status,
       idleSeconds: runtimeStatus.idleSeconds,
       activeSeconds: runtimeStatus.activeSeconds,
+      counterDate: activeCounterDate ?? localDateKey(),
       agentVersion: runtimeStatus.agentVersion,
     });
     const latestLocalStatus = runtimeStatus.trackingStatus;
@@ -1591,6 +1674,12 @@ async function heartbeatTick(options: { refreshMetadata?: boolean } = {}) {
     }
     runtimeStatus.connectionStatus = "online";
     runtimeStatus.lastSuccessfulSyncAt = new Date().toISOString();
+    if (!currentSessionId) {
+      log.info(
+        "The server closed the current session; starting a fresh session automatically",
+      );
+      scheduleAutomaticTrackingRestart(1_000);
+    }
   } catch (error) {
     runtimeStatus.connectionStatus = "offline";
     if (isDeviceIdentityMismatch(error)) {
@@ -1609,17 +1698,7 @@ async function heartbeatTick(options: { refreshMetadata?: boolean } = {}) {
       runtimeStatus.sessionStartedAt = null;
       runtimeStatus.trackingStatus = "starting";
       lastDurationTickAt = null;
-      if (
-        !automaticTrackingRetryTimer &&
-        !isStartingTrackingAutomatically &&
-        !trackingPausedByUser &&
-        !isQuitting
-      ) {
-        automaticTrackingRetryTimer = setTimeout(() => {
-          automaticTrackingRetryTimer = null;
-          void startTrackingAutomatically();
-        }, 1000);
-      }
+      scheduleAutomaticTrackingRestart(1_000);
     } else {
       enqueuePendingEvent({
         id: eventId,
@@ -1643,6 +1722,41 @@ async function heartbeatTick(options: { refreshMetadata?: boolean } = {}) {
   }
 }
 
+function automaticTrackingIsExpected() {
+  return (
+    runtimeStatus.enrolled &&
+    !trackingPausedByUser &&
+    !unpaidPauseActive &&
+    !isQuitting
+  );
+}
+
+function scheduleAutomaticTrackingRestart(delayMs = 1_000) {
+  if (
+    !automaticTrackingIsExpected() ||
+    currentSessionId ||
+    automaticTrackingRetryTimer
+  ) {
+    return;
+  }
+  runtimeStatus.trackingStatus = "starting";
+  automaticTrackingRetryTimer = setTimeout(() => {
+    automaticTrackingRetryTimer = null;
+    void startTrackingAutomatically();
+  }, Math.max(0, delayMs));
+}
+
+function startTrackingWatchdog() {
+  if (trackingWatchdogTimer) {
+    return;
+  }
+  trackingWatchdogTimer = setInterval(() => {
+    if (!currentSessionId && automaticTrackingIsExpected()) {
+      scheduleAutomaticTrackingRestart(1_000);
+    }
+  }, 15_000);
+}
+
 function startTimers() {
   if (lastDurationTickAt === null) {
     lastDurationTickAt = Date.now();
@@ -1662,6 +1776,7 @@ function startTimers() {
   startIdleMonitor();
   startForegroundActivityMonitoring();
   startScreenshotMonitoring();
+  startTrackingWatchdog();
 }
 
 function startScreenshotMonitoring() {
@@ -1702,30 +1817,25 @@ function clearRuntimeTimers() {
     clearTimeout(automaticTrackingRetryTimer);
     automaticTrackingRetryTimer = null;
   }
+  if (trackingWatchdogTimer) {
+    clearInterval(trackingWatchdogTimer);
+    trackingWatchdogTimer = null;
+  }
 }
 
 function screenshotCaptureBlockReason(): string | null {
-  if (!runtimeStatus.enrolled) return "device_not_enrolled";
-  if (!trackingConfig.screenshot_enabled) return "capture_disabled";
-  if (!onAcPower) return "battery_power";
-  if (
-    runtimeStatus.trackingStatus === "locked" ||
-    runtimeStatus.trackingStatus === "sleeping"
-  ) {
-    return runtimeStatus.trackingStatus === "locked"
-      ? "screen_locked"
-      : "system_sleeping";
-  }
-  const systemIdleSeconds = powerMonitor.getSystemIdleTime();
-  if (
-    !trackingConfig.capture_during_idle &&
-    (runtimeStatus.trackingStatus === "idle" ||
-      systemIdleSeconds >=
-        Math.max(60, trackingConfig.idle_threshold_minutes * 60))
-  ) {
-    return "no_user_activity";
-  }
-  return null;
+  return screenshotCaptureBlockReasonForState({
+    enrolled: runtimeStatus.enrolled,
+    screenshotsEnabled: trackingConfig.screenshot_enabled,
+    hasActiveSession: Boolean(currentSessionId),
+    trackingPaused:
+      trackingPausedByUser ||
+      unpaidPauseActive ||
+      runtimeStatus.trackingPaused,
+    onAcPower,
+    trackingStatus: runtimeStatus.trackingStatus as RuntimeTrackingStatus,
+    systemIdleSeconds: powerMonitor.getSystemIdleTime(),
+  });
 }
 
 async function refreshTrackingConfig() {
@@ -1851,6 +1961,7 @@ async function captureAndUploadScreenshot() {
       displayName: source.name || `Screen ${index + 1}`,
       displayCount: sources.length,
       powerSource: onAcPower ? "ac" : "battery",
+      trackingStatus: runtimeStatus.trackingStatus,
     };
 
     try {
@@ -1886,7 +1997,7 @@ async function captureAndUploadScreenshot() {
   }
   rebuildTrayMenu();
   if (uploaded + queued > 0) {
-    showScreenshotCapturedNotification();
+    showScreenshotCapturedNotification(uploaded, queued);
   }
   log.info("Display screenshots processed", {
     displays: sources.length,
@@ -1895,9 +2006,15 @@ async function captureAndUploadScreenshot() {
   });
 }
 
-function showScreenshotCapturedNotification() {
-  const title = "Screenshot captured";
-  const body = "Khaliduo took a screenshot to document your work and effort.";
+function showScreenshotCapturedNotification(uploaded: number, queued: number) {
+  const waitingForSync = queued > 0;
+  const title = waitingForSync ? "Screenshot saved" : "Screenshot captured";
+  const body =
+    queued > 0 && uploaded > 0
+      ? "Some screens were uploaded. The rest are saved securely and waiting to sync."
+      : queued > 0
+        ? "The screenshot is saved securely on this device and waiting to sync."
+        : "Khaliduo uploaded the screenshot to document your work and effort.";
 
   if (Notification.isSupported()) {
     const notification = new Notification({
@@ -1916,12 +2033,12 @@ function showScreenshotCapturedNotification() {
   }
 }
 
-async function syncPendingQueues(forcePendingEvents = false) {
+async function syncPendingQueues(forcePendingQueues = false) {
   if (!runtimeStatus.enrolled) {
     return;
   }
 
-  for (const event of getDuePendingEvents(25, { force: forcePendingEvents })) {
+  for (const event of getDuePendingEvents(25, { force: forcePendingQueues })) {
     try {
       await sendQueuedRequest(
         event.method,
@@ -1932,14 +2049,17 @@ async function syncPendingQueues(forcePendingEvents = false) {
       runtimeStatus.connectionStatus = "online";
       runtimeStatus.lastSuccessfulSyncAt = new Date().toISOString();
     } catch (error) {
+      const responseStatus = axios.isAxiosError(error) ? error.response?.status : undefined;
       markPendingEventFailed(event.id, event.attempts);
-      runtimeStatus.connectionStatus = "offline";
+      // Any HTTP response proves that the API is reachable. Keep the agent
+      // online while the rejected item remains pending for a later decision.
+      runtimeStatus.connectionStatus = responseStatus === undefined ? "offline" : "online";
       log.warn("Pending event sync failed", error);
       continue;
     }
   }
 
-  for (const screenshot of getDuePendingScreenshots()) {
+  for (const screenshot of getDuePendingScreenshots(10, { force: forcePendingQueues })) {
     try {
       const metadata = JSON.parse(
         screenshot.metadataJson,
@@ -1961,8 +2081,16 @@ async function syncPendingQueues(forcePendingEvents = false) {
       runtimeStatus.connectionStatus = "online";
       runtimeStatus.lastSuccessfulSyncAt = new Date().toISOString();
     } catch (error) {
-      markPendingScreenshotFailed(screenshot.screenshotId, screenshot.attempts);
-      runtimeStatus.connectionStatus = "offline";
+      const responseStatus = axios.isAxiosError(error) ? error.response?.status : undefined;
+      const permanentlyRejected =
+        responseStatus !== undefined && [400, 403, 404, 409, 413, 422].includes(responseStatus);
+      markPendingScreenshotFailed(
+        screenshot.screenshotId,
+        screenshot.attempts,
+        permanentlyRejected,
+      );
+      // A policy/conflict response is a sync rejection, not an internet outage.
+      runtimeStatus.connectionStatus = responseStatus === undefined ? "offline" : "online";
       log.warn("Pending screenshot sync failed", error);
       continue;
     }
@@ -2103,12 +2231,7 @@ async function startTrackingAutomatically() {
       resetForDeviceReenrollment();
       return;
     }
-    if (!isQuitting && runtimeStatus.enrolled && !trackingPausedByUser) {
-      automaticTrackingRetryTimer = setTimeout(() => {
-        automaticTrackingRetryTimer = null;
-        void startTrackingAutomatically();
-      }, 15_000);
-    }
+    scheduleAutomaticTrackingRestart(15_000);
   } finally {
     isStartingTrackingAutomatically = false;
     rebuildTrayMenu();
@@ -2338,6 +2461,7 @@ async function logoutDevice() {
   saveTrackingPreferences();
   currentSessionId = null;
   workedTodayBaseSeconds = 0;
+  activeCounterDate = null;
   idleSecondsBeforeCurrentIdle = 0;
   eligibleIdleSecondsBeforeCurrentIdle = 0;
   idleWallClockStartedAt = null;
@@ -2595,18 +2719,17 @@ function setUpdateAttention(active: boolean) {
   }
 }
 
-function showRequiredUpdatePrompt(version: string | null) {
-  setUpdateAttention(true);
-  showMainWindow({ forceForeground: true, centerOnPointerDisplay: true });
-  mainWindow?.webContents.send("agent:update-required", {
-    version,
-  });
-}
-
 function runtimeStatusPayload() {
   const screenshotBlockReason = screenshotCaptureBlockReason();
+  const currentIdleSeconds =
+    runtimeStatus.trackingStatus === "idle" &&
+    !runtimeStatus.trackingPaused &&
+    !unpaidPauseActive
+      ? idleDurationAfterThreshold(powerMonitor.getSystemIdleTime())
+      : 0;
   return {
     ...runtimeStatus,
+    currentIdleSeconds,
     screenshotMonitoringEnabled:
       runtimeStatus.enrolled && trackingConfig.screenshot_enabled,
     screenshotCaptureActive: screenshotBlockReason === null,
@@ -2665,8 +2788,45 @@ async function showUpdateMessage(options: Electron.MessageBoxOptions) {
   return dialog.showMessageBox(options);
 }
 
-async function checkForUpdates(manual = false) {
+type UpdateActionResult = { success: boolean; message?: string };
+
+/**
+ * Re-arms the updater after a failure. Without this a single network blip or a
+ * locked installer file parked the app on the old build until the next 15-minute
+ * tick, and a failure during installation stopped retrying altogether.
+ */
+function scheduleUpdateRetry(reason: string) {
+  if (!app.isPackaged || isInstallingUpdate) {
+    return;
+  }
+  if (updateRetryTimer) clearTimeout(updateRetryTimer);
+  consecutiveUpdateFailures += 1;
+  // 2, 4, 8, 16 minutes, then a 30-minute floor so a permanently failing
+  // machine keeps trying without hammering the update feed.
+  const delayMinutes = Math.min(30, 2 ** Math.min(consecutiveUpdateFailures, 4));
+  log.info(
+    `Khaliduo will retry the update in ${delayMinutes} minute(s) after: ${reason}`,
+  );
+  updateRetryTimer = setTimeout(
+    () => {
+      updateRetryTimer = null;
+      if (runtimeStatus.updateStatus === "ready") {
+        // The download survived; only the installation needs another attempt.
+        void installDownloadedUpdate();
+        return;
+      }
+      void checkForUpdates();
+    },
+    delayMinutes * 60 * 1000,
+  );
+}
+
+async function checkForUpdates(
+  manual = false,
+  showErrorDialog = manual,
+): Promise<UpdateActionResult> {
   if (!app.isPackaged) {
+    const message = "Updates are only available in the installed Khaliduo app.";
     if (manual) {
       await dialog.showMessageBox({
         type: "info",
@@ -2675,14 +2835,22 @@ async function checkForUpdates(manual = false) {
         detail: "The development preview does not install updates.",
       });
     }
-    return;
+    return { success: false, message };
+  }
+  if (isUpdateCheckRunning) {
+    return { success: true, message: "An update check is already running." };
   }
   if (
-    isUpdateCheckRunning ||
-    runtimeStatus.updateStatus === "downloading" ||
-    runtimeStatus.updateStatus === "ready"
+    runtimeStatus.updateStatus === "available" ||
+    runtimeStatus.updateStatus === "downloading"
   ) {
-    return;
+    return { success: true, message: "The update is already downloading." };
+  }
+  if (runtimeStatus.updateStatus === "ready") {
+    return { success: true, message: "The update is ready to install." };
+  }
+  if (runtimeStatus.updateStatus === "installing" || isInstallingUpdate) {
+    return { success: true, message: "The update installation has started." };
   }
 
   manualUpdateCheckRequested = manual;
@@ -2690,10 +2858,16 @@ async function checkForUpdates(manual = false) {
   setUpdateStatus("checking", { percent: null });
   try {
     await autoUpdater.checkForUpdates();
+    return { success: true };
   } catch (error) {
     setUpdateStatus("error", { percent: null });
+    scheduleUpdateRetry("the update check failed");
     log.error("Khaliduo update check failed", error);
-    if (manual) {
+    const message = getUserFacingError(
+      error,
+      "Khaliduo could not check for updates. Check the internet connection and try again.",
+    );
+    if (manual && showErrorDialog) {
       await showUpdateMessage({
         type: "error",
         title: "Khaliduo Updates",
@@ -2702,6 +2876,7 @@ async function checkForUpdates(manual = false) {
           "Check the internet connection and try again from the notification-area icon.",
       });
     }
+    return { success: false, message };
   } finally {
     isUpdateCheckRunning = false;
     rebuildTrayMenu();
@@ -2709,8 +2884,15 @@ async function checkForUpdates(manual = false) {
 }
 
 async function preserveTrackingBeforeUpdate() {
-  recalculateWorkedTime();
-  await flushForegroundActivitySegment();
+  try {
+    recalculateWorkedTime();
+    await flushForegroundActivitySegment();
+  } catch (error) {
+    log.warn(
+      "Could not persist foreground activity before installing the update",
+      error,
+    );
+  }
   if (currentSessionId && runtimeStatus.enrolled) {
     try {
       // Persist the latest counters without ending the work session. After the
@@ -2718,25 +2900,85 @@ async function preserveTrackingBeforeUpdate() {
       // open session instead of creating a sign-out/sign-in break.
       await heartbeatTick({ refreshMetadata: false });
     } catch (error) {
-      log.warn("Could not persist the active session before installing the update", error);
+      log.warn(
+        "Could not persist the active session before installing the update",
+        error,
+      );
     }
   }
   clearRuntimeTimers();
   updateDisplaySleepBlocker();
 }
 
-async function installDownloadedUpdate() {
-  if (runtimeStatus.updateStatus !== "ready" || isInstallingUpdate) {
-    return;
+async function installDownloadedUpdate(): Promise<UpdateActionResult> {
+  if (isInstallingUpdate || runtimeStatus.updateStatus === "installing") {
+    return { success: true, message: "The update installation has started." };
+  }
+  if (runtimeStatus.updateStatus !== "ready") {
+    return {
+      success: false,
+      message:
+        runtimeStatus.updateStatus === "downloading" ||
+        runtimeStatus.updateStatus === "available"
+          ? "The update is still downloading."
+          : "No downloaded update is ready to install.",
+    };
   }
   isInstallingUpdate = true;
+  setUpdateStatus("installing", {
+    version: runtimeStatus.updateVersion,
+    percent: 100,
+  });
   setUpdateAttention(false);
   if (updateCheckTimer) clearInterval(updateCheckTimer);
   if (initialUpdateCheckTimer) clearTimeout(initialUpdateCheckTimer);
+  if (updateRetryTimer) {
+    clearTimeout(updateRetryTimer);
+    updateRetryTimer = null;
+  }
+  log.info(
+    `Installing Khaliduo update ${runtimeStatus.updateVersion ?? ""} automatically`,
+  );
   await preserveTrackingBeforeUpdate();
   isQuitting = true;
   quitNotificationSent = true;
-  autoUpdater.quitAndInstall(true, true);
+  try {
+    autoUpdater.quitAndInstall(true, true);
+    return { success: true };
+  } catch (error) {
+    isInstallingUpdate = false;
+    isQuitting = false;
+    quitNotificationSent = false;
+    setUpdateStatus("ready", {
+      version: runtimeStatus.updateVersion,
+      percent: 100,
+    });
+    if (currentSessionId && runtimeStatus.enrolled) {
+      startTimers();
+    }
+    log.error("Could not launch the downloaded update installer", error);
+    // The installer is already downloaded, so keep retrying it on our own
+    // instead of waiting for the employee to notice a stuck button.
+    startUpdateCheckSchedule();
+    scheduleUpdateRetry("the downloaded update could not be installed");
+    return {
+      success: false,
+      message: getUserFacingError(error, "Could not install the update."),
+    };
+  }
+}
+
+/**
+ * One scheduled pass of the updater. An installer that finished downloading but
+ * failed to launch must be retried on the next tick, otherwise the app sits on
+ * "ready" forever and every later check short-circuits on that same status.
+ */
+function runScheduledUpdatePass() {
+  if (runtimeStatus.updateStatus === "ready" && !isInstallingUpdate) {
+    void installDownloadedUpdate();
+    return;
+  }
+  void checkForUpdates();
 }
 
 function configureAutoUpdater() {
@@ -2749,30 +2991,19 @@ function configureAutoUpdater() {
   autoUpdater.autoInstallOnAppQuit = true;
   autoUpdater.autoRunAppAfterInstall = true;
   autoUpdater.allowPrerelease = false;
+  // Every release publishes the same KhaliduoSetup.exe file name, so the old and
+  // new block maps live at one URL and a differential download compares a build
+  // against itself. Always fetch the full installer instead.
+  autoUpdater.disableDifferentialDownload = true;
 
   autoUpdater.on("checking-for-update", () => {
     setUpdateStatus("checking", { percent: null });
   });
   autoUpdater.on("update-available", (info) => {
     setUpdateStatus("available", { version: info.version, percent: 0 });
-    log.info(`Khaliduo update ${info.version} is available`);
-    if (process.platform === "win32") {
-      tray?.displayBalloon({
-        title: "Required Khaliduo update",
-        content: `Version ${info.version} is downloading and will be installed automatically.`,
-        iconType: "info",
-      });
-    }
-    void showUpdateMessage({
-      type: "info",
-      title: "Required Khaliduo Update",
-      message: `Khaliduo ${info.version} is available.`,
-      detail:
-        "The required update is downloading now. Khaliduo will ask you to install it as soon as the download finishes.",
-      buttons: ["OK"],
-      defaultId: 0,
-      noLink: true,
-    });
+    log.info(
+      `Khaliduo update ${info.version} is downloading silently in the background`,
+    );
   });
   autoUpdater.on("download-progress", (progress) => {
     setUpdateStatus("downloading", {
@@ -2782,6 +3013,7 @@ function configureAutoUpdater() {
   });
   autoUpdater.on("update-not-available", async () => {
     setUpdateStatus("up-to-date", { version: null, percent: null });
+    consecutiveUpdateFailures = 0;
     if (manualUpdateCheckRequested) {
       manualUpdateCheckRequested = false;
       await showUpdateMessage({
@@ -2792,21 +3024,42 @@ function configureAutoUpdater() {
       });
     }
   });
-  autoUpdater.on("update-downloaded", async (event) => {
+  autoUpdater.on("update-downloaded", (event) => {
     setUpdateStatus("ready", { version: event.version, percent: 100 });
-    if (hasPromptedForDownloadedUpdate) {
-      return;
-    }
-    hasPromptedForDownloadedUpdate = true;
-    showRequiredUpdatePrompt(event.version);
+    consecutiveUpdateFailures = 0;
+    log.info(
+      `Khaliduo update ${event.version} is ready; automatic installation is starting now`,
+    );
+    void installDownloadedUpdate().then((result) => {
+      if (!result.success) {
+        log.error(
+          "Automatic update installation could not start",
+          result.message,
+        );
+      }
+    });
   });
   autoUpdater.on("error", (error) => {
+    isInstallingUpdate = false;
     setUpdateStatus("error", { percent: null });
     manualUpdateCheckRequested = false;
     log.error("Khaliduo automatic update error", error);
+    scheduleUpdateRetry("the updater reported an error");
   });
 
-  initialUpdateCheckTimer = setTimeout(() => void checkForUpdates(), 10_000);
+  initialUpdateCheckTimer = setTimeout(runScheduledUpdatePass, 1_000);
+  startUpdateCheckSchedule();
+}
+
+/**
+ * (Re)arms the periodic update pass. Starting an installation clears it because
+ * the app is about to exit; if that installation never happens the schedule has
+ * to come back, or the device silently stops looking for updates.
+ */
+function startUpdateCheckSchedule() {
+  if (!app.isPackaged) {
+    return;
+  }
   const configuredInterval = Number.parseInt(
     process.env.UPDATE_CHECK_INTERVAL_MINUTES ?? "15",
     10,
@@ -2814,8 +3067,9 @@ function configureAutoUpdater() {
   const updateCheckIntervalMinutes = Number.isFinite(configuredInterval)
     ? Math.max(5, Math.min(1_440, configuredInterval))
     : 15;
+  if (updateCheckTimer) clearInterval(updateCheckTimer);
   updateCheckTimer = setInterval(
-    () => void checkForUpdates(),
+    runScheduledUpdatePass,
     updateCheckIntervalMinutes * 60 * 1000,
   );
   log.info(
@@ -2940,6 +3194,10 @@ app.whenReady().then(async () => {
   hydrateIdentityStatus();
   const launchedByWindowsStartup =
     process.argv.includes("--autostart") || process.argv.includes("--hidden");
+  const launchedAfterSilentUpdate =
+    process.argv.includes("--updated") || process.argv.includes("--force-run");
+  const launchedInBackground =
+    launchedByWindowsStartup || launchedAfterSilentUpdate;
   loadTrackingPreferences(launchedByWindowsStartup);
   configureAutoStart();
   wireSystemEvents();
@@ -2953,7 +3211,9 @@ app.whenReady().then(async () => {
 
   await createMainWindow();
   configureAutoUpdater();
-  showMainWindow();
+  if (!launchedInBackground) {
+    showMainWindow();
+  }
   if (runtimeStatus.enrolled) {
     await refreshTrackingConfig();
     startScreenshotMonitoring();
@@ -2984,8 +3244,7 @@ ipcMain.on("agent:set-update-attention", (_, active: boolean) => {
 
 ipcMain.handle("agent:check-for-updates", async () => {
   try {
-    await checkForUpdates(true);
-    return { success: true };
+    return await checkForUpdates(true, false);
   } catch (error) {
     log.error("Manual update check failed", error);
     return {
@@ -2997,8 +3256,7 @@ ipcMain.handle("agent:check-for-updates", async () => {
 
 ipcMain.handle("agent:install-update", async () => {
   try {
-    await installDownloadedUpdate();
-    return { success: true };
+    return await installDownloadedUpdate();
   } catch (error) {
     log.error("Update installation failed", error);
     setUpdateAttention(true);
@@ -3321,13 +3579,48 @@ ipcMain.handle(
   ) => {
     try {
       const request = await createTimeAdjustmentRequest(input);
-      await refreshTimeAdjustmentRequests();
-      await refreshTrackingConfig();
-      await refreshWorkedTodayTotal();
+      runtimeStatus.timeAdjustmentRequests = [
+        request,
+        ...runtimeStatus.timeAdjustmentRequests.filter(
+          (existing) => existing.id !== request.id,
+        ),
+      ].slice(0, 10);
+      if (
+        request.request_type === "idle_time" &&
+        request.work_session_id &&
+        request.source_start_at &&
+        request.source_end_at
+      ) {
+        const requestedSeconds = Math.max(0, request.requested_minutes * 60);
+        runtimeStatus.idleRequestPeriods = runtimeStatus.idleRequestPeriods
+          .map((period) =>
+            period.work_session_id === request.work_session_id &&
+            period.started_at === request.source_start_at &&
+            period.ended_at === request.source_end_at
+              ? {
+                  ...period,
+                  available_seconds: Math.max(
+                    0,
+                    period.available_seconds - requestedSeconds,
+                  ),
+                }
+              : period,
+          )
+          .filter((period) => period.available_seconds >= 60);
+      }
       runtimeStatus.connectionStatus = "online";
       runtimeStatus.lastSuccessfulSyncAt = new Date().toISOString();
       rebuildTrayMenu();
-      return { success: true, request, status: runtimeStatusPayload() };
+      const status = runtimeStatusPayload();
+      void Promise.all([
+        refreshTimeAdjustmentRequests(),
+        refreshTrackingConfig(),
+        refreshWorkedTodayTotal(),
+      ]).then(() => {
+        rebuildTrayMenu();
+        notifyRendererStatus();
+      });
+      return { success: true, request, status };
     } catch (error) {
       runtimeStatus.connectionStatus = "offline";
       rebuildTrayMenu();

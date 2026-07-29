@@ -3,7 +3,7 @@ from typing import Any
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from sqlalchemy import or_, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import ApiError
@@ -225,10 +225,6 @@ def _sessions_for_workday(db: Session, session: WorkSession) -> list[WorkSession
                 WorkSession.device_id == session.device_id,
                 WorkSession.started_at >= start,
                 WorkSession.started_at < end,
-                or_(
-                    WorkSession.timezone == zone.key,
-                    WorkSession.timezone.is_(None),
-                ),
             )
             .order_by(WorkSession.started_at, WorkSession.created_at)
         ).all()
@@ -271,7 +267,6 @@ def sync_session_time_buckets(
         target_date=work_date,
         now=calculated_at,
         device_id=session.device_id,
-        session_timezone_name=zone.key,
     )
     buckets: dict[UUID, dict[str, int]] = {}
     for interval in timeline["intervals"]:

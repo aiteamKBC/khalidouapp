@@ -1,4 +1,4 @@
-import { apiFetch, apiUrl, withQuery } from "./client";
+import { apiFetch, withQuery } from "./client";
 import { mapWorkdayTimeline, type BackendWorkdayTimeline } from "./workday";
 import { normalizeAiAcronym } from "@/lib/text";
 import type { WorkdayTimeline } from "@/types";
@@ -100,7 +100,8 @@ export type PortalProject = { id: string; name: string; team_id: string };
 export type PortalScreenshot = {
   id: string;
   captured_at: string;
-  imageUrl: string;
+  thumbnailUrl: string;
+  fullUrl: string;
   tracked_seconds: number;
 };
 
@@ -384,20 +385,19 @@ export async function employeeScreenshots(
   day?: string,
 ): Promise<PortalScreenshot[]> {
   const rows = await apiFetch<
-    Array<{ id: string; captured_at: string; temporary_url: string; tracked_seconds: number }>
+    Array<{
+      id: string;
+      captured_at: string;
+      temporary_url: string;
+      thumbnail_url: string;
+      tracked_seconds: number;
+    }>
   >(withQuery("/employee-portal/screenshots", { day }), {}, token);
-  return Promise.all(
-    rows.map(async (row) => {
-      const response = await fetch(apiUrl(row.temporary_url), {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!response.ok) throw new Error("A screenshot could not be loaded.");
-      return {
-        id: row.id,
-        captured_at: row.captured_at,
-        tracked_seconds: row.tracked_seconds,
-        imageUrl: URL.createObjectURL(await response.blob()),
-      };
-    }),
-  );
+  return rows.map((row) => ({
+    id: row.id,
+    captured_at: row.captured_at,
+    tracked_seconds: row.tracked_seconds,
+    thumbnailUrl: row.thumbnail_url,
+    fullUrl: row.temporary_url,
+  }));
 }

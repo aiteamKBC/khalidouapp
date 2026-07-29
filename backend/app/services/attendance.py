@@ -174,7 +174,6 @@ def calculate_daily_attendance(
         target_date=work_date,
         now=now,
         device_id=device_id,
-        session_timezone_name=effective_timezone if device_id is not None else None,
     )
     start_at = schedule["start_at"]
     end_at = schedule["end_at"]
