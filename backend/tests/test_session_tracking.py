@@ -635,6 +635,51 @@ def test_idle_beyond_the_threshold_ends_the_session_where_work_stopped(tracking_
     assert result["restarted"] is False
 
 
+def test_heartbeat_accumulates_multiple_idle_episodes(tracking_context):
+    db, device = tracking_context
+    started_at = datetime(2026, 7, 16, 9, 0, tzinfo=UTC)
+    session = WorkSession(
+        company_id=device.company_id,
+        employee_id=device.employee_id,
+        device_id=device.id,
+        started_at=started_at,
+        status="active",
+        active_seconds=0,
+        idle_seconds=0,
+    )
+    db.add(session)
+    db.commit()
+
+    heartbeats = [
+        (2, "active", 2 * 60, 0),
+        (5, "idle", 2 * 60, 3 * 60),
+        (9, "active", 6 * 60, 0),
+        # The agent counter describes only this idle episode. The backend must
+        # retain the first three minutes and derive six cumulative idle minutes.
+        (12, "idle", 6 * 60, 3 * 60),
+    ]
+    for minute, status, active_seconds, idle_seconds in heartbeats:
+        record_heartbeat(
+            db,
+            device=device,
+            session_id=session.id,
+            payload=HeartbeatRequest(
+                event_id=uuid4(),
+                timestamp=started_at + timedelta(minutes=minute),
+                status=status,
+                active_seconds=active_seconds,
+                idle_seconds=idle_seconds,
+                agent_version="1.1.75",
+            ),
+        )
+
+    db.refresh(session)
+    assert session.status == "idle"
+    assert session.ended_at is None
+    assert session.active_seconds == 6 * 60
+    assert session.idle_seconds == 6 * 60
+
+
 def test_idle_heartbeat_does_not_reopen_an_ended_session(tracking_context):
     db, device = tracking_context
     started_at = datetime(2026, 7, 16, 9, 0, tzinfo=UTC)

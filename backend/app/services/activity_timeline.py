@@ -344,9 +344,14 @@ def scope_timeline_to_schedule(
         totals[interval["type"]] += interval["duration_seconds"]
 
     is_running = any(item["is_current"] for item in merged)
-    first_started_at = min(
-        (item["started_at"] for item in merged),
-        default=None,
+    # build_workday_timeline already removed false starts using the company's
+    # idle threshold. Keep that canonical start when the raw timeline is split
+    # into shift/break categories; taking min() here used to put the discarded
+    # first touch back into attendance responses.
+    first_started_at = (
+        _utc(datetime.fromisoformat(timeline["first_started_at"]))
+        if timeline.get("first_started_at")
+        else min((item["started_at"] for item in merged), default=None)
     )
     last_activity_at = max(
         (item["ended_at"] for item in merged),

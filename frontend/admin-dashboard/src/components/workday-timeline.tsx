@@ -195,9 +195,7 @@ export function WorkdayTimeline({ timeline }: { timeline?: WorkdayTimelineData }
                 {style.label}
               </span>
               <span className="min-w-0 truncate text-muted-foreground">
-                {displayType === "worked" ||
-                displayType === "extra" ||
-                displayType === "break_work"
+                {displayType === "worked" || displayType === "extra" || displayType === "break_work"
                   ? (interval.taskName ?? interval.projectName ?? "-")
                   : "-"}
               </span>

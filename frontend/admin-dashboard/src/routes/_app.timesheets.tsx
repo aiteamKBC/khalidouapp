@@ -40,26 +40,25 @@ function TimesheetsPage() {
   const emps = useQuery({ queryKey: ["employees", scope], queryFn: () => listEmployees(scope) });
   const teams = useQuery({ queryKey: ["teams", scope], queryFn: () => listTeams(scope) });
 
-  const [view, setView] = useState<"daily" | "weekly" | "monthly">("weekly");
-  const [date, setDate] = useState("");
+  const [view, setView] = useState<"daily" | "weekly" | "monthly">("daily");
+  const [date, setDate] = useState(todayDateValue);
   const [teamId, setTeamId] = useState("all");
   const [empId, setEmpId] = useState("all");
   const [page, setPage] = useState(0);
   const perPage = 15;
   const ts = useQuery({
-    queryKey: ["ts", scope, view],
-    queryFn: () => listTimesheets(scope, view),
+    queryKey: ["ts", scope, view, date, teamId],
+    queryFn: () => listTimesheets(scope, view, date, teamId),
   });
 
   const filtered = useMemo(
     () =>
       (ts.data ?? []).filter((t) => {
-        if (date && t.date !== date) return false;
         if (teamId !== "all" && t.teamId !== teamId) return false;
         if (empId !== "all" && t.employeeId !== empId) return false;
         return true;
       }),
-    [ts.data, date, teamId, empId],
+    [ts.data, teamId, empId],
   );
 
   const paged = filtered.slice(page * perPage, (page + 1) * perPage);
@@ -112,15 +111,34 @@ function TimesheetsPage() {
 
       <Card className="p-4 mb-4">
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-          <Tabs value={view} onValueChange={(v) => setView(v as "daily" | "weekly" | "monthly")}>
+          <Tabs
+            value={view}
+            onValueChange={(v) => {
+              setView(v as "daily" | "weekly" | "monthly");
+              setPage(0);
+            }}
+          >
             <TabsList>
               <TabsTrigger value="daily">Daily</TabsTrigger>
               <TabsTrigger value="weekly">Weekly</TabsTrigger>
               <TabsTrigger value="monthly">Monthly</TabsTrigger>
             </TabsList>
           </Tabs>
-          <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
-          <Select value={teamId} onValueChange={setTeamId}>
+          <Input
+            type="date"
+            value={date}
+            onChange={(e) => {
+              setDate(e.target.value);
+              setPage(0);
+            }}
+          />
+          <Select
+            value={teamId}
+            onValueChange={(value) => {
+              setTeamId(value);
+              setPage(0);
+            }}
+          >
             <SelectTrigger>
               <SelectValue placeholder="Team" />
             </SelectTrigger>
@@ -133,7 +151,13 @@ function TimesheetsPage() {
               ))}
             </SelectContent>
           </Select>
-          <Select value={empId} onValueChange={setEmpId}>
+          <Select
+            value={empId}
+            onValueChange={(value) => {
+              setEmpId(value);
+              setPage(0);
+            }}
+          >
             <SelectTrigger>
               <SelectValue placeholder="Employee" />
             </SelectTrigger>
@@ -149,7 +173,7 @@ function TimesheetsPage() {
           <Button
             variant="outline"
             onClick={() => {
-              setDate("");
+              setDate(todayDateValue());
               setTeamId("all");
               setEmpId("all");
               setPage(0);
@@ -319,6 +343,14 @@ function TimesheetsPage() {
       </Card>
     </div>
   );
+}
+
+function todayDateValue() {
+  const today = new Date();
+  const year = today.getFullYear();
+  const month = String(today.getMonth() + 1).padStart(2, "0");
+  const day = String(today.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 function TimesheetMetric({
