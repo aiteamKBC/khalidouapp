@@ -226,6 +226,74 @@ def list_screenshots(
     )
 
 
+@router.get("/previews")
+def list_screenshot_previews(
+    current_admin: Annotated[AdminUser, Depends(get_current_admin)],
+    db: Annotated[Session, Depends(get_db)],
+    day: date,
+    employee_id: list[UUID] = Query(default=[]),
+    limit_per_employee: int = Query(default=3, ge=1, le=3),
+):
+    """Return a small, even preview set for the visible dashboard members."""
+    require_capability(current_admin, "screenshots.view")
+    employee_ids = list(dict.fromkeys(employee_id))
+    if not employee_ids:
+        return success_response(data=[])
+    if len(employee_ids) > 20:
+        raise ApiError(
+            "TOO_MANY_PREVIEW_EMPLOYEES",
+            "Screenshot previews can be requested for at most 20 employees.",
+            422,
+        )
+
+    employee_rows = _employee_timezone_rows(
+        db,
+        current_admin.company_id,
+        employee_ids,
+    )
+    preview_statement = select(
+        Screenshot.id.label("screenshot_id"),
+        func.row_number()
+        .over(
+            partition_by=Screenshot.employee_id,
+            order_by=Screenshot.captured_at.desc(),
+        )
+        .label("preview_rank"),
+    ).where(
+        Screenshot.company_id == current_admin.company_id,
+        Screenshot.employee_id.in_(employee_ids),
+        Screenshot.deleted_at.is_(None),
+        _local_day_condition(
+            day,
+            employee_rows,
+            employee_column=Screenshot.employee_id,
+            timestamp_column=Screenshot.captured_at,
+        ),
+    )
+    preview_statement = apply_employee_scope(
+        preview_statement,
+        db,
+        current_admin,
+        Screenshot.employee_id,
+    )
+    if not is_general_admin(current_admin):
+        preview_statement = preview_statement.where(
+            or_(
+                Screenshot.team_id.is_(None),
+                Screenshot.team_id.in_(accessible_team_ids_statement(current_admin)),
+            )
+        )
+
+    ranked_previews = preview_statement.subquery()
+    screenshots = db.scalars(
+        select(Screenshot)
+        .join(ranked_previews, ranked_previews.c.screenshot_id == Screenshot.id)
+        .where(ranked_previews.c.preview_rank <= limit_per_employee)
+        .order_by(Screenshot.employee_id.asc(), Screenshot.captured_at.desc())
+    ).all()
+    return success_response(data=[serialize_with_url(item) for item in screenshots])
+
+
 @router.get("/folders")
 def list_screenshot_folders(
     current_admin: Annotated[AdminUser, Depends(get_current_admin)],
@@ -588,7 +656,14 @@ def get_screenshot_file(
         raise ApiError(
             "SCREENSHOT_FILE_NOT_FOUND", "Screenshot file was not found in private storage.", 404
         )
-    return FileResponse(path, media_type=screenshot.mime_type)
+    return FileResponse(
+        path,
+        media_type=screenshot.mime_type,
+        headers={
+            "Cache-Control": "private, max-age=1800",
+            "Vary": "Authorization",
+        },
+    )
 
 
 @router.get("/{screenshot_id}/thumbnail")

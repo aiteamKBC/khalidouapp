@@ -18,6 +18,10 @@ import type {
   WorkdayTimeline,
 } from "./types/electron";
 import {
+  TIMELINE_LABELS,
+  timelineDisplayType,
+} from "./timelinePresentation";
+import {
   requestableIdleMinutes,
   totalRequestableIdleMinutes,
 } from "./idleRequests";
@@ -39,6 +43,7 @@ const fallbackStatus: AgentStatus = {
   workedTodaySeconds: 0,
   activeSeconds: 0,
   idleSeconds: 0,
+  currentIdleSeconds: 0,
   eligibleIdleSeconds: 0,
   paidPauseEndsAt: null,
   paidPauseRemainingSeconds: 0,
@@ -128,6 +133,7 @@ type KIconName =
   | "manual"
   | "locked"
   | "sleeping"
+  | "break"
   | "settings";
 
 function KIcon({
@@ -220,6 +226,13 @@ function KIcon({
       <>
         <path d="M18 15.5A7 7 0 0 1 8.5 6a7 7 0 1 0 9.5 9.5Z" />
         <path d="M15 4h4l-4 5h4" />
+      </>
+    ),
+    break: (
+      <>
+        <path d="M7 8h10v5a5 5 0 0 1-10 0Z" />
+        <path d="M17 9h1.5a2.5 2.5 0 0 1 0 5H17" />
+        <path d="M6 20h12" />
       </>
     ),
     settings: (
@@ -401,7 +414,6 @@ function App() {
   >("home");
   const [projectFilterId, setProjectFilterId] = useState("");
   const [sessionNote, setSessionNote] = useState("");
-  const [timeRequestMinutes, setTimeRequestMinutes] = useState(15);
   const [timeRequestReason, setTimeRequestReason] = useState("");
   const [selectedIdleRequestKey, setSelectedIdleRequestKey] = useState("");
   const [earlyLeaveDate, setEarlyLeaveDate] = useState(localDateKey());
@@ -451,64 +463,11 @@ function App() {
   const [screenshotError, setScreenshotError] = useState<string | null>(null);
   const [theme, setTheme] = useState<"light" | "dark">(initialTheme);
   const shownIdleAlertId = useRef<string | null>(null);
-  const promptedUpdateVersion = useRef<string | null>(null);
-  const updatePromptActive = useRef(false);
-  const updateStatusRef = useRef(status.updateStatus);
-  updateStatusRef.current = status.updateStatus;
   const screenshotsLoadedForEnrollment = useRef(false);
   const lastLoadedScreenshotAt = useRef<string | null>(null);
   const isDesktopRuntime = Boolean(window.khaliduo);
   const desktopRuntimeMessage =
     "Open Khaliduo desktop app to enroll this device. The browser preview cannot access the secure desktop identity store.";
-
-  const showRequiredUpdate = useCallback(async (version: string | null) => {
-    const promptKey = version ?? "ready";
-    if (
-      updatePromptActive.current ||
-      promptedUpdateVersion.current === promptKey
-    )
-      return;
-    promptedUpdateVersion.current = promptKey;
-    updatePromptActive.current = true;
-    window.khaliduo?.setUpdateAttention(true);
-
-    try {
-      while (true) {
-        const result = await Swal.fire({
-          title: "Required update",
-          text: `Khaliduo ${version ? `v${version}` : ""} is ready to install. You must install this update now to continue using the app. Your active session will be closed safely and Khaliduo will restart automatically.`,
-          icon: "info",
-          confirmButtonText: "Install update now",
-          confirmButtonColor: "#e91e63",
-          allowEscapeKey: false,
-          allowOutsideClick: false,
-          showCancelButton: false,
-          showCloseButton: false,
-          backdrop: true,
-          heightAuto: false,
-        });
-        if (!result.isConfirmed) continue;
-
-        const installResult = await window.khaliduo?.installUpdate();
-        if (installResult?.success !== false) return;
-        await Swal.fire({
-          title: "Update could not start",
-          text: installResult?.message ?? "Please try again.",
-          icon: "error",
-          confirmButtonText: "Try again",
-          allowEscapeKey: false,
-          allowOutsideClick: false,
-          showCancelButton: false,
-          showCloseButton: false,
-        });
-      }
-    } finally {
-      updatePromptActive.current = false;
-      window.khaliduo?.setUpdateAttention(updateStatusRef.current === "ready");
-      if (updateStatusRef.current !== "ready")
-        promptedUpdateVersion.current = null;
-    }
-  }, []);
 
   useEffect(() => {
     let mounted = true;
@@ -544,25 +503,15 @@ function App() {
           void showIdleAlert(nextStatus.lastIdleAlert);
         }
       }) ?? (() => undefined);
-    const removeRequiredUpdateListener =
-      window.khaliduo.onRequiredUpdate?.((update) => {
-        void showRequiredUpdate(update.version);
-      }) ?? (() => undefined);
     const interval = window.setInterval(() => void loadStatus(), 1000);
 
     return () => {
       mounted = false;
       removeIdleAlertListener();
       removeStatusChangedListener();
-      removeRequiredUpdateListener();
       window.clearInterval(interval);
     };
-  }, [desktopRuntimeMessage, showRequiredUpdate]);
-
-  useEffect(() => {
-    if (status.updateStatus !== "ready") return;
-    void showRequiredUpdate(status.updateVersion);
-  }, [showRequiredUpdate, status.updateStatus, status.updateVersion]);
+  }, [desktopRuntimeMessage]);
 
   useEffect(() => {
     if (status.selectedTask?.projectId) {
@@ -736,14 +685,6 @@ function App() {
   }, [idleRequestOptions, selectedIdleRequestKey]);
 
   useEffect(() => {
-    if (!selectedIdleRequest) return;
-    const maxMinutes = Math.max(1, requestableIdleMinutes(selectedIdleRequest));
-    setTimeRequestMinutes((minutes) =>
-      Math.min(Math.max(1, minutes), maxMinutes),
-    );
-  }, [selectedIdleRequest]);
-
-  useEffect(() => {
     const shiftEnd = timeToMinutes(status.requestPolicy?.shift_end);
     if (shiftEnd === null) return;
     setEarlyLeaveTime(
@@ -802,6 +743,8 @@ function App() {
   const isIdleState = ["idle", "locked", "sleeping"].includes(
     status.trackingStatus,
   );
+  const isNotWorkingOutsideShift =
+    isExtraTime && (isPaused || isIdleState || !isTracking);
   const timerTone = isPaused
     ? "paused"
     : isTracking && isExtraTime
@@ -811,20 +754,23 @@ function App() {
         : isIdleState
           ? "paused"
           : "stopped";
-  const statusText = isPaused
-    ? "Paused"
+  const statusText = isNotWorkingOutsideShift
+    ? "Off shift"
+    : isPaused
+      ? "Paused"
     : isTracking
       ? isExtraTime
-        ? isIdleState
-          ? "Extra paused"
-          : "Extra time"
+        ? "Extra time"
         : isIdleState
           ? "Shift idle"
           : "Paid shift"
       : "No timer running";
-  const displayedTimerSeconds = isExtraTime
-    ? extraSeconds
-    : countedTodaySeconds;
+  const displayedTimerSeconds =
+    status.trackingStatus === "idle" && !isPaused
+      ? status.currentIdleSeconds
+      : isExtraTime
+        ? extraSeconds
+        : countedTodaySeconds;
 
   async function refreshStatusAfterEnrollment() {
     if (status.enrolled) {
@@ -874,14 +820,10 @@ function App() {
       setTimeRequestError("No completed idle period is available to request.");
       return;
     }
-    const maxMinutes = Math.max(1, requestableIdleMinutes(selectedIdleRequest));
-    if (
-      !Number.isFinite(timeRequestMinutes) ||
-      timeRequestMinutes < 1 ||
-      timeRequestMinutes > maxMinutes
-    ) {
+    const requestedMinutes = requestableIdleMinutes(selectedIdleRequest);
+    if (requestedMinutes < 1) {
       setTimeRequestError(
-        `You can request up to ${maxMinutes} minute(s) from this idle period.`,
+        "This idle period has no whole minutes remaining to request.",
       );
       return;
     }
@@ -895,7 +837,7 @@ function App() {
     setIsSubmittingTimeRequest(true);
     try {
       const result = await window.khaliduo.createTimeAdjustmentRequest({
-        requestedMinutes: timeRequestMinutes,
+        requestedMinutes,
         reason: timeRequestReason,
         requestType: "idle_time",
         requestedDate: status.todayTimeline?.date ?? localDateKey(),
@@ -908,7 +850,9 @@ function App() {
         return;
       }
       setTimeRequestReason("");
-      setTimeRequestSuccess("Idle time request sent for review.");
+      setTimeRequestSuccess(
+        `The full idle period (${requestedMinutes} minute${requestedMinutes === 1 ? "" : "s"}) was sent for review.`,
+      );
       setSelectedIdleRequestKey("");
       if (result.status) setStatus(result.status);
     } finally {
@@ -1304,13 +1248,6 @@ function App() {
     window.khaliduo?.setIdleAlertAttention(true);
     const canRequestManualTime =
       !alert.outsideScheduledShift && alert.eligibleLostSeconds > 0;
-    const lostMinutes = Math.max(
-      1,
-      Math.round(
-        (canRequestManualTime ? alert.eligibleLostSeconds : alert.lostSeconds) /
-          60,
-      ),
-    );
     let result: SweetAlertResult;
     try {
       result = await Swal.fire({
@@ -1355,7 +1292,6 @@ function App() {
         setTrackingControlMessage(resumeResult.message);
       setExpandedRequest("idle");
       setActiveView("requests");
-      setTimeRequestMinutes(lostMinutes);
       setTimeRequestReason(
         "Offline meeting or work completed while away from the computer.",
       );
@@ -1368,16 +1304,22 @@ function App() {
 
   async function handleUpdateButton() {
     if (!window.khaliduo || isCheckingUpdate) return;
+    const isInstallAction = status.updateStatus === "ready";
     setIsCheckingUpdate(true);
     try {
-      const result =
-        status.updateStatus === "ready"
-          ? await window.khaliduo.installUpdate()
-          : await window.khaliduo.checkForUpdates();
+      const result = isInstallAction
+        ? await window.khaliduo.installUpdate()
+        : await window.khaliduo.checkForUpdates();
       if (result?.success === false) {
         await Swal.fire({
-          title: "Update check failed",
-          text: result.message ?? "Khaliduo could not check for updates.",
+          title: isInstallAction
+            ? "Update installation failed"
+            : "Update check failed",
+          text:
+            result.message ??
+            (isInstallAction
+              ? "Khaliduo could not install the update."
+              : "Khaliduo could not check for updates."),
           icon: "error",
           confirmButtonText: "OK",
         });
@@ -1390,20 +1332,25 @@ function App() {
   }
 
   const updateButtonLabel =
-    status.updateStatus === "ready"
+    status.updateStatus === "installing"
+      ? "Installing update..."
+      : status.updateStatus === "ready"
       ? "Install update"
       : status.updateStatus === "downloading"
         ? `Updating ${Math.round(status.updatePercent ?? 0)}%`
         : status.updateStatus === "available"
           ? "Downloading update"
-          : isCheckingUpdate || status.updateStatus === "checking"
-            ? "Checking..."
-            : "Check update";
+          : status.updateStatus === "error"
+            ? "Retry update"
+            : isCheckingUpdate || status.updateStatus === "checking"
+              ? "Checking..."
+              : "Check update";
   const updateButtonDisabled =
     isCheckingUpdate ||
     status.updateStatus === "checking" ||
     status.updateStatus === "downloading" ||
-    status.updateStatus === "available";
+    status.updateStatus === "available" ||
+    status.updateStatus === "installing";
 
   return (
     <main className="k-app" data-tone={timerTone} data-theme={theme}>
@@ -1455,7 +1402,11 @@ function App() {
               : "API sync is offline; click to retry. Local tracking and queued screenshots are preserved."
           }
         >
-          {status.connectionStatus === "online" ? "Synced" : "Offline"}
+          {status.connectionStatus === "online"
+            ? "Synced"
+            : isTracking
+              ? "Offline - tracking locally"
+              : "Offline"}
         </button>
         {status.enrolled && (
           <button
@@ -1472,7 +1423,11 @@ function App() {
           className="k-theme-button"
           onClick={() => void handleUpdateButton()}
           disabled={updateButtonDisabled}
-          title="Check for Khaliduo updates now"
+          title={
+            status.updateStatus === "ready"
+              ? "Install the downloaded Khaliduo update now"
+              : "Check for Khaliduo updates now"
+          }
         >
           {updateButtonLabel}
         </button>
@@ -1512,15 +1467,19 @@ function App() {
         </div>
       </header>
 
-      {["available", "downloading", "ready"].includes(status.updateStatus) && (
+      {["available", "downloading", "ready", "installing"].includes(
+        status.updateStatus,
+      ) && (
         <section className="k-update" role="status" aria-live="assertive">
           <strong>
             Required update{" "}
             {status.updateVersion ? `v${status.updateVersion}` : ""}
           </strong>
           <span>
-            {status.updateStatus === "ready"
-              ? "Ready to install. Follow the installation message to continue."
+            {status.updateStatus === "installing"
+              ? "Installing automatically now. Khaliduo will restart when it finishes."
+              : status.updateStatus === "ready"
+              ? "Downloaded and ready. Automatic installation is starting now; you can also click Install update."
               : status.updateStatus === "downloading"
                 ? `Downloading: ${Math.round(status.updatePercent ?? 0)}%`
                 : "Preparing the required download..."}
@@ -1581,9 +1540,6 @@ function App() {
               onRequestManualTime={(option) => {
                 if (option) {
                   setSelectedIdleRequestKey(option.key);
-                  setTimeRequestMinutes(
-                    Math.max(1, requestableIdleMinutes(option)),
-                  );
                 }
                 setExpandedRequest("idle");
                 setActiveView("requests");
@@ -1631,7 +1587,6 @@ function App() {
           {activeView === "requests" && (
             <RequestCentreView
               status={status}
-              timeRequestMinutes={timeRequestMinutes}
               timeRequestReason={timeRequestReason}
               timeRequestError={timeRequestError}
               timeRequestSuccess={timeRequestSuccess}
@@ -1646,7 +1601,6 @@ function App() {
               onLeaveEndDateChange={setLeaveEndDate}
               onLeaveReasonChange={setLeaveReason}
               onSubmitLeaveRequest={handleLeaveRequest}
-              onTimeRequestMinutesChange={setTimeRequestMinutes}
               onTimeRequestReasonChange={setTimeRequestReason}
               selectedIdleRequestKey={selectedIdleRequestKey}
               idleRequestOptions={idleRequestOptions}
@@ -1687,7 +1641,11 @@ function App() {
         <span
           className={status.connectionStatus === "online" ? "k-ok" : "k-danger"}
         >
-          {status.connectionStatus === "online" ? "Synced" : "Offline"}
+          {status.connectionStatus === "online"
+            ? "Synced"
+            : isTracking
+              ? "Sync pending - time saved locally"
+              : "Offline"}
         </span>
         <span>Normal today {formatDuration(countedTodaySeconds)}</span>
         <span>Activity {status.activityPercent}%</span>
@@ -1747,7 +1705,11 @@ function EnrollmentView({
               required
             />
           </label>
-          <button type="submit" disabled={isSubmitting || !isDesktopRuntime}>
+          <button
+            type="submit"
+            className="k-primary k-enroll-submit"
+            disabled={isSubmitting || !isDesktopRuntime}
+          >
             {isSubmitting ? "Signing in..." : "Sign in and link device"}
           </button>
         </form>
@@ -1829,7 +1791,7 @@ function Sidebar({
             {status.connectionStatus === "online"
               ? "Online - Synced"
               : isTracking
-                ? "Online - Sync pending"
+                ? "Online - tracking locally"
                 : "Offline"}
           </small>
         </div>
@@ -1948,14 +1910,17 @@ function HomeView({
     "locked",
     "sleeping",
   ].includes(status.trackingStatus);
+  const isAutomaticIdle =
+    status.trackingStatus === "idle" && !status.trackingPaused;
   const heroStatusLabel = !hasRunningSession
     ? statusLabel
-    : isPaused
-      ? "Paused"
+    : isExtraTime &&
+        (isPaused || ["idle", "locked", "sleeping"].includes(status.trackingStatus))
+      ? "Off shift"
+      : isPaused
+        ? "Paused"
       : isExtraTime
-        ? ["idle", "locked", "sleeping"].includes(status.trackingStatus)
-          ? "Extra paused"
-          : "Extra time active"
+        ? "Extra time active"
         : ["idle", "locked", "sleeping"].includes(status.trackingStatus)
           ? "Paid shift idle"
           : "Paid shift active";
@@ -2024,7 +1989,9 @@ function HomeView({
           <div
             className="k-ring"
             aria-label={
-              isExtraTime
+              isAutomaticIdle
+                ? `Idle for ${formatDuration(displayedTimerSeconds)} after the ten-minute grace period`
+                : isExtraTime
                 ? `Recorded overtime ${formatDuration(displayedTimerSeconds)}`
                 : `Worked ${formatDuration(countedTodaySeconds)} of ${formatDuration(status.dailyTargetSeconds)}`
             }
@@ -2037,7 +2004,9 @@ function HomeView({
             <div className="k-gauge-readout">
               <strong>{formatDuration(displayedTimerSeconds)}</strong>
               <small>
-                {isExtraTime
+                {isAutomaticIdle
+                  ? "Idle time after 10-minute grace"
+                  : isExtraTime
                   ? "Overtime recorded today"
                   : `${targetProgress}% of ${formatDuration(status.dailyTargetSeconds)}`}
               </small>
@@ -2349,11 +2318,15 @@ function Timeline({
           </div>
         ) : null}
         {timeline.intervals.slice(-6).map((interval, index) => {
-          const displayType = timeline.approved_leave
-            ? interval.type === "worked"
-              ? "extra"
-              : "leave"
-            : interval.type;
+          const displayType = timelineDisplayType(
+            interval.type,
+            Boolean(timeline.approved_leave),
+            interval.work_category,
+          );
+          const displaysWork =
+            displayType === "worked" ||
+            displayType === "extra" ||
+            displayType === "break_work";
           return (
             <div
               key={`${interval.session_id}-${interval.started_at}-${index}`}
@@ -2370,16 +2343,15 @@ function Timeline({
               </span>
               <b
                 title={
-                  displayType === "worked" || displayType === "extra"
+                  displaysWork
                     ? (interval.task_name ??
                       interval.project_name ??
-                      labels[displayType])
-                    : labels[displayType]
+                      TIMELINE_LABELS[displayType])
+                    : TIMELINE_LABELS[displayType]
                 }
               >
-                {labels[displayType]}
-                {(displayType === "worked" || displayType === "extra") &&
-                (interval.task_name || interval.project_name)
+                {TIMELINE_LABELS[displayType]}
+                {displaysWork && (interval.task_name || interval.project_name)
                   ? ` · ${interval.task_name ?? interval.project_name}`
                   : ""}
               </b>
@@ -2805,7 +2777,6 @@ function TasksView({
 
 type RequestCentreProps = {
   status: AgentStatus;
-  timeRequestMinutes: number;
   timeRequestReason: string;
   timeRequestError: string | null;
   timeRequestSuccess: string | null;
@@ -2827,7 +2798,6 @@ type RequestCentreProps = {
   onLeaveEndDateChange: (value: string) => void;
   onLeaveReasonChange: (value: string) => void;
   onSubmitLeaveRequest: (event: FormEvent<HTMLFormElement>) => void;
-  onTimeRequestMinutesChange: (value: number) => void;
   onTimeRequestReasonChange: (value: string) => void;
   onSelectedIdleRequestChange: (value: string) => void;
   onEarlyLeaveDateChange: (value: string) => void;
@@ -3061,21 +3031,10 @@ function RequestCentreView(props: RequestCentreProps) {
                     </select>
                   </label>
                   <label>
-                    Minutes to count
+                    Minutes requested (full idle period)
                     <input
-                      type="number"
-                      min={1}
-                      max={maxIdleMinutes || 1}
-                      value={props.timeRequestMinutes}
-                      disabled={!selectedIdle}
-                      onChange={(event) =>
-                        props.onTimeRequestMinutesChange(
-                          Math.min(
-                            Math.max(1, Number(event.target.value)),
-                            maxIdleMinutes || 1,
-                          ),
-                        )
-                      }
+                      value={selectedIdle ? `${maxIdleMinutes} min` : "0 min"}
+                      disabled
                     />
                   </label>
                 </div>
@@ -3100,7 +3059,7 @@ function RequestCentreView(props: RequestCentreProps) {
                       ? formatDuration(selectedIdle.durationSeconds)
                       : "00:00:00"}
                     {selectedIdle
-                      ? ` | Requestable remaining: up to ${requestableIdleMinutes(selectedIdle)} min`
+                      ? ` | The full ${requestableIdleMinutes(selectedIdle)} min will be sent`
                       : ""}
                   </span>
                   <button

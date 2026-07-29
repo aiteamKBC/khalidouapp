@@ -1,7 +1,7 @@
 import { apiFetch, toMinutes, withQuery } from "./client";
 import { mapUser } from "./auth";
 import { normalizeAiAcronym } from "@/lib/text";
-import type { Team, TeamMemberRole, User } from "@/types";
+import type { Team, TeamMemberRole, TeamOwnerSummary, User } from "@/types";
 
 type BackendTeam = {
   id: string;
@@ -11,6 +11,7 @@ type BackendTeam = {
   created_at: string;
   employee_ids?: string[];
   owner_ids?: string[];
+  owners?: { id: string; name: string; email: string }[];
 };
 
 type BackendEmployee = {
@@ -33,13 +34,14 @@ export type TeamCreateInput = {
   description?: string;
 };
 
-function mapTeam(team: BackendTeam, employeeIds: string[], ownerIds: string[]): Team {
+function mapTeam(team: BackendTeam, employeeIds: string[], owners: TeamOwnerSummary[]): Team {
   return {
     id: team.id,
     name: normalizeAiAcronym(team.name),
     description: team.description ?? "",
     status: team.status === "deleted" ? "archived" : team.status,
-    ownerIds,
+    ownerIds: owners.map((owner) => owner.id),
+    owners,
     employeeIds,
     createdAt: team.created_at,
   };
@@ -59,7 +61,7 @@ async function enrichTeam(team: BackendTeam): Promise<Team> {
   return mapTeam(
     team,
     members.map((member) => member.id),
-    owners.map((owner) => owner.id),
+    owners.map((owner) => ({ id: owner.id, name: owner.name, email: owner.email })),
   );
 }
 
@@ -70,7 +72,14 @@ export async function listTeams(scopedTeamIds?: string[]): Promise<Team[]> {
   const filtered = scopedTeamIds?.length
     ? teams.filter((team) => scopedTeamIds.includes(team.id))
     : teams;
-  return filtered.map((team) => mapTeam(team, team.employee_ids ?? [], team.owner_ids ?? []));
+  return filtered.map((team) =>
+    mapTeam(
+      team,
+      team.employee_ids ?? [],
+      // Older backends only returned ids; keep those teams renderable by name-less fallback.
+      team.owners ?? (team.owner_ids ?? []).map((id) => ({ id, name: "", email: "" })),
+    ),
+  );
 }
 
 export async function getTeam(id: string): Promise<Team | undefined> {

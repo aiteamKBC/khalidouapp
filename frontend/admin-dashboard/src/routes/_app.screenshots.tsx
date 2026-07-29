@@ -15,6 +15,7 @@ import {
   ListChecks,
   MonitorCheck,
   MonitorX,
+  RefreshCw,
   Trash2,
 } from "lucide-react";
 import { PageHeader } from "@/components/ui/page-header";
@@ -32,6 +33,7 @@ import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ProtectedImage } from "@/components/ProtectedImage";
+import { SCREENSHOT_REFRESH_INTERVAL_MS } from "@/lib/screenshot-display";
 import {
   deleteScreenshot,
   downloadScreenshot,
@@ -143,7 +145,8 @@ function ScreenshotsPage() {
         folderStatus,
       }),
     enabled: !rangeMode,
-    refetchInterval: 30_000,
+    staleTime: SCREENSHOT_REFRESH_INTERVAL_MS,
+    refetchInterval: SCREENSHOT_REFRESH_INTERVAL_MS,
   });
   const shots = useQuery({
     queryKey: [
@@ -171,7 +174,8 @@ function ScreenshotsPage() {
         workCategory,
       }),
     enabled: selectedFolderId !== null && validRange,
-    refetchInterval: selectedFolderId !== null ? 30_000 : false,
+    staleTime: SCREENSHOT_REFRESH_INTERVAL_MS,
+    refetchInterval: selectedFolderId !== null ? SCREENSHOT_REFRESH_INTERVAL_MS : false,
   });
   const [openIdx, setOpenIdx] = useState<number | null>(null);
   const [failedIds, setFailedIds] = useState<Set<string>>(new Set());
@@ -255,9 +259,18 @@ function ScreenshotsPage() {
             : `Employee screenshot folders for ${date}${folders.data ? ` · ${folders.data.total} employees` : ""}.`
         }
         actions={
-          <Button variant="outline" onClick={() => setAuditOpen(true)} disabled={rangeMode}>
-            <ListChecks className="mr-2 h-4 w-4" /> Capture audit
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="outline"
+              onClick={() => (selectedFolderId ? shots.refetch() : folders.refetch())}
+              disabled={selectedFolderId ? shots.isFetching : folders.isFetching}
+            >
+              <RefreshCw className="mr-2 h-4 w-4" /> Refresh
+            </Button>
+            <Button variant="outline" onClick={() => setAuditOpen(true)} disabled={rangeMode}>
+              <ListChecks className="mr-2 h-4 w-4" /> Capture audit
+            </Button>
+          </div>
         }
       />
 

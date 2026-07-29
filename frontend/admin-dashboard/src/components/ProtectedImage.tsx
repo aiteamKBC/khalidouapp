@@ -2,16 +2,24 @@ import { useEffect, useRef, useState, type ImgHTMLAttributes } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiImageFile } from "@/api/client";
 import { cn } from "@/lib/utils";
+import {
+  SCREENSHOT_FULL_IMAGE_CACHE_MS,
+  SCREENSHOT_THUMBNAIL_CACHE_MS,
+} from "@/lib/screenshot-display";
 
 type ProtectedImageProps = Omit<ImgHTMLAttributes<HTMLImageElement>, "src"> & {
   src: string;
   eager?: boolean;
+  authToken?: string;
+  cacheTimeMs?: number;
   onLoadError?: () => void;
 };
 
 export function ProtectedImage({
   src,
   eager = false,
+  authToken,
+  cacheTimeMs,
   onLoadError,
   className,
   alt,

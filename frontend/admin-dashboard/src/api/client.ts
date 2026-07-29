@@ -390,14 +390,15 @@ export async function apiFetchWithMeta<T>(
 
 export async function apiFile(path: string, signal?: AbortSignal): Promise<Blob> {
   const authLocation = readAuth();
+  const token = tokenOverride ?? authLocation?.auth.accessToken;
   const fetchFile = (token?: string) =>
     fetchWithTimeout(apiUrl(path), {
       headers: token ? { Authorization: `Bearer ${token}` } : undefined,
       signal,
     });
 
-  let res = await fetchFile(authLocation?.auth.accessToken);
-  if (res.status === 401 && authLocation) {
+  let res = await fetchFile(token);
+  if (res.status === 401 && authLocation && !tokenOverride) {
     const tokens = await refreshAuthTokens(authLocation);
     res = await fetchFile(tokens.access_token);
   }

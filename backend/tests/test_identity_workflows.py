@@ -18,6 +18,8 @@ from app.models import (
     AdminPasswordResetToken,
     AdminUser,
     Company,
+    Device,
+    DeviceToken,
     EmailDelivery,
     Employee,
     EmployeeInvitation,
@@ -1092,6 +1094,68 @@ def test_accepted_employee_can_enroll_desktop_with_employee_token(identity_clien
     assert enrolled.json()["data"]["device"]["installation_id"] == "desktop-installation-12345"
     assert enrolled.json()["data"]["device_token"]
     assert enrolled.json()["data"]["token_type"] == "bearer"
+
+
+def test_general_admin_can_reactivate_device_without_restoring_old_tokens(identity_client):
+    client, data = identity_client
+    revoked_at = datetime.now(UTC)
+    db: Session = data["session_factory"]()
+    try:
+        employee = Employee(
+            company_id=data["general_admin"].company_id,
+            name="Revoked Device Employee",
+            email="revoked.device@kentconsultancy.co",
+            employee_code="EMP-REVOKED-DEVICE",
+            job_title="Developer",
+            timezone="Africa/Cairo",
+            status="active",
+            portal_password_hash=hash_password("EmployeePassword123!"),
+        )
+        db.add(employee)
+        db.flush()
+        device = Device(
+            company_id=employee.company_id,
+            employee_id=employee.id,
+            device_name="Revoked Laptop",
+            installation_id="revoked-installation-12345",
+            operating_system="Windows 11",
+            agent_version="1.2.0",
+            status="revoked",
+            revoked_at=revoked_at,
+        )
+        db.add(device)
+        db.flush()
+        old_token = DeviceToken(
+            company_id=employee.company_id,
+            device_id=device.id,
+            token_hash=hash_token("previously-revoked-device-token"),
+            revoked_at=revoked_at,
+        )
+        db.add(old_token)
+        db.commit()
+        device_id = device.id
+        old_token_id = old_token.id
+    finally:
+        db.close()
+
+    response = client.post(
+        f"/api/v1/devices/{device_id}/reactivate",
+        headers=data["general_headers"],
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"]["status"] == "active"
+    assert response.json()["data"]["revoked_at"] is None
+
+    db = data["session_factory"]()
+    try:
+        device = db.get(Device, device_id)
+        old_token = db.get(DeviceToken, old_token_id)
+        assert device.status == "active"
+        assert device.revoked_at is None
+        assert old_token.revoked_at is not None
+    finally:
+        db.close()
 
 
 def test_inviting_an_existing_active_employee_is_a_conflict(identity_client):

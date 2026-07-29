@@ -82,7 +82,7 @@ def list_teams(
 
     team_ids = [team.id for team in teams]
     members_by_team: dict[UUID, list[str]] = {team_id: [] for team_id in team_ids}
-    owners_by_team: dict[UUID, list[str]] = {team_id: [] for team_id in team_ids}
+    owners_by_team: dict[UUID, list[dict[str, str]]] = {team_id: [] for team_id in team_ids}
     if team_ids:
         for relation_team_id, employee_id in db.execute(
             select(TeamMember.team_id, TeamMember.employee_id).where(
@@ -91,18 +91,30 @@ def list_teams(
             )
         ).all():
             members_by_team[relation_team_id].append(str(employee_id))
-        for relation_team_id, admin_user_id in db.execute(
-            select(TeamOwner.team_id, TeamOwner.admin_user_id).where(
-                TeamOwner.team_id.in_(team_ids)
+        # Owner names travel with the team list so every admin - including team
+        # leads and HR who cannot read the full user directory - can see who
+        # manages a team without a second privileged request.
+        for relation_team_id, admin_user_id, owner_name, owner_email in db.execute(
+            select(
+                TeamOwner.team_id,
+                AdminUser.id,
+                AdminUser.name,
+                AdminUser.email,
             )
+            .join(AdminUser, AdminUser.id == TeamOwner.admin_user_id)
+            .where(TeamOwner.team_id.in_(team_ids))
+            .order_by(AdminUser.name)
         ).all():
-            owners_by_team[relation_team_id].append(str(admin_user_id))
+            owners_by_team[relation_team_id].append(
+                {"id": str(admin_user_id), "name": owner_name, "email": owner_email}
+            )
 
     data = []
     for team in teams:
         item = serialize_team(team)
         item["employee_ids"] = members_by_team[team.id]
-        item["owner_ids"] = owners_by_team[team.id]
+        item["owner_ids"] = [owner["id"] for owner in owners_by_team[team.id]]
+        item["owners"] = owners_by_team[team.id]
         data.append(item)
     return success_response(
         data=data,

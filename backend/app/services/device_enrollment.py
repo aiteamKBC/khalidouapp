@@ -95,7 +95,14 @@ def enroll_employee_device(
         db.add(device)
         db.flush()
     elif device.revoked_at is not None or device.status == "revoked":
-        raise ApiError("DEVICE_REVOKED", "This device has been revoked.", 403)
+        raise ApiError(
+            "DEVICE_REVOKED",
+            (
+                "This device has been revoked. Ask a general admin to reactivate it "
+                "from Devices, then sign in again."
+            ),
+            403,
+        )
     elif device.employee_id != employee.id:
         raise ApiError(
             "DEVICE_ALREADY_ENROLLED",

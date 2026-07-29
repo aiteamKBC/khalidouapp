@@ -59,7 +59,8 @@ from app.services.task_workflow import (
     validate_employee_stage_change,
     stop_task_tracking,
 )
-from app.services.screenshots import serialize_screenshot
+from app.services.screenshots import build_thumbnail, serialize_screenshot
+from app.storage.local import LocalScreenshotStorage
 from app.services.activity_timeline import local_today
 from app.services.attendance import calculate_daily_attendance, serialize_daily_attendance
 from app.services.time_adjustments import serialize_time_adjustment_request
@@ -852,16 +853,18 @@ def screenshots(
     for screenshot in rows:
         item = serialize_screenshot(screenshot)
         item["temporary_url"] = f"/api/v1/employee-portal/screenshots/{screenshot.id}/file"
+        item["thumbnail_url"] = (
+            f"/api/v1/employee-portal/screenshots/{screenshot.id}/thumbnail"
+        )
         data.append(item)
     return success_response(data=data)
 
 
-@router.get("/screenshots/{screenshot_id}/file")
-def screenshot_file(
+def _employee_screenshot_or_404(
+    db: Session,
+    current_employee: Employee,
     screenshot_id: UUID,
-    current_employee: Annotated[Employee, Depends(get_current_employee)],
-    db: Annotated[Session, Depends(get_db)],
-):
+) -> Screenshot:
     screenshot = db.scalar(
         select(Screenshot).where(
             Screenshot.id == screenshot_id,
@@ -872,10 +875,65 @@ def screenshot_file(
     )
     if screenshot is None:
         raise ApiError("SCREENSHOT_NOT_FOUND", "Screenshot was not found.", 404)
+    return screenshot
+
+
+@router.get("/screenshots/{screenshot_id}/file")
+def screenshot_file(
+    screenshot_id: UUID,
+    current_employee: Annotated[Employee, Depends(get_current_employee)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    screenshot = _employee_screenshot_or_404(db, current_employee, screenshot_id)
     path = (settings.screenshot_storage_path / screenshot.storage_path).resolve()
     if not path.exists():
         raise ApiError("SCREENSHOT_FILE_NOT_FOUND", "Screenshot file was not found.", 404)
-    return FileResponse(path, media_type=screenshot.mime_type)
+    return FileResponse(
+        path,
+        media_type=screenshot.mime_type,
+        headers={
+            "Cache-Control": "private, max-age=1800",
+            "Vary": "Authorization",
+        },
+    )
+
+
+@router.get("/screenshots/{screenshot_id}/thumbnail")
+def screenshot_thumbnail(
+    screenshot_id: UUID,
+    current_employee: Annotated[Employee, Depends(get_current_employee)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    screenshot = _employee_screenshot_or_404(db, current_employee, screenshot_id)
+    storage = LocalScreenshotStorage()
+    original_path = (settings.screenshot_storage_path / screenshot.storage_path).resolve()
+    thumbnail_path = (
+        (settings.screenshot_storage_path / screenshot.thumbnail_path).resolve()
+        if screenshot.thumbnail_path
+        else None
+    )
+
+    if thumbnail_path is None or not thumbnail_path.is_file():
+        if not original_path.is_file():
+            raise ApiError("SCREENSHOT_FILE_NOT_FOUND", "Screenshot preview was not found.", 404)
+        thumbnail = build_thumbnail(original_path.read_bytes(), screenshot.storage_path)
+        if thumbnail is not None:
+            screenshot.thumbnail_path, thumbnail_content = thumbnail
+            thumbnail_path = storage.save(screenshot.thumbnail_path, thumbnail_content)
+            db.add(screenshot)
+            db.commit()
+
+    path = thumbnail_path if thumbnail_path and thumbnail_path.is_file() else original_path
+    if not path.is_file():
+        raise ApiError("SCREENSHOT_FILE_NOT_FOUND", "Screenshot preview was not found.", 404)
+    return FileResponse(
+        path,
+        media_type="image/jpeg" if path == thumbnail_path else screenshot.mime_type,
+        headers={
+            "Cache-Control": "private, max-age=1800",
+            "Vary": "Authorization",
+        },
+    )
 
 
 @router.get("/time-adjustment-requests")

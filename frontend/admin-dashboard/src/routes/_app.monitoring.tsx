@@ -23,6 +23,7 @@ import { downloadScreenshot, listScreenshotPage } from "@/api/screenshots";
 import { listTeams } from "@/api/teams";
 import { ApplicationHistoryPanel } from "@/components/application-history-panel";
 import { ProtectedImage } from "@/components/ProtectedImage";
+import { SCREENSHOT_REFRESH_INTERVAL_MS } from "@/lib/screenshot-display";
 import { WorkdayTimeline } from "@/components/workday-timeline";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";

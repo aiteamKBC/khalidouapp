@@ -166,7 +166,6 @@ def create_employee_time_adjustment_request(
             timezone_name=timezone_name,
             target_date=requested_date,
             device_id=device.id,
-            session_timezone_name=timezone_name,
         )
         if timeline.get("approved_leave"):
             raise ApiError(

@@ -192,6 +192,8 @@ type PersonRow = {
   roleLabel: string;
   detail: string;
   managerNames: string[];
+  /** Teams this person is the manager (team owner) of. */
+  managedTeamNames: string[];
   status: "active" | "app_pending" | "invited" | "expired" | "archived";
   teamIds: string[];
   dashboardEmployeeId?: string;
@@ -430,6 +432,20 @@ function PeopleDirectory({
     () => (teams.data ?? []).filter((team) => team.status === "active"),
     [teams.data],
   );
+  // Teams each admin account manages, so the directory shows accountability the
+  // same way the team page does instead of only listing a person's own managers.
+  const managedTeamNamesByUserId = useMemo(() => {
+    const managed = new Map<string, string[]>();
+    for (const team of teams.data ?? []) {
+      if (team.status !== "active") continue;
+      for (const ownerId of team.ownerIds) {
+        const names = managed.get(ownerId);
+        if (names) names.push(team.name);
+        else managed.set(ownerId, [team.name]);
+      }
+    }
+    return managed;
+  }, [teams.data]);
   const directoryLoading =
     employees.isPending || teams.isPending || (canManageAccess && users.isPending);
   const directoryRefreshing =
@@ -445,6 +461,7 @@ function PeopleDirectory({
       roleLabel: "Employee",
       detail: employee.jobTitle || "—",
       managerNames: employee.managers.map((manager) => manager.name),
+      managedTeamNames: [],
       status: employeeDirectoryStatus(employee),
       teamIds: employee.teamIds,
       dashboardEmployeeId: employee.id,
@@ -485,6 +502,7 @@ function PeopleDirectory({
                 .filter(Boolean)
                 .join(", ") || "—"),
         managerNames: linkedEmployee?.managers.map((manager) => manager.name) ?? [],
+        managedTeamNames: managedTeamNamesByUserId.get(user.id) ?? [],
         status:
           linkedEmployee && user.status !== "archived" && user.status !== "inactive"
             ? employeeDirectoryStatus(linkedEmployee)
@@ -532,6 +550,7 @@ function PeopleDirectory({
     users.data,
     teamNames,
     activeTeams,
+    managedTeamNamesByUserId,
     currentUser?.id,
     currentUser?.employeeId,
     currentUser?.trackedEmployeeId,
@@ -1077,6 +1096,11 @@ function PeopleDirectory({
                     </TableCell>
                     <TableCell className="text-sm">
                       <div>{row.detail}</div>
+                      {row.managedTeamNames.length > 0 && (
+                        <div className="mt-1 text-xs font-semibold text-[#e5185d]">
+                          Manages: {row.managedTeamNames.join(", ")}
+                        </div>
+                      )}
                       <div className="mt-1 text-xs text-muted-foreground">
                         {row.managerNames.length
                           ? `Managers: ${row.managerNames.join(", ")}`

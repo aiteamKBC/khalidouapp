@@ -28,6 +28,7 @@ import {
 import { toast } from "sonner";
 import { PageHeader } from "@/components/ui/page-header";
 import { ProtectedImage } from "@/components/ProtectedImage";
+import { SCREENSHOT_REFRESH_INTERVAL_MS } from "@/lib/screenshot-display";
 import { BackButton } from "@/components/ui/back-button";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -150,9 +151,9 @@ function EmployeeDetailPage() {
         day: screenshotDay ?? undefined,
       }).then((page) => page.items),
     enabled: activeTab === "screenshots",
-    staleTime: 45_000,
+    staleTime: SCREENSHOT_REFRESH_INTERVAL_MS,
     placeholderData: (previous) => previous,
-    refetchInterval: activeTab === "screenshots" ? 30_000 : false,
+    refetchInterval: activeTab === "screenshots" ? SCREENSHOT_REFRESH_INTERVAL_MS : false,
   });
   const ts = useQuery({
     queryKey: ["emp-ts", employeeId],

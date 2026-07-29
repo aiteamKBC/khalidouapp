@@ -55,3 +55,7 @@ export async function getDevice(id: string): Promise<Device | undefined> {
 export async function revokeDevice(id: string): Promise<void> {
   await apiFetch(`/devices/${id}/revoke`, { method: "POST" });
 }
+
+export async function reactivateDevice(id: string): Promise<Device> {
+  return mapDevice(await apiFetch<BackendDevice>(`/devices/${id}/reactivate`, { method: "POST" }));
+}

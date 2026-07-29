@@ -179,7 +179,6 @@ def calculate_daily_attendance(
         target_date=work_date,
         now=now,
         device_id=device_id,
-        session_timezone_name=effective_timezone if device_id is not None else None,
     )
     adjustments = db.scalars(
         select(TimeAdjustmentRequest).where(

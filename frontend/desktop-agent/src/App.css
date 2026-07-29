@@ -1503,6 +1503,21 @@ textarea:focus {
   padding: 16px 18px;
 }
 
+.k-enrollment {
+  display: grid;
+  place-items: start center;
+}
+
+.k-enroll-card {
+  width: min(620px, 100%);
+  margin-top: 24px;
+}
+
+.k-enroll-submit {
+  width: 100%;
+  min-height: 42px;
+}
+
 .k-page {
   display: grid;
   align-content: start;

@@ -143,6 +143,7 @@ function EmployeeLogin({
     mutationFn: () => employeeLogin(emailValue, credentialValue),
     onSuccess: (result) => {
       queryClient.removeQueries({ queryKey: ["employee-portal"] });
+      queryClient.removeQueries({ queryKey: ["protected-image", "employee"] });
       saveEmployeeToken(result.access_token);
       onLoggedIn(result.access_token);
     },
@@ -163,6 +164,7 @@ function EmployeeLogin({
               event.preventDefault();
               clearEmployeeToken();
               queryClient.removeQueries({ queryKey: ["employee-portal"] });
+              queryClient.removeQueries({ queryKey: ["protected-image", "employee"] });
               if (!emailValue || !credentialValue) {
                 return;
               }
@@ -227,6 +229,7 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
   const handleLogout = () => {
     clearEmployeeToken();
     queryClient.removeQueries({ queryKey: ["employee-portal"] });
+    queryClient.removeQueries({ queryKey: ["protected-image", "employee"] });
     onLogout();
   };
   const [screenshotDay, setScreenshotDay] = useState(() => localDateKey());
@@ -275,7 +278,8 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
     queryKey: [...employeePortalQueryKey, "screenshots", screenshotDay],
     queryFn: () => employeeScreenshots(token, screenshotDay),
     enabled: loadMedia,
-    refetchInterval: 30_000,
+    staleTime: SCREENSHOT_REFRESH_INTERVAL_MS,
+    refetchInterval: SCREENSHOT_REFRESH_INTERVAL_MS,
   });
   useEffect(() => {
     if (new URLSearchParams(window.location.search).get("view") !== "screenshots") return;
@@ -1113,8 +1117,9 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
                     onClick={() => setPreviewScreenshot(shot)}
                     aria-label="Preview screenshot"
                   >
-                    <img
-                      src={shot.imageUrl}
+                    <ProtectedImage
+                      src={shot.thumbnailUrl}
+                      authToken={token}
                       alt="Work screenshot"
                       className="aspect-video w-full object-cover transition hover:opacity-90"
                     />
@@ -1142,8 +1147,10 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
           <DialogTitle className="sr-only">Screenshot preview</DialogTitle>
           {previewScreenshot && (
             <div className="space-y-3">
-              <img
-                src={previewScreenshot.imageUrl}
+              <ProtectedImage
+                src={previewScreenshot.fullUrl}
+                authToken={token}
+                eager
                 alt="Full work screenshot preview"
                 className="max-h-[78vh] w-full rounded-lg object-contain ring-1 ring-border"
               />

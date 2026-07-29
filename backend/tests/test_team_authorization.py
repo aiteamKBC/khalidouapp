@@ -1966,6 +1966,12 @@ def test_desktop_summary_recovers_elapsed_work_when_an_update_started_a_new_sess
     now = datetime.now(UTC)
     db = data["session_factory"]()
     try:
+        employee = db.get(Employee, data["employee_a"].id)
+        current_session = db.get(WorkSession, data["session_a"].id)
+        device = db.get(Device, current_session.device_id)
+        employee.timezone = "Africa/Cairo"
+        device.timezone = "Africa/Cairo"
+        current_session.timezone = "Africa/Cairo"
         prior_session = WorkSession(
             company_id=data["employee_a"].company_id,
             employee_id=data["employee_a"].id,
@@ -1975,6 +1981,7 @@ def test_desktop_summary_recovers_elapsed_work_when_an_update_started_a_new_sess
             status="ended",
             active_seconds=0,
             idle_seconds=0,
+            timezone="Asia/Riyadh",
         )
         db.add(prior_session)
         db.commit()

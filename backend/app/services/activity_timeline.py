@@ -359,7 +359,6 @@ def build_workday_timeline(
     target_date: date | None = None,
     now: datetime | None = None,
     device_id: UUID | None = None,
-    session_timezone_name: str | None = None,
 ) -> dict:
     now_utc = _utc(now or datetime.now(UTC))
     zone = _timezone(timezone_name)
@@ -389,13 +388,6 @@ def build_workday_timeline(
     )
     if device_id is not None:
         session_statement = session_statement.where(WorkSession.device_id == device_id)
-    if session_timezone_name:
-        session_statement = session_statement.where(
-            or_(
-                WorkSession.timezone == session_timezone_name,
-                WorkSession.timezone.is_(None),
-            )
-        )
     rows = db.execute(session_statement).all()
     sessions = [row[0] for row in rows]
     session_context = {

@@ -435,6 +435,8 @@ function BreakEditorDialog({
   const [shiftStart, setShiftStart] = useState("10:00");
   const [shiftEnd, setShiftEnd] = useState("18:00");
   const [breaks, setBreaks] = useState<BreakDraft[]>(FALLBACK_BREAKS);
+  const [updateShift, setUpdateShift] = useState(true);
+  const [updateBreaks, setUpdateBreaks] = useState(true);
   const [reason, setReason] = useState("");
   const [employeeName, setEmployeeName] = useState("");
   const [jobTitle, setJobTitle] = useState("");
@@ -475,6 +477,8 @@ function BreakEditorDialog({
     setShiftStart(source?.shiftStart ?? "10:00");
     setShiftEnd(source?.shiftEnd ?? "18:00");
     setBreaks(toDrafts(source?.breakRules));
+    setUpdateShift(true);
+    setUpdateBreaks(true);
     setEmployeeName(source?.name ?? "");
     setJobTitle(source?.jobTitle ?? "");
     setTimezone(source?.timezone ?? "Africa/Cairo");
@@ -570,13 +574,18 @@ function BreakEditorDialog({
 
     return problems;
   }, [rules, shiftEnd, shiftStart]);
-  const invalidBreakIndexes = new Set(breakProblems.flatMap((problem) => problem.indexes));
+  const invalidBreakIndexes = new Set(
+    updateBreaks ? breakProblems.flatMap((problem) => problem.indexes) : [],
+  );
   const validationMessages = [
-    ...(!shiftStart || !shiftEnd || minutesBetween(shiftStart, shiftEnd) <= 0
+    ...(!updateShift && !updateBreaks
+      ? ["Choose working hours, break schedule, or both."]
+      : []),
+    ...(updateShift && (!shiftStart || !shiftEnd || minutesBetween(shiftStart, shiftEnd) <= 0)
       ? ["Shift end must be later than shift start."]
       : []),
-    ...(rules.length === 0 ? ["Add at least one break."] : []),
-    ...breakProblems.map((problem) => problem.message),
+    ...(updateBreaks && rules.length === 0 ? ["Add at least one break."] : []),
+    ...(updateBreaks ? breakProblems.map((problem) => problem.message) : []),
     ...(!reason.trim() ? ["Enter a reason for this schedule change."] : []),
     ...(scope === "employee" && !employeeId ? ["Select an employee."] : []),
     ...(scope === "employees" && employeeIds.length === 0 ? ["Select at least one employee."] : []),
@@ -584,11 +593,12 @@ function BreakEditorDialog({
     ...(!permanent && !effectiveDate ? ["Select the effective date."] : []),
   ];
   const invalid = validationMessages.length > 0;
+  const overrideType = updateShift ? (updateBreaks ? "both" : "shift") : "breaks";
 
   const save = useMutation({
     mutationFn: async () => {
       if (permanent && intent?.kind === "employee") {
-        if (canManagePeople) {
+        if (updateShift && canManagePeople) {
           await updateEmployee(employeeId, {
             name: employeeName.trim(),
             jobTitle: jobTitle.trim(),
@@ -596,23 +606,29 @@ function BreakEditorDialog({
           });
         }
         await updateWorkProfile(employeeId, {
-          shiftStart,
-          shiftEnd,
-          requiredDailyMinutes: minutesBetween(shiftStart, shiftEnd),
-          workingDays,
-          weeklyOffDays: [0, 1, 2, 3, 4, 5, 6].filter((day) => !workingDays.includes(day)),
-          breakRules: rules,
-          lateGraceMinutes,
-          ...(canManagePayroll
+          ...(updateShift
             ? {
-                overtimeEnabled,
-                overtimeBasis: "outside_shift" as const,
-                overtimeRateMultiplier: overtimeMultiplier,
-                salaryAmount,
-                salaryCurrency: salaryCurrency as WorkProfile["salaryCurrency"],
-                salaryType,
+                shiftStart,
+                shiftEnd,
+                requiredDailyMinutes: minutesBetween(shiftStart, shiftEnd),
+                workingDays,
+                weeklyOffDays: [0, 1, 2, 3, 4, 5, 6].filter(
+                  (day) => !workingDays.includes(day),
+                ),
+                lateGraceMinutes,
+                ...(canManagePayroll
+                  ? {
+                      overtimeEnabled,
+                      overtimeBasis: "outside_shift" as const,
+                      overtimeRateMultiplier: overtimeMultiplier,
+                      salaryAmount,
+                      salaryCurrency: salaryCurrency as WorkProfile["salaryCurrency"],
+                      salaryType,
+                    }
+                  : {}),
               }
             : {}),
+          ...(updateBreaks ? { breakRules: rules } : {}),
         });
         return { affected_employees: 1 };
       }
@@ -621,12 +637,12 @@ function BreakEditorDialog({
         employee_id: scope === "employee" ? employeeId : undefined,
         employee_ids: scope === "employees" ? employeeIds : undefined,
         team_id: scope === "team" ? teamId : undefined,
-        override_type: "both",
+        override_type: overrideType,
         permanent,
         effective_date: permanent ? undefined : effectiveDate,
-        shift_start: shiftStart,
-        shift_end: shiftEnd,
-        break_rules: rules,
+        shift_start: updateShift ? shiftStart : undefined,
+        shift_end: updateShift ? shiftEnd : undefined,
+        break_rules: updateBreaks ? rules : undefined,
         reason: reason.trim(),
       });
     },
@@ -779,7 +795,57 @@ function BreakEditorDialog({
           </div>
         )}
 
-        {permanent && intent?.kind === "employee" && (
+        <div className="space-y-3 rounded-2xl border bg-muted/10 p-4">
+          <div>
+            <Label className="text-sm font-extrabold">Choose what to update</Label>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Only selected sections will be saved. Unselected sections keep each employee&apos;s
+              current settings.
+            </p>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label
+              className={`flex cursor-pointer items-start gap-3 rounded-xl border p-3 transition ${
+                updateShift
+                  ? "border-primary/40 bg-primary/5"
+                  : "bg-card hover:border-primary/30"
+              }`}
+            >
+              <Checkbox
+                className="mt-0.5"
+                checked={updateShift}
+                onCheckedChange={(checked) => setUpdateShift(checked === true)}
+              />
+              <span>
+                <span className="block text-sm font-bold">Working hours</span>
+                <span className="mt-0.5 block text-xs text-muted-foreground">
+                  Shift times and related work settings.
+                </span>
+              </span>
+            </label>
+            <label
+              className={`flex cursor-pointer items-start gap-3 rounded-xl border p-3 transition ${
+                updateBreaks
+                  ? "border-primary/40 bg-primary/5"
+                  : "bg-card hover:border-primary/30"
+              }`}
+            >
+              <Checkbox
+                className="mt-0.5"
+                checked={updateBreaks}
+                onCheckedChange={(checked) => setUpdateBreaks(checked === true)}
+              />
+              <span>
+                <span className="block text-sm font-bold">Break schedule</span>
+                <span className="mt-0.5 block text-xs text-muted-foreground">
+                  Break names, times, and paid status.
+                </span>
+              </span>
+            </label>
+          </div>
+        </div>
+
+        {permanent && intent?.kind === "employee" && updateShift && (
           <div className="grid gap-3 rounded-2xl border bg-muted/10 p-4 sm:grid-cols-2">
             {canManagePeople && (
               <>
@@ -924,7 +990,12 @@ function BreakEditorDialog({
           </div>
         )}
 
-        <div className="rounded-2xl border bg-muted/10 p-4">
+        <div
+          aria-disabled={!updateShift}
+          className={`rounded-2xl border bg-muted/10 p-4 transition ${
+            updateShift ? "" : "opacity-55"
+          }`}
+        >
           <div className="mb-3 flex items-center justify-between gap-3">
             <div>
               <Label className="text-sm font-extrabold">Working hours</Label>
@@ -943,6 +1014,7 @@ function BreakEditorDialog({
             <Field label="Shift starts">
               <Input
                 type="time"
+                disabled={!updateShift}
                 value={shiftStart}
                 onChange={(event) => setShiftStart(event.target.value)}
               />
@@ -950,6 +1022,7 @@ function BreakEditorDialog({
             <Field label="Shift ends">
               <Input
                 type="time"
+                disabled={!updateShift}
                 value={shiftEnd}
                 onChange={(event) => setShiftEnd(event.target.value)}
               />
@@ -957,7 +1030,12 @@ function BreakEditorDialog({
           </div>
         </div>
 
-        <div className="space-y-3 rounded-2xl border bg-muted/10 p-4">
+        <div
+          aria-disabled={!updateBreaks}
+          className={`space-y-3 rounded-2xl border bg-muted/10 p-4 transition ${
+            updateBreaks ? "" : "opacity-55"
+          }`}
+        >
           <div className="flex items-center justify-between gap-3">
             <div>
               <Label className="text-sm font-extrabold">Break schedule</Label>
@@ -968,6 +1046,7 @@ function BreakEditorDialog({
             <Button
               size="sm"
               variant="outline"
+              disabled={!updateBreaks}
               onClick={() =>
                 setBreaks((current) => [
                   ...current,
@@ -988,6 +1067,7 @@ function BreakEditorDialog({
             >
               <Field label="Name">
                 <Input
+                  disabled={!updateBreaks}
                   value={item.name}
                   onChange={(event) =>
                     setBreaks((current) =>
@@ -1001,6 +1081,7 @@ function BreakEditorDialog({
               <Field label="Starts">
                 <Input
                   type="time"
+                  disabled={!updateBreaks}
                   value={item.startTime}
                   onChange={(event) =>
                     setBreaks((current) =>
@@ -1014,6 +1095,7 @@ function BreakEditorDialog({
               <Field label="Ends">
                 <Input
                   type="time"
+                  disabled={!updateBreaks}
                   value={item.endTime}
                   onChange={(event) =>
                     setBreaks((current) =>
@@ -1028,6 +1110,7 @@ function BreakEditorDialog({
                 <Label className="mb-2 block text-xs">Paid</Label>
                 <div className="flex items-center gap-2">
                   <Switch
+                    disabled={!updateBreaks}
                     checked={item.paid}
                     onCheckedChange={(paid) =>
                       setBreaks((current) =>
@@ -1043,6 +1126,7 @@ function BreakEditorDialog({
               <Button
                 size="icon"
                 variant="ghost"
+                disabled={!updateBreaks}
                 aria-label={`Remove ${item.name}`}
                 onClick={() => setBreaks((current) => current.filter((_, i) => i !== index))}
               >

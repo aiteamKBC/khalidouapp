@@ -29,6 +29,7 @@ import { MetricTile } from "@/components/ui/metric-tile";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { ProtectedImage } from "@/components/ProtectedImage";
+import { SCREENSHOT_REFRESH_INTERVAL_MS } from "@/lib/screenshot-display";
 import { useAuth } from "@/lib/auth";
 import { listDailyAttendance } from "@/api/attendance";
 import { employeeIsOnline, listEmployees } from "@/api/employees";
@@ -61,6 +62,10 @@ function isoDate(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
     d.getDate(),
   ).padStart(2, "0")}`;
+}
+
+function compareEmployeesByName(left: Employee, right: Employee): number {
+  return employeeNameCollator.compare(left.name, right.name);
 }
 function weekDates(monday: Date): string[] {
   return Array.from({ length: 7 }, (_, i) => {
@@ -141,6 +146,7 @@ function periodTotals(byDate: Map<string, DayAgg>, dates: string[]) {
 
 function DashboardPage() {
   const [activityFilter, setActivityFilter] = useState<"all" | Employee["status"]>("all");
+  const [showAllActivity, setShowAllActivity] = useState(false);
   const [attentionOpen, setAttentionOpen] = useState(false);
   const [loadActions, setLoadActions] = useState(false);
   const [loadMedia, setLoadMedia] = useState(false);
@@ -153,7 +159,7 @@ function DashboardPage() {
   const emps = useQuery({
     queryKey: ["employees", scope],
     queryFn: () => listEmployees(scope),
-    staleTime: 10_000,
+    staleTime: LIVE_REFRESH_MS,
     refetchInterval: LIVE_REFRESH_MS,
     refetchIntervalInBackground: false,
     placeholderData: (previous) => previous,
@@ -161,7 +167,7 @@ function DashboardPage() {
   const month = useQuery({
     queryKey: ["timesheets", "monthly", scope],
     queryFn: () => listTimesheets(scope, "monthly"),
-    staleTime: 30_000,
+    staleTime: ACTION_REFRESH_MS,
     refetchInterval: ACTION_REFRESH_MS,
     refetchIntervalInBackground: false,
     placeholderData: (previous) => previous,
@@ -170,6 +176,7 @@ function DashboardPage() {
   useEffect(() => {
     setLoadActions(false);
     setLoadMedia(false);
+    setShowAllActivity(false);
   }, [scopeKey]);
   useEffect(() => {
     if (!primaryReady) return;
@@ -180,6 +187,18 @@ function DashboardPage() {
       window.clearTimeout(mediaTimer);
     };
   }, [primaryReady, scopeKey]);
+
+  // Select six stable rows first, then request only their previews. Fetching the
+  // latest screenshots company-wide allowed one busy employee to consume the
+  // whole result page and made other rows look empty.
+  const matchingActivityEmployees = (emps.data ?? [])
+    .filter((employee) => employee.currentDeviceId)
+    .filter((employee) => activityFilter === "all" || employee.status === activityFilter)
+    .sort(compareEmployeesByName);
+  const visibleActivityEmployees = showAllActivity
+    ? matchingActivityEmployees
+    : matchingActivityEmployees.slice(0, 6);
+  const previewEmployeeIds = visibleActivityEmployees.map((employee) => employee.id);
 
   const shots = useQuery({
     queryKey: ["screenshot-folders", scope, "dashboard", dashboardDay],
@@ -205,7 +224,7 @@ function DashboardPage() {
     queryKey: ["teams", scope],
     queryFn: () => listTeams(scope),
     enabled: loadActions,
-    staleTime: 30_000,
+    staleTime: ACTION_REFRESH_MS,
     refetchInterval: ACTION_REFRESH_MS,
     refetchIntervalInBackground: false,
     placeholderData: (previous) => previous,
@@ -214,7 +233,7 @@ function DashboardPage() {
     queryKey: ["devices", scope],
     queryFn: () => listDevices(scope),
     enabled: loadActions,
-    staleTime: 10_000,
+    staleTime: LIVE_REFRESH_MS,
     refetchInterval: LIVE_REFRESH_MS,
     refetchIntervalInBackground: false,
     placeholderData: (previous) => previous,
@@ -223,7 +242,7 @@ function DashboardPage() {
     queryKey: ["time-adjustments", scope, "pending"],
     queryFn: () => listTimeAdjustmentRequests({ scopedTeamIds: scope, status: "pending" }),
     enabled: loadActions,
-    staleTime: 30_000,
+    staleTime: ACTION_REFRESH_MS,
     refetchInterval: ACTION_REFRESH_MS,
     refetchIntervalInBackground: false,
     placeholderData: (previous) => previous,
@@ -236,7 +255,7 @@ function DashboardPage() {
         teamId: scope?.length === 1 ? scope[0] : undefined,
       }),
     enabled: loadActions,
-    staleTime: 20_000,
+    staleTime: ACTION_REFRESH_MS,
     refetchInterval: ACTION_REFRESH_MS,
     refetchIntervalInBackground: false,
     placeholderData: (previous) => previous,
@@ -308,9 +327,8 @@ function DashboardPage() {
     idleHours: day.idleHours,
   }));
 
-  // Member activity includes every employee with a registered device. Starting
-  // from screenshots hid offline employees because they often have no recent
-  // capture, which made the Offline filter incorrectly show zero.
+  // Member activity includes every employee with a registered device, including
+  // offline employees that do not have a capture today.
   const byEmployee = new Map<string, Screenshot[]>();
   for (const folder of shots.data?.items ?? []) {
     byEmployee.set(folder.employeeId, folder.previews);
@@ -342,9 +360,7 @@ function DashboardPage() {
     )
     .slice(0, 6);
 
-  const online = (emps.data ?? [])
-    .filter(employeeIsOnline)
-    .sort((a, b) => (a.status === "active" ? -1 : 1) - (b.status === "active" ? -1 : 1));
+  const online = (emps.data ?? []).filter(employeeIsOnline).sort(compareEmployeesByName);
   const onlinePreview = online.slice(0, 4);
   const hiddenOnlineCount = Math.max(0, online.length - onlinePreview.length);
 
@@ -726,7 +742,7 @@ function DashboardPage() {
               <div className="flex flex-wrap items-center gap-2.5">
                 <CardTitle className="text-sm font-extrabold">Member activity</CardTitle>
                 <span className="text-[11px] font-bold text-muted-foreground">
-                  {filteredActivity.length} of {matchingActivity.length}{" "}
+                  {filteredActivity.length} of {matchingActivityEmployees.length}{" "}
                   {activityFilter === "all" ? "members" : `${activityFilter} members`}
                 </span>
                 <span className="rounded-full border bg-muted/40 px-2.5 py-1 text-[10px] font-bold text-muted-foreground">
@@ -757,7 +773,7 @@ function DashboardPage() {
                 </p>
               )}
               {filteredActivity.map(({ employee, shots: images }) => (
-                <div
+                <Link
                   key={employee.id}
                   className="overflow-hidden rounded-[18px] border border-border/80 bg-card/70"
                 >
@@ -779,7 +795,7 @@ function DashboardPage() {
                       </p>
                     )}
                     {images.map((shot) => (
-                      <Link
+                      <div
                         key={shot.id}
                         to="/screenshots"
                         className="group relative overflow-hidden rounded-[12px] border border-border bg-background transition hover:border-primary/40 hover:shadow-md"
@@ -798,7 +814,7 @@ function DashboardPage() {
                       </Link>
                     ))}
                   </div>
-                </div>
+                </Link>
               ))}
             </CardContent>
           </Card>

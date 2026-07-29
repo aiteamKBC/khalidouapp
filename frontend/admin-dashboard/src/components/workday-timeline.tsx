@@ -3,7 +3,7 @@ import { Activity, CalendarDays, CircleCheck, Coffee, LockKeyhole, Moon } from "
 import type { WorkdayIntervalType, WorkdayTimeline as WorkdayTimelineData } from "@/types";
 import { formatAttendanceStart, formatClock } from "@/lib/format";
 
-type DisplayIntervalType = WorkdayIntervalType | "extra" | "leave";
+type DisplayIntervalType = WorkdayIntervalType | "break_work" | "extra" | "leave";
 
 const intervalStyles: Record<
   DisplayIntervalType,
@@ -20,6 +20,18 @@ const intervalStyles: Record<
     bar: "bg-fuchsia-500 dark:bg-pink-400",
     badge: "bg-fuchsia-500/15 text-fuchsia-700 dark:bg-pink-500/15 dark:text-pink-300",
     icon: Activity,
+  },
+  break_work: {
+    label: "Worked during break",
+    bar: "bg-violet-500",
+    badge: "bg-violet-500/15 text-violet-800",
+    icon: Activity,
+  },
+  break: {
+    label: "Break",
+    bar: "bg-slate-300",
+    badge: "bg-slate-500/10 text-slate-700",
+    icon: Coffee,
   },
   idle: {
     label: "Idle",
@@ -58,6 +70,23 @@ const intervalStyles: Record<
     icon: CalendarDays,
   },
 };
+
+function resolveDisplayType(
+  intervalType: WorkdayIntervalType,
+  workCategory: "extra" | "break_work" | null | undefined,
+  approvedLeave: boolean,
+): DisplayIntervalType {
+  if (approvedLeave) {
+    return intervalType === "worked" ? "extra" : "leave";
+  }
+  if (intervalType === "worked" && workCategory === "break_work") {
+    return "break_work";
+  }
+  if (intervalType === "worked" && workCategory === "extra") {
+    return "extra";
+  }
+  return intervalType;
+}
 
 function formatDuration(totalSeconds: number) {
   const hours = Math.floor(totalSeconds / 3600);
@@ -125,13 +154,11 @@ export function WorkdayTimeline({ timeline }: { timeline?: WorkdayTimelineData }
         aria-label="Workday activity bar"
       >
         {timeline.intervals.map((interval, index) => {
-          const displayType: DisplayIntervalType = timeline.approvedLeave
-            ? interval.type === "worked"
-              ? "extra"
-              : "leave"
-            : interval.type === "worked" && interval.workCategory === "extra"
-              ? "extra"
-              : interval.type;
+          const displayType = resolveDisplayType(
+            interval.type,
+            interval.workCategory,
+            timeline.approvedLeave,
+          );
           return (
             <span
               key={`${interval.sessionId}-${interval.startedAt}-${index}`}
@@ -145,13 +172,11 @@ export function WorkdayTimeline({ timeline }: { timeline?: WorkdayTimelineData }
 
       <div className="divide-y rounded-md border">
         {timeline.intervals.map((interval, index) => {
-          const displayType: DisplayIntervalType = timeline.approvedLeave
-            ? interval.type === "worked"
-              ? "extra"
-              : "leave"
-            : interval.type === "worked" && interval.workCategory === "extra"
-              ? "extra"
-              : interval.type;
+          const displayType = resolveDisplayType(
+            interval.type,
+            interval.workCategory,
+            timeline.approvedLeave,
+          );
           const style = intervalStyles[displayType];
           const Icon = style.icon;
           return (
@@ -170,7 +195,9 @@ export function WorkdayTimeline({ timeline }: { timeline?: WorkdayTimelineData }
                 {style.label}
               </span>
               <span className="min-w-0 truncate text-muted-foreground">
-                {displayType === "worked" || displayType === "extra"
+                {displayType === "worked" ||
+                displayType === "extra" ||
+                displayType === "break_work"
                   ? (interval.taskName ?? interval.projectName ?? "-")
                   : "-"}
               </span>

@@ -79,6 +79,7 @@ export type PauseState = {
 };
 
 export type WorkdayState = {
+  work_date?: string;
   required_normal_seconds: number;
   normal_seconds: number;
   normal_remaining_seconds: number;
@@ -237,16 +238,16 @@ export type AgentWorkdayTimeline = {
   approved_leave?: boolean;
   leave_seconds?: number;
   intervals: Array<{
-    type: "worked" | "idle" | "locked" | "sleeping";
-    source?: "activity" | "manual_pause";
+    type: "worked" | "idle" | "locked" | "sleeping" | "break";
+    source?: "activity" | "manual_pause" | "scheduled_break";
     started_at: string;
     ended_at: string | null;
     duration_seconds: number;
-    session_id: string;
+    session_id: string | null;
     project_name: string | null;
     task_name: string | null;
     is_current: boolean;
-    work_category?: "extra" | null;
+    work_category?: "extra" | "break_work" | null;
   }>;
 };
 
@@ -614,6 +615,7 @@ export async function sendHeartbeat(options: {
   status: "active" | "idle" | "locked" | "offline" | "sleeping";
   idleSeconds: number;
   activeSeconds: number;
+  counterDate: string;
   agentVersion: string;
 }) {
   const response = await axios.post<
@@ -626,6 +628,7 @@ export async function sendHeartbeat(options: {
       status: options.status,
       idle_seconds: options.idleSeconds,
       active_seconds: options.activeSeconds,
+      counter_date: options.counterDate,
       agent_version: options.agentVersion,
       mac_address: getDeviceInfo(options.agentVersion).mac_address,
       timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || null,
@@ -684,6 +687,7 @@ export type ScreenshotMetadata = {
   displayName?: string;
   displayCount?: number;
   powerSource?: "ac" | "battery" | "unknown";
+  trackingStatus?: string | null;
 };
 
 export async function initiateScreenshot(metadata: ScreenshotMetadata) {
@@ -704,6 +708,7 @@ export async function initiateScreenshot(metadata: ScreenshotMetadata) {
       display_name: metadata.displayName,
       display_count: metadata.displayCount ?? 1,
       power_source: metadata.powerSource ?? "unknown",
+      tracking_status: metadata.trackingStatus,
     },
     { headers: getAuthHeaders() },
   );

@@ -727,6 +727,71 @@ def test_live_idle_during_scheduled_break_is_on_break(attendance_context):
     )
 
 
+def test_work_during_part_of_a_scheduled_break_is_distinguished(
+    attendance_context,
+):
+    db, employee, device, _ = attendance_context
+    work_date = date(2026, 7, 21)
+    session = _session(
+        db,
+        employee,
+        device,
+        datetime(2026, 7, 21, 9, 0, tzinfo=UTC),
+        datetime(2026, 7, 21, 17, 0, tzinfo=UTC),
+    )
+    db.add_all(
+        [
+            ActivityEvent(
+                company_id=employee.company_id,
+                employee_id=employee.id,
+                device_id=device.id,
+                session_id=session.id,
+                event_type="idle_started",
+                event_timestamp=datetime(2026, 7, 21, 11, 50, tzinfo=UTC),
+                idempotency_key="partial-break-idle-start",
+            ),
+            ActivityEvent(
+                company_id=employee.company_id,
+                employee_id=employee.id,
+                device_id=device.id,
+                session_id=session.id,
+                event_type="idle_ended",
+                event_timestamp=datetime(2026, 7, 21, 12, 15, tzinfo=UTC),
+                idempotency_key="partial-break-idle-end",
+            ),
+        ]
+    )
+    db.commit()
+
+    row, timeline = calculate_daily_attendance(
+        db,
+        employee=employee,
+        work_date=work_date,
+        now=datetime(2026, 7, 22, tzinfo=UTC),
+    )
+
+    scheduled_break = next(
+        item for item in timeline["intervals"] if item["type"] == "break"
+    )
+    worked_during_break = next(
+        item
+        for item in timeline["intervals"]
+        if item["type"] == "worked"
+        and item.get("work_category") == "break_work"
+    )
+
+    assert scheduled_break["duration_seconds"] == 15 * 60
+    assert scheduled_break["source"] == "scheduled_break"
+    assert worked_during_break["duration_seconds"] == 15 * 60
+    assert worked_during_break["source"] == "activity"
+    assert worked_during_break["break_name"] == "Lunch"
+    assert worked_during_break["break_paid"] is True
+    assert timeline["break_seconds"] == 15 * 60
+    assert timeline["worked_seconds"] == 7 * 3600 + 35 * 60
+    assert row.normal_worked_seconds == 7 * 3600 + 20 * 60
+    assert row.paid_break_seconds == 30 * 60
+
+
 def test_idle_outside_shift_is_not_deductible_or_paid_idle(attendance_context):
     db, employee, device, _ = attendance_context
     work_date = date(2026, 7, 21)
