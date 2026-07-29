@@ -19,8 +19,10 @@ from app.models import (
 )
 from app.services.activity_timeline import (
     build_workday_timeline,
+    company_idle_threshold_seconds,
     local_today,
     scope_timeline_to_schedule,
+    sustained_work_start,
 )
 from app.services.schedules import (
     effective_schedule,
@@ -223,9 +225,19 @@ def calculate_daily_attendance(
         for item in activity_intervals
         if item[0]["type"] != "worked" or item[0].get("work_category") != "extra"
     ]
-    raw_first_at = min((item[1] for item in activity_intervals), default=None)
+    # Lateness is measured from sustained work, not from a brief touch that was
+    # followed by hours away from the machine.
+    idle_threshold = company_idle_threshold_seconds(db, employee.company_id)
+
+    def first_activity_at(candidates) -> datetime | None:
+        blocks = [(item[0]["type"], item[1], item[2]) for item in candidates]
+        return sustained_work_start(blocks, idle_threshold) or min(
+            (item[1] for item in candidates), default=None
+        )
+
+    raw_first_at = first_activity_at(activity_intervals)
     raw_last_at = max((item[2] for item in activity_intervals), default=None)
-    scheduled_first_at = min((item[1] for item in scheduled_activity_intervals), default=None)
+    scheduled_first_at = first_activity_at(scheduled_activity_intervals)
     scheduled_last_at = max((item[2] for item in scheduled_activity_intervals), default=None)
     correction = db.scalar(
         select(AttendanceCorrection).where(
