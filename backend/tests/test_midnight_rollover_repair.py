@@ -1,0 +1,248 @@
+"""The data migration that removes unattended hours banked by the old rollover."""
+
+import importlib.util
+from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
+
+import pytest
+from alembic.migration import MigrationContext
+from alembic.operations import Operations
+from sqlalchemy import create_engine, select
+from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.pool import StaticPool
+
+from app.database.base import Base
+from app.models import (
+    ActivityEvent,
+    Company,
+    DailyAttendance,
+    Device,
+    Employee,
+    WorkSession,
+)
+
+MIGRATION_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "alembic"
+    / "versions"
+    / "20260729_000050_repair_midnight_rollover_workdays.py"
+)
+CAIRO = "Africa/Cairo"
+
+
+def load_migration():
+    spec = importlib.util.spec_from_file_location("repair_midnight_rollover", MIGRATION_PATH)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def run_migration(db: Session) -> None:
+    """Run the migration's upgrade against the test session's connection."""
+    module = load_migration()
+    connection = db.connection()
+    module.op = Operations(MigrationContext.configure(connection))
+    module.upgrade()
+
+
+@pytest.fixture()
+def repair_context():
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    testing_session = sessionmaker(
+        bind=engine, autoflush=False, autocommit=False, expire_on_commit=False
+    )
+    db: Session = testing_session()
+
+    company = Company(name="Rollover Company", status="active")
+    db.add(company)
+    db.flush()
+    employee = Employee(
+        company_id=company.id,
+        name="Overnight Employee",
+        email="overnight@example.com",
+        employee_code="OVERNIGHT",
+        timezone=CAIRO,
+        status="active",
+    )
+    db.add(employee)
+    db.flush()
+    device = Device(
+        company_id=company.id,
+        employee_id=employee.id,
+        device_name="Overnight Device",
+        installation_id="overnight-installation",
+        operating_system="Windows 11",
+        agent_version="1.0.0",
+        status="active",
+    )
+    db.add(device)
+    db.commit()
+
+    try:
+        yield db, employee, device
+    finally:
+        db.close()
+        Base.metadata.drop_all(engine)
+        engine.dispose()
+
+
+def add_session(db, employee, device, *, started_at, ended_at, active_seconds, idle_seconds=0):
+    session = WorkSession(
+        company_id=employee.company_id,
+        employee_id=employee.id,
+        device_id=device.id,
+        timezone=CAIRO,
+        started_at=started_at,
+        ended_at=ended_at,
+        status="ended" if ended_at else "active",
+        active_seconds=active_seconds,
+        idle_seconds=idle_seconds,
+    )
+    db.add(session)
+    db.commit()
+    return session
+
+
+def add_worked_heartbeat(db, employee, device, session, at, key):
+    db.add(
+        ActivityEvent(
+            company_id=employee.company_id,
+            employee_id=employee.id,
+            device_id=device.id,
+            session_id=session.id,
+            event_type="heartbeat",
+            event_timestamp=at,
+            payload={"status": "active"},
+            idempotency_key=key,
+        )
+    )
+    db.commit()
+
+
+def test_session_ended_at_midnight_is_pulled_back_to_the_last_real_activity(repair_context):
+    db, employee, device = repair_context
+    # 2026-07-28 10:35 Cairo (+03:00) through local midnight, the exact shape the
+    # rollover produced for an unattended machine.
+    session = add_session(
+        db,
+        employee,
+        device,
+        started_at=datetime(2026, 7, 28, 7, 35, tzinfo=UTC),
+        ended_at=datetime(2026, 7, 28, 21, 0, tzinfo=UTC),
+        active_seconds=48146,
+    )
+    last_worked_at = datetime(2026, 7, 28, 15, 30, tzinfo=UTC)
+    add_worked_heartbeat(db, employee, device, session, last_worked_at, "worked-1")
+
+    run_migration(db)
+    db.refresh(session)
+
+    assert session.ended_at.replace(tzinfo=UTC) == last_worked_at
+    duration = int((last_worked_at - datetime(2026, 7, 28, 7, 35, tzinfo=UTC)).total_seconds())
+    assert session.active_seconds == duration
+
+
+def test_session_started_at_midnight_is_pushed_to_the_first_real_activity(repair_context):
+    db, employee, device = repair_context
+    midnight_utc = datetime(2026, 7, 28, 21, 0, tzinfo=UTC)  # 2026-07-29 00:00 Cairo
+    session = add_session(
+        db,
+        employee,
+        device,
+        started_at=midnight_utc,
+        ended_at=datetime(2026, 7, 29, 15, 0, tzinfo=UTC),
+        active_seconds=28493,
+    )
+    first_worked_at = datetime(2026, 7, 29, 7, 9, tzinfo=UTC)  # 10:09 Cairo
+    add_worked_heartbeat(db, employee, device, session, first_worked_at, "worked-1")
+    add_worked_heartbeat(
+        db, employee, device, session, datetime(2026, 7, 29, 12, 0, tzinfo=UTC), "worked-2"
+    )
+
+    run_migration(db)
+    db.refresh(session)
+
+    assert session.started_at.replace(tzinfo=UTC) == first_worked_at
+
+
+def test_a_midnight_session_without_any_proven_work_collapses(repair_context):
+    db, employee, device = repair_context
+    started = datetime(2026, 7, 28, 7, 35, tzinfo=UTC)
+    session = add_session(
+        db,
+        employee,
+        device,
+        started_at=started,
+        ended_at=datetime(2026, 7, 28, 21, 0, tzinfo=UTC),
+        active_seconds=48146,
+        idle_seconds=0,
+    )
+
+    run_migration(db)
+    db.refresh(session)
+
+    assert session.ended_at.replace(tzinfo=UTC) == started
+    assert session.active_seconds == 0
+    assert session.idle_seconds == 0
+
+
+def test_a_normal_session_is_left_alone(repair_context):
+    db, employee, device = repair_context
+    started = datetime(2026, 7, 29, 7, 9, tzinfo=UTC)
+    ended = datetime(2026, 7, 29, 15, 30, tzinfo=UTC)
+    session = add_session(
+        db, employee, device, started_at=started, ended_at=ended, active_seconds=30060
+    )
+
+    run_migration(db)
+    db.refresh(session)
+
+    assert session.started_at.replace(tzinfo=UTC) == started
+    assert session.ended_at.replace(tzinfo=UTC) == ended
+    assert session.active_seconds == 30060
+
+
+def test_attendance_snapshots_for_repaired_days_are_dropped(repair_context):
+    db, employee, device = repair_context
+    session = add_session(
+        db,
+        employee,
+        device,
+        started_at=datetime(2026, 7, 28, 7, 35, tzinfo=UTC),
+        ended_at=datetime(2026, 7, 28, 21, 0, tzinfo=UTC),
+        active_seconds=48146,
+    )
+    add_worked_heartbeat(
+        db, employee, device, session, datetime(2026, 7, 28, 15, 30, tzinfo=UTC), "worked-1"
+    )
+    db.add(
+        DailyAttendance(
+            company_id=employee.company_id,
+            employee_id=employee.id,
+            work_date=date(2026, 7, 28),
+            timezone=CAIRO,
+            calculated_at=datetime.now(UTC),
+        )
+    )
+    db.add(
+        DailyAttendance(
+            company_id=employee.company_id,
+            employee_id=employee.id,
+            work_date=date(2026, 7, 28) + timedelta(days=1),
+            timezone=CAIRO,
+            calculated_at=datetime.now(UTC),
+        )
+    )
+    db.commit()
+
+    run_migration(db)
+
+    remaining = db.scalars(
+        select(DailyAttendance).where(DailyAttendance.employee_id == employee.id)
+    ).all()
+    assert remaining == []

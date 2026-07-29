@@ -356,7 +356,133 @@ def test_heartbeat_after_local_day_changes_restarts_session(tracking_context):
     assert result["session"]["started_at"] == heartbeat_at.isoformat()
     assert result["session"]["active_seconds"] == 0
     assert stale.status == "ended"
-    assert stale.ended_at.replace(tzinfo=UTC) == datetime(2026, 7, 17, 0, 0, tzinfo=UTC)
+    # Nothing proves the employee worked past the session start, so the day ends
+    # there rather than banking every unattended hour up to midnight.
+    assert stale.ended_at.replace(tzinfo=UTC) == started_at
+
+
+def test_overnight_session_ends_at_the_last_active_heartbeat(tracking_context):
+    db, device = tracking_context
+    started_at = datetime(2026, 7, 16, 9, 0, tzinfo=UTC)
+    last_worked_at = datetime(2026, 7, 16, 17, 30, tzinfo=UTC)
+    session = WorkSession(
+        company_id=device.company_id,
+        employee_id=device.employee_id,
+        device_id=device.id,
+        started_at=started_at,
+        status="active",
+        active_seconds=3600,
+        idle_seconds=0,
+    )
+    db.add(session)
+    db.commit()
+    db.add(
+        ActivityEvent(
+            company_id=device.company_id,
+            employee_id=device.employee_id,
+            device_id=device.id,
+            session_id=session.id,
+            event_type="heartbeat",
+            event_timestamp=last_worked_at,
+            payload={"status": "active"},
+            idempotency_key="worked-marker",
+        )
+    )
+    db.commit()
+
+    record_heartbeat(
+        db,
+        device=device,
+        session_id=session.id,
+        payload=HeartbeatRequest(
+            event_id=uuid4(),
+            timestamp=datetime(2026, 7, 17, 10, 0, tzinfo=UTC),
+            status="active",
+            active_seconds=30 * 60 * 60,
+            idle_seconds=0,
+            agent_version="1.0.0",
+        ),
+    )
+    db.refresh(session)
+
+    assert session.status == "ended"
+    assert session.ended_at.replace(tzinfo=UTC) == last_worked_at
+
+
+def test_idle_beyond_the_threshold_ends_the_session_where_work_stopped(tracking_context):
+    db, device = tracking_context
+    started_at = datetime(2026, 7, 16, 9, 0, tzinfo=UTC)
+    session = WorkSession(
+        company_id=device.company_id,
+        employee_id=device.employee_id,
+        device_id=device.id,
+        started_at=started_at,
+        status="active",
+        active_seconds=600,
+        idle_seconds=0,
+    )
+    db.add(session)
+    db.commit()
+
+    result = record_heartbeat(
+        db,
+        device=device,
+        session_id=session.id,
+        payload=HeartbeatRequest(
+            event_id=uuid4(),
+            timestamp=started_at + timedelta(minutes=45),
+            status="idle",
+            active_seconds=600,
+            idle_seconds=45 * 60,
+            agent_version="1.0.0",
+        ),
+    )
+    db.refresh(session)
+
+    assert session.status == "ended"
+    assert session.ended_at.replace(tzinfo=UTC) == started_at
+    assert result["restarted"] is False
+
+
+def test_idle_heartbeat_does_not_reopen_an_ended_session(tracking_context):
+    db, device = tracking_context
+    started_at = datetime(2026, 7, 16, 9, 0, tzinfo=UTC)
+    ended = WorkSession(
+        company_id=device.company_id,
+        employee_id=device.employee_id,
+        device_id=device.id,
+        started_at=started_at,
+        ended_at=started_at + timedelta(hours=8),
+        status="ended",
+        active_seconds=600,
+        idle_seconds=0,
+    )
+    db.add(ended)
+    db.commit()
+
+    result = record_heartbeat(
+        db,
+        device=device,
+        session_id=ended.id,
+        payload=HeartbeatRequest(
+            event_id=uuid4(),
+            timestamp=started_at + timedelta(hours=20),
+            status="idle",
+            active_seconds=600,
+            idle_seconds=12 * 60 * 60,
+            agent_version="1.0.0",
+        ),
+    )
+
+    assert result["restarted"] is False
+    assert result["session"]["id"] == str(ended.id)
+    open_sessions = db.scalars(
+        select(WorkSession).where(
+            WorkSession.employee_id == device.employee_id,
+            WorkSession.ended_at.is_(None),
+        )
+    ).all()
+    assert open_sessions == []
 
 
 def test_paid_pause_auto_resumes_and_consumes_daily_balance(tracking_context):

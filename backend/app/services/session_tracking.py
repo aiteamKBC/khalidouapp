@@ -15,6 +15,7 @@ from app.models import (
     OvertimeRecord,
     PauseBalance,
     PauseSession,
+    TrackingSettings,
     WorkScheduleOverride,
     WorkSession,
 )
@@ -85,6 +86,48 @@ def next_local_midnight(started_at: datetime, zone: ZoneInfo) -> datetime:
         tzinfo=zone,
     )
     return local_midnight.astimezone(UTC)
+
+
+WORKED_EVENT_TYPES = {
+    "session_started",
+    "idle_ended",
+    "manual_pause_ended",
+    "screen_unlocked",
+    "system_resumed",
+}
+NON_WORKING_SESSION_STATUSES = {"idle", "locked", "sleeping", "offline"}
+
+
+def idle_cutoff_seconds(db: Session, company_id: UUID) -> int:
+    """Seconds of uninterrupted non-working time that end a session outright."""
+    minutes = db.scalar(
+        select(TrackingSettings.idle_threshold_minutes).where(
+            TrackingSettings.company_id == company_id
+        )
+    )
+    return max(1, minutes or 10) * 60
+
+
+def last_worked_activity_at(db: Session, session: WorkSession) -> datetime:
+    """When the employee was last demonstrably at the keyboard in this session.
+
+    A machine left switched on keeps sending heartbeats, so the session's own
+    end time says nothing about when the employee stopped working. Closing a
+    session at this timestamp keeps unattended hours out of the workday instead
+    of counting them up to midnight.
+    """
+    started_at = utc(session.started_at)
+    events = db.execute(
+        select(ActivityEvent.event_type, ActivityEvent.event_timestamp, ActivityEvent.payload)
+        .where(ActivityEvent.session_id == session.id)
+        .order_by(ActivityEvent.event_timestamp.desc())
+    ).all()
+    for event_type, event_timestamp, payload in events:
+        if event_type in WORKED_EVENT_TYPES:
+            return max(started_at, utc(event_timestamp))
+        if event_type == "heartbeat" and (payload or {}).get("status") == "active":
+            return max(started_at, utc(event_timestamp))
+    return started_at
 
 
 def close_open_session(
@@ -581,11 +624,18 @@ def start_or_get_session(
             )
             current = None
         elif not same_local_day(current.started_at, now, current_zone):
+            # End yesterday's session where the employee actually stopped, not at
+            # midnight. A machine left switched on overnight otherwise banked
+            # every unattended hour as work.
             close_open_session(
                 db,
                 device=device,
                 session=current,
-                ended_at=min(now, next_local_midnight(current.started_at, current_zone)),
+                ended_at=min(
+                    now,
+                    next_local_midnight(current.started_at, current_zone),
+                    max(last_worked_activity_at(db, current), utc(current.started_at)),
+                ),
                 reason="New local workday started",
             )
             current = None
@@ -822,6 +872,19 @@ def record_heartbeat(
 ) -> dict[str, Any]:
     session = get_owned_session(db, device, session_id)
     if session.ended_at is not None:
+        # Only real work reopens a workday. An unattended machine keeps sending
+        # idle heartbeats, and restarting on those spawned a fresh session the
+        # moment the previous one closed - which is how workdays ended up
+        # beginning at midnight.
+        if payload.status in NON_WORKING_SESSION_STATUSES:
+            device.last_seen_at = utc(payload.timestamp)
+            db.commit()
+            return {
+                "event_id": None,
+                "duplicate": False,
+                **session_response(db, session),
+                "restarted": False,
+            }
         restarted = start_or_get_session(
             db, device, SessionStartRequest(started_at=payload.timestamp)
         )
@@ -849,7 +912,11 @@ def record_heartbeat(
             ended_at=(
                 heartbeat_at
                 if timezone_changed
-                else min(heartbeat_at, next_local_midnight(session.started_at, zone))
+                else min(
+                    heartbeat_at,
+                    next_local_midnight(session.started_at, zone),
+                    max(last_worked_activity_at(db, session), utc(session.started_at)),
+                )
             ),
             reason=(
                 "Device timezone changed"
@@ -858,6 +925,15 @@ def record_heartbeat(
             ),
         )
         db.commit()
+        if payload.status in NON_WORKING_SESSION_STATUSES:
+            device.last_seen_at = heartbeat_at
+            db.commit()
+            return {
+                "event_id": None,
+                "duplicate": False,
+                **session_response(db, session),
+                "restarted": False,
+            }
         restarted = start_or_get_session(
             db,
             device,
@@ -871,6 +947,29 @@ def record_heartbeat(
             **restarted,
             "restarted": True,
         }
+
+    if payload.status in NON_WORKING_SESSION_STATUSES:
+        # The employee has been away longer than the idle threshold, so the
+        # session ends where they stopped working. Coming back starts a new one.
+        stopped_at = max(last_worked_activity_at(db, session), utc(session.started_at))
+        away_seconds = int((heartbeat_at - stopped_at).total_seconds())
+        if away_seconds >= idle_cutoff_seconds(db, device.company_id):
+            close_open_session(
+                db,
+                device=device,
+                session=session,
+                ended_at=stopped_at,
+                reason="Employee left the device longer than the idle threshold",
+            )
+            device.last_seen_at = heartbeat_at
+            db.commit()
+            return {
+                "event_id": None,
+                "duplicate": False,
+                **session_response(db, session),
+                "restarted": False,
+            }
+
     elapsed_seconds = max(0, int((heartbeat_at - utc(session.started_at)).total_seconds()))
 
     event, duplicate = create_activity_event(
