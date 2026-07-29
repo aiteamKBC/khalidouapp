@@ -91,22 +91,28 @@ def effective_schedules_for_employees(
     work_date: date,
     *,
     profiles: dict | None = None,
+    memberships_by_employee: dict | None = None,
 ) -> dict:
     """Resolve one workday for many employees with two shared queries."""
     if not employees:
         return {}
 
     employee_ids = [employee.id for employee in employees]
-    memberships_by_employee: dict = {employee_id: [] for employee_id in employee_ids}
-    membership_rows = db.execute(
-        select(TeamMember.employee_id, TeamMember.team_id).where(
-            TeamMember.employee_id.in_(employee_ids),
-            TeamMember.status == "active",
-        )
-    ).all()
-    for employee_id, team_id in membership_rows:
-        memberships_by_employee.setdefault(employee_id, []).append(team_id)
-    team_ids = {team_id for _employee_id, team_id in membership_rows}
+    if memberships_by_employee is None:
+        memberships_by_employee = {employee_id: [] for employee_id in employee_ids}
+        membership_rows = db.execute(
+            select(TeamMember.employee_id, TeamMember.team_id).where(
+                TeamMember.employee_id.in_(employee_ids),
+                TeamMember.status == "active",
+            )
+        ).all()
+        for employee_id, team_id in membership_rows:
+            memberships_by_employee.setdefault(employee_id, []).append(team_id)
+    team_ids = {
+        team_id
+        for employee_id in employee_ids
+        for team_id in memberships_by_employee.get(employee_id, [])
+    }
     company_ids = {employee.company_id for employee in employees}
 
     scope_conditions = [

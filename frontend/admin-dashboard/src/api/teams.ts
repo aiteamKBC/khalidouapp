@@ -65,9 +65,10 @@ async function enrichTeam(team: BackendTeam): Promise<Team> {
   );
 }
 
-export async function listTeams(scopedTeamIds?: string[]): Promise<Team[]> {
+export async function listTeams(scopedTeamIds?: string[], signal?: AbortSignal): Promise<Team[]> {
   const teams = await apiFetch<BackendTeam[]>(
     withQuery("/teams", { page_size: 100, include_relations: "true" }),
+    { signal },
   );
   const filtered = scopedTeamIds?.length
     ? teams.filter((team) => scopedTeamIds.includes(team.id))
@@ -80,6 +81,19 @@ export async function listTeams(scopedTeamIds?: string[]): Promise<Team[]> {
       team.owners ?? (team.owner_ids ?? []).map((id) => ({ id, name: "", email: "" })),
     ),
   );
+}
+
+export async function listMonitoringTeams(
+  scopedTeamIds?: string[],
+  signal?: AbortSignal,
+): Promise<Team[]> {
+  const teams = await apiFetch<BackendTeam[]>(
+    withQuery("/teams", { page_size: 100, include_relations: "false" }),
+    { signal },
+  );
+  return teams
+    .filter((team) => !scopedTeamIds?.length || scopedTeamIds.includes(team.id))
+    .map((team) => mapTeam(team, [], []));
 }
 
 export async function getTeam(id: string): Promise<Team | undefined> {

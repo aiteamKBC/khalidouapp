@@ -186,6 +186,8 @@ def application_history(
     db: Annotated[Session, Depends(get_db)],
     day: date | None = None,
     team_id: UUID | None = None,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=25, ge=1, le=100),
 ):
     require_capability(current_admin, "timesheets.view")
     employee = ensure_employee_access(db, current_admin, employee_id, team_id)
@@ -205,15 +207,18 @@ def application_history(
         )
         .order_by(ActivityEvent.event_timestamp, ActivityEvent.created_at)
     ).all()
+    history = build_application_history(
+        list(events),
+        selected_day=selected_day,
+        timezone_name=employee.timezone,
+    )
+    items = history["items"]
+    total = len(items)
+    start = (page - 1) * page_size
+    history["items"] = items[start : start + page_size]
     return success_response(
-        data={
-            "employee_id": str(employee_id),
-            **build_application_history(
-                list(events),
-                selected_day=selected_day,
-                timezone_name=employee.timezone,
-            ),
-        }
+        data={"employee_id": str(employee_id), **history},
+        meta=pagination_meta(total, page, page_size),
     )
 
 

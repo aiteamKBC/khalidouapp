@@ -1,4 +1,4 @@
-import { apiFetch, toMinutes, withQuery } from "./client";
+import { apiFetch, apiFetchWithMeta, toMinutes, withQuery } from "./client";
 import type { ActivityEvent, WorkSession } from "@/types";
 import { mapWorkdayTimeline, type BackendWorkdayTimeline } from "./workday";
 
@@ -51,6 +51,9 @@ export type ApplicationHistory = {
   totalSeconds: number;
   applicationCount: number;
   websiteCount: number;
+  page: number;
+  pages: number;
+  total: number;
   applications: Array<{ name: string; durationSeconds: number }>;
   websites: Array<{ domain: string; durationSeconds: number }>;
   items: Array<{
@@ -116,13 +119,19 @@ export async function getWorkdayTimeline(employeeId: string, day: string) {
 export async function getApplicationHistory(
   employeeId: string,
   day: string,
+  page = 1,
+  signal?: AbortSignal,
 ): Promise<ApplicationHistory> {
-  const history = await apiFetch<BackendApplicationHistory>(
+  const result = await apiFetchWithMeta<BackendApplicationHistory>(
     withQuery("/activity/application-history", {
       employee_id: employeeId,
       day,
+      page,
+      page_size: 25,
     }),
+    { signal },
   );
+  const history = result.data;
   return {
     employeeId: history.employee_id,
     date: history.date,
@@ -130,6 +139,9 @@ export async function getApplicationHistory(
     totalSeconds: history.total_seconds,
     applicationCount: history.application_count,
     websiteCount: history.website_count,
+    page: Number(result.meta.page ?? page),
+    pages: Number(result.meta.total_pages ?? 1),
+    total: Number(result.meta.total ?? history.items.length),
     applications: history.applications.map((item) => ({
       name: item.name,
       durationSeconds: item.duration_seconds,

@@ -4,7 +4,7 @@ from uuid import UUID, uuid4
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request
 from sqlalchemy import func, or_, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, load_only
 
 from app.api.deps import get_current_admin
 from app.api.v1.admin_utils import (
@@ -31,6 +31,7 @@ from app.models import (
     DailyAttendance,
     Device,
     Employee,
+    EmployeeInvitation,
     EmployeeWorkProfile,
     LeaveRequest,
     PayrollAdjustment,
@@ -541,6 +542,222 @@ def list_employee_overviews(
                 "team_ids": teams_by_employee.get(employee.id, []),
                 "team_role": team_role_by_employee.get(employee.id),
                 "managers": managers_by_employee.get(employee.id, []),
+            }
+        )
+    return success_response(data=data)
+
+
+@router.get("/employees-monitoring")
+def list_monitoring_employees(
+    current_admin: Annotated[AdminUser, Depends(get_current_admin)],
+    db: Annotated[Session, Depends(get_db)],
+    team_id: UUID | None = None,
+):
+    """Return only the roster fields required by Employee Monitoring.
+
+    Attendance totals, screenshots, managers, payroll, and full employee
+    profiles deliberately stay out of this frequently-polled response.
+    """
+
+    company_settings = get_company_settings(db, current_admin.company_id)
+    now = datetime.now(UTC)
+    cutoff = now - timedelta(minutes=company_settings.offline_threshold_minutes)
+
+    device_ranked = (
+        select(
+            Device.employee_id.label("employee_id"),
+            Device.id.label("device_id"),
+            Device.device_name.label("device_name"),
+            Device.status.label("device_status"),
+            Device.last_seen_at.label("device_last_seen"),
+            func.row_number()
+            .over(
+                partition_by=Device.employee_id,
+                order_by=(
+                    Device.last_seen_at.desc().nullslast(),
+                    Device.registered_at.desc(),
+                ),
+            )
+            .label("rank"),
+        )
+        .where(Device.company_id == current_admin.company_id)
+        .subquery()
+    )
+    latest_device = select(device_ranked).where(device_ranked.c.rank == 1).subquery()
+    session_ranked = (
+        select(
+            WorkSession.employee_id.label("employee_id"),
+            WorkSession.id.label("session_id"),
+            WorkSession.status.label("session_status"),
+            func.row_number()
+            .over(
+                partition_by=WorkSession.employee_id,
+                order_by=WorkSession.started_at.desc(),
+            )
+            .label("rank"),
+        )
+        .where(
+            WorkSession.company_id == current_admin.company_id,
+            WorkSession.ended_at.is_(None),
+        )
+        .subquery()
+    )
+    latest_session = select(session_ranked).where(session_ranked.c.rank == 1).subquery()
+    invitation_ranked = (
+        select(
+            EmployeeInvitation.employee_id.label("employee_id"),
+            EmployeeInvitation.accepted_at.label("accepted_at"),
+            func.row_number()
+            .over(
+                partition_by=EmployeeInvitation.employee_id,
+                order_by=EmployeeInvitation.created_at.desc(),
+            )
+            .label("rank"),
+        )
+        .where(EmployeeInvitation.company_id == current_admin.company_id)
+        .subquery()
+    )
+    latest_invitation = (
+        select(invitation_ranked).where(invitation_ranked.c.rank == 1).subquery()
+    )
+
+    statement = (
+        select(
+            Employee,
+            latest_device.c.device_id,
+            latest_device.c.device_name,
+            latest_device.c.device_status,
+            latest_device.c.device_last_seen,
+            latest_session.c.session_id,
+            latest_session.c.session_status,
+            latest_invitation.c.accepted_at,
+        )
+        .options(
+            load_only(
+                Employee.id,
+                Employee.company_id,
+                Employee.name,
+                Employee.email,
+                Employee.employee_code,
+                Employee.job_title,
+                Employee.timezone,
+                Employee.status,
+            )
+        )
+        .outerjoin(latest_device, latest_device.c.employee_id == Employee.id)
+        .outerjoin(latest_session, latest_session.c.employee_id == Employee.id)
+        .outerjoin(latest_invitation, latest_invitation.c.employee_id == Employee.id)
+        .where(
+            Employee.company_id == current_admin.company_id,
+            Employee.status != "deleted",
+        )
+    )
+    statement = apply_employee_scope(statement, db, current_admin, Employee.id, team_id)
+    rows = db.execute(statement.order_by(Employee.name)).all()
+
+    employee_ids = [row[0].id for row in rows]
+    memberships_by_employee: dict[UUID, list[UUID]] = {
+        employee_id: [] for employee_id in employee_ids
+    }
+    if employee_ids:
+        memberships = db.execute(
+            select(TeamMember.employee_id, TeamMember.team_id).where(
+                TeamMember.employee_id.in_(employee_ids),
+                TeamMember.status == "active",
+            )
+        ).all()
+        for membership_employee_id, membership_team_id in memberships:
+            memberships_by_employee.setdefault(membership_employee_id, []).append(
+                membership_team_id
+            )
+
+    schedule_candidates = []
+    for (
+        employee,
+        device_id,
+        _device_name,
+        device_status,
+        last_seen,
+        session_id,
+        status,
+        _invitation_accepted_at,
+    ) in rows:
+        normalized_last_seen = _as_utc(last_seen)
+        if (
+            status in {"active", "idle", "locked", "sleeping"}
+            and session_id
+            and device_id
+            and device_status != "revoked"
+            and normalized_last_seen
+            and normalized_last_seen >= cutoff
+        ):
+            schedule_candidates.append(employee)
+    schedule_context_by_employee = current_idle_contexts(
+        db,
+        employees=schedule_candidates,
+        now=now,
+        memberships_by_employee=memberships_by_employee,
+    )
+
+    data = []
+    for (
+        employee,
+        device_id,
+        device_name,
+        device_status,
+        last_seen,
+        session_id,
+        status,
+        invitation_accepted_at,
+    ) in rows:
+        normalized_last_seen = _as_utc(last_seen)
+        online = bool(
+            device_id
+            and device_status != "revoked"
+            and normalized_last_seen
+            and normalized_last_seen >= cutoff
+        )
+        activity_status = status if session_id and online else "offline"
+        schedule_context = schedule_context_by_employee.get(employee.id)
+        if schedule_context == "on_break":
+            if activity_status == "active":
+                activity_status = "break_work"
+            elif activity_status in {"idle", "locked", "sleeping"}:
+                activity_status = "on_break"
+        elif (
+            schedule_context == "off_shift"
+            and activity_status in {"idle", "locked", "sleeping"}
+        ):
+            activity_status = "off_shift"
+
+        onboarding_status = (
+            "app_pending"
+            if employee.status == "active"
+            and invitation_accepted_at is not None
+            and device_id is None
+            else employee.status
+        )
+        data.append(
+            {
+                "employee": {
+                    "id": str(employee.id),
+                    "name": employee.name,
+                    "email": employee.email,
+                    "employee_code": employee.employee_code,
+                    "job_title": employee.job_title,
+                    "timezone": employee.timezone,
+                    "status": employee.status,
+                    "onboarding_status": onboarding_status,
+                },
+                "activity_status": activity_status,
+                "last_heartbeat": last_seen.isoformat() if last_seen else None,
+                "device": (
+                    {"id": str(device_id), "device_name": device_name} if device_id else None
+                ),
+                "team_ids": [
+                    str(team_id)
+                    for team_id in memberships_by_employee.get(employee.id, [])
+                ],
             }
         )
     return success_response(data=data)

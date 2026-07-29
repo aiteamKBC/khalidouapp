@@ -62,17 +62,20 @@ function mapScreenshot(screenshot: BackendScreenshot, teamId: string): Screensho
   };
 }
 
-export async function listScreenshotPage(options: {
-  scopedTeamIds?: string[];
-  page: number;
-  pageSize?: number;
-  employeeId?: string;
-  teamId?: string;
-  day?: string;
-  startDate?: string;
-  endDate?: string;
-  workCategory?: string;
-}): Promise<{ items: Screenshot[]; page: number; pages: number; total: number }> {
+export async function listScreenshotPage(
+  options: {
+    scopedTeamIds?: string[];
+    page: number;
+    pageSize?: number;
+    employeeId?: string;
+    teamId?: string;
+    day?: string;
+    startDate?: string;
+    endDate?: string;
+    workCategory?: string;
+  },
+  signal?: AbortSignal,
+): Promise<{ items: Screenshot[]; page: number; pages: number; total: number }> {
   const scopedTeamId = options.scopedTeamIds?.length === 1 ? options.scopedTeamIds[0] : undefined;
   const teamId = options.teamId && options.teamId !== "all" ? options.teamId : scopedTeamId;
   const result = await apiFetchWithMeta<BackendScreenshot[]>(
@@ -86,6 +89,7 @@ export async function listScreenshotPage(options: {
       end_time: options.endDate,
       work_category: options.workCategory === "all" ? undefined : options.workCategory,
     }),
+    { signal },
   );
   return {
     items: result.data.map((screenshot) =>

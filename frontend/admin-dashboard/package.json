@@ -9,6 +9,7 @@
     "build:dev": "vite build --mode development",
     "start": "node .output/server/index.mjs",
     "preview": "vite preview",
+    "test:monitoring": "node --experimental-strip-types --test src/lib/monitoring-query-policy.test.ts",
     "lint": "eslint src",
     "format": "prettier --write ."
   },

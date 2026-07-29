@@ -2987,6 +2987,163 @@ def test_employee_overview_uses_materialized_attendance_totals(team_client):
     assert overview["idle_seconds"] == 90
 
 
+def test_monitoring_roster_is_lightweight_scoped_and_has_bounded_queries(team_client):
+    client, data = team_client
+    now = datetime.now(UTC)
+    with data["session_factory"]() as db:
+        device = db.get(Device, data["session_a"].device_id)
+        device.last_seen_at = now
+        employee = db.get(Employee, data["employee_a"].id)
+        get_or_create_work_profile(db, employee)
+        db.commit()
+
+    engine = data["session_factory"].kw["bind"]
+    statements = []
+
+    def count_statement(_conn, _cursor, statement, *_args):
+        statements.append(statement)
+
+    event.listen(engine, "before_cursor_execute", count_statement)
+    try:
+        response = client.get(
+            "/api/v1/employees-monitoring",
+            headers=data["owner_headers"],
+        )
+    finally:
+        event.remove(engine, "before_cursor_execute", count_statement)
+
+    assert response.status_code == 200
+    rows = response.json()["data"]
+    assert {row["employee"]["id"] for row in rows} == {
+        str(data["employee_a"].id),
+        str(data["shared_employee"].id),
+    }
+    assert len(statements) <= 8, [
+        f"{index}: {' '.join(statement.split())[:180]}"
+        for index, statement in enumerate(statements, start=1)
+    ]
+    assert len(response.content) < 100_000
+    assert set(rows[0]) == {
+        "employee",
+        "activity_status",
+        "last_heartbeat",
+        "device",
+        "team_ids",
+    }
+    assert set(rows[0]["employee"]) == {
+        "id",
+        "name",
+        "email",
+        "employee_code",
+        "job_title",
+        "timezone",
+        "status",
+        "onboarding_status",
+    }
+    assert "worked_today_seconds" not in rows[0]
+    assert "last_screenshot" not in rows[0]
+    assert "managers" not in rows[0]
+
+
+def test_monitoring_roster_preserves_break_and_off_shift_statuses(team_client, monkeypatch):
+    client, data = team_client
+    with data["session_factory"]() as db:
+        session = db.get(WorkSession, data["session_a"].id)
+        device = db.get(Device, session.device_id)
+        device.last_seen_at = datetime.now(UTC)
+        session.status = "active"
+        db.commit()
+
+    monkeypatch.setattr(
+        "app.api.v1.employees.current_idle_contexts",
+        lambda *_args, employees, **_kwargs: {
+            employee.id: "on_break" for employee in employees
+        },
+    )
+    response = client.get(
+        f"/api/v1/employees-monitoring?team_id={data['team_a'].id}",
+        headers=data["owner_headers"],
+    )
+    assert response.status_code == 200
+    row = next(
+        item
+        for item in response.json()["data"]
+        if item["employee"]["id"] == str(data["employee_a"].id)
+    )
+    assert row["activity_status"] == "break_work"
+
+    with data["session_factory"]() as db:
+        session = db.get(WorkSession, data["session_a"].id)
+        session.status = "idle"
+        db.commit()
+    monkeypatch.setattr(
+        "app.api.v1.employees.current_idle_contexts",
+        lambda *_args, employees, **_kwargs: {
+            employee.id: "off_shift" for employee in employees
+        },
+    )
+    response = client.get(
+        f"/api/v1/employees-monitoring?team_id={data['team_a'].id}",
+        headers=data["owner_headers"],
+    )
+    row = next(
+        item
+        for item in response.json()["data"]
+        if item["employee"]["id"] == str(data["employee_a"].id)
+    )
+    assert row["activity_status"] == "off_shift"
+
+
+def test_application_history_returns_server_pagination(team_client):
+    client, data = team_client
+    selected_day = local_today("UTC")
+    started_at = datetime.combine(selected_day, datetime.min.time(), tzinfo=UTC) + timedelta(
+        hours=8
+    )
+    with data["session_factory"]() as db:
+        db.add_all(
+            [
+                ActivityEvent(
+                    company_id=data["employee_a"].company_id,
+                    employee_id=data["employee_a"].id,
+                    device_id=data["session_a"].device_id,
+                    session_id=data["session_a"].id,
+                    event_type="foreground_activity",
+                    event_timestamp=started_at + timedelta(minutes=index),
+                    idempotency_key=f"application-page-{index}",
+                    payload={
+                        "application_name": f"Application {index}",
+                        "process_name": f"process-{index}",
+                        "duration_seconds": 10,
+                    },
+                )
+                for index in range(31)
+            ]
+        )
+        db.commit()
+
+    response = client.get(
+        "/api/v1/activity/application-history",
+        headers=data["general_headers"],
+        params={
+            "employee_id": str(data["employee_a"].id),
+            "day": selected_day.isoformat(),
+            "page": 2,
+            "page_size": 25,
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["meta"] == {
+        "page": 2,
+        "page_size": 25,
+        "total": 31,
+        "total_pages": 2,
+    }
+    assert len(payload["data"]["items"]) == 6
+
+
 def test_employee_overview_distinguishes_idle_break_and_off_shift(team_client, monkeypatch):
     client, data = team_client
     with data["session_factory"]() as db:

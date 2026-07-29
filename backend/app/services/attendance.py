@@ -5,7 +5,7 @@ from typing import Literal
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, load_only
 
 from app.models import (
     AttendanceCorrection,
@@ -694,6 +694,7 @@ def current_idle_contexts(
     *,
     employees: list[Employee],
     now: datetime | None = None,
+    memberships_by_employee: dict[UUID, list[UUID]] | None = None,
 ) -> dict[UUID, Literal["accountable", "on_break", "off_shift"]]:
     """Classify many live idle employees without rebuilding their timelines."""
     if not employees:
@@ -704,9 +705,19 @@ def current_idle_contexts(
     profiles = {
         profile.employee_id: profile
         for profile in db.scalars(
-            select(EmployeeWorkProfile).where(
-                EmployeeWorkProfile.employee_id.in_(employee_ids)
+            select(EmployeeWorkProfile)
+            .options(
+                load_only(
+                    EmployeeWorkProfile.id,
+                    EmployeeWorkProfile.company_id,
+                    EmployeeWorkProfile.employee_id,
+                    EmployeeWorkProfile.shift_start,
+                    EmployeeWorkProfile.shift_end,
+                    EmployeeWorkProfile.working_days,
+                    EmployeeWorkProfile.break_rules,
+                )
             )
+            .where(EmployeeWorkProfile.employee_id.in_(employee_ids))
         ).all()
     }
     for employee in employees:
@@ -729,6 +740,7 @@ def current_idle_contexts(
                 day_employees,
                 work_date,
                 profiles=profiles,
+                memberships_by_employee=memberships_by_employee,
             )
         )
 

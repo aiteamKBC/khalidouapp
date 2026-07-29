@@ -40,9 +40,9 @@ type BackendEmployeeStatus = {
     task_id?: string | null;
   } | null;
   session_start_time?: string | null;
-  worked_today_seconds: number;
-  active_seconds: number;
-  idle_seconds: number;
+  worked_today_seconds?: number;
+  active_seconds?: number;
+  idle_seconds?: number;
   last_heartbeat?: string | null;
   last_screenshot?: string | null;
   device?: BackendDevice | null;
@@ -271,6 +271,18 @@ export async function listEmployees(scopedTeamIds?: string[]): Promise<Employee[
   const teamId = scopedTeamIds?.length === 1 ? scopedTeamIds[0] : undefined;
   const statuses = await apiFetch<BackendEmployeeStatus[]>(
     withQuery("/employees-overview", { team_id: teamId }),
+  );
+  return statuses.map((status) => mapEmployee(status, status.team_ids ?? []));
+}
+
+export async function listMonitoringEmployees(
+  scopedTeamIds?: string[],
+  signal?: AbortSignal,
+): Promise<Employee[]> {
+  const teamId = scopedTeamIds?.length === 1 ? scopedTeamIds[0] : undefined;
+  const statuses = await apiFetch<BackendEmployeeStatus[]>(
+    withQuery("/employees-monitoring", { team_id: teamId }),
+    { signal },
   );
   return statuses.map((status) => mapEmployee(status, status.team_ids ?? []));
 }

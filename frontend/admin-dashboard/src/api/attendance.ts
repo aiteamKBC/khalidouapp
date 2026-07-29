@@ -176,9 +176,11 @@ export async function listDailyAttendance(filters: {
   return result.rows.map(mapAttendance);
 }
 
-export async function getDailyAttendance(employeeId: string, day: string) {
+export async function getDailyAttendance(employeeId: string, day: string, signal?: AbortSignal) {
   return mapAttendance(
-    await apiFetch<BackendAttendance>(`/attendance/employee/${employeeId}/${day}`),
+    await apiFetch<BackendAttendance>(`/attendance/employee/${employeeId}/${day}`, {
+      signal,
+    }),
   );
 }
 

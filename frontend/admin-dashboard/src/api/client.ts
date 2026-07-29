@@ -31,6 +31,15 @@ export class ApiClientError extends Error {
   }
 }
 
+export function retryTransientRequest(failureCount: number, error: unknown) {
+  if (error instanceof DOMException && error.name === "AbortError") return false;
+  if (error instanceof ApiClientError) {
+    if ([400, 401, 403, 404].includes(error.status)) return false;
+    return (error.status === 0 || error.status >= 500) && failureCount < 2;
+  }
+  return failureCount < 2;
+}
+
 type PersistedAuth = {
   accessToken: string;
   refreshToken: string;
@@ -390,7 +399,7 @@ export async function apiFetchWithMeta<T>(
 
 export async function apiFile(path: string, signal?: AbortSignal): Promise<Blob> {
   const authLocation = readAuth();
-  const token = tokenOverride ?? authLocation?.auth.accessToken;
+  const token = authLocation?.auth.accessToken;
   const fetchFile = (token?: string) =>
     fetchWithTimeout(apiUrl(path), {
       headers: token ? { Authorization: `Bearer ${token}` } : undefined,
@@ -398,7 +407,7 @@ export async function apiFile(path: string, signal?: AbortSignal): Promise<Blob>
     });
 
   let res = await fetchFile(token);
-  if (res.status === 401 && authLocation && !tokenOverride) {
+  if (res.status === 401 && authLocation) {
     const tokens = await refreshAuthTokens(authLocation);
     res = await fetchFile(tokens.access_token);
   }
