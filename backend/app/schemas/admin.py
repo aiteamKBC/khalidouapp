@@ -2,7 +2,7 @@ from datetime import date, time
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 
 
 class EmployeeCreate(BaseModel):
@@ -295,6 +295,22 @@ class TimeAdjustmentReview(BaseModel):
     status: str = Field(pattern="^(approved|rejected)$")
     approved_minutes: int | None = Field(default=None, ge=1, le=720)
     admin_note: str | None = Field(default=None, max_length=1000)
+
+
+class TimeAdjustmentBulkReview(BaseModel):
+    status: Literal["approved", "rejected"]
+    request_ids: list[UUID] = Field(default_factory=list, max_length=200)
+    all_filtered: bool = False
+    employee_id: UUID | None = None
+    team_id: UUID | None = None
+    request_group: Literal["time", "early_leave"] = "time"
+    admin_note: str | None = Field(default=None, max_length=1000)
+
+    @model_validator(mode="after")
+    def require_exactly_one_scope(self):
+        if self.all_filtered == bool(self.request_ids):
+            raise ValueError("Choose request_ids or all_filtered, but not both.")
+        return self
 
 
 class LeaveRequestReview(BaseModel):

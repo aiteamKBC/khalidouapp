@@ -1921,6 +1921,85 @@ def test_desktop_summary_matches_employee_periods_and_profile(team_client):
         }.issubset(period)
 
 
+def test_daily_timesheet_uses_employee_local_date_for_sessions_and_screenshots(
+    team_client,
+):
+    client, data = team_client
+    with data["session_factory"]() as db:
+        employee = db.get(Employee, data["employee_a"].id)
+        session = db.get(WorkSession, data["session_a"].id)
+        device = db.get(Device, session.device_id)
+        screenshot = db.get(Screenshot, data["screenshot_a"].id)
+        employee.timezone = "Africa/Cairo"
+        device.timezone = "Africa/Cairo"
+        # 22:10 UTC on July 28 is 01:10 on the employee's July 29 workday.
+        session.started_at = datetime(2026, 7, 28, 22, 10, tzinfo=UTC)
+        session.ended_at = datetime(2026, 7, 28, 22, 20, tzinfo=UTC)
+        session.status = "ended"
+        session.timezone = "Asia/Riyadh"
+        session.active_seconds = 10 * 60
+        session.idle_seconds = 0
+        screenshot.captured_at = datetime(2026, 7, 28, 22, 15, tzinfo=UTC)
+        db.add_all([employee, device, session, screenshot])
+        db.commit()
+
+    local_day = client.get(
+        "/api/v1/timesheets/daily?day=2026-07-29",
+        headers=data["general_headers"],
+    )
+    utc_day = client.get(
+        "/api/v1/timesheets/daily?day=2026-07-28",
+        headers=data["general_headers"],
+    )
+
+    assert local_day.status_code == 200
+    local_row = next(
+        row
+        for row in local_day.json()["data"]
+        if row["employee_id"] == str(data["employee_a"].id)
+    )
+    assert local_row["date"] == "2026-07-29"
+    assert local_row["active_seconds"] >= 10 * 60
+    assert local_row["screenshot_count"] == 1
+    with data["session_factory"]() as db:
+        rebuilt_attendance = db.scalar(
+            select(DailyAttendance).where(
+                DailyAttendance.employee_id == data["employee_a"].id,
+                DailyAttendance.work_date == datetime(2026, 7, 29).date(),
+            )
+        )
+        assert rebuilt_attendance is not None
+        assert rebuilt_attendance.actual_first_activity_at is not None
+    assert all(
+        row["employee_id"] != str(data["employee_a"].id)
+        for row in utc_day.json()["data"]
+    )
+
+    weekly = client.get(
+        "/api/v1/timesheets/weekly?week_start=2026-07-27",
+        headers=data["general_headers"],
+    )
+    assert weekly.status_code == 200
+    assert any(
+        row["employee_id"] == str(data["employee_a"].id)
+        and row["date"] == "2026-07-29"
+        and row["screenshot_count"] == 1
+        for row in weekly.json()["data"]
+    )
+
+    monthly = client.get(
+        "/api/v1/timesheets/monthly?month_start=2026-07-01",
+        headers=data["general_headers"],
+    )
+    assert monthly.status_code == 200
+    assert any(
+        row["employee_id"] == str(data["employee_a"].id)
+        and row["date"] == "2026-07-29"
+        and row["screenshot_count"] == 1
+        for row in monthly.json()["data"]
+    )
+
+
 def test_desktop_summary_recovers_elapsed_work_when_an_update_started_a_new_session(
     team_client,
 ):
@@ -2260,7 +2339,7 @@ def test_workday_timeline_splits_work_idle_and_locked_periods(team_client):
 
 def test_workday_timeline_stops_stale_open_session_at_last_heartbeat(team_client):
     client, data = team_client
-    now = datetime.now(UTC)
+    now = datetime.now(UTC).replace(microsecond=0)
     started_at = now - timedelta(minutes=20)
     heartbeat_at = now - timedelta(minutes=10)
 
@@ -2296,6 +2375,18 @@ def test_workday_timeline_stops_stale_open_session_at_last_heartbeat(team_client
     assert timeline["is_running"] is False
     assert timeline["last_ended_at"] == heartbeat_at.isoformat()
     assert timeline["worked_seconds"] == 600
+
+    timesheet_response = client.get(
+        f"/api/v1/timesheets/daily?day={now.date().isoformat()}",
+        headers=data["general_headers"],
+    )
+    timesheet_row = next(
+        row
+        for row in timesheet_response.json()["data"]
+        if row["employee_id"] == str(data["employee_a"].id)
+    )
+    assert timesheet_response.status_code == 200
+    assert timesheet_row["end_time"] == heartbeat_at.isoformat()
 
 
 def test_employee_may_belong_to_multiple_teams(team_client):
@@ -2489,6 +2580,142 @@ def test_employee_time_adjustment_request_can_be_approved_and_added_to_timesheet
         json={"status": "rejected", "admin_note": "Too late."},
     )
     assert repeated_review.status_code == 409
+
+
+def test_time_adjustment_requests_support_bulk_filter_and_selected_review(team_client):
+    client, data = team_client
+    work_date = data["session_a"].started_at.date()
+    with data["session_factory"]() as db:
+        employee_a_request = TimeAdjustmentRequest(
+            company_id=data["employee_a"].company_id,
+            employee_id=data["employee_a"].id,
+            request_type="manual_time",
+            requested_date=work_date,
+            requested_seconds=5 * 60,
+            reason="Employee A customer call.",
+            status="pending",
+        )
+        shared_request = TimeAdjustmentRequest(
+            company_id=data["shared_employee"].company_id,
+            employee_id=data["shared_employee"].id,
+            request_type="idle_time",
+            requested_date=work_date,
+            requested_seconds=8 * 60,
+            reason="Shared employee offline meeting.",
+            status="pending",
+        )
+        employee_b_request = TimeAdjustmentRequest(
+            company_id=data["employee_b"].company_id,
+            employee_id=data["employee_b"].id,
+            request_type="manual_time",
+            requested_date=work_date,
+            requested_seconds=7 * 60,
+            reason="Employee B customer call.",
+            status="pending",
+        )
+        early_leave_request = TimeAdjustmentRequest(
+            company_id=data["employee_a"].company_id,
+            employee_id=data["employee_a"].id,
+            request_type="early_leave",
+            requested_date=work_date,
+            requested_seconds=30 * 60,
+            reason="Approved departure request.",
+            status="pending",
+        )
+        db.add_all(
+            [
+                employee_a_request,
+                shared_request,
+                employee_b_request,
+                early_leave_request,
+            ]
+        )
+        db.commit()
+        employee_a_request_id = employee_a_request.id
+        shared_request_id = shared_request.id
+        employee_b_request_id = employee_b_request.id
+        early_leave_request_id = early_leave_request.id
+
+    approve_filtered = client.post(
+        "/api/v1/time-adjustment-requests/bulk-review",
+        headers=data["general_headers"],
+        json={
+            "status": "approved",
+            "all_filtered": True,
+            "team_id": str(data["team_a"].id),
+            "request_group": "time",
+        },
+    )
+    reject_selected = client.post(
+        "/api/v1/time-adjustment-requests/bulk-review",
+        headers=data["general_headers"],
+        json={
+            "status": "rejected",
+            "request_ids": [str(employee_b_request_id)],
+            "request_group": "time",
+        },
+    )
+
+    assert approve_filtered.status_code == 200
+    assert approve_filtered.json()["data"]["reviewed_count"] == 2
+    assert set(approve_filtered.json()["data"]["reviewed_ids"]) == {
+        str(employee_a_request_id),
+        str(shared_request_id),
+    }
+    assert reject_selected.status_code == 200
+    assert reject_selected.json()["data"]["reviewed_count"] == 1
+    with data["session_factory"]() as db:
+        assert db.get(TimeAdjustmentRequest, employee_a_request_id).status == "approved"
+        assert db.get(TimeAdjustmentRequest, shared_request_id).status == "approved"
+        assert db.get(TimeAdjustmentRequest, employee_b_request_id).status == "rejected"
+        assert db.get(TimeAdjustmentRequest, early_leave_request_id).status == "pending"
+
+
+def test_bulk_time_review_skips_a_team_owner_self_review(team_client):
+    client, data = team_client
+    work_date = data["session_a"].started_at.date()
+    with data["session_factory"]() as db:
+        self_request = TimeAdjustmentRequest(
+            company_id=data["employee_a"].company_id,
+            employee_id=data["employee_a"].id,
+            request_type="manual_time",
+            requested_date=work_date,
+            requested_seconds=5 * 60,
+            reason="Owner employee request.",
+            status="pending",
+        )
+        teammate_request = TimeAdjustmentRequest(
+            company_id=data["shared_employee"].company_id,
+            employee_id=data["shared_employee"].id,
+            request_type="manual_time",
+            requested_date=work_date,
+            requested_seconds=5 * 60,
+            reason="Teammate request.",
+            status="pending",
+        )
+        db.add_all([self_request, teammate_request])
+        db.commit()
+        self_request_id = self_request.id
+        teammate_request_id = teammate_request.id
+
+    response = client.post(
+        "/api/v1/time-adjustment-requests/bulk-review",
+        headers=data["owner_headers"],
+        json={
+            "status": "approved",
+            "all_filtered": True,
+            "team_id": str(data["team_a"].id),
+            "request_group": "time",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"]["reviewed_count"] == 1
+    assert response.json()["data"]["skipped_self_review_count"] == 1
+    assert response.json()["data"]["reviewed_ids"] == [str(teammate_request_id)]
+    with data["session_factory"]() as db:
+        assert db.get(TimeAdjustmentRequest, self_request_id).status == "pending"
+        assert db.get(TimeAdjustmentRequest, teammate_request_id).status == "approved"
 
 
 def test_only_super_admin_can_review_their_own_time_request(team_client):

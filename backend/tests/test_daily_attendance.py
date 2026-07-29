@@ -176,6 +176,68 @@ def test_multiple_sessions_keep_raw_lateness_and_unapproved_overtime_separate(
     assert approved.total_payable_seconds == 8 * 3600 + 40 * 60
 
 
+def test_attendance_starts_at_work_resumed_after_a_false_start(attendance_context):
+    db, employee, device, _ = attendance_context
+    work_date = date(2026, 7, 21)
+    session = _session(
+        db,
+        employee,
+        device,
+        datetime(2026, 7, 21, 9, 4, tzinfo=UTC),
+        datetime(2026, 7, 21, 12, 35, tzinfo=UTC),
+    )
+    db.add_all(
+        [
+            ActivityEvent(
+                company_id=employee.company_id,
+                employee_id=employee.id,
+                device_id=device.id,
+                session_id=session.id,
+                event_type="session_started",
+                event_timestamp=datetime(2026, 7, 21, 9, 4, tzinfo=UTC),
+                idempotency_key="false-start-session",
+            ),
+            ActivityEvent(
+                company_id=employee.company_id,
+                employee_id=employee.id,
+                device_id=device.id,
+                session_id=session.id,
+                event_type="idle_started",
+                event_timestamp=datetime(2026, 7, 21, 9, 14, tzinfo=UTC),
+                idempotency_key="false-start-idle",
+            ),
+            ActivityEvent(
+                company_id=employee.company_id,
+                employee_id=employee.id,
+                device_id=device.id,
+                session_id=session.id,
+                event_type="idle_ended",
+                event_timestamp=datetime(2026, 7, 21, 11, 17, tzinfo=UTC),
+                idempotency_key="false-start-resumed",
+            ),
+        ]
+    )
+    db.commit()
+
+    row, timeline = calculate_daily_attendance(
+        db,
+        employee=employee,
+        work_date=work_date,
+        now=datetime(2026, 7, 22, tzinfo=UTC),
+    )
+
+    assert timeline["first_started_at"] == datetime(
+        2026, 7, 21, 11, 17, tzinfo=UTC
+    ).isoformat()
+    assert timeline["first_signal_at"] == datetime(
+        2026, 7, 21, 9, 4, tzinfo=UTC
+    ).isoformat()
+    assert row.actual_first_activity_at.replace(tzinfo=UTC) == datetime(
+        2026, 7, 21, 11, 17, tzinfo=UTC
+    )
+    assert row.raw_late_seconds == 2 * 3600 + 17 * 60
+
+
 def test_stale_session_closed_days_later_does_not_fill_the_offline_gap(
     attendance_context,
 ):

@@ -38,14 +38,63 @@ function mapTimesheet(row: BackendTimesheet, teamId: string): Timesheet {
 export async function listTimesheets(
   scopedTeamIds?: string[],
   view: "daily" | "weekly" | "monthly" = "daily",
+  selectedDate?: string,
+  selectedTeamId?: string,
 ): Promise<Timesheet[]> {
-  const teamId = scopedTeamIds?.length === 1 ? scopedTeamIds[0] : undefined;
+  const teamId =
+    selectedTeamId && selectedTeamId !== "all"
+      ? selectedTeamId
+      : scopedTeamIds?.length === 1
+        ? scopedTeamIds[0]
+        : undefined;
   const path =
     view === "weekly"
       ? "/timesheets/weekly"
       : view === "monthly"
         ? "/timesheets/monthly"
         : "/timesheets/daily";
-  const rows = await apiFetch<BackendTimesheet[]>(withQuery(path, { team_id: teamId }));
+  const periodDate =
+    view === "weekly"
+      ? startOfWeek(selectedDate)
+      : view === "monthly"
+        ? startOfMonth(selectedDate)
+        : selectedDate;
+  const rows = await apiFetch<BackendTimesheet[]>(
+    withQuery(path, {
+      team_id: teamId,
+      day: view === "daily" ? periodDate : undefined,
+      week_start: view === "weekly" ? periodDate : undefined,
+      month_start: view === "monthly" ? periodDate : undefined,
+    }),
+  );
   return rows.map((row) => mapTimesheet(row, row.team_id ?? teamId ?? ""));
+}
+
+function startOfWeek(value?: string): string | undefined {
+  const parsed = parseDate(value);
+  if (!parsed) return undefined;
+  const mondayOffset = (parsed.getDay() + 6) % 7;
+  parsed.setDate(parsed.getDate() - mondayOffset);
+  return localDateValue(parsed);
+}
+
+function startOfMonth(value?: string): string | undefined {
+  const parsed = parseDate(value);
+  if (!parsed) return undefined;
+  parsed.setDate(1);
+  return localDateValue(parsed);
+}
+
+function parseDate(value?: string): Date | null {
+  if (!value) return null;
+  const [year, month, day] = value.split("-").map(Number);
+  if (!year || !month || !day) return null;
+  return new Date(year, month - 1, day);
+}
+
+function localDateValue(value: Date): string {
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, "0");
+  const day = String(value.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }

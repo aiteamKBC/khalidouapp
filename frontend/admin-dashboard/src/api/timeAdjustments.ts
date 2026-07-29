@@ -84,3 +84,47 @@ export async function reviewTimeAdjustmentRequest(
   });
   return mapRequest(row);
 }
+
+export type BulkTimeAdjustmentReviewResult = {
+  reviewedCount: number;
+  skippedCount: number;
+  skippedSelfReviewCount: number;
+  reviewedIds: string[];
+  status: "approved" | "rejected";
+};
+
+export async function bulkReviewTimeAdjustmentRequests(input: {
+  status: "approved" | "rejected";
+  requestIds?: string[];
+  allFiltered?: boolean;
+  employeeId?: string;
+  teamId?: string;
+  requestGroup?: "time" | "early_leave";
+  adminNote?: string;
+}): Promise<BulkTimeAdjustmentReviewResult> {
+  const row = await apiFetch<{
+    reviewed_count: number;
+    skipped_count: number;
+    skipped_self_review_count: number;
+    reviewed_ids: string[];
+    status: "approved" | "rejected";
+  }>("/time-adjustment-requests/bulk-review", {
+    method: "POST",
+    body: JSON.stringify({
+      status: input.status,
+      request_ids: input.requestIds ?? [],
+      all_filtered: input.allFiltered ?? false,
+      employee_id: input.employeeId && input.employeeId !== "all" ? input.employeeId : undefined,
+      team_id: input.teamId && input.teamId !== "all" ? input.teamId : undefined,
+      request_group: input.requestGroup ?? "time",
+      admin_note: input.adminNote,
+    }),
+  });
+  return {
+    reviewedCount: row.reviewed_count,
+    skippedCount: row.skipped_count,
+    skippedSelfReviewCount: row.skipped_self_review_count,
+    reviewedIds: row.reviewed_ids,
+    status: row.status,
+  };
+}

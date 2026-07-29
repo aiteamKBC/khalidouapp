@@ -75,7 +75,8 @@ import {
   hasReachedIdleThreshold,
   idleDurationAfterThreshold,
   IDLE_THRESHOLD_MINUTES,
-  IDLE_THRESHOLD_SECONDS,
+  inputResumedAfterIdle,
+  shouldWaitForInputBeforeRestart,
 } from "./services/idlePolicy.js";
 import {
   screenshotCaptureBlockReasonForState,
@@ -248,6 +249,9 @@ let isStartingTrackingAutomatically = false;
 let idleSecondsBeforeCurrentIdle = 0;
 let eligibleIdleSecondsBeforeCurrentIdle = 0;
 let idleWallClockStartedAt: number | null = null;
+let automaticIdleStartedDuringBreak = false;
+let lastObservedSystemIdleSeconds: number | null = null;
+let waitingForInputAfterIdleSessionClose = false;
 let lastDurationTickAt: number | null = null;
 let workedTodayBaseSeconds = 0;
 let activeCounterDate: string | null = null;
@@ -258,6 +262,7 @@ let hasShownMinimizeBalloon = false;
 let updateCheckTimer: ReturnType<typeof setInterval> | null = null;
 let initialUpdateCheckTimer: ReturnType<typeof setTimeout> | null = null;
 let updateRetryTimer: ReturnType<typeof setTimeout> | null = null;
+let updateInstallRecoveryTimer: ReturnType<typeof setTimeout> | null = null;
 let manualUpdateCheckRequested = false;
 let isUpdateCheckRunning = false;
 let isInstallingUpdate = false;
@@ -488,6 +493,9 @@ function resetForDeviceReenrollment() {
   idleSecondsBeforeCurrentIdle = 0;
   eligibleIdleSecondsBeforeCurrentIdle = 0;
   idleWallClockStartedAt = null;
+  automaticIdleStartedDuringBreak = false;
+  lastObservedSystemIdleSeconds = null;
+  waitingForInputAfterIdleSessionClose = false;
   Object.assign(runtimeStatus, {
     enrolled: false,
     employeeName: "Not enrolled",
@@ -870,6 +878,7 @@ function syncRuntimeFromSession(session: WorkSession) {
     return;
   }
   const changedSession = currentSessionId !== session.id;
+  const wasIdle = runtimeStatus.trackingStatus === "idle";
   const todayCounterDate = localDateKey();
   const sessionCounterDate = localDateKey(new Date(session.started_at));
   const sessionBelongsToToday = sessionCounterDate === todayCounterDate;
@@ -879,6 +888,12 @@ function syncRuntimeFromSession(session: WorkSession) {
   currentSessionId = session.id;
   runtimeStatus.sessionStartedAt = session.started_at;
   runtimeStatus.trackingStatus = session.status;
+  if (session.status === "idle" && (changedSession || !wasIdle)) {
+    automaticIdleStartedDuringBreak = isInsideScheduledBreak(new Date());
+    lastObservedSystemIdleSeconds = null;
+  } else if (session.status !== "idle") {
+    automaticIdleStartedDuringBreak = false;
+  }
   runtimeStatus.activeSeconds = sessionBelongsToToday
     ? Math.max(session.active_seconds, localActiveSeconds)
     : 0;
@@ -934,6 +949,78 @@ function timeToMinuteOfDay(value?: string | null) {
   const [hour, minute] = value.slice(0, 5).split(":").map(Number);
   if (!Number.isFinite(hour) || !Number.isFinite(minute)) return null;
   return hour * 60 + minute;
+}
+
+function waitForInputAfterIdleSessionClose(
+  status: "idle" | "locked" | "sleeping",
+) {
+  waitingForInputAfterIdleSessionClose = true;
+  runtimeStatus.trackingStatus = status;
+  lastObservedSystemIdleSeconds = powerMonitor.getSystemIdleTime();
+  notifyRendererStatus();
+  rebuildTrayMenu();
+}
+
+function resumeAfterIdleSessionClose() {
+  if (!waitingForInputAfterIdleSessionClose) {
+    return false;
+  }
+  waitingForInputAfterIdleSessionClose = false;
+  lastObservedSystemIdleSeconds = null;
+  runtimeStatus.trackingStatus = "starting";
+  scheduleAutomaticTrackingRestart(0);
+  notifyRendererStatus();
+  rebuildTrayMenu();
+  return true;
+}
+
+function isInsideScheduledBreak(at: Date) {
+  const policy = runtimeStatus.requestPolicy;
+  if (!policy || policy.approved_leave_today) return false;
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: policy.timezone || "UTC",
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(at);
+  const part = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((item) => item.type === type)?.value;
+  const weekday =
+    (
+      { Mon: 0, Tue: 1, Wed: 2, Thu: 3, Fri: 4, Sat: 5, Sun: 6 } as Record<
+        string,
+        number
+      >
+    )[part("weekday") ?? ""] ?? -1;
+  if (!policy.working_days.includes(weekday)) return false;
+  const minuteOfDay = Number(part("hour")) * 60 + Number(part("minute"));
+  const shiftStart = timeToMinuteOfDay(policy.shift_start);
+  const shiftEnd = timeToMinuteOfDay(policy.shift_end);
+  if (
+    shiftStart === null ||
+    shiftEnd === null ||
+    minuteOfDay < shiftStart ||
+    minuteOfDay >= shiftEnd
+  ) {
+    return false;
+  }
+  const approvedEarlyLeave = timeToMinuteOfDay(
+    policy.approved_early_leave_from,
+  );
+  if (approvedEarlyLeave !== null && minuteOfDay >= approvedEarlyLeave) {
+    return false;
+  }
+  return (policy.break_rules ?? []).some((rule) => {
+    const start = timeToMinuteOfDay(rule.start_time);
+    const end = timeToMinuteOfDay(rule.end_time);
+    return (
+      start !== null &&
+      end !== null &&
+      minuteOfDay >= start &&
+      minuteOfDay < end
+    );
+  });
 }
 
 function scheduledIdleIsCountable(at: Date) {
@@ -1325,6 +1412,7 @@ function finishAutomaticIdleImmediately() {
   idleSecondsBeforeCurrentIdle = runtimeStatus.idleSeconds;
   eligibleIdleSecondsBeforeCurrentIdle = runtimeStatus.eligibleIdleSeconds;
   idleWallClockStartedAt = null;
+  automaticIdleStartedDuringBreak = false;
   isFinishingAutomaticIdle = true;
   void sendStateEvent("idle_ended", "active").finally(() => {
     isFinishingAutomaticIdle = false;
@@ -1337,6 +1425,7 @@ async function resumeAutomaticIdle() {
     return { success: false, message: "The idle review is no longer active." };
   }
   idleWallClockStartedAt = null;
+  automaticIdleStartedDuringBreak = false;
   if (runtimeStatus.trackingStatus === "active") {
     return { success: true };
   }
@@ -1353,6 +1442,24 @@ function startIdleMonitor() {
   }
 
   idleTimer = setInterval(() => {
+    if (waitingForInputAfterIdleSessionClose) {
+      if (
+        !runtimeStatus.enrolled ||
+        trackingPausedByUser ||
+        unpaidPauseActive ||
+        isQuitting
+      ) {
+        lastObservedSystemIdleSeconds = null;
+        return;
+      }
+      const idleSeconds = powerMonitor.getSystemIdleTime();
+      const previousSystemIdleSeconds = lastObservedSystemIdleSeconds;
+      lastObservedSystemIdleSeconds = idleSeconds;
+      if (inputResumedAfterIdle(idleSeconds, previousSystemIdleSeconds)) {
+        resumeAfterIdleSessionClose();
+      }
+      return;
+    }
     if (
       !runtimeStatus.enrolled ||
       !currentSessionId ||
@@ -1360,22 +1467,27 @@ function startIdleMonitor() {
       unpaidPauseActive ||
       !["starting", "active", "idle"].includes(runtimeStatus.trackingStatus)
     ) {
+      lastObservedSystemIdleSeconds = null;
       return;
     }
 
     const idleSeconds = powerMonitor.getSystemIdleTime();
+    const previousSystemIdleSeconds = lastObservedSystemIdleSeconds;
+    lastObservedSystemIdleSeconds = idleSeconds;
+    const insideScheduledBreak = isInsideScheduledBreak(new Date());
     if (
-      hasReachedIdleThreshold(idleSeconds) &&
+      hasReachedIdleThreshold(idleSeconds, insideScheduledBreak) &&
       runtimeStatus.trackingStatus !== "idle"
     ) {
       recalculateWorkedTime();
       idleSecondsBeforeCurrentIdle = runtimeStatus.idleSeconds;
       eligibleIdleSecondsBeforeCurrentIdle = runtimeStatus.eligibleIdleSeconds;
       idleWallClockStartedAt = Date.now();
+      automaticIdleStartedDuringBreak = insideScheduledBreak;
       void sendStateEvent("idle_started", "idle");
     } else if (
-      idleSeconds < IDLE_THRESHOLD_SECONDS &&
-      runtimeStatus.trackingStatus === "idle"
+      runtimeStatus.trackingStatus === "idle" &&
+      inputResumedAfterIdle(idleSeconds, previousSystemIdleSeconds)
     ) {
       finishAutomaticIdleImmediately();
     }
@@ -1658,10 +1770,18 @@ async function heartbeatTick(options: { refreshMetadata?: boolean } = {}) {
       counterDate: activeCounterDate ?? localDateKey(),
       agentVersion: runtimeStatus.agentVersion,
     });
+    const serverClosedDuringNonWorking = shouldWaitForInputBeforeRestart(
+      status,
+      Boolean(result.session.ended_at) ||
+        result.session.status === "ended" ||
+        result.session.status === "offline",
+    );
     const latestLocalStatus = runtimeStatus.trackingStatus;
     syncRuntimeFromSession(result.session);
     applyWorkdayState(result.workday);
-    if (latestLocalStatus !== status) {
+    if (serverClosedDuringNonWorking) {
+      waitForInputAfterIdleSessionClose(status);
+    } else if (latestLocalStatus !== status) {
       runtimeStatus.trackingStatus = latestLocalStatus;
     }
     applyPauseState(result.pause);
@@ -1675,10 +1795,16 @@ async function heartbeatTick(options: { refreshMetadata?: boolean } = {}) {
     runtimeStatus.connectionStatus = "online";
     runtimeStatus.lastSuccessfulSyncAt = new Date().toISOString();
     if (!currentSessionId) {
-      log.info(
-        "The server closed the current session; starting a fresh session automatically",
-      );
-      scheduleAutomaticTrackingRestart(1_000);
+      if (serverClosedDuringNonWorking) {
+        log.info(
+          "The server closed the inactive session; waiting for fresh input before tracking again",
+        );
+      } else {
+        log.info(
+          "The server closed the current session; starting a fresh session automatically",
+        );
+        scheduleAutomaticTrackingRestart(1_000);
+      }
     }
   } catch (error) {
     runtimeStatus.connectionStatus = "offline";
@@ -1727,6 +1853,7 @@ function automaticTrackingIsExpected() {
     runtimeStatus.enrolled &&
     !trackingPausedByUser &&
     !unpaidPauseActive &&
+    !waitingForInputAfterIdleSessionClose &&
     !isQuitting
   );
 }
@@ -2206,7 +2333,22 @@ async function startTrackingAutomatically() {
       void refreshLeaveRequests();
       return;
     }
+    const systemIdleSeconds = powerMonitor.getSystemIdleTime();
+    if (
+      hasReachedIdleThreshold(
+        systemIdleSeconds,
+        isInsideScheduledBreak(new Date()),
+      )
+    ) {
+      waitForInputAfterIdleSessionClose("idle");
+      startIdleMonitor();
+      log.info(
+        "No active server session and Windows is idle; waiting for fresh input before starting one",
+      );
+      return;
+    }
     const started = await startSession();
+    waitingForInputAfterIdleSessionClose = false;
     syncRuntimeFromSession(started.session);
     applyWorkdayState(started.workday);
     await refreshWorkedTodayTotal();
@@ -2281,6 +2423,7 @@ function applyPauseState(pause?: PauseState | null) {
 async function stopTrackingSession(reason = "Stopped by employee") {
   recalculateWorkedTime();
   trackingPausedByUser = true;
+  waitingForInputAfterIdleSessionClose = false;
   runtimeStatus.trackingPaused = true;
   saveTrackingPreferences();
   clearRuntimeTimers();
@@ -2427,6 +2570,7 @@ async function resumeTracking() {
   }
 
   trackingPausedByUser = false;
+  waitingForInputAfterIdleSessionClose = false;
   runtimeStatus.trackingPaused = false;
   runtimeStatus.paidPauseEndsAt = null;
   runtimeStatus.paidPauseRemainingSeconds = 0;
@@ -2460,6 +2604,7 @@ async function logoutDevice() {
   unpaidPauseActive = false;
   saveTrackingPreferences();
   currentSessionId = null;
+  waitingForInputAfterIdleSessionClose = false;
   workedTodayBaseSeconds = 0;
   activeCounterDate = null;
   idleSecondsBeforeCurrentIdle = 0;
@@ -2725,7 +2870,10 @@ function runtimeStatusPayload() {
     runtimeStatus.trackingStatus === "idle" &&
     !runtimeStatus.trackingPaused &&
     !unpaidPauseActive
-      ? idleDurationAfterThreshold(powerMonitor.getSystemIdleTime())
+      ? idleDurationAfterThreshold(
+          powerMonitor.getSystemIdleTime(),
+          automaticIdleStartedDuringBreak,
+        )
       : 0;
   return {
     ...runtimeStatus,
@@ -2906,8 +3054,33 @@ async function preserveTrackingBeforeUpdate() {
       );
     }
   }
-  clearRuntimeTimers();
+  // Keep heartbeat, duration, screenshot, and queue timers alive until Electron
+  // actually begins quitting. Some older installers returned from
+  // quitAndInstall without closing the app, which left a visible employee app
+  // running but silently stopped all tracking.
+}
+
+function clearUpdateInstallRecoveryTimer() {
+  if (!updateInstallRecoveryTimer) return;
+  clearTimeout(updateInstallRecoveryTimer);
+  updateInstallRecoveryTimer = null;
+}
+
+function recoverFromFailedUpdateInstall(reason: string) {
+  clearUpdateInstallRecoveryTimer();
+  isInstallingUpdate = false;
+  isQuitting = false;
+  quitNotificationSent = false;
+  setUpdateStatus("ready", {
+    version: runtimeStatus.updateVersion,
+    percent: 100,
+  });
+  if (currentSessionId && runtimeStatus.enrolled) {
+    startTimers();
+  }
   updateDisplaySleepBlocker();
+  startUpdateCheckSchedule();
+  scheduleUpdateRetry(reason);
 }
 
 async function installDownloadedUpdate(): Promise<UpdateActionResult> {
@@ -2944,23 +3117,25 @@ async function installDownloadedUpdate(): Promise<UpdateActionResult> {
   quitNotificationSent = true;
   try {
     autoUpdater.quitAndInstall(true, true);
+    // quitAndInstall is synchronous but a locked/cancelled installer can fail
+    // without throwing. If Electron is still alive, restore normal tracking
+    // instead of leaving the employee online with frozen counters.
+    clearUpdateInstallRecoveryTimer();
+    updateInstallRecoveryTimer = setTimeout(() => {
+      if (!isInstallingUpdate || !isQuitting) return;
+      log.error(
+        "The downloaded update did not close Khaliduo; tracking has been restored",
+      );
+      recoverFromFailedUpdateInstall(
+        "the downloaded update did not close the application",
+      );
+    }, 30_000);
     return { success: true };
   } catch (error) {
-    isInstallingUpdate = false;
-    isQuitting = false;
-    quitNotificationSent = false;
-    setUpdateStatus("ready", {
-      version: runtimeStatus.updateVersion,
-      percent: 100,
-    });
-    if (currentSessionId && runtimeStatus.enrolled) {
-      startTimers();
-    }
+    recoverFromFailedUpdateInstall(
+      "the downloaded update could not be installed",
+    );
     log.error("Could not launch the downloaded update installer", error);
-    // The installer is already downloaded, so keep retrying it on our own
-    // instead of waiting for the employee to notice a stuck button.
-    startUpdateCheckSchedule();
-    scheduleUpdateRetry("the downloaded update could not be installed");
     return {
       success: false,
       message: getUserFacingError(error, "Could not install the update."),
@@ -3040,11 +3215,18 @@ function configureAutoUpdater() {
     });
   });
   autoUpdater.on("error", (error) => {
-    isInstallingUpdate = false;
-    setUpdateStatus("error", { percent: null });
+    const failedDuringInstall = isInstallingUpdate || isQuitting;
+    if (failedDuringInstall) {
+      recoverFromFailedUpdateInstall(
+        "the updater reported an installation error",
+      );
+    } else {
+      isInstallingUpdate = false;
+      setUpdateStatus("error", { percent: null });
+      scheduleUpdateRetry("the updater reported an error");
+    }
     manualUpdateCheckRequested = false;
     log.error("Khaliduo automatic update error", error);
-    scheduleUpdateRetry("the updater reported an error");
   });
 
   initialUpdateCheckTimer = setTimeout(runScheduledUpdatePass, 1_000);
@@ -3089,31 +3271,45 @@ function wireSystemEvents() {
   });
   powerMonitor.on("lock-screen", () => {
     recalculateWorkedTime();
-    void sendStateEvent("screen_locked", "locked");
+    if (waitingForInputAfterIdleSessionClose) {
+      runtimeStatus.trackingStatus = "locked";
+    } else {
+      void sendStateEvent("screen_locked", "locked");
+    }
     log.info("Windows lock detected");
   });
 
   powerMonitor.on("unlock-screen", () => {
     lastDurationTickAt = Date.now();
     idleSecondsBeforeCurrentIdle = runtimeStatus.idleSeconds;
-    void sendStateEvent("screen_unlocked", "active");
+    if (!resumeAfterIdleSessionClose()) {
+      void sendStateEvent("screen_unlocked", "active");
+    }
     log.info("Windows unlock detected");
   });
 
   powerMonitor.on("user-did-become-active", () => {
-    finishAutomaticIdleImmediately();
+    if (!resumeAfterIdleSessionClose()) {
+      finishAutomaticIdleImmediately();
+    }
   });
 
   powerMonitor.on("suspend", () => {
     recalculateWorkedTime();
-    void sendStateEvent("system_suspended", "sleeping");
+    if (waitingForInputAfterIdleSessionClose) {
+      runtimeStatus.trackingStatus = "sleeping";
+    } else {
+      void sendStateEvent("system_suspended", "sleeping");
+    }
     log.info("System suspend detected");
   });
 
   powerMonitor.on("resume", () => {
     lastDurationTickAt = Date.now();
     idleSecondsBeforeCurrentIdle = runtimeStatus.idleSeconds;
-    void sendStateEvent("system_resumed", "active");
+    if (!resumeAfterIdleSessionClose()) {
+      void sendStateEvent("system_resumed", "active");
+    }
     log.info("System resume detected");
   });
 }
@@ -3128,6 +3324,7 @@ app.on("second-instance", () => showMainWindow());
 app.on("before-quit", (event) => {
   isQuitting = true;
   updateDisplaySleepBlocker();
+  clearUpdateInstallRecoveryTimer();
   if (updateCheckTimer) clearInterval(updateCheckTimer);
   if (initialUpdateCheckTimer) clearTimeout(initialUpdateCheckTimer);
 

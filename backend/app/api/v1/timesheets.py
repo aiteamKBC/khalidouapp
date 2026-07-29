@@ -1,14 +1,14 @@
 from calendar import monthrange
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from typing import Annotated
 from uuid import UUID
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.api.deps import get_current_admin
-from app.api.v1.admin_utils import day_bounds
 from app.api.v1.team_auth import apply_employee_scope, ensure_employee_access
 from app.core.responses import success_response
 from app.database.session import get_db
@@ -25,6 +25,24 @@ from app.services.activity_timeline import local_today
 from app.services.attendance import accountable_idle_seconds, cached_daily_attendance
 
 router = APIRouter(prefix="/timesheets", tags=["timesheets"])
+ACTIVE_SESSION_STATUSES = {"active", "idle", "locked", "sleeping"}
+
+
+def _utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
+
+
+def _zone(timezone_name: str | None) -> ZoneInfo:
+    try:
+        return ZoneInfo(timezone_name or "UTC")
+    except (ZoneInfoNotFoundError, ValueError):
+        return ZoneInfo("UTC")
+
+
+def _employee_local_date(value: datetime, timezone_name: str | None) -> date:
+    return _utc(value).astimezone(_zone(timezone_name)).date()
 
 
 def timesheet_rows(
@@ -37,24 +55,26 @@ def timesheet_rows(
     current_admin: AdminUser | None = None,
     device_id: UUID | None = None,
 ):
-    start, _ = day_bounds(start_day)
-    _, end = day_bounds(end_day)
+    # Employees can be up to a calendar day ahead of or behind UTC. Fetch a
+    # safe UTC envelope, then assign every row to the employee's local date.
+    # SQL func.date(timestamp) silently put Cairo sessions after midnight on
+    # the previous UTC day, which made "Today" appear empty in Timesheets.
+    start = datetime.combine(start_day - timedelta(days=1), time.min, tzinfo=UTC)
+    end = datetime.combine(end_day + timedelta(days=2), time.min, tzinfo=UTC)
     session_statement = (
         select(
+            WorkSession,
             Employee.id,
             Employee.name,
             Employee.timezone,
-            func.date(WorkSession.started_at).label("work_date"),
-            func.min(WorkSession.started_at),
-            func.max(WorkSession.ended_at),
-            func.coalesce(func.sum(WorkSession.active_seconds), 0),
-            func.coalesce(func.sum(WorkSession.idle_seconds), 0),
-            func.coalesce(func.sum(WorkSession.deducted_seconds), 0),
         )
         .join(WorkSession, WorkSession.employee_id == Employee.id)
-        .where(Employee.company_id == company_id, WorkSession.started_at.between(start, end))
-        .group_by(Employee.id, Employee.name, Employee.timezone, func.date(WorkSession.started_at))
-        .order_by(func.date(WorkSession.started_at).desc(), Employee.name)
+        .where(
+            Employee.company_id == company_id,
+            WorkSession.started_at < end,
+            or_(WorkSession.ended_at.is_(None), WorkSession.ended_at > start),
+        )
+        .order_by(WorkSession.started_at.desc(), Employee.name)
     )
     if current_admin is not None:
         session_statement = apply_employee_scope(
@@ -69,20 +89,58 @@ def timesheet_rows(
 
     result_by_key: dict[tuple[UUID, date], dict] = {}
     for row in db.execute(session_statement).all():
-        work_date = row[3] if isinstance(row[3], date) else date.fromisoformat(str(row[3]))
-        key = (row[0], work_date)
-        result_by_key[key] = {
-            "employee_id": str(row[0]),
-            "employee_name": row[1],
-            "timezone": row[2] or "UTC",
-            "date": work_date.isoformat(),
-            "start_time": row[4].isoformat() if row[4] else None,
-            "end_time": row[5].isoformat() if row[5] else None,
-            "active_seconds": max(0, int(row[6]) - int(row[8])),
-            "idle_seconds": int(row[7]),
-            "deducted_seconds": int(row[8]),
-            "adjustment_seconds": 0,
-        }
+        session, row_employee_id, employee_name, timezone_name = row
+        work_date = _employee_local_date(session.started_at, timezone_name)
+        if work_date < start_day or work_date > end_day:
+            continue
+        key = (row_employee_id, work_date)
+        item = result_by_key.setdefault(
+            key,
+            {
+                "employee_id": str(row_employee_id),
+                "employee_name": employee_name,
+                "timezone": timezone_name or "UTC",
+                "date": work_date.isoformat(),
+                "_start_at": None,
+                "_latest_end_at": None,
+                "_has_open_session": False,
+                "active_seconds": 0,
+                "idle_seconds": 0,
+                "deducted_seconds": 0,
+                "adjustment_seconds": 0,
+            },
+        )
+        started_at = _utc(session.started_at)
+        ended_at = _utc(session.ended_at) if session.ended_at else None
+        item["_start_at"] = min(
+            value for value in (item["_start_at"], started_at) if value is not None
+        )
+        if ended_at is not None:
+            item["_latest_end_at"] = max(
+                value
+                for value in (item["_latest_end_at"], ended_at)
+                if value is not None
+            )
+        if session.ended_at is None and session.status in ACTIVE_SESSION_STATUSES:
+            item["_has_open_session"] = True
+        item["active_seconds"] += max(
+            0,
+            int(session.active_seconds) - int(session.deducted_seconds),
+        )
+        item["idle_seconds"] += int(session.idle_seconds)
+        item["deducted_seconds"] += int(session.deducted_seconds)
+
+    for item in result_by_key.values():
+        item["start_time"] = (
+            item["_start_at"].isoformat() if item["_start_at"] else None
+        )
+        item["end_time"] = (
+            None
+            if item["_has_open_session"]
+            else item["_latest_end_at"].isoformat()
+            if item["_latest_end_at"]
+            else None
+        )
 
     employee_ids = {key[0] for key in result_by_key}
     employees_by_id = (
@@ -113,48 +171,68 @@ def timesheet_rows(
             stored_attendance_by_key[(attendance.employee_id, attendance.work_date)] = attendance
 
     # Raw session idle is a device state, not necessarily accountable idle.
-    # Historical timesheets use the canonical attendance snapshot and default
-    # to zero when an old row has no schedule-aware snapshot, so time outside a
-    # shift can never be charged to an employee.
-    for key, item in result_by_key.items():
-        stored_attendance = stored_attendance_by_key.get(key)
-        item["idle_seconds"] = (
-            accountable_idle_seconds(stored_attendance) if stored_attendance is not None else 0
-        )
-
-    # A live session can have authoritative activity events before its
-    # cumulative counters are persisted by the next heartbeat. Reconcile only
-    # each employee's current local day so daily/weekly/monthly views agree with
-    # Today's activity without turning historical reports into an N+1 query.
+    # Migration 51 clears the derived attendance cache so old days can adopt
+    # the sustained-work rule. Rebuild only missing rows here; after the first
+    # read they are stored again and historical range reads stay inexpensive.
+    attendance_now = datetime.now(UTC)
     for (row_employee_id, work_date), item in result_by_key.items():
         timezone_name = str(item["timezone"])
-        if work_date != local_today(timezone_name):
-            continue
         employee = employees_by_id.get(row_employee_id)
         if employee is None:
             continue
-        attendance, timeline = cached_daily_attendance(
-            db,
-            employee=employee,
-            work_date=work_date,
-            now=datetime.now(UTC),
-            max_age_seconds=30,
-            device_id=device_id,
-            timezone_name=timezone_name,
-            existing_attendance=stored_attendance_by_key.get((row_employee_id, work_date)),
-            profile=employee.work_profile,
+        attendance = stored_attendance_by_key.get((row_employee_id, work_date))
+        timeline = None
+        if attendance is None or work_date == local_today(timezone_name, attendance_now):
+            attendance, timeline = cached_daily_attendance(
+                db,
+                employee=employee,
+                work_date=work_date,
+                now=attendance_now,
+                max_age_seconds=30,
+                device_id=device_id,
+                timezone_name=timezone_name,
+                existing_attendance=attendance,
+                profile=employee.work_profile,
+            )
+            stored_attendance_by_key[(row_employee_id, work_date)] = attendance
+
+        item["idle_seconds"] = accountable_idle_seconds(attendance)
+        item["start_time"] = (
+            _utc(attendance.actual_first_activity_at).isoformat()
+            if attendance.actual_first_activity_at
+            else item["start_time"]
         )
+        calculation_sources = attendance.calculation_sources or {}
+        is_running = (
+            work_date == local_today(timezone_name, attendance_now)
+            and bool(
+                timeline["is_running"]
+                if timeline is not None
+                else calculation_sources.get("is_running", False)
+            )
+        )
+        attendance_end = attendance.actual_sign_out_at or attendance.actual_last_activity_at
+        item["end_time"] = (
+            None
+            if is_running
+            else _utc(attendance_end).isoformat()
+            if attendance_end
+            else item["end_time"]
+        )
+
+        # A live session can have authoritative activity events before its
+        # cumulative counters are persisted by the next heartbeat.
         if timeline is not None:
             item["active_seconds"] = max(
                 int(item["active_seconds"]),
                 max(0, int(timeline["worked_seconds"]) - int(item["deducted_seconds"])),
             )
-        item["idle_seconds"] = accountable_idle_seconds(attendance)
 
     adjustment_statement = (
         select(
             Employee.id,
             Employee.name,
+            Employee.timezone,
             TimeAdjustmentRequest.requested_date,
             func.coalesce(func.sum(TimeAdjustmentRequest.approved_seconds), 0),
         )
@@ -166,7 +244,12 @@ def timesheet_rows(
             TimeAdjustmentRequest.requested_date >= start_day,
             TimeAdjustmentRequest.requested_date <= end_day,
         )
-        .group_by(Employee.id, Employee.name, TimeAdjustmentRequest.requested_date)
+        .group_by(
+            Employee.id,
+            Employee.name,
+            Employee.timezone,
+            TimeAdjustmentRequest.requested_date,
+        )
         .order_by(TimeAdjustmentRequest.requested_date.desc(), Employee.name)
     )
     if current_admin is not None:
@@ -177,13 +260,13 @@ def timesheet_rows(
         adjustment_statement = adjustment_statement.where(Employee.id == employee_id)
 
     for row in db.execute(adjustment_statement).all():
-        work_date = row[2]
+        work_date = row[3]
         key = (row[0], work_date)
         if key not in result_by_key:
             result_by_key[key] = {
                 "employee_id": str(row[0]),
                 "employee_name": row[1],
-                "timezone": "UTC",
+                "timezone": row[2] or "UTC",
                 "date": work_date.isoformat(),
                 "start_time": None,
                 "end_time": None,
@@ -192,8 +275,8 @@ def timesheet_rows(
                 "adjustment_seconds": 0,
                 "deducted_seconds": 0,
             }
-        result_by_key[key]["adjustment_seconds"] += int(row[3])
-        result_by_key[key]["active_seconds"] += int(row[3])
+        result_by_key[key]["adjustment_seconds"] += int(row[4])
+        result_by_key[key]["active_seconds"] += int(row[4])
 
     employee_ids = {key[0] for key in result_by_key}
     team_by_employee: dict[UUID, str] = {}
@@ -208,30 +291,35 @@ def timesheet_rows(
 
     screenshot_counts: dict[tuple[UUID, date], int] = {}
     if employee_ids:
+        timezone_by_employee = {
+            row_employee_id: str(result_by_key[(row_employee_id, work_date)]["timezone"])
+            for row_employee_id, work_date in result_by_key
+        }
         screenshot_statement = (
             select(
                 Screenshot.employee_id,
-                func.date(Screenshot.captured_at),
-                func.count(),
+                Screenshot.captured_at,
             )
             .where(
                 Screenshot.company_id == company_id,
                 Screenshot.employee_id.in_(employee_ids),
-                Screenshot.captured_at.between(start, end),
+                Screenshot.captured_at >= start,
+                Screenshot.captured_at < end,
                 Screenshot.deleted_at.is_(None),
             )
-            .group_by(Screenshot.employee_id, func.date(Screenshot.captured_at))
         )
         if device_id:
             screenshot_statement = screenshot_statement.where(Screenshot.device_id == device_id)
         screenshot_rows = db.execute(screenshot_statement).all()
-        for screenshot_employee_id, screenshot_date, screenshot_count in screenshot_rows:
-            normalized_date = (
-                screenshot_date
-                if isinstance(screenshot_date, date)
-                else date.fromisoformat(str(screenshot_date))
+        for screenshot_employee_id, captured_at in screenshot_rows:
+            normalized_date = _employee_local_date(
+                captured_at,
+                timezone_by_employee.get(screenshot_employee_id),
             )
-            screenshot_counts[(screenshot_employee_id, normalized_date)] = int(screenshot_count)
+            if normalized_date < start_day or normalized_date > end_day:
+                continue
+            key = (screenshot_employee_id, normalized_date)
+            screenshot_counts[key] = screenshot_counts.get(key, 0) + 1
 
     result = []
     for (row_employee_id, work_date), item in sorted(
@@ -259,6 +347,7 @@ def timesheet_rows(
                 "screenshot_count": int(screenshot_count),
             }
         )
+    db.commit()
     return result
 
 

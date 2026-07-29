@@ -180,12 +180,7 @@ export interface ActivityEvent {
   meta?: Record<string, string>;
 }
 
-export type WorkdayIntervalType =
-  | "worked"
-  | "idle"
-  | "locked"
-  | "sleeping"
-  | "break";
+export type WorkdayIntervalType = "worked" | "idle" | "locked" | "sleeping" | "break";
 
 export interface WorkdayInterval {
   type: WorkdayIntervalType;
