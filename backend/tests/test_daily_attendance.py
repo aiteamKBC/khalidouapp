@@ -329,6 +329,136 @@ def test_stale_session_closed_days_later_does_not_fill_the_offline_gap(
     )
 
 
+def test_agent_restart_gap_inside_one_session_is_not_counted_as_work(
+    attendance_context,
+):
+    db, employee, device, _ = attendance_context
+    session = WorkSession(
+        company_id=employee.company_id,
+        employee_id=employee.id,
+        device_id=device.id,
+        started_at=datetime(2026, 7, 21, 11, 9, tzinfo=UTC),
+        status="active",
+        active_seconds=8_463,
+        idle_seconds=0,
+    )
+    db.add(session)
+    db.flush()
+    db.add_all(
+        [
+            ActivityEvent(
+                company_id=employee.company_id,
+                employee_id=employee.id,
+                device_id=device.id,
+                session_id=session.id,
+                event_type="heartbeat",
+                event_timestamp=datetime(2026, 7, 21, 11, 45, tzinfo=UTC),
+                payload={"status": "active", "active_seconds": 2_160},
+                idempotency_key="restart-gap-before",
+            ),
+            ActivityEvent(
+                company_id=employee.company_id,
+                employee_id=employee.id,
+                device_id=device.id,
+                session_id=session.id,
+                event_type="heartbeat",
+                event_timestamp=datetime(2026, 7, 21, 13, 36, tzinfo=UTC),
+                payload={"status": "active", "active_seconds": 2_163},
+                idempotency_key="restart-gap-after",
+            ),
+            ActivityEvent(
+                company_id=employee.company_id,
+                employee_id=employee.id,
+                device_id=device.id,
+                session_id=session.id,
+                event_type="heartbeat",
+                event_timestamp=datetime(2026, 7, 21, 15, 21, tzinfo=UTC),
+                payload={"status": "active", "active_seconds": 8_463},
+                idempotency_key="restart-gap-current",
+            ),
+        ]
+    )
+    db.commit()
+
+    timeline = build_workday_timeline(
+        db,
+        company_id=employee.company_id,
+        employee_id=employee.id,
+        timezone_name="UTC",
+        target_date=date(2026, 7, 21),
+        now=datetime(2026, 7, 21, 15, 21, tzinfo=UTC),
+    )
+
+    assert timeline["worked_seconds"] == 8_463
+    assert len(timeline["intervals"]) == 2
+    assert timeline["intervals"][0]["ended_at"] == datetime(
+        2026, 7, 21, 11, 45, tzinfo=UTC
+    ).isoformat()
+    assert timeline["intervals"][1]["started_at"] == datetime(
+        2026, 7, 21, 13, 35, 57, tzinfo=UTC
+    ).isoformat()
+
+
+def test_network_only_heartbeat_gap_keeps_locally_observed_work(
+    attendance_context,
+):
+    db, employee, device, _ = attendance_context
+    session = _session(
+        db,
+        employee,
+        device,
+        datetime(2026, 7, 21, 9, 0, tzinfo=UTC),
+        datetime(2026, 7, 21, 12, 0, tzinfo=UTC),
+    )
+    db.add_all(
+        [
+            ActivityEvent(
+                company_id=employee.company_id,
+                employee_id=employee.id,
+                device_id=device.id,
+                session_id=session.id,
+                event_type="heartbeat",
+                event_timestamp=datetime(2026, 7, 21, 9, 30, tzinfo=UTC),
+                payload={"status": "active", "active_seconds": 1_800},
+                idempotency_key="network-gap-before",
+            ),
+            ActivityEvent(
+                company_id=employee.company_id,
+                employee_id=employee.id,
+                device_id=device.id,
+                session_id=session.id,
+                event_type="heartbeat",
+                event_timestamp=datetime(2026, 7, 21, 11, 30, tzinfo=UTC),
+                payload={"status": "active", "active_seconds": 9_000},
+                idempotency_key="network-gap-after",
+            ),
+            ActivityEvent(
+                company_id=employee.company_id,
+                employee_id=employee.id,
+                device_id=device.id,
+                session_id=session.id,
+                event_type="heartbeat",
+                event_timestamp=datetime(2026, 7, 21, 12, 0, tzinfo=UTC),
+                payload={"status": "active", "active_seconds": 10_800},
+                idempotency_key="network-gap-last",
+            ),
+        ]
+    )
+    db.commit()
+
+    timeline = build_workday_timeline(
+        db,
+        company_id=employee.company_id,
+        employee_id=employee.id,
+        timezone_name="UTC",
+        target_date=date(2026, 7, 21),
+        now=datetime(2026, 7, 21, 12, 0, tzinfo=UTC),
+    )
+
+    assert timeline["worked_seconds"] == 3 * 3600
+    assert len(timeline["intervals"]) == 1
+
+
 def test_active_reconnected_session_clears_an_earlier_sign_out(
     attendance_context,
 ):

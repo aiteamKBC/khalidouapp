@@ -5,7 +5,7 @@ from datetime import UTC, date, datetime, time, timedelta
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.models import ActivityEvent, LeaveRequest, Project, Task, TrackingSettings, WorkSession
@@ -44,6 +44,83 @@ def _continued_session_started_at(events: list[ActivityEvent]) -> datetime | Non
         except ValueError:
             return None
     return None
+
+
+def _counter(payload: dict | None, key: str) -> int | None:
+    if not isinstance(payload, dict):
+        return None
+    value = payload.get(key)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return max(0, int(value))
+
+
+def _offline_gaps(
+    heartbeats: list[tuple[datetime, dict | None]],
+    *,
+    freshness_limit: timedelta,
+) -> list[tuple[datetime, datetime]]:
+    """Find time where the agent itself was not running.
+
+    A session can survive an app update or crash.  When the same session later
+    resumes, treating the entire heartbeat gap as worked makes the work total
+    disagree with the screenshot count.  The active counter tells us how much
+    of the gap the agent actually observed: preserve that amount at the end of
+    the gap and exclude the unobserved remainder.
+
+    A network-only outage is different: the local active counter continues to
+    advance, so the gap remains worked even though the heartbeats arrive late.
+    """
+    result: list[tuple[datetime, datetime]] = []
+    for (previous_at, previous_payload), (next_at, next_payload) in zip(
+        heartbeats,
+        heartbeats[1:],
+        strict=False,
+    ):
+        gap_seconds = max(0, int((next_at - previous_at).total_seconds()))
+        if gap_seconds <= int(freshness_limit.total_seconds()):
+            continue
+        previous_active = _counter(previous_payload, "active_seconds")
+        next_active = _counter(next_payload, "active_seconds")
+        observed_active = (
+            max(0, next_active - previous_active)
+            if previous_active is not None and next_active is not None
+            else 0
+        )
+        unobserved_seconds = max(0, gap_seconds - min(gap_seconds, observed_active))
+        if unobserved_seconds <= int(freshness_limit.total_seconds()):
+            continue
+        result.append(
+            (
+                previous_at,
+                previous_at + timedelta(seconds=unobserved_seconds),
+            )
+        )
+    return result
+
+
+def _exclude_gaps(interval: dict, gaps: list[tuple[datetime, datetime]]) -> list[dict]:
+    segments = [(interval["started_at"], interval["ended_at"])]
+    for gap_start, gap_end in gaps:
+        next_segments: list[tuple[datetime, datetime]] = []
+        for segment_start, segment_end in segments:
+            if gap_end <= segment_start or gap_start >= segment_end:
+                next_segments.append((segment_start, segment_end))
+                continue
+            if segment_start < gap_start:
+                next_segments.append((segment_start, min(segment_end, gap_start)))
+            if gap_end < segment_end:
+                next_segments.append((max(segment_start, gap_end), segment_end))
+        segments = next_segments
+    return [
+        {
+            **interval,
+            "started_at": segment_start,
+            "ended_at": segment_end,
+        }
+        for segment_start, segment_end in segments
+        if segment_end > segment_start
+    ]
 
 
 def company_idle_threshold_seconds(db: Session, company_id: UUID) -> int:
@@ -456,7 +533,7 @@ def build_workday_timeline(
     }
 
     events_by_session: dict[UUID, list[ActivityEvent]] = defaultdict(list)
-    last_heartbeat_by_session: dict[UUID, datetime] = {}
+    heartbeats_by_session: dict[UUID, list[tuple[datetime, dict | None]]] = defaultdict(list)
     if sessions:
         session_ids = [session.id for session in sessions]
         events = db.scalars(
@@ -475,7 +552,8 @@ def build_workday_timeline(
         heartbeat_rows = db.execute(
             select(
                 ActivityEvent.session_id,
-                func.max(ActivityEvent.event_timestamp),
+                ActivityEvent.event_timestamp,
+                ActivityEvent.payload,
             )
             .where(
                 ActivityEvent.company_id == company_id,
@@ -484,13 +562,14 @@ def build_workday_timeline(
                 ActivityEvent.event_type == "heartbeat",
                 ActivityEvent.event_timestamp < day_end,
             )
-            .group_by(ActivityEvent.session_id)
+            .order_by(
+                ActivityEvent.session_id,
+                ActivityEvent.event_timestamp,
+                ActivityEvent.created_at,
+            )
         ).all()
-        last_heartbeat_by_session = {
-            session_id: _utc(last_heartbeat_at)
-            for session_id, last_heartbeat_at in heartbeat_rows
-            if last_heartbeat_at is not None
-        }
+        for session_id, heartbeat_at, payload in heartbeat_rows:
+            heartbeats_by_session[session_id].append((_utc(heartbeat_at), payload))
 
     offline_threshold_minutes = (
         db.scalar(
@@ -503,13 +582,19 @@ def build_workday_timeline(
     freshness_limit = timedelta(minutes=max(1, int(offline_threshold_minutes)))
 
     intervals: list[dict] = []
+    offline_gaps_by_session: dict[UUID, list[tuple[datetime, datetime]]] = {}
     has_open_session = False
     continued_session_starts: list[datetime] = []
     for session in sessions:
         session_start = _utc(session.started_at)
         session_events = events_by_session[session.id]
         continued_session_start = _continued_session_started_at(session_events)
-        last_heartbeat_at = last_heartbeat_by_session.get(session.id)
+        session_heartbeats = heartbeats_by_session[session.id]
+        last_heartbeat_at = session_heartbeats[-1][0] if session_heartbeats else None
+        offline_gaps_by_session[session.id] = _offline_gaps(
+            session_heartbeats,
+            freshness_limit=freshness_limit,
+        )
         if last_heartbeat_at is not None:
             # A terminal event can arrive hours or days after the desktop's
             # last heartbeat when a stale session is closed on the next app
@@ -624,7 +709,17 @@ def build_workday_timeline(
     # Turn them into one disjoint timeline so the same wall-clock second can
     # never be counted twice. Any active input wins over idle/locked signals
     # from an older session or another enrolled device.
-    valid_intervals = [item for item in intervals if item["ended_at"] > item["started_at"]]
+    connected_intervals = [
+        segment
+        for item in intervals
+        for segment in _exclude_gaps(
+            item,
+            offline_gaps_by_session.get(item["session_id"], []),
+        )
+    ]
+    valid_intervals = [
+        item for item in connected_intervals if item["ended_at"] > item["started_at"]
+    ]
     boundaries = sorted(
         {point for item in valid_intervals for point in (item["started_at"], item["ended_at"])}
     )
