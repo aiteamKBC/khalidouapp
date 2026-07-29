@@ -133,7 +133,6 @@ type KIconName =
   | "manual"
   | "locked"
   | "sleeping"
-  | "break"
   | "settings";
 
 function KIcon({
@@ -226,13 +225,6 @@ function KIcon({
       <>
         <path d="M18 15.5A7 7 0 0 1 8.5 6a7 7 0 1 0 9.5 9.5Z" />
         <path d="M15 4h4l-4 5h4" />
-      </>
-    ),
-    break: (
-      <>
-        <path d="M7 8h10v5a5 5 0 0 1-10 0Z" />
-        <path d="M17 9h1.5a2.5 2.5 0 0 1 0 5H17" />
-        <path d="M6 20h12" />
       </>
     ),
     settings: (
@@ -2259,16 +2251,6 @@ function Timeline({
   idleRequestOptions: IdleRequestOption[];
   onRequestIdleTime: (option: IdleRequestOption) => void;
 }) {
-  const labels = {
-    worked: "Worked",
-    idle: "Idle",
-    locked: "Locked",
-    sleeping: "Sleeping",
-    break: "Break",
-    manual: "Manual approved",
-    extra: "Overtime",
-    leave: "Leave",
-  } as const;
   const requestableMinutes = totalRequestableIdleMinutes(idleRequestOptions);
   return (
     <section className="k-side-section">

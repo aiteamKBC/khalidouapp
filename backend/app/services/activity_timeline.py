@@ -276,7 +276,17 @@ def scope_timeline_to_schedule(
             work_category = item.get("work_category")
             interval_type = item["type"]
             interval_source = item.get("source")
-            if scheduled_break is not None and has_shift and not approved_leave:
+            if (
+                scheduled_break is not None
+                and has_shift
+                and not approved_leave
+                and item["type"] == "worked"
+            ):
+                # Keep real activity visible during a scheduled break.  The
+                # employee may return early or work through part of the break;
+                # turning that interval into "break" would hide the work.
+                work_category = "break_work"
+            elif scheduled_break is not None and has_shift and not approved_leave:
                 interval_type = "break"
                 interval_source = "scheduled_break"
                 work_category = None
@@ -379,7 +389,12 @@ def scope_timeline_to_schedule(
         ),
         "last_activity_at": last_activity_at.isoformat() if last_activity_at else None,
         "is_running": is_running,
-        "worked_seconds": totals["worked"],
+        # Splitting one worked interval at shift or break boundaries can put a
+        # fractional second on each side.  Summing the individually truncated
+        # pieces loses a second even though no work was removed.  The raw
+        # timeline is already disjoint and worked intervals are never filtered
+        # here, so preserve its exact whole-second worked total.
+        "worked_seconds": int(timeline.get("worked_seconds", totals["worked"])),
         "idle_seconds": 0 if approved_leave else totals["idle"],
         "locked_seconds": totals["locked"],
         "sleeping_seconds": totals["sleeping"],

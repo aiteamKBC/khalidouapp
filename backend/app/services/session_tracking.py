@@ -112,6 +112,10 @@ def session_chain_started_at(db: Session, session: WorkSession) -> datetime:
 
 WORKED_EVENT_TYPES = {
     "session_started",
+    # The agent emits this boundary when it detects that the employee has
+    # stopped interacting.  It is therefore the last proven worked instant,
+    # even though everything after it is non-working.
+    "idle_started",
     "idle_ended",
     "manual_pause_ended",
     "screen_unlocked",

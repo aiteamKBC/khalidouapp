@@ -3,7 +3,8 @@ export type TimelineIntervalType =
   | "idle"
   | "locked"
   | "sleeping"
-  | "break";
+  | "break"
+  | "manual";
 
 export type TimelineWorkCategory = "extra" | "break_work" | null | undefined;
 
@@ -19,6 +20,7 @@ export const TIMELINE_LABELS: Record<TimelineDisplayType, string> = {
   locked: "Locked",
   sleeping: "Sleeping",
   break: "Break",
+  manual: "Manual approved",
   break_work: "Worked during break",
   extra: "Overtime",
   leave: "Leave",

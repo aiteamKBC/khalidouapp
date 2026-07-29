@@ -74,6 +74,7 @@ import {
 import {
   hasReachedIdleThreshold,
   IDLE_THRESHOLD_MINUTES,
+  idleDurationAfterThreshold,
   inputResumedAfterIdle,
   shouldWaitForInputBeforeRestart,
 } from "./services/idlePolicy.js";

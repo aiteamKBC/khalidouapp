@@ -22,7 +22,7 @@ from app.schemas.auth import (
 )
 from app.core.exceptions import ApiError
 from app.core.security import hash_password, hash_token, verify_password
-from app.services.email import enqueue_admin_password_reset_link_email
+from app.services.email import enqueue_admin_password_reset_link_email, ensure_email_allowed
 from app.services.admin_auth import (
     authenticate_admin,
     create_admin_token_pair,

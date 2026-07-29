@@ -29,9 +29,11 @@ down_revision: Union[str, None] = "20260727_000049"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-# Events that prove the employee was back at the keyboard.
+# Events that prove a worked boundary.  ``idle_started`` is the instant the
+# employee stopped interacting, so it is also the correct end of proven work.
 WORKED_EVENT_TYPES = {
     "session_started",
+    "idle_started",
     "idle_ended",
     "manual_pause_ended",
     "screen_unlocked",
