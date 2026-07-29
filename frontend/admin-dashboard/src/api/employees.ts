@@ -176,6 +176,7 @@ function normalizeEmployeeStatus(value?: string | null): EmployeeStatus {
     value === "locked" ||
     value === "sleeping" ||
     value === "on_break" ||
+    value === "break_work" ||
     value === "off_shift" ||
     value === "offline"
   )

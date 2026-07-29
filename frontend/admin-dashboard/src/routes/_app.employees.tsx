@@ -157,6 +157,9 @@ export function EmployeesList({ embedded = false }: { embedded?: boolean }) {
               <SelectItem value="idle">Idle</SelectItem>
               <SelectItem value="locked">Locked</SelectItem>
               <SelectItem value="sleeping">Sleeping</SelectItem>
+              <SelectItem value="on_break">On break</SelectItem>
+              <SelectItem value="break_work">Working during break</SelectItem>
+              <SelectItem value="off_shift">Off shift</SelectItem>
               <SelectItem value="offline">Offline</SelectItem>
             </SelectContent>
           </Select>

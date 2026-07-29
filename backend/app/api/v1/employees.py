@@ -388,7 +388,7 @@ def list_employee_overviews(
         statement = statement.where(Employee.id == employee_id)
     statement = statement.order_by(Employee.name)
     rows = db.execute(statement).all()
-    idle_candidates = []
+    schedule_context_candidates = []
     for row in rows:
         employee = row[0]
         device_id = row[1]
@@ -397,17 +397,17 @@ def list_employee_overviews(
         session_id = row[5]
         session_status = row[9]
         if (
-            session_status in {"idle", "locked", "sleeping"}
+            session_status in {"active", "idle", "locked", "sleeping"}
             and session_id
             and device_id
             and device_status != "revoked"
             and normalized_last_seen
             and normalized_last_seen >= cutoff
         ):
-            idle_candidates.append(employee)
-    idle_context_by_employee = current_idle_contexts(
+            schedule_context_candidates.append(employee)
+    schedule_context_by_employee = current_idle_contexts(
         db,
-        employees=idle_candidates,
+        employees=schedule_context_candidates,
         now=now,
     )
 
@@ -501,12 +501,17 @@ def list_employee_overviews(
             accountable_idle_seconds(attendance_today) if attendance_today is not None else 0
         )
         activity_status = session_status if session_id and online else "offline"
-        if activity_status in {"idle", "locked", "sleeping"}:
-            idle_context = idle_context_by_employee.get(employee.id, "off_shift")
-            if idle_context == "on_break":
+        schedule_context = schedule_context_by_employee.get(employee.id)
+        if schedule_context == "on_break":
+            if activity_status == "active":
+                activity_status = "break_work"
+            elif activity_status in {"idle", "locked", "sleeping"}:
                 activity_status = "on_break"
-            elif idle_context == "off_shift":
-                activity_status = "off_shift"
+        elif (
+            schedule_context == "off_shift"
+            and activity_status in {"idle", "locked", "sleeping"}
+        ):
+            activity_status = "off_shift"
         data.append(
             {
                 "employee": employee_data,
@@ -1012,16 +1017,23 @@ def employee_status(
     )
     idle_seconds = max(0, int(canonical_today["idle_seconds"])) if canonical_today else 0
     activity_status = current.status if current and online else "offline"
-    if activity_status in {"idle", "locked", "sleeping"}:
-        idle_context = current_idle_contexts(
+    schedule_context = None
+    if activity_status in {"active", "idle", "locked", "sleeping"}:
+        schedule_context = current_idle_contexts(
             db,
             employees=[employee],
             now=now,
         ).get(employee.id, "off_shift")
-        if idle_context == "on_break":
+    if schedule_context == "on_break":
+        if activity_status == "active":
+            activity_status = "break_work"
+        elif activity_status in {"idle", "locked", "sleeping"}:
             activity_status = "on_break"
-        elif idle_context == "off_shift":
-            activity_status = "off_shift"
+    elif (
+        schedule_context == "off_shift"
+        and activity_status in {"idle", "locked", "sleeping"}
+    ):
+        activity_status = "off_shift"
     return success_response(
         data={
             "employee": serialize_employee(employee),

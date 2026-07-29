@@ -1,6 +1,7 @@
 from datetime import UTC, datetime, timedelta
 from io import BytesIO
 from uuid import UUID, uuid4
+from zoneinfo import ZoneInfo
 
 import pytest
 from fastapi.testclient import TestClient
@@ -2043,14 +2044,19 @@ def test_desktop_summary_recovers_elapsed_work_when_an_update_started_a_new_sess
 ):
     client, data = team_client
     now = datetime.now(UTC)
+    safe_timezone = next(
+        timezone_name
+        for timezone_name in ("UTC", "Asia/Tokyo", "America/New_York")
+        if 1 <= now.astimezone(ZoneInfo(timezone_name)).hour <= 22
+    )
     db = data["session_factory"]()
     try:
         employee = db.get(Employee, data["employee_a"].id)
         current_session = db.get(WorkSession, data["session_a"].id)
         device = db.get(Device, current_session.device_id)
-        employee.timezone = "Africa/Cairo"
-        device.timezone = "Africa/Cairo"
-        current_session.timezone = "Africa/Cairo"
+        employee.timezone = safe_timezone
+        device.timezone = safe_timezone
+        current_session.timezone = safe_timezone
         prior_session = WorkSession(
             company_id=data["employee_a"].company_id,
             employee_id=data["employee_a"].id,
@@ -3017,6 +3023,30 @@ def test_employee_overview_distinguishes_idle_break_and_off_shift(team_client, m
 
     assert on_break.status_code == 200
     assert on_break.json()["data"][0]["activity_status"] == "on_break"
+
+    with data["session_factory"]() as db:
+        session = db.get(WorkSession, data["session_a"].id)
+        session.status = "active"
+        db.commit()
+
+    working_during_break = client.get(
+        f"/api/v1/employees-overview?employee_id={data['employee_a'].id}",
+        headers=data["general_headers"],
+    )
+    employee_status = client.get(
+        f"/api/v1/employees/{data['employee_a'].id}/status",
+        headers=data["general_headers"],
+    )
+
+    assert working_during_break.status_code == 200
+    assert working_during_break.json()["data"][0]["activity_status"] == "break_work"
+    assert employee_status.status_code == 200
+    assert employee_status.json()["data"]["activity_status"] == "break_work"
+
+    with data["session_factory"]() as db:
+        session = db.get(WorkSession, data["session_a"].id)
+        session.status = "idle"
+        db.commit()
 
     monkeypatch.setattr(
         "app.api.v1.employees.current_idle_contexts",
