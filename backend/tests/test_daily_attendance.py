@@ -984,6 +984,114 @@ def test_work_during_part_of_a_scheduled_break_is_distinguished(
     assert row.paid_break_seconds == 30 * 60
 
 
+def test_idle_crossing_break_end_is_visible_immediately_after_break(
+    attendance_context,
+):
+    db, employee, device, _ = attendance_context
+    work_date = date(2026, 7, 21)
+    session = _session(
+        db,
+        employee,
+        device,
+        datetime(2026, 7, 21, 9, 0, tzinfo=UTC),
+        datetime(2026, 7, 21, 13, 0, tzinfo=UTC),
+    )
+    db.add_all(
+        [
+            ActivityEvent(
+                company_id=employee.company_id,
+                employee_id=employee.id,
+                device_id=device.id,
+                session_id=session.id,
+                event_type="idle_started",
+                event_timestamp=datetime(2026, 7, 21, 12, 3, tzinfo=UTC),
+                idempotency_key="break-end-idle-start",
+            ),
+            ActivityEvent(
+                company_id=employee.company_id,
+                employee_id=employee.id,
+                device_id=device.id,
+                session_id=session.id,
+                event_type="heartbeat",
+                event_timestamp=datetime(2026, 7, 21, 12, 3, tzinfo=UTC),
+                payload={
+                    "status": "idle",
+                    "active_seconds": 10_000,
+                    "idle_seconds": 0,
+                },
+                idempotency_key="break-end-idle-heartbeat-start",
+            ),
+            ActivityEvent(
+                company_id=employee.company_id,
+                employee_id=employee.id,
+                device_id=device.id,
+                session_id=session.id,
+                event_type="idle_ended",
+                event_timestamp=datetime(2026, 7, 21, 12, 36, tzinfo=UTC),
+                idempotency_key="break-end-idle-end",
+            ),
+            ActivityEvent(
+                company_id=employee.company_id,
+                employee_id=employee.id,
+                device_id=device.id,
+                session_id=session.id,
+                event_type="heartbeat",
+                event_timestamp=datetime(2026, 7, 21, 12, 36, tzinfo=UTC),
+                payload={
+                    "status": "active",
+                    "active_seconds": 10_000,
+                    "idle_seconds": 33 * 60,
+                },
+                idempotency_key="break-end-idle-heartbeat-end",
+            ),
+        ]
+    )
+    db.commit()
+
+    _, timeline = calculate_daily_attendance(
+        db,
+        employee=employee,
+        work_date=work_date,
+        now=datetime(2026, 7, 22, tzinfo=UTC),
+    )
+
+    crossing = [
+        (
+            item["type"],
+            item.get("work_category"),
+            item["started_at"],
+            item["ended_at"],
+        )
+        for item in timeline["intervals"]
+        if item["started_at"]
+        < datetime(2026, 7, 21, 12, 36, tzinfo=UTC).isoformat()
+        and (item["ended_at"] or "")
+        > datetime(2026, 7, 21, 12, 0, tzinfo=UTC).isoformat()
+    ]
+
+    assert crossing == [
+        (
+            "worked",
+            "break_work",
+            datetime(2026, 7, 21, 12, 0, tzinfo=UTC).isoformat(),
+            datetime(2026, 7, 21, 12, 3, tzinfo=UTC).isoformat(),
+        ),
+        (
+            "break",
+            None,
+            datetime(2026, 7, 21, 12, 3, tzinfo=UTC).isoformat(),
+            datetime(2026, 7, 21, 12, 30, tzinfo=UTC).isoformat(),
+        ),
+        (
+            "idle",
+            None,
+            datetime(2026, 7, 21, 12, 30, tzinfo=UTC).isoformat(),
+            datetime(2026, 7, 21, 12, 36, tzinfo=UTC).isoformat(),
+        ),
+    ]
+    assert timeline["idle_seconds"] == 6 * 60
+
+
 def test_idle_outside_shift_is_not_deductible_or_paid_idle(attendance_context):
     db, employee, device, _ = attendance_context
     work_date = date(2026, 7, 21)

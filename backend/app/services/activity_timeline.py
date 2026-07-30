@@ -64,12 +64,13 @@ def _offline_gaps(
 
     A session can survive an app update or crash.  When the same session later
     resumes, treating the entire heartbeat gap as worked makes the work total
-    disagree with the screenshot count.  The active counter tells us how much
-    of the gap the agent actually observed: preserve that amount at the end of
-    the gap and exclude the unobserved remainder.
+    disagree with the screenshot count. The active and idle counters tell us
+    how much of the gap the agent actually observed: preserve that amount at
+    the end of the gap and exclude only the unobserved remainder. Looking at
+    active time alone incorrectly deleted long, locally observed idle periods.
 
-    A network-only outage is different: the local active counter continues to
-    advance, so the gap remains worked even though the heartbeats arrive late.
+    A network-only outage is different: the local counters continue to advance,
+    so the gap remains classified even though the heartbeats arrive late.
     """
     result: list[tuple[datetime, datetime]] = []
     for (previous_at, previous_payload), (next_at, next_payload) in zip(
@@ -82,12 +83,20 @@ def _offline_gaps(
             continue
         previous_active = _counter(previous_payload, "active_seconds")
         next_active = _counter(next_payload, "active_seconds")
+        previous_idle = _counter(previous_payload, "idle_seconds")
+        next_idle = _counter(next_payload, "idle_seconds")
         observed_active = (
             max(0, next_active - previous_active)
             if previous_active is not None and next_active is not None
             else 0
         )
-        unobserved_seconds = max(0, gap_seconds - min(gap_seconds, observed_active))
+        observed_idle = (
+            max(0, next_idle - previous_idle)
+            if previous_idle is not None and next_idle is not None
+            else 0
+        )
+        observed_seconds = min(gap_seconds, observed_active + observed_idle)
+        unobserved_seconds = max(0, gap_seconds - observed_seconds)
         if unobserved_seconds <= int(freshness_limit.total_seconds()):
             continue
         result.append(
