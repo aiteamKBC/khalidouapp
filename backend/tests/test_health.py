@@ -37,12 +37,8 @@ def test_database_health_rejects_an_incomplete_critical_schema(monkeypatch) -> N
             return FakeConnection()
 
     class FakeInspector:
-        def get_table_names(self):
-            return [
-                table_name
-                for table_name in health_api.CRITICAL_DATABASE_TABLES
-                if table_name != "device_tokens"
-            ]
+        def has_table(self, table_name):
+            return table_name != "device_tokens"
 
     monkeypatch.setattr(health_api, "get_engine", lambda: FakeEngine())
     monkeypatch.setattr(health_api, "inspect", lambda _connection: FakeInspector())

@@ -182,7 +182,7 @@ Run the production audit again without changing data:
 
 ```bash
 cd /var/www/khalidouapp/backend
-/var/www/khalidouapp/venv/bin/python scripts/audit_production_state.py --days 7
+/var/www/khalidouapp/venv/bin/python -m scripts.audit_production_state --days 7
 ```
 
 Use `--employee "Employee Name"` to narrow the report. Missing screenshot

@@ -34,11 +34,10 @@ def database_health_check():
     with get_engine().connect() as connection:
         connection.execute(text("select 1"))
         inspector = inspect(connection)
-        available_tables = set(inspector.get_table_names())
         missing_tables = [
             table_name
             for table_name in CRITICAL_DATABASE_TABLES
-            if table_name not in available_tables
+            if not inspector.has_table(table_name)
         ]
     if missing_tables:
         raise ApiError(

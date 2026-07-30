@@ -214,7 +214,7 @@ fi
 
 AUDIT_PATH="$BACKUP_ROOT/audits/production-$DEPLOY_ID.json"
 cd "$APP_ROOT/backend"
-"$APP_ROOT/venv/bin/python" scripts/audit_production_state.py \
+"$APP_ROOT/venv/bin/python" -m scripts.audit_production_state \
   --days 7 | tee "$AUDIT_PATH"
 chmod 600 "$AUDIT_PATH"
 
