@@ -506,6 +506,111 @@ def test_dashboard_work_trend_is_lightweight_and_team_scoped(
     assert len(general.content) < 100_000
 
 
+def test_daily_timesheet_includes_scoped_empty_employees_in_bounded_queries(
+    team_client,
+    monkeypatch,
+):
+    client, data = team_client
+    query_count = 0
+    extra_employee_ids: set[str] = set()
+    with data["session_factory"]() as db:
+        for index in range(75):
+            employee = Employee(
+                company_id=data["employee_a"].company_id,
+                name=f"Timesheet Employee {index:02d}",
+                email=f"timesheet-{index:02d}@example.com",
+                employee_code=f"TS-{index:02d}",
+                timezone="UTC",
+                status="active",
+            )
+            db.add(employee)
+            db.flush()
+            extra_employee_ids.add(str(employee.id))
+        db.commit()
+
+    def unexpected_attendance_rebuild(*_args, **_kwargs):
+        raise AssertionError("Daily timesheet list must not rebuild employee timelines")
+
+    monkeypatch.setattr(
+        timesheets_api,
+        "cached_daily_attendance",
+        unexpected_attendance_rebuild,
+    )
+
+    def count_query(*_args, **_kwargs):
+        nonlocal query_count
+        query_count += 1
+
+    engine = data["session_factory"].kw["bind"]
+    event.listen(engine, "before_cursor_execute", count_query)
+    try:
+        response = client.get(
+            "/api/v1/timesheets/daily",
+            params={"day": local_today("UTC").isoformat()},
+            headers=data["general_headers"],
+        )
+    finally:
+        event.remove(engine, "before_cursor_execute", count_query)
+
+    assert response.status_code == 200
+    rows = response.json()["data"]
+    rows_by_employee = {row["employee_id"]: row for row in rows}
+    shared_employee_id = str(data["shared_employee"].id)
+    assert shared_employee_id in rows_by_employee, f"query_count={query_count}"
+    assert str(data["other_employee"].id) not in rows_by_employee
+    assert rows_by_employee[shared_employee_id]["total_tracked_seconds"] == 0
+    assert rows_by_employee[shared_employee_id]["active_seconds"] == 0
+    assert rows_by_employee[shared_employee_id]["idle_seconds"] == 0
+    assert extra_employee_ids.issubset(rows_by_employee)
+    assert len(rows) == 78
+    assert query_count <= 10, query_count
+    assert len(response.content) < 100_000
+
+    owner_response = client.get(
+        "/api/v1/timesheets/daily",
+        params={"day": local_today("UTC").isoformat()},
+        headers=data["owner_headers"],
+    )
+    assert owner_response.status_code == 200
+    assert {
+        row["employee_id"] for row in owner_response.json()["data"]
+    } == {
+        str(data["employee_a"].id),
+        shared_employee_id,
+    }
+
+    options_response = client.get(
+        "/api/v1/timesheets/employee-options",
+        headers=data["owner_headers"],
+    )
+    assert options_response.status_code == 200
+    assert {
+        option["id"] for option in options_response.json()["data"]
+    } == {
+        str(data["employee_a"].id),
+        shared_employee_id,
+    }
+
+    first_page = client.get(
+        "/api/v1/timesheets/employee-options?page=1&page_size=50",
+        headers=data["general_headers"],
+    )
+    second_page = client.get(
+        "/api/v1/timesheets/employee-options?page=2&page_size=50",
+        headers=data["general_headers"],
+    )
+    assert first_page.status_code == 200
+    assert second_page.status_code == 200
+    assert first_page.json()["meta"] == {
+        "page": 1,
+        "page_size": 50,
+        "total": 78,
+        "total_pages": 2,
+    }
+    assert len(first_page.json()["data"]) == 50
+    assert len(second_page.json()["data"]) == 28
+
+
 def test_daily_attendance_list_reuses_materialized_row(team_client, monkeypatch):
     client, data = team_client
     today = local_today("UTC")
@@ -2328,19 +2433,15 @@ def test_daily_timesheet_uses_employee_local_date_for_sessions_and_screenshots(
     assert local_row["date"] == "2026-07-29"
     assert local_row["active_seconds"] >= 10 * 60
     assert local_row["screenshot_count"] == 1
-    with data["session_factory"]() as db:
-        rebuilt_attendance = db.scalar(
-            select(DailyAttendance).where(
-                DailyAttendance.employee_id == data["employee_a"].id,
-                DailyAttendance.work_date == datetime(2026, 7, 29).date(),
-            )
-        )
-        assert rebuilt_attendance is not None
-        assert rebuilt_attendance.actual_first_activity_at is not None
-    assert all(
-        row["employee_id"] != str(data["employee_a"].id)
+    utc_row = next(
+        row
         for row in utc_day.json()["data"]
+        if row["employee_id"] == str(data["employee_a"].id)
     )
+    assert utc_row["date"] == "2026-07-28"
+    assert utc_row["start_time"] is None
+    assert utc_row["end_time"] is None
+    assert utc_row["total_tracked_seconds"] == 0
 
     weekly = client.get(
         "/api/v1/timesheets/weekly?week_start=2026-07-27",

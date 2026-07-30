@@ -1,8 +1,9 @@
-import { apiFetch, toMinutes, withQuery } from "./client";
+import { apiFetch, apiFetchWithMeta, toMinutes, withQuery } from "./client";
 import type { Timesheet } from "@/types";
 
 type BackendTimesheet = {
   employee_id: string;
+  employee_name?: string;
   team_id?: string | null;
   date: string;
   start_time?: string | null;
@@ -20,6 +21,7 @@ function mapTimesheet(row: BackendTimesheet, teamId: string): Timesheet {
   return {
     id: `${row.employee_id}-${teamId || "company"}-${row.date}`,
     employeeId: row.employee_id,
+    employeeName: row.employee_name,
     teamId,
     date: row.date,
     startTime: row.start_time ?? undefined,
@@ -31,8 +33,54 @@ function mapTimesheet(row: BackendTimesheet, teamId: string): Timesheet {
     deductedMinutes: toMinutes(row.deducted_seconds ?? 0),
     points: row.points ?? Math.round((row.active_seconds / 3600) * 100) / 100,
     screenshotCount: row.screenshot_count,
-    status: row.end_time ? "complete" : "in_progress",
+    status:
+      !row.start_time &&
+      !row.end_time &&
+      row.total_tracked_seconds === 0 &&
+      (row.adjustment_seconds ?? 0) === 0
+        ? "missing"
+        : row.end_time
+          ? "complete"
+          : "in_progress",
   };
+}
+
+export type TimesheetEmployeeOption = {
+  id: string;
+  name: string;
+};
+
+export async function listTimesheetEmployeeOptions(
+  scopedTeamIds?: string[],
+  selectedTeamId?: string,
+  signal?: AbortSignal,
+): Promise<TimesheetEmployeeOption[]> {
+  const teamId =
+    selectedTeamId && selectedTeamId !== "all"
+      ? selectedTeamId
+      : scopedTeamIds?.length === 1
+        ? scopedTeamIds[0]
+        : undefined;
+  const employees: TimesheetEmployeeOption[] = [];
+  let page = 1;
+  let totalPages = 1;
+
+  do {
+    const result = await apiFetchWithMeta<TimesheetEmployeeOption[]>(
+      withQuery("/timesheets/employee-options", {
+        team_id: teamId,
+        page,
+        page_size: 100,
+      }),
+      { signal },
+    );
+    employees.push(...result.data);
+    const parsedTotalPages = Number(result.meta.total_pages ?? 1);
+    totalPages = Number.isFinite(parsedTotalPages) && parsedTotalPages > 0 ? parsedTotalPages : 1;
+    page += 1;
+  } while (page <= totalPages);
+
+  return employees;
 }
 
 export async function listTimesheets(

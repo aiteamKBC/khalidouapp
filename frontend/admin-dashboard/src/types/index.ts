@@ -245,6 +245,7 @@ export interface Screenshot {
 export interface Timesheet {
   id: string;
   employeeId: string;
+  employeeName?: string;
   teamId: string;
   date: string;
   startTime?: string;

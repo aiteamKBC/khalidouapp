@@ -4,25 +4,28 @@ from typing import Annotated
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.api.deps import get_current_admin
+from app.api.v1.admin_utils import apply_pagination, count_for, pagination_meta
 from app.api.v1.team_auth import apply_employee_scope, ensure_employee_access
 from app.core.responses import success_response
 from app.database.session import get_db
 from app.models import (
     AdminUser,
+    ActivityEvent,
     DailyAttendance,
     Employee,
     EmployeeWorkProfile,
     Screenshot,
     TeamMember,
     TimeAdjustmentRequest,
+    TrackingSettings,
     WorkSession,
 )
-from app.services.activity_timeline import local_today
+from app.services.activity_timeline import EVENT_STATES, TERMINAL_EVENTS, local_today
 from app.services.attendance import accountable_idle_seconds, cached_daily_attendance
 
 router = APIRouter(prefix="/timesheets", tags=["timesheets"])
@@ -57,6 +60,7 @@ def timesheet_rows(
     device_id: UUID | None = None,
     refresh_current_attendance: bool = True,
     include_screenshot_counts: bool = True,
+    include_empty_roster: bool = False,
 ):
     # Employees can be up to a calendar day ahead of or behind UTC. Fetch a
     # safe UTC envelope, then assign every row to the employee's local date.
@@ -107,6 +111,7 @@ def timesheet_rows(
                 "_start_at": None,
                 "_latest_end_at": None,
                 "_has_open_session": False,
+                "_open_sessions": [],
                 "active_seconds": 0,
                 "idle_seconds": 0,
                 "deducted_seconds": 0,
@@ -126,12 +131,129 @@ def timesheet_rows(
             )
         if session.ended_at is None and session.status in ACTIVE_SESSION_STATUSES:
             item["_has_open_session"] = True
+            item["_open_sessions"].append(
+                (
+                    session.id,
+                    started_at,
+                    _utc(session.updated_at),
+                )
+            )
         item["active_seconds"] += max(
             0,
             int(session.active_seconds) - int(session.deducted_seconds),
         )
         item["idle_seconds"] += int(session.idle_seconds)
         item["deducted_seconds"] += int(session.deducted_seconds)
+
+    if include_empty_roster:
+        roster_statement = select(
+            Employee.id,
+            Employee.name,
+            Employee.timezone,
+        ).where(
+            Employee.company_id == company_id,
+            Employee.status == "active",
+        )
+        if current_admin is not None:
+            roster_statement = apply_employee_scope(
+                roster_statement,
+                db,
+                current_admin,
+                Employee.id,
+                team_id,
+            )
+        if employee_id:
+            roster_statement = roster_statement.where(Employee.id == employee_id)
+
+        for row_employee_id, employee_name, timezone_name in db.execute(
+            roster_statement.order_by(Employee.name)
+        ).all():
+            result_by_key.setdefault(
+                (row_employee_id, start_day),
+                {
+                    "employee_id": str(row_employee_id),
+                    "employee_name": employee_name,
+                    "timezone": timezone_name or "UTC",
+                    "date": start_day.isoformat(),
+                    "_start_at": None,
+                    "_latest_end_at": None,
+                    "_has_open_session": False,
+                    "_open_sessions": [],
+                    "active_seconds": 0,
+                    "idle_seconds": 0,
+                    "deducted_seconds": 0,
+                    "adjustment_seconds": 0,
+                },
+            )
+
+    open_session_ids = {
+        session_id
+        for item in result_by_key.values()
+        for session_id, _started_at, _updated_at in item["_open_sessions"]
+    }
+    if open_session_ids:
+        signal_by_session: dict[UUID, dict[str, datetime]] = {}
+        signal_rows = db.execute(
+            select(
+                ActivityEvent.session_id,
+                ActivityEvent.event_type,
+                func.max(ActivityEvent.event_timestamp),
+            )
+            .where(
+                ActivityEvent.company_id == company_id,
+                ActivityEvent.session_id.in_(open_session_ids),
+                or_(
+                    ActivityEvent.event_type == "heartbeat",
+                    ActivityEvent.event_type.in_(set(EVENT_STATES) - TERMINAL_EVENTS),
+                ),
+            )
+            .group_by(ActivityEvent.session_id, ActivityEvent.event_type)
+        ).all()
+        for session_id, event_type, event_at in signal_rows:
+            if event_at is not None:
+                signal_by_session.setdefault(session_id, {})[event_type] = _utc(event_at)
+
+        offline_threshold_minutes = (
+            db.scalar(
+                select(TrackingSettings.offline_threshold_minutes).where(
+                    TrackingSettings.company_id == company_id
+                )
+            )
+            or 3
+        )
+        freshness_limit = timedelta(minutes=max(1, int(offline_threshold_minutes)))
+        now_utc = datetime.now(UTC)
+        for item in result_by_key.values():
+            fresh_open_session = False
+            latest_end_at = item["_latest_end_at"]
+            for session_id, session_started_at, session_updated_at in item["_open_sessions"]:
+                signals = signal_by_session.get(session_id, {})
+                heartbeat_at = signals.get("heartbeat")
+                if heartbeat_at is not None:
+                    last_signal_at = max(
+                        session_started_at,
+                        heartbeat_at,
+                        *(
+                            event_at
+                            for event_type, event_at in signals.items()
+                            if event_type != "heartbeat"
+                        ),
+                    )
+                else:
+                    last_signal_at = max(
+                        session_started_at,
+                        min(session_updated_at, now_utc),
+                    )
+                if now_utc - last_signal_at <= freshness_limit:
+                    fresh_open_session = True
+                else:
+                    latest_end_at = max(
+                        value
+                        for value in (latest_end_at, last_signal_at)
+                        if value is not None
+                    )
+            item["_has_open_session"] = fresh_open_session
+            item["_latest_end_at"] = latest_end_at
 
     for item in result_by_key.values():
         item["start_time"] = (
@@ -168,7 +290,7 @@ def timesheet_rows(
                 )
             ).all()
         }
-        if employee_ids
+        if employee_ids and refresh_current_attendance
         else {}
     )
     stored_attendance_by_key: dict[tuple[UUID, date], DailyAttendance] = {}
@@ -190,15 +312,15 @@ def timesheet_rows(
     attendance_now = datetime.now(UTC)
     for (row_employee_id, work_date), item in result_by_key.items():
         timezone_name = str(item["timezone"])
-        employee = employees_by_id.get(row_employee_id)
-        if employee is None:
-            continue
         attendance = stored_attendance_by_key.get((row_employee_id, work_date))
         timeline = None
         if refresh_current_attendance and (
             attendance is None
             or work_date == local_today(timezone_name, attendance_now)
         ):
+            employee = employees_by_id.get(row_employee_id)
+            if employee is None:
+                continue
             attendance, timeline = cached_daily_attendance(
                 db,
                 employee=employee,
@@ -303,7 +425,7 @@ def timesheet_rows(
 
     employee_ids = {key[0] for key in result_by_key}
     team_by_employee: dict[UUID, str] = {}
-    if employee_ids and include_screenshot_counts:
+    if employee_ids:
         for member_employee_id, member_team_id in db.execute(
             select(TeamMember.employee_id, TeamMember.team_id).where(
                 TeamMember.employee_id.in_(employee_ids),
@@ -313,7 +435,7 @@ def timesheet_rows(
             team_by_employee.setdefault(member_employee_id, str(member_team_id))
 
     screenshot_counts: dict[tuple[UUID, date], int] = {}
-    if employee_ids:
+    if employee_ids and include_screenshot_counts:
         timezone_by_employee = {
             row_employee_id: str(result_by_key[(row_employee_id, work_date)]["timezone"])
             for row_employee_id, work_date in result_by_key
@@ -370,7 +492,8 @@ def timesheet_rows(
                 "screenshot_count": int(screenshot_count),
             }
         )
-    db.commit()
+    if refresh_current_attendance:
+        db.commit()
     return result
 
 
@@ -390,6 +513,8 @@ def daily(
             target,
             team_id=team_id,
             current_admin=current_admin,
+            refresh_current_attendance=False,
+            include_empty_roster=True,
         )
     )
 
@@ -410,6 +535,7 @@ def weekly(
             start + timedelta(days=6),
             team_id=team_id,
             current_admin=current_admin,
+            refresh_current_attendance=False,
         )
     )
 
@@ -432,7 +558,43 @@ def monthly(
             end,
             team_id=team_id,
             current_admin=current_admin,
+            refresh_current_attendance=False,
         )
+    )
+
+
+@router.get("/employee-options")
+def employee_options(
+    current_admin: Annotated[AdminUser, Depends(get_current_admin)],
+    db: Annotated[Session, Depends(get_db)],
+    team_id: UUID | None = None,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=100, ge=1, le=100),
+):
+    statement = select(Employee.id, Employee.name).where(
+        Employee.company_id == current_admin.company_id,
+        Employee.status == "active",
+    )
+    statement = apply_employee_scope(
+        statement,
+        db,
+        current_admin,
+        Employee.id,
+        team_id,
+    )
+    total = count_for(db, statement)
+    employees = db.execute(
+        apply_pagination(statement.order_by(Employee.name, Employee.id), page, page_size)
+    ).all()
+    return success_response(
+        data=[
+            {
+                "id": str(row_employee_id),
+                "name": employee_name,
+            }
+            for row_employee_id, employee_name in employees
+        ],
+        meta=pagination_meta(total, page, page_size),
     )
 
 

@@ -1,17 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
-import { Activity, Camera, Clock3, Coffee, Download } from "lucide-react";
+import { Activity, AlertTriangle, Camera, Clock3, Coffee, Download, RefreshCw } from "lucide-react";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card } from "@/components/ui/card";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -23,11 +15,12 @@ import {
 } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { StatusBadge } from "@/components/ui/status-badge";
-import { listTimesheets } from "@/api/timesheets";
-import { listEmployees } from "@/api/employees";
+import { listTimesheetEmployeeOptions, listTimesheets } from "@/api/timesheets";
 import { listTeams } from "@/api/teams";
+import { retryTransientRequest } from "@/api/client";
 import { useAuth } from "@/lib/auth";
 import { downloadCSV, formatClock, formatMinutes } from "@/lib/format";
+import { paginateRows } from "@/lib/timesheet-pagination";
 import type { LucideIcon } from "lucide-react";
 
 export const Route = createFileRoute("/_app/timesheets")({
@@ -37,27 +30,38 @@ export const Route = createFileRoute("/_app/timesheets")({
 function TimesheetsPage() {
   const { scopedTeamIds } = useAuth();
   const scope = scopedTeamIds();
+  const [view, setView] = useState<"daily" | "weekly" | "monthly">("daily");
+  const [date, setDate] = useState(todayDateValue);
+  const [teamId, setTeamId] = useState("all");
+  const [empId, setEmpId] = useState("all");
+  const [page, setPage] = useState(0);
+  const perPage = 50;
+  const isCurrentPeriod = selectedPeriodIncludesToday(view, date);
+
   const emps = useQuery({
-    queryKey: ["employees", scope],
-    queryFn: ({ signal }) => listEmployees(scope, signal),
+    queryKey: ["timesheetEmployeeOptions", scope, teamId],
+    queryFn: ({ signal }) => listTimesheetEmployeeOptions(scope, teamId, signal),
+    staleTime: 10 * 60_000,
+    gcTime: 30 * 60_000,
+    placeholderData: (previous) => previous,
+    retry: retryTransientRequest,
   });
   const teams = useQuery({
     queryKey: ["teams", scope],
     queryFn: ({ signal }) => listTeams(scope, signal),
     staleTime: 10 * 60_000,
     gcTime: 30 * 60_000,
+    retry: retryTransientRequest,
   });
 
-  const [view, setView] = useState<"daily" | "weekly" | "monthly">("daily");
-  const [date, setDate] = useState(todayDateValue);
-  const [teamId, setTeamId] = useState("all");
-  const [empId, setEmpId] = useState("all");
-  const [page, setPage] = useState(0);
-  const perPage = 15;
   const ts = useQuery({
     queryKey: ["ts", scope, view, date, teamId],
     queryFn: ({ signal }) => listTimesheets(scope, view, date, teamId, signal),
     placeholderData: (previous) => previous,
+    staleTime: isCurrentPeriod ? 30_000 : 5 * 60_000,
+    refetchInterval: isCurrentPeriod ? 60_000 : false,
+    refetchIntervalInBackground: false,
+    retry: retryTransientRequest,
   });
 
   const filtered = useMemo(
@@ -70,20 +74,30 @@ function TimesheetsPage() {
     [ts.data, teamId, empId],
   );
 
-  const paged = filtered.slice(page * perPage, (page + 1) * perPage);
-  const totalPages = Math.max(1, Math.ceil(filtered.length / perPage));
-
-  const empName = (id: string) => (emps.data ?? []).find((e) => e.id === id)?.name ?? id;
-  const teamName = (id: string) => (teams.data ?? []).find((t) => t.id === id)?.name ?? id;
-  const totals = filtered.reduce(
-    (sum, row) => ({
-      total: sum.total + row.totalMinutes,
-      active: sum.active + row.activeMinutes,
-      idle: sum.idle + row.idleMinutes,
-      screenshots: sum.screenshots + row.screenshotCount,
-    }),
-    { total: 0, active: 0, idle: 0, screenshots: 0 },
+  const pagination = useMemo(() => paginateRows(filtered, page, perPage), [filtered, page]);
+  const employeeNameById = useMemo(
+    () => new Map((emps.data ?? []).map((employee) => [employee.id, employee.name])),
+    [emps.data],
   );
+  const teamNameById = useMemo(
+    () => new Map((teams.data ?? []).map((team) => [team.id, team.name])),
+    [teams.data],
+  );
+  const totals = useMemo(
+    () =>
+      filtered.reduce(
+        (sum, row) => ({
+          total: sum.total + row.totalMinutes,
+          active: sum.active + row.activeMinutes,
+          idle: sum.idle + row.idleMinutes,
+          screenshots: sum.screenshots + row.screenshotCount,
+        }),
+        { total: 0, active: 0, idle: 0, screenshots: 0 },
+      ),
+    [filtered],
+  );
+  const empName = (id: string, fallback?: string) => fallback ?? employeeNameById.get(id) ?? id;
+  const teamName = (id: string) => (id ? (teamNameById.get(id) ?? id) : "Unassigned");
 
   return (
     <div className="studio-page">
@@ -98,7 +112,7 @@ function TimesheetsPage() {
                 "timesheets.csv",
                 filtered.map((t) => ({
                   date: t.date,
-                  employee: empName(t.employeeId),
+                  employee: empName(t.employeeId, t.employeeName),
                   team: teamName(t.teamId),
                   total_minutes: t.totalMinutes,
                   active_minutes: t.activeMinutes,
@@ -145,6 +159,7 @@ function TimesheetsPage() {
             value={teamId}
             onValueChange={(value) => {
               setTeamId(value);
+              setEmpId("all");
               setPage(0);
             }}
           >
@@ -191,6 +206,31 @@ function TimesheetsPage() {
             Reset
           </Button>
         </div>
+        {(teams.isError || emps.isError) && (
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs">
+            <span className="flex items-center gap-2 text-destructive">
+              <AlertTriangle className="h-4 w-4" />
+              Some filter options could not be loaded.
+            </span>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                if (teams.isError) void teams.refetch();
+                if (emps.isError) void emps.refetch();
+              }}
+            >
+              Retry filters
+            </Button>
+          </div>
+        )}
+        {(teams.isFetching || emps.isFetching) && !teams.isPending && !emps.isPending && (
+          <p className="mt-3 flex items-center gap-2 text-xs font-semibold text-muted-foreground">
+            <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+            Refreshing filter options…
+          </p>
+        )}
       </Card>
 
       <div className="mb-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -211,144 +251,140 @@ function TimesheetsPage() {
       </div>
 
       <Card className="mb-4 overflow-hidden">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3">
+          <p className="text-sm font-extrabold">
+            {filtered.length} {filtered.length === 1 ? "record" : "records"}
+          </p>
+          {ts.isFetching && !ts.isPending && (
+            <span className="flex items-center gap-2 text-xs font-semibold text-muted-foreground">
+              <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+              Updating timesheets…
+            </span>
+          )}
+        </div>
+        {ts.isError && ts.data && (
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-destructive/20 bg-destructive/5 px-4 py-2 text-xs text-destructive">
+            <span>Latest refresh failed. Previously loaded records are still shown.</span>
+            <Button type="button" variant="outline" size="sm" onClick={() => void ts.refetch()}>
+              Retry
+            </Button>
+          </div>
+        )}
         <div className="divide-y divide-border">
-          {ts.isLoading
-            ? Array.from({ length: 6 }).map((_, index) => (
-                <div key={index} className="p-4">
-                  <div className="h-16 animate-pulse rounded-2xl bg-muted" />
-                </div>
-              ))
-            : paged.map((t) => {
-                const activePct = t.totalMinutes
-                  ? Math.round((t.activeMinutes / t.totalMinutes) * 100)
-                  : 0;
-                const idlePct = t.totalMinutes
-                  ? Math.round((t.idleMinutes / t.totalMinutes) * 100)
-                  : 0;
-                return (
-                  <div
-                    key={t.id}
-                    className="grid gap-4 p-4 transition hover:bg-muted/40 lg:grid-cols-[minmax(0,1.25fr)_minmax(260px,1fr)_auto]"
-                  >
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-extrabold">{empName(t.employeeId)}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {teamName(t.teamId)} · {t.date}
-                      </p>
-                      <p className="mt-1 text-xs text-muted-foreground">
-                        {formatClock(t.startTime)} →{" "}
-                        {t.endTime ? formatClock(t.endTime) : "Open until now"}
-                      </p>
-                    </div>
+          {ts.isPending ? (
+            Array.from({ length: 6 }).map((_, index) => (
+              <div key={index} className="p-4">
+                <div className="h-16 animate-pulse rounded-2xl bg-muted" />
+              </div>
+            ))
+          ) : ts.isError && !ts.data ? (
+            <div className="flex flex-col items-center gap-3 px-4 py-12 text-center">
+              <AlertTriangle className="h-8 w-8 text-destructive" />
+              <div>
+                <p className="text-sm font-extrabold">Timesheets could not be loaded</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Check the connection and try this section again.
+                </p>
+              </div>
+              <Button type="button" variant="outline" onClick={() => void ts.refetch()}>
+                Retry
+              </Button>
+            </div>
+          ) : (
+            pagination.rows.map((t) => {
+              const activePct = t.totalMinutes
+                ? Math.round((t.activeMinutes / t.totalMinutes) * 100)
+                : 0;
+              const idlePct = t.totalMinutes
+                ? Math.round((t.idleMinutes / t.totalMinutes) * 100)
+                : 0;
+              return (
+                <div
+                  key={t.id}
+                  className="grid gap-4 p-4 transition hover:bg-muted/40 lg:grid-cols-[minmax(0,1.25fr)_minmax(260px,1fr)_auto]"
+                >
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-extrabold">
+                      {empName(t.employeeId, t.employeeName)}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {teamName(t.teamId)} · {t.date}
+                    </p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {t.status === "missing"
+                        ? "No time recorded"
+                        : `${formatClock(t.startTime)} → ${
+                            t.endTime ? formatClock(t.endTime) : "Open until now"
+                          }`}
+                    </p>
+                  </div>
 
-                    <div>
-                      <div className="mb-2 flex items-center justify-between text-xs">
-                        <span className="font-bold text-muted-foreground">Work mix</span>
-                        <span className="font-mono-numeric font-extrabold">
-                          {formatMinutes(t.totalMinutes)}
-                        </span>
-                      </div>
-                      <div className="flex h-3 overflow-hidden rounded-full bg-muted">
-                        <span
-                          className="bg-success"
-                          style={{ width: `${Math.max(0, activePct)}%` }}
-                        />
-                        <span
-                          className="bg-warning"
-                          style={{ width: `${Math.max(0, idlePct)}%` }}
-                        />
-                      </div>
-                      <div className="mt-2 grid grid-cols-3 gap-2 text-[11px] text-muted-foreground">
-                        <span>Active {formatMinutes(t.activeMinutes)}</span>
-                        <span>Idle {formatMinutes(t.idleMinutes)}</span>
-                        <span>Manual {formatMinutes(t.adjustmentMinutes)}</span>
-                      </div>
+                  <div>
+                    <div className="mb-2 flex items-center justify-between text-xs">
+                      <span className="font-bold text-muted-foreground">Work mix</span>
+                      <span className="font-mono-numeric font-extrabold">
+                        {formatMinutes(t.totalMinutes)}
+                      </span>
                     </div>
-
-                    <div className="flex flex-wrap items-center gap-2 lg:justify-end">
-                      <span className="rounded-full bg-muted px-2.5 py-1 text-xs font-bold text-muted-foreground">
-                        {t.screenshotCount} shots
-                      </span>
-                      <span className="rounded-full bg-muted px-2.5 py-1 text-xs font-bold text-muted-foreground">
-                        {t.points.toFixed(2)} pts
-                      </span>
-                      <StatusBadge status={t.status} />
+                    <div className="flex h-3 overflow-hidden rounded-full bg-muted">
+                      <span
+                        className="bg-success"
+                        style={{ width: `${Math.max(0, activePct)}%` }}
+                      />
+                      <span className="bg-warning" style={{ width: `${Math.max(0, idlePct)}%` }} />
+                    </div>
+                    <div className="mt-2 grid grid-cols-3 gap-2 text-[11px] text-muted-foreground">
+                      <span>Active {formatMinutes(t.activeMinutes)}</span>
+                      <span>Idle {formatMinutes(t.idleMinutes)}</span>
+                      <span>Manual {formatMinutes(t.adjustmentMinutes)}</span>
                     </div>
                   </div>
-                );
-              })}
-          {!ts.isLoading && paged.length === 0 && (
+
+                  <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+                    <span className="rounded-full bg-muted px-2.5 py-1 text-xs font-bold text-muted-foreground">
+                      {t.screenshotCount} shots
+                    </span>
+                    <span className="rounded-full bg-muted px-2.5 py-1 text-xs font-bold text-muted-foreground">
+                      {t.points.toFixed(2)} pts
+                    </span>
+                    <StatusBadge status={t.status} />
+                  </div>
+                </div>
+              );
+            })
+          )}
+          {!ts.isPending && !ts.isError && pagination.rows.length === 0 && (
             <div className="py-12 text-center text-sm text-muted-foreground">
               No timesheets match these filters.
             </div>
           )}
         </div>
-      </Card>
-
-      <Card className="hidden overflow-x-auto">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Date</TableHead>
-              <TableHead>Employee</TableHead>
-              <TableHead>Team</TableHead>
-              <TableHead>Start</TableHead>
-              <TableHead>End</TableHead>
-              <TableHead>Total</TableHead>
-              <TableHead>Active</TableHead>
-              <TableHead>Idle</TableHead>
-              <TableHead>Manual</TableHead>
-              <TableHead>Deleted time</TableHead>
-              <TableHead>Points</TableHead>
-              <TableHead>Screenshots</TableHead>
-              <TableHead>Status</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {paged.map((t) => (
-              <TableRow key={t.id}>
-                <TableCell>{t.date}</TableCell>
-                <TableCell>{empName(t.employeeId)}</TableCell>
-                <TableCell>{teamName(t.teamId)}</TableCell>
-                <TableCell>{formatClock(t.startTime)}</TableCell>
-                <TableCell>{t.endTime ? formatClock(t.endTime) : "Open until now"}</TableCell>
-                <TableCell>{formatMinutes(t.totalMinutes)}</TableCell>
-                <TableCell>{formatMinutes(t.activeMinutes)}</TableCell>
-                <TableCell>{formatMinutes(t.idleMinutes)}</TableCell>
-                <TableCell>{formatMinutes(t.adjustmentMinutes)}</TableCell>
-                <TableCell>{formatMinutes(t.deductedMinutes)}</TableCell>
-                <TableCell>{t.points.toFixed(2)}</TableCell>
-                <TableCell>{t.screenshotCount}</TableCell>
-                <TableCell>
-                  <StatusBadge status={t.status} />
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-        <div className="flex items-center justify-between border-t border-border px-4 py-3 text-sm">
-          <span className="text-muted-foreground">
-            Page {page + 1} of {totalPages} · {filtered.length} rows
-          </span>
-          <div className="flex gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={page === 0}
-              onClick={() => setPage((p) => p - 1)}
-            >
-              Previous
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={page + 1 >= totalPages}
-              onClick={() => setPage((p) => p + 1)}
-            >
-              Next
-            </Button>
+        {!ts.isPending && !ts.isError && filtered.length > 0 && (
+          <div className="flex items-center justify-between border-t border-border px-4 py-3 text-sm">
+            <span className="text-muted-foreground">
+              Showing {pagination.start + 1}–{pagination.end} of {filtered.length} records · Page{" "}
+              {pagination.page + 1} of {pagination.totalPages}
+            </span>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={pagination.page === 0}
+                onClick={() => setPage(pagination.page - 1)}
+              >
+                Previous
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={pagination.page + 1 >= pagination.totalPages}
+                onClick={() => setPage(pagination.page + 1)}
+              >
+                Next
+              </Button>
+            </div>
           </div>
-        </div>
+        )}
       </Card>
     </div>
   );
@@ -360,6 +396,36 @@ function todayDateValue() {
   const month = String(today.getMonth() + 1).padStart(2, "0");
   const day = String(today.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
+}
+
+function selectedPeriodIncludesToday(view: "daily" | "weekly" | "monthly", selectedDate: string) {
+  const selected = parseLocalDate(selectedDate);
+  const today = parseLocalDate(todayDateValue());
+  if (!selected || !today) return false;
+
+  if (view === "monthly") {
+    return (
+      selected.getFullYear() === today.getFullYear() && selected.getMonth() === today.getMonth()
+    );
+  }
+  if (view === "weekly") {
+    return startOfLocalWeek(selected).getTime() === startOfLocalWeek(today).getTime();
+  }
+  return selected.getTime() === today.getTime();
+}
+
+function parseLocalDate(value: string) {
+  const [year, month, day] = value.split("-").map(Number);
+  if (!year || !month || !day) return null;
+  return new Date(year, month - 1, day);
+}
+
+function startOfLocalWeek(value: Date) {
+  const start = new Date(value);
+  const mondayOffset = (start.getDay() + 6) % 7;
+  start.setDate(start.getDate() - mondayOffset);
+  start.setHours(0, 0, 0, 0);
+  return start;
 }
 
 function TimesheetMetric({
