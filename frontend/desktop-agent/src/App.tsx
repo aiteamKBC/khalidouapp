@@ -1783,7 +1783,7 @@ function Sidebar({
             {status.connectionStatus === "online"
               ? "Online - Synced"
               : isTracking
-                ? "Online - tracking locally"
+                ? "Offline - tracking locally"
                 : "Offline"}
           </small>
         </div>
