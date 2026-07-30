@@ -66,6 +66,7 @@ from app.schemas.admin import EmployeeWorkProfileUpdate
 from app.services.permissions import has_capability, require_capability
 from app.services.person_access import disable_employee_tracking
 from app.services.request_notifications import employee_manager_summaries
+from app.services.input_integrity import summarize_input_integrity
 from app.services.work_profiles import (
     DEFAULT_BREAK_RULES,
     DEFAULT_WEEKLY_OFF_DAYS,
@@ -671,6 +672,33 @@ def list_monitoring_employees(
                 membership_team_id
             )
 
+    integrity_by_employee: dict[UUID, list[tuple[datetime, object]]] = {
+        employee_id: [] for employee_id in employee_ids
+    }
+    if employee_ids:
+        integrity_rows = db.execute(
+            select(
+                ActivityEvent.employee_id,
+                ActivityEvent.event_timestamp,
+                ActivityEvent.payload,
+            ).where(
+                ActivityEvent.company_id == current_admin.company_id,
+                ActivityEvent.employee_id.in_(employee_ids),
+                ActivityEvent.event_type == "heartbeat",
+                ActivityEvent.event_timestamp >= now - timedelta(minutes=10),
+            )
+        ).all()
+        for integrity_employee_id, observed_at, event_payload in integrity_rows:
+            observation = (
+                event_payload.get("input_integrity")
+                if isinstance(event_payload, dict)
+                else None
+            )
+            if observation is not None:
+                integrity_by_employee.setdefault(integrity_employee_id, []).append(
+                    (observed_at, observation)
+                )
+
     schedule_candidates = []
     for (
         employee,
@@ -758,6 +786,9 @@ def list_monitoring_employees(
                     str(team_id)
                     for team_id in memberships_by_employee.get(employee.id, [])
                 ],
+                "input_integrity": summarize_input_integrity(
+                    integrity_by_employee.get(employee.id, [])
+                ),
             }
         )
     return success_response(data=data)

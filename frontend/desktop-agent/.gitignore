@@ -8,6 +8,7 @@ pnpm-debug.log*
 lerna-debug.log*
 
 node_modules
+native-bin
 build-runtime.env
 dist
 dist-ssr

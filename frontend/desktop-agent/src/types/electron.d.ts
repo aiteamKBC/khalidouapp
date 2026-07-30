@@ -56,6 +56,7 @@ export type AgentStatus = {
   todayTimeline: WorkdayTimeline | null;
   idleRequestPeriods: IdleRequestPeriod[];
   lastIdleAlert: IdleAlert | null;
+  locallyEndedIdleAt: string | null;
   updateStatus:
     | "idle"
     | "checking"

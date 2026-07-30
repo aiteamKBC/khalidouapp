@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ImgHTMLAttributes } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { ImageOff, RotateCw } from "lucide-react";
 import { apiImageFile } from "@/api/client";
 import { cn } from "@/lib/utils";
 import {
@@ -80,6 +81,44 @@ export function ProtectedImage({
     errorReported.current = true;
     onLoadError?.();
   }, [image.isError, onLoadError]);
+
+  if (visible && image.isError && !objectUrl) {
+    return (
+      <span
+        ref={(element) => {
+          imageRef.current = element;
+        }}
+        role="img"
+        aria-label={typeof alt === "string" ? `${alt} unavailable` : "Image unavailable"}
+        className={cn(
+          "flex flex-col items-center justify-center gap-1.5 bg-muted/50 p-2 text-center text-[10px] font-semibold text-muted-foreground",
+          className,
+        )}
+      >
+        <ImageOff className="h-4 w-4" aria-hidden="true" />
+        <span>Image unavailable</span>
+        <span
+          role="button"
+          tabIndex={0}
+          className="inline-flex items-center gap-1 rounded-md border bg-card px-2 py-1 text-foreground"
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            void image.refetch();
+          }}
+          onKeyDown={(event) => {
+            if (event.key !== "Enter" && event.key !== " ") return;
+            event.preventDefault();
+            event.stopPropagation();
+            void image.refetch();
+          }}
+        >
+          <RotateCw className="h-3 w-3" aria-hidden="true" />
+          Retry
+        </span>
+      </span>
+    );
+  }
 
   if (!objectUrl) {
     return (

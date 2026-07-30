@@ -42,3 +42,46 @@ export function timelineDisplayType(
   }
   return intervalType;
 }
+
+export function timelineIntervalPresentation(
+  interval: {
+    type: TimelineIntervalType;
+    started_at: string;
+    ended_at: string | null;
+    duration_seconds: number;
+    is_current: boolean;
+  },
+  locallyEndedIdleAt: string | null,
+) {
+  if (
+    interval.type !== "idle" ||
+    !interval.is_current ||
+    !locallyEndedIdleAt
+  ) {
+    return {
+      isCurrent: interval.is_current,
+      endedAt: interval.ended_at,
+      durationSeconds: interval.duration_seconds,
+    };
+  }
+
+  const startedAtMs = Date.parse(interval.started_at);
+  const endedAtMs = Date.parse(locallyEndedIdleAt);
+  if (
+    !Number.isFinite(startedAtMs) ||
+    !Number.isFinite(endedAtMs) ||
+    endedAtMs < startedAtMs
+  ) {
+    return {
+      isCurrent: interval.is_current,
+      endedAt: interval.ended_at,
+      durationSeconds: interval.duration_seconds,
+    };
+  }
+
+  return {
+    isCurrent: false,
+    endedAt: locallyEndedIdleAt,
+    durationSeconds: Math.floor((endedAtMs - startedAtMs) / 1000),
+  };
+}

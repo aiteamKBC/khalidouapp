@@ -61,15 +61,24 @@ import {
 } from "./services/identityStore.js";
 import type { StoredIdentity } from "./services/identityStore.js";
 import {
+  appendLocalTrackingEvent,
+  checkpointLocalTrackingSession,
+  closeLocalTrackingSession,
+  createLocalTrackingSession,
   enqueuePendingEvent,
   enqueuePendingScreenshot,
   getDuePendingEvents,
   getDuePendingScreenshots,
+  getLocalTrackingEvents,
+  getOpenLocalTrackingSession,
+  getPendingLocalTrackingSessions,
   initializeLocalDatabase,
+  markLocalTrackingSessionSynced,
   markPendingEventFailed,
   markPendingEventUploaded,
   markPendingScreenshotFailed,
   markPendingScreenshotUploaded,
+  type LocalTrackingSession,
 } from "./services/localDb.js";
 import {
   hasReachedIdleThreshold,
@@ -78,6 +87,15 @@ import {
   inputResumedAfterIdle,
   shouldWaitForInputBeforeRestart,
 } from "./services/idlePolicy.js";
+import { createCoalescedRefresh } from "./services/coalescedRefresh.js";
+import {
+  mergeRecoveredCounters,
+  offsetRecoveredEventPayload,
+} from "./services/offlineTracking.js";
+import {
+  InputIntegrityMonitor,
+  type InputIntegrityObservation,
+} from "./services/inputIntegrity.js";
 
 const { nativeImage, shell } = electronCommon;
 const {
@@ -150,6 +168,7 @@ type AgentRuntimeStatus = {
   todayTimeline: AgentSummary["today_timeline"] | null;
   idleRequestPeriods: NonNullable<AgentSummary["idle_request_periods"]>;
   lastIdleAlert: IdleLossAlert | null;
+  locallyEndedIdleAt: string | null;
   updateStatus:
     | "idle"
     | "checking"
@@ -226,15 +245,23 @@ let tray: Electron.Tray | null = null;
 let isQuitting = false;
 let quitNotificationSent = false;
 let currentSessionId: string | null = null;
+let localTrackingSessionId: string | null = null;
+let isPromotingLocalTrackingSessions = false;
+let lastLocalTrackingCheckpointAt = 0;
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 let durationTimer: ReturnType<typeof setInterval> | null = null;
 let foregroundActivityTimer: ReturnType<typeof setInterval> | null = null;
 let foregroundActivityTickRunning = false;
 let foregroundActivitySegment: ForegroundActivitySegment | null = null;
+const inputIntegrityMonitor = new InputIntegrityMonitor();
+let lastInputProbeStartAttemptAt = 0;
+let inputProbeMissingWasLogged = false;
 let idleTimer: ReturnType<typeof setInterval> | null = null;
 let idleAttentionTimer: ReturnType<typeof setTimeout> | null = null;
 let idleAlertAttentionActive = false;
 let isFinishingAutomaticIdle = false;
+let automaticIdleStartPromise: Promise<boolean> | null = null;
+let automaticIdleFinishPromise: Promise<boolean> | null = null;
 let updateAttentionActive = false;
 let screenshotTimer: ReturnType<typeof setTimeout> | null = null;
 let screenshotQueue: number[] = [];
@@ -267,7 +294,6 @@ let consecutiveUpdateFailures = 0;
 let lastFullSummaryRefreshAt = 0;
 let lastMetadataRefreshAt = 0;
 let isRefreshingTrackingConfig = false;
-let isRefreshingWorkedSummary = false;
 let isRefreshingTasks = false;
 let isRefreshingTimeAdjustments = false;
 let isRefreshingLeaveRequests = false;
@@ -328,13 +354,14 @@ const runtimeStatus: AgentRuntimeStatus = {
   todayTimeline: null,
   idleRequestPeriods: [],
   lastIdleAlert: null,
+  locallyEndedIdleAt: null,
   updateStatus: "idle",
   updateVersion: null,
   updatePercent: null,
 };
 
 const privacyNotice =
-  "While work tracking is active, Khaliduo records the foreground application name and, for supported browsers, the website domain. Company policy may also capture periodic workplace screenshots while this enrolled device is active, unlocked, and connected to AC power. Full URLs, page titles, typed text, passwords, webcam, microphone, and personal files are not recorded.";
+  "While work tracking is active, Khaliduo records the foreground application name and, for supported browsers, the website domain. Company policy may also capture periodic workplace screenshots while this enrolled device is active, unlocked, and connected to AC power. To protect attendance integrity, the Windows agent counts real versus software-injected input events; it never records keys, typed text, click coordinates, passwords, webcam, microphone, full URLs, or personal files.";
 
 const FOREGROUND_WINDOW_POWERSHELL = String.raw`
 $ErrorActionPreference = 'Stop'
@@ -479,7 +506,13 @@ function isDeviceIdentityMismatch(error: unknown) {
 function resetForDeviceReenrollment() {
   // Keep pending local screenshots/events on disk. They can be retried after
   // the employee signs in again; only the invalid local credential is cleared.
+  recalculateWorkedTime();
+  closeActiveLocalTrackingSession(
+    new Date().toISOString(),
+    "device_identity_mismatch",
+  );
   clearRuntimeTimers();
+  inputIntegrityMonitor.stop();
   clearEnrollmentIdentity();
   configureAutoStart(false);
   trackingPausedByUser = false;
@@ -491,6 +524,9 @@ function resetForDeviceReenrollment() {
   eligibleIdleSecondsBeforeCurrentIdle = 0;
   idleWallClockStartedAt = null;
   automaticIdleStartedDuringBreak = false;
+  automaticIdleStartPromise = null;
+  automaticIdleFinishPromise = null;
+  isFinishingAutomaticIdle = false;
   lastObservedSystemIdleSeconds = null;
   waitingForInputAfterIdleSessionClose = false;
   Object.assign(runtimeStatus, {
@@ -520,6 +556,7 @@ function resetForDeviceReenrollment() {
     todayTimeline: null,
     idleRequestPeriods: [],
     lastIdleAlert: null,
+    locallyEndedIdleAt: null,
   } satisfies Partial<AgentRuntimeStatus>);
   tray?.setImage(createTrayImage("#b7791f"));
   rebuildTrayMenu();
@@ -557,6 +594,7 @@ async function activateEnrolledDevice(identity: StoredIdentity) {
   saveTrackingPreferences();
   configureAutoStart(true);
   tray?.setImage(createTrayImage("#1f7a4d"));
+  beginLocalTrackingSession();
   await startTrackingAutomatically();
   await refreshTasks();
   await refreshTimeAdjustmentRequests();
@@ -604,7 +642,7 @@ function formatDuration(totalSeconds: number) {
 function updateDisplaySleepBlocker() {
   const shouldKeepDisplayAwake =
     runtimeStatus.enrolled &&
-    Boolean(currentSessionId) &&
+    hasTrackingSession() &&
     !trackingPausedByUser &&
     !runtimeStatus.trackingPaused &&
     !isQuitting;
@@ -636,7 +674,7 @@ function rebuildTrayMenu() {
   updateDisplaySleepBlocker();
 
   const trackingActive =
-    Boolean(currentSessionId) &&
+    hasTrackingSession() &&
     !trackingPausedByUser &&
     !runtimeStatus.trackingPaused;
   const normalTodaySeconds = Math.min(
@@ -819,6 +857,329 @@ function localDateKey(at = new Date()) {
   return `${part("year")}-${part("month")}-${part("day")}`;
 }
 
+function inputProbeExecutablePath() {
+  return app.isPackaged
+    ? path.join(
+        process.resourcesPath,
+        "input-integrity",
+        "KhaliduoInputProbe.exe",
+      )
+    : path.join(app.getAppPath(), "native-bin", "KhaliduoInputProbe.exe");
+}
+
+function startInputIntegrityMonitoring() {
+  if (process.platform !== "win32" || inputIntegrityMonitor.running) {
+    return;
+  }
+  const now = Date.now();
+  if (now - lastInputProbeStartAttemptAt < 30_000) {
+    return;
+  }
+  lastInputProbeStartAttemptAt = now;
+  const executablePath = inputProbeExecutablePath();
+  if (!fs.existsSync(executablePath)) {
+    if (!inputProbeMissingWasLogged) {
+      inputProbeMissingWasLogged = true;
+      log.warn("Input-integrity probe is unavailable", { executablePath });
+    }
+    return;
+  }
+  if (
+    !inputIntegrityMonitor.start(
+      executablePath,
+      powerMonitor.getSystemIdleTime(),
+    )
+  ) {
+    log.warn("Input-integrity probe could not be started");
+  }
+}
+
+function observedIdleSeconds() {
+  startInputIntegrityMonitoring();
+  return inputIntegrityMonitor.idleSeconds(powerMonitor.getSystemIdleTime());
+}
+
+function inputIntegrityObservation():
+  | InputIntegrityObservation
+  | undefined {
+  if (process.platform !== "win32") return undefined;
+  startInputIntegrityMonitoring();
+  return inputIntegrityMonitor.takeObservation();
+}
+
+function hasTrackingSession() {
+  return Boolean(currentSessionId || localTrackingSessionId);
+}
+
+function heartbeatStatus(
+  status: string,
+): "active" | "idle" | "locked" | "offline" | "sleeping" {
+  return ["idle", "locked", "offline", "sleeping"].includes(status)
+    ? (status as "idle" | "locked" | "offline" | "sleeping")
+    : "active";
+}
+
+function checkpointActiveLocalTrackingSession(force = false) {
+  if (!localTrackingSessionId) {
+    return;
+  }
+  const now = Date.now();
+  if (!force && now - lastLocalTrackingCheckpointAt < 5_000) {
+    return;
+  }
+  lastLocalTrackingCheckpointAt = now;
+  checkpointLocalTrackingSession({
+    sessionId: localTrackingSessionId,
+    status: runtimeStatus.trackingStatus,
+    activeSeconds: runtimeStatus.activeSeconds,
+    idleSeconds: runtimeStatus.idleSeconds,
+    checkpointAt: new Date(now).toISOString(),
+  });
+}
+
+function closeActiveLocalTrackingSession(
+  endedAt = new Date().toISOString(),
+  status = "ended",
+) {
+  const sessionId = localTrackingSessionId;
+  if (!sessionId) {
+    return;
+  }
+  checkpointActiveLocalTrackingSession(true);
+  closeLocalTrackingSession({
+    sessionId,
+    endedAt,
+    status,
+    activeSeconds: runtimeStatus.activeSeconds,
+    idleSeconds: runtimeStatus.idleSeconds,
+  });
+  localTrackingSessionId = null;
+  lastLocalTrackingCheckpointAt = 0;
+}
+
+function beginLocalTrackingSession(startedAt = new Date()) {
+  if (
+    currentSessionId ||
+    localTrackingSessionId ||
+    !runtimeStatus.enrolled ||
+    !runtimeStatus.deviceId ||
+    trackingPausedByUser ||
+    unpaidPauseActive ||
+    isQuitting
+  ) {
+    return false;
+  }
+
+  const staleOpen = getOpenLocalTrackingSession(runtimeStatus.deviceId);
+  if (staleOpen) {
+    closeLocalTrackingSession({
+      sessionId: staleOpen.sessionId,
+      endedAt: staleOpen.lastCheckpointAt,
+      status: "app_interrupted",
+      activeSeconds: staleOpen.activeSeconds,
+      idleSeconds: staleOpen.idleSeconds,
+    });
+  }
+
+  const preservedWorkedToday = runtimeStatus.workedTodaySeconds;
+  const localSessionId = randomUUID();
+  const startedAtIso = startedAt.toISOString();
+  createLocalTrackingSession({
+    sessionId: localSessionId,
+    deviceId: runtimeStatus.deviceId,
+    startedAt: startedAtIso,
+    status: "active",
+  });
+  localTrackingSessionId = localSessionId;
+  lastLocalTrackingCheckpointAt = startedAt.getTime();
+  activeCounterDate = localDateKey(startedAt);
+  workedTodayBaseSeconds = Math.max(
+    workedTodayBaseSeconds,
+    preservedWorkedToday,
+  );
+  runtimeStatus.sessionStartedAt = startedAtIso;
+  runtimeStatus.activeSeconds = 0;
+  runtimeStatus.idleSeconds = 0;
+  runtimeStatus.eligibleIdleSeconds = 0;
+  runtimeStatus.trackingStatus = "active";
+  runtimeStatus.trackingPaused = false;
+  lastDurationTickAt = startedAt.getTime();
+  startTimers();
+  startScreenshotMonitoring();
+  notifyRendererStatus();
+  rebuildTrayMenu();
+  log.info("Local tracking session started before API recovery", {
+    localSessionId,
+    startedAt: startedAtIso,
+  });
+  return true;
+}
+
+async function replayLocalTrackingEvents(
+  localSession: LocalTrackingSession,
+  serverSessionId: string,
+  serverIdleSeconds: number,
+  deliveredIds = new Set<string>(),
+) {
+  while (true) {
+    const pending = getLocalTrackingEvents(localSession.sessionId).filter(
+      (event) => !deliveredIds.has(event.id),
+    );
+    if (pending.length === 0) {
+      return deliveredIds;
+    }
+    for (const event of pending) {
+      const payload = offsetRecoveredEventPayload(
+        JSON.parse(event.payloadJson) as Record<string, unknown>,
+        serverIdleSeconds,
+      );
+      await sendActivityEvent({
+        sessionId: serverSessionId,
+        eventId: event.id,
+        eventType: event.eventType,
+        eventTimestamp: event.eventTimestamp,
+        payload,
+      });
+      deliveredIds.add(event.id);
+    }
+  }
+}
+
+async function promotePendingLocalTrackingSessions() {
+  if (
+    !runtimeStatus.enrolled ||
+    !runtimeStatus.deviceId ||
+    isPromotingLocalTrackingSessions
+  ) {
+    return false;
+  }
+  checkpointActiveLocalTrackingSession(true);
+  const pendingSessions = getPendingLocalTrackingSessions(runtimeStatus.deviceId);
+  if (pendingSessions.length === 0) {
+    return false;
+  }
+
+  isPromotingLocalTrackingSessions = true;
+  try {
+    for (const pendingSession of pendingSessions) {
+      const started = await startSession({
+        startedAt: pendingSession.startedAt,
+        offlineRecovery: true,
+        offlineRecoveryId: pendingSession.sessionId,
+      });
+      const serverSessionId = started.session.id;
+      if (pendingSession.endedAt && started.session.ended_at) {
+        markLocalTrackingSessionSynced(pendingSession.sessionId);
+        continue;
+      }
+      const serverCounters = {
+        activeSeconds: started.session.active_seconds,
+        idleSeconds: started.session.idle_seconds,
+      };
+      const deliveredLocalEventIds = await replayLocalTrackingEvents(
+        pendingSession,
+        serverSessionId,
+        serverCounters.idleSeconds,
+      );
+      const recovered = mergeRecoveredCounters(serverCounters, {
+        activeSeconds: pendingSession.activeSeconds,
+        idleSeconds: pendingSession.idleSeconds,
+      });
+      const heartbeatAt =
+        pendingSession.endedAt ??
+        pendingSession.lastCheckpointAt ??
+        new Date().toISOString();
+      const heartbeat = await sendHeartbeat({
+        sessionId: serverSessionId,
+        eventId: randomUUID(),
+        status: heartbeatStatus(pendingSession.status),
+        activeSeconds: recovered.activeSeconds,
+        idleSeconds: recovered.idleSeconds,
+        counterDate: localDateKey(new Date(heartbeatAt)),
+        agentVersion: runtimeStatus.agentVersion,
+        timestamp: heartbeatAt,
+      });
+
+      if (pendingSession.endedAt) {
+        await endSession({
+          sessionId: serverSessionId,
+          activeSeconds: recovered.activeSeconds,
+          idleSeconds: recovered.idleSeconds,
+          reason: "Recovered from offline device storage",
+          endedAt: pendingSession.endedAt,
+          eventId: randomUUID(),
+        });
+        markLocalTrackingSessionSynced(pendingSession.sessionId);
+        continue;
+      }
+
+      // A lock/idle transition may have been recorded locally while the
+      // recovery heartbeat was in flight. Replay once more before atomically
+      // switching this live session from local storage to the server ID.
+      await replayLocalTrackingEvents(
+        pendingSession,
+        serverSessionId,
+        serverCounters.idleSeconds,
+        deliveredLocalEventIds,
+      );
+      const latestLocalActiveSeconds =
+        localTrackingSessionId === pendingSession.sessionId
+          ? runtimeStatus.activeSeconds
+          : pendingSession.activeSeconds;
+      const latestLocalIdleSeconds =
+        localTrackingSessionId === pendingSession.sessionId
+          ? runtimeStatus.idleSeconds
+          : pendingSession.idleSeconds;
+      const latestStatus = runtimeStatus.trackingStatus;
+      const latestRecovered = mergeRecoveredCounters(serverCounters, {
+        activeSeconds: latestLocalActiveSeconds,
+        idleSeconds: latestLocalIdleSeconds,
+      });
+      const finalHeartbeat =
+        latestRecovered.activeSeconds !== recovered.activeSeconds ||
+        latestRecovered.idleSeconds !== recovered.idleSeconds ||
+        latestStatus !== pendingSession.status
+          ? await sendHeartbeat({
+              sessionId: serverSessionId,
+              eventId: randomUUID(),
+              status: heartbeatStatus(latestStatus),
+              activeSeconds: latestRecovered.activeSeconds,
+              idleSeconds: latestRecovered.idleSeconds,
+              counterDate: localDateKey(),
+              agentVersion: runtimeStatus.agentVersion,
+            })
+          : heartbeat;
+      localTrackingSessionId = null;
+      lastLocalTrackingCheckpointAt = 0;
+      syncRuntimeFromSession(finalHeartbeat.session);
+      runtimeStatus.activeSeconds = Math.max(
+        runtimeStatus.activeSeconds,
+        latestRecovered.activeSeconds,
+      );
+      runtimeStatus.idleSeconds = Math.max(
+        runtimeStatus.idleSeconds,
+        latestRecovered.idleSeconds,
+      );
+      runtimeStatus.eligibleIdleSeconds = Math.max(
+        runtimeStatus.eligibleIdleSeconds,
+        latestRecovered.idleSeconds,
+      );
+      runtimeStatus.trackingStatus = latestStatus;
+      runtimeStatus.workedTodaySeconds =
+        workedTodayBaseSeconds + runtimeStatus.activeSeconds;
+      markLocalTrackingSessionSynced(pendingSession.sessionId);
+    }
+    runtimeStatus.connectionStatus = "online";
+    runtimeStatus.lastSuccessfulSyncAt = new Date().toISOString();
+    log.info("Local tracking sessions synchronized with the API", {
+      count: pendingSessions.length,
+    });
+    return true;
+  } finally {
+    isPromotingLocalTrackingSessions = false;
+  }
+}
+
 function ensureCurrentCounterDate(now = new Date()) {
   const nextCounterDate = localDateKey(now);
   if (activeCounterDate === null) {
@@ -829,6 +1190,8 @@ function ensureCurrentCounterDate(now = new Date()) {
     return;
   }
 
+  const restartLocalTracking = Boolean(localTrackingSessionId);
+  closeActiveLocalTrackingSession(now.toISOString(), "daily_rollover");
   activeCounterDate = nextCounterDate;
   workedTodayBaseSeconds = 0;
   runtimeStatus.activeSeconds = 0;
@@ -842,9 +1205,13 @@ function ensureCurrentCounterDate(now = new Date()) {
   runtimeStatus.timeSummary = null;
   runtimeStatus.todayTimeline = null;
   runtimeStatus.idleRequestPeriods = [];
+  runtimeStatus.locallyEndedIdleAt = null;
   idleSecondsBeforeCurrentIdle = 0;
   eligibleIdleSecondsBeforeCurrentIdle = 0;
   lastDurationTickAt = now.getTime();
+  if (restartLocalTracking && automaticTrackingIsExpected()) {
+    beginLocalTrackingSession(now);
+  }
   notifyRendererStatus();
   rebuildTrayMenu();
 }
@@ -953,7 +1320,7 @@ function waitForInputAfterIdleSessionClose(
 ) {
   waitingForInputAfterIdleSessionClose = true;
   runtimeStatus.trackingStatus = status;
-  lastObservedSystemIdleSeconds = powerMonitor.getSystemIdleTime();
+  lastObservedSystemIdleSeconds = observedIdleSeconds();
   notifyRendererStatus();
   rebuildTrayMenu();
 }
@@ -1121,7 +1488,7 @@ function activeTimeBucket(at: Date): "normal" | "extra" {
 function recalculateWorkedTime() {
   ensureCurrentCounterDate();
   if (
-    !currentSessionId ||
+    !hasTrackingSession() ||
     !runtimeStatus.sessionStartedAt ||
     !runtimeStatus.enrolled ||
     trackingPausedByUser
@@ -1183,19 +1550,16 @@ function recalculateWorkedTime() {
         100,
     ),
   );
+  checkpointActiveLocalTrackingSession();
   rebuildTrayMenu();
 }
 
-async function refreshWorkedTodayTotal() {
+async function refreshWorkedTodayTotalOnce() {
   if (!runtimeStatus.enrolled) {
     workedTodayBaseSeconds = 0;
     runtimeStatus.workedTodaySeconds = 0;
     return;
   }
-  if (isRefreshingWorkedSummary) {
-    return;
-  }
-  isRefreshingWorkedSummary = true;
   try {
     const previousTimelineDate = runtimeStatus.todayTimeline?.date ?? null;
     const summary = await getAgentSummary();
@@ -1215,6 +1579,13 @@ async function refreshWorkedTodayTotal() {
     runtimeStatus.activityPercent = summary.activity_percent ?? 0;
     runtimeStatus.todayTimeline = summary.today_timeline;
     runtimeStatus.idleRequestPeriods = summary.idle_request_periods ?? [];
+    if (
+      !summary.today_timeline.intervals.some(
+        (interval) => interval.type === "idle" && interval.is_current,
+      )
+    ) {
+      runtimeStatus.locallyEndedIdleAt = null;
+    }
     const trackedTodaySeconds = Math.max(
       summary.today.tracked_active_seconds,
       summary.today_timeline?.worked_seconds ?? 0,
@@ -1233,10 +1604,12 @@ async function refreshWorkedTodayTotal() {
     );
   } catch (error) {
     log.warn("Failed to refresh today's worked time", error);
-  } finally {
-    isRefreshingWorkedSummary = false;
   }
 }
+
+const refreshWorkedTodayTotal = createCoalescedRefresh(
+  refreshWorkedTodayTotalOnce,
+);
 
 function showIdleLossAlert(lostSeconds: number, eligibleLostSeconds: number) {
   if (lostSeconds <= 0) {
@@ -1330,33 +1703,74 @@ async function sendStateEvent(
   eventType: string,
   status: AgentRuntimeStatus["trackingStatus"],
   extraPayload: Record<string, unknown> = {},
+  options: {
+    eventTimestamp?: string;
+    waitForDelivery?: Promise<boolean> | null;
+  } = {},
 ) {
   runtimeStatus.trackingStatus = status;
   notifyRendererStatus();
   rebuildTrayMenu();
-  if (!currentSessionId || !runtimeStatus.enrolled) {
-    return;
+  if (!runtimeStatus.enrolled) {
+    return false;
   }
 
   const eventId = randomUUID();
-  const endpoint = `/agent/sessions/${currentSessionId}/events`;
+  const eventTimestamp = options.eventTimestamp ?? new Date().toISOString();
+  const eventPayload = {
+    status,
+    idle_seconds: runtimeStatus.idleSeconds,
+    agent_version: runtimeStatus.agentVersion,
+    ...extraPayload,
+  };
+  if (
+    localTrackingSessionId &&
+    (!currentSessionId || isPromotingLocalTrackingSessions)
+  ) {
+    appendLocalTrackingEvent({
+      id: eventId,
+      localSessionId: localTrackingSessionId,
+      eventType,
+      eventTimestamp,
+      payload: eventPayload,
+    });
+    checkpointActiveLocalTrackingSession(true);
+    return false;
+  }
+  const sessionId = currentSessionId;
+  if (!sessionId) {
+    return false;
+  }
+  const endpoint = `/agent/sessions/${sessionId}/events`;
   const payload = {
     event_id: eventId,
     event_type: eventType,
-    event_timestamp: new Date().toISOString(),
-    payload: {
-      status,
-      idle_seconds: runtimeStatus.idleSeconds,
-      agent_version: runtimeStatus.agentVersion,
-      ...extraPayload,
-    },
+    event_timestamp: eventTimestamp,
+    payload: eventPayload,
   };
 
   try {
+    const priorEventDelivered = options.waitForDelivery
+      ? await options.waitForDelivery
+      : true;
+    if (!priorEventDelivered) {
+      enqueuePendingEvent({
+        id: eventId,
+        method: "POST",
+        endpoint,
+        payload,
+        idempotencyKey: eventId,
+      });
+      log.info(
+        `Queued ${eventType} behind an earlier offline state transition`,
+      );
+      return false;
+    }
     const result = await sendActivityEvent({
-      sessionId: currentSessionId,
+      sessionId,
       eventId,
       eventType,
+      eventTimestamp,
       payload: payload.payload,
     });
     const latestLocalStatus = runtimeStatus.trackingStatus;
@@ -1368,6 +1782,7 @@ async function sendStateEvent(
     await refreshWorkedTodayTotal();
     runtimeStatus.connectionStatus = "online";
     runtimeStatus.lastSuccessfulSyncAt = new Date().toISOString();
+    return true;
   } catch (error) {
     runtimeStatus.connectionStatus = "offline";
     enqueuePendingEvent({
@@ -1378,6 +1793,7 @@ async function sendStateEvent(
       idempotencyKey: eventId,
     });
     log.warn(`Failed to send ${eventType}`, error);
+    return false;
   } finally {
     if (!isQuitting) {
       void refreshTrackingConfig();
@@ -1393,7 +1809,7 @@ function finishAutomaticIdleImmediately() {
     unpaidPauseActive ||
     isFinishingAutomaticIdle ||
     runtimeStatus.trackingStatus !== "idle" ||
-    !currentSessionId
+    !hasTrackingSession()
   ) {
     return;
   }
@@ -1417,11 +1833,26 @@ function finishAutomaticIdleImmediately() {
   idleWallClockStartedAt = null;
   automaticIdleStartedDuringBreak = false;
   isFinishingAutomaticIdle = true;
-  void sendStateEvent("idle_ended", "active", {
-    idle_started_at: idleStartedAt,
-    idle_gap_seconds: lostSeconds,
-    idle_seconds_before_gap: idleSecondsBeforeGap,
-  }).finally(() => {
+  const automaticIdleEndedAt = new Date().toISOString();
+  runtimeStatus.locallyEndedIdleAt = automaticIdleEndedAt;
+  const finishPromise = sendStateEvent(
+    "idle_ended",
+    "active",
+    {
+      idle_started_at: idleStartedAt,
+      idle_gap_seconds: lostSeconds,
+      idle_seconds_before_gap: idleSecondsBeforeGap,
+    },
+    {
+      eventTimestamp: automaticIdleEndedAt,
+      waitForDelivery: automaticIdleStartPromise,
+    },
+  );
+  automaticIdleFinishPromise = finishPromise;
+  void finishPromise.finally(() => {
+    if (automaticIdleFinishPromise === finishPromise) {
+      automaticIdleFinishPromise = null;
+    }
     isFinishingAutomaticIdle = false;
   });
   if (lostSeconds > LONG_IDLE_SESSION_SPLIT_SECONDS) {
@@ -1434,18 +1865,29 @@ function finishAutomaticIdleImmediately() {
 }
 
 async function resumeAutomaticIdle() {
-  if (!currentSessionId) {
+  if (!hasTrackingSession()) {
     return { success: false, message: "The idle review is no longer active." };
   }
   idleWallClockStartedAt = null;
   automaticIdleStartedDuringBreak = false;
+  if (automaticIdleFinishPromise) {
+    await automaticIdleFinishPromise;
+    return { success: true };
+  }
   if (runtimeStatus.trackingStatus === "active") {
     return { success: true };
   }
   if (runtimeStatus.trackingStatus !== "idle") {
     return { success: false, message: "The idle review is no longer active." };
   }
-  await sendStateEvent("idle_ended", "active");
+  const resumedAt = new Date().toISOString();
+  runtimeStatus.locallyEndedIdleAt = resumedAt;
+  await sendStateEvent(
+    "idle_ended",
+    "active",
+    {},
+    { eventTimestamp: resumedAt, waitForDelivery: automaticIdleStartPromise },
+  );
   return { success: true };
 }
 
@@ -1492,7 +1934,7 @@ function startIdleMonitor() {
         lastObservedSystemIdleSeconds = null;
         return;
       }
-      const idleSeconds = powerMonitor.getSystemIdleTime();
+      const idleSeconds = observedIdleSeconds();
       const previousSystemIdleSeconds = lastObservedSystemIdleSeconds;
       lastObservedSystemIdleSeconds = idleSeconds;
       if (inputResumedAfterIdle(idleSeconds, previousSystemIdleSeconds)) {
@@ -1502,7 +1944,7 @@ function startIdleMonitor() {
     }
     if (
       !runtimeStatus.enrolled ||
-      !currentSessionId ||
+      !hasTrackingSession() ||
       runtimeStatus.trackingPaused ||
       unpaidPauseActive ||
       !["starting", "active", "idle"].includes(runtimeStatus.trackingStatus)
@@ -1511,7 +1953,7 @@ function startIdleMonitor() {
       return;
     }
 
-    const idleSeconds = powerMonitor.getSystemIdleTime();
+    const idleSeconds = observedIdleSeconds();
     const previousSystemIdleSeconds = lastObservedSystemIdleSeconds;
     lastObservedSystemIdleSeconds = idleSeconds;
     const insideScheduledBreak = isInsideScheduledBreak(new Date());
@@ -1524,7 +1966,14 @@ function startIdleMonitor() {
       eligibleIdleSecondsBeforeCurrentIdle = runtimeStatus.eligibleIdleSeconds;
       idleWallClockStartedAt = Date.now();
       automaticIdleStartedDuringBreak = insideScheduledBreak;
-      void sendStateEvent("idle_started", "idle");
+      runtimeStatus.locallyEndedIdleAt = null;
+      const startPromise = sendStateEvent("idle_started", "idle");
+      automaticIdleStartPromise = startPromise;
+      void startPromise.finally(() => {
+        if (automaticIdleStartPromise === startPromise) {
+          automaticIdleStartPromise = null;
+        }
+      });
       showIdleStartedNotification();
     } else if (
       runtimeStatus.trackingStatus === "idle" &&
@@ -1780,10 +2229,15 @@ function startForegroundActivityMonitoring() {
 }
 
 async function heartbeatTick(options: { refreshMetadata?: boolean } = {}) {
-  if (!currentSessionId || !runtimeStatus.enrolled) {
+  if (
+    !currentSessionId ||
+    !runtimeStatus.enrolled ||
+    isPromotingLocalTrackingSessions
+  ) {
     return;
   }
 
+  const sessionId = currentSessionId;
   recalculateWorkedTime();
   const eventId = randomUUID();
   const status =
@@ -1792,6 +2246,7 @@ async function heartbeatTick(options: { refreshMetadata?: boolean } = {}) {
     runtimeStatus.trackingStatus === "sleeping"
       ? runtimeStatus.trackingStatus
       : "active";
+  const integrityObservation = inputIntegrityObservation();
   const payload = {
     event_id: eventId,
     timestamp: new Date().toISOString(),
@@ -1799,17 +2254,19 @@ async function heartbeatTick(options: { refreshMetadata?: boolean } = {}) {
     idle_seconds: runtimeStatus.idleSeconds,
     active_seconds: runtimeStatus.activeSeconds,
     agent_version: runtimeStatus.agentVersion,
+    input_integrity: integrityObservation ?? null,
   };
 
   try {
     const result = await sendHeartbeat({
-      sessionId: currentSessionId,
+      sessionId,
       eventId,
       status,
       idleSeconds: runtimeStatus.idleSeconds,
       activeSeconds: runtimeStatus.activeSeconds,
       counterDate: activeCounterDate ?? localDateKey(),
       agentVersion: runtimeStatus.agentVersion,
+      inputIntegrity: integrityObservation,
     });
     const serverClosedDuringNonWorking = shouldWaitForInputBeforeRestart(
       status,
@@ -1863,14 +2320,13 @@ async function heartbeatTick(options: { refreshMetadata?: boolean } = {}) {
       // session while preserving the local tracking state.
       currentSessionId = null;
       runtimeStatus.sessionStartedAt = null;
-      runtimeStatus.trackingStatus = "starting";
-      lastDurationTickAt = null;
+      beginLocalTrackingSession();
       scheduleAutomaticTrackingRestart(1_000);
     } else {
       enqueuePendingEvent({
         id: eventId,
         method: "POST",
-        endpoint: `/agent/sessions/${currentSessionId}/heartbeat`,
+        endpoint: `/agent/sessions/${sessionId}/heartbeat`,
         payload,
         idempotencyKey: eventId,
       });
@@ -1907,7 +2363,9 @@ function scheduleAutomaticTrackingRestart(delayMs = 1_000) {
   ) {
     return;
   }
-  runtimeStatus.trackingStatus = "starting";
+  if (!localTrackingSessionId) {
+    runtimeStatus.trackingStatus = "starting";
+  }
   automaticTrackingRetryTimer = setTimeout(() => {
     automaticTrackingRetryTimer = null;
     void startTrackingAutomatically();
@@ -2003,7 +2461,7 @@ function screenshotCaptureBlockReason(): string | null {
       ? "screen_locked"
       : "system_sleeping";
   }
-  const systemIdleSeconds = powerMonitor.getSystemIdleTime();
+  const systemIdleSeconds = observedIdleSeconds();
   if (
     !trackingConfig.capture_during_idle &&
     (runtimeStatus.trackingStatus === "idle" ||
@@ -2349,12 +2807,14 @@ async function startTrackingAutomatically() {
     return;
   }
 
+  beginLocalTrackingSession();
   isStartingTrackingAutomatically = true;
   if (automaticTrackingRetryTimer) {
     clearTimeout(automaticTrackingRetryTimer);
     automaticTrackingRetryTimer = null;
   }
   try {
+    await promotePendingLocalTrackingSessions();
     await syncPendingQueues(true);
     const rawConfig = await getAgentConfig();
     trackingConfig = normalizeTrackingConfig(rawConfig);
@@ -2363,7 +2823,7 @@ async function startTrackingAutomatically() {
       runtimeStatus.employeeEmail = rawConfig.employee.email;
     }
     runtimeStatus.requestPolicy = rawConfig.request_policy ?? null;
-    await refreshTasks();
+    void refreshTasks();
     const current = await getCurrentSession();
     if (
       current.session &&
@@ -2386,7 +2846,7 @@ async function startTrackingAutomatically() {
       void refreshLeaveRequests();
       return;
     }
-    const systemIdleSeconds = powerMonitor.getSystemIdleTime();
+    const systemIdleSeconds = observedIdleSeconds();
     if (
       hasReachedIdleThreshold(
         systemIdleSeconds,
@@ -2420,7 +2880,12 @@ async function startTrackingAutomatically() {
     void refreshLeaveRequests();
   } catch (error) {
     runtimeStatus.connectionStatus = "offline";
-    runtimeStatus.trackingStatus = "offline";
+    if (!localTrackingSessionId) {
+      beginLocalTrackingSession();
+    }
+    if (!hasTrackingSession()) {
+      runtimeStatus.trackingStatus = "offline";
+    }
     log.error("Automatic tracking start failed", error);
     if (isDeviceIdentityMismatch(error)) {
       resetForDeviceReenrollment();
@@ -2479,7 +2944,9 @@ async function stopTrackingSession(reason = "Stopped by employee") {
   waitingForInputAfterIdleSessionClose = false;
   runtimeStatus.trackingPaused = true;
   saveTrackingPreferences();
+  closeActiveLocalTrackingSession(new Date().toISOString(), "paused");
   clearRuntimeTimers();
+  inputIntegrityMonitor.stop();
   // Task/work-time tracking may pause, but workplace screenshot monitoring is
   // an independent company policy and continues for an enrolled active device.
   startScreenshotMonitoring();
@@ -2548,7 +3015,7 @@ async function stopTrackingSession(reason = "Stopped by employee") {
 async function pauseTracking(
   _options?: string | { requestedMinutes?: number; reason?: string },
 ) {
-  if (!runtimeStatus.enrolled || !currentSessionId) {
+  if (!runtimeStatus.enrolled || !hasTrackingSession()) {
     return {
       success: false,
       message: "Start your shift before using Pause.",
@@ -2606,7 +3073,7 @@ async function resumeTracking() {
     }
   }
 
-  if (unpaidPauseActive && currentSessionId) {
+  if (unpaidPauseActive && hasTrackingSession()) {
     recalculateWorkedTime();
     unpaidPauseActive = false;
     runtimeStatus.trackingPaused = false;
@@ -2628,10 +3095,11 @@ async function resumeTracking() {
   runtimeStatus.paidPauseEndsAt = null;
   runtimeStatus.paidPauseRemainingSeconds = 0;
   clearPaidPauseTimer();
-  runtimeStatus.trackingStatus = currentSessionId ? "active" : "starting";
+  beginLocalTrackingSession();
+  runtimeStatus.trackingStatus = hasTrackingSession() ? "active" : "starting";
   saveTrackingPreferences();
   await startTrackingAutomatically();
-  const success = Boolean(currentSessionId);
+  const success = hasTrackingSession();
   return {
     success,
     message: success
@@ -2651,6 +3119,7 @@ async function logoutDevice() {
   }
 
   clearRuntimeTimers();
+  inputIntegrityMonitor.stop();
   clearEnrollmentIdentity();
   configureAutoStart(false);
   trackingPausedByUser = false;
@@ -2663,6 +3132,9 @@ async function logoutDevice() {
   idleSecondsBeforeCurrentIdle = 0;
   eligibleIdleSecondsBeforeCurrentIdle = 0;
   idleWallClockStartedAt = null;
+  automaticIdleStartPromise = null;
+  automaticIdleFinishPromise = null;
+  isFinishingAutomaticIdle = false;
   screenshotQueue = [];
   screenshotWindowEndsAt = null;
   saveScreenshotSchedule(null);
@@ -2693,6 +3165,7 @@ async function logoutDevice() {
     todayTimeline: null,
     idleRequestPeriods: [],
     lastIdleAlert: null,
+    locallyEndedIdleAt: null,
   } satisfies Partial<AgentRuntimeStatus>);
   tray?.setImage(createTrayImage("#b7791f"));
   rebuildTrayMenu();
@@ -2702,6 +3175,7 @@ async function logoutDevice() {
 
 async function syncNow() {
   await refreshTrackingConfig();
+  await promotePendingLocalTrackingSessions();
   await syncPendingQueues();
   if (currentSessionId && !trackingPausedByUser) {
     await heartbeatTick();
@@ -2756,7 +3230,7 @@ async function createMainWindow() {
     if (isQuitting) {
       return;
     }
-    if (!runtimeStatus.enrolled || !currentSessionId) {
+    if (!runtimeStatus.enrolled || !hasTrackingSession()) {
       event.preventDefault();
       app.quit();
       return;
@@ -2924,7 +3398,7 @@ function runtimeStatusPayload() {
     !runtimeStatus.trackingPaused &&
     !unpaidPauseActive
       ? idleDurationAfterThreshold(
-          powerMonitor.getSystemIdleTime(),
+          observedIdleSeconds(),
           automaticIdleStartedDuringBreak,
         )
       : 0;
@@ -3087,6 +3561,7 @@ async function checkForUpdates(
 async function preserveTrackingBeforeUpdate() {
   try {
     recalculateWorkedTime();
+    checkpointActiveLocalTrackingSession(true);
     await flushForegroundActivitySegment();
   } catch (error) {
     log.warn(
@@ -3094,7 +3569,7 @@ async function preserveTrackingBeforeUpdate() {
       error,
     );
   }
-  if (currentSessionId && runtimeStatus.enrolled) {
+  if (hasTrackingSession() && runtimeStatus.enrolled) {
     try {
       // Persist the latest counters without ending the work session. After the
       // updater restarts Khaliduo, automatic startup reconnects to this same
@@ -3128,7 +3603,7 @@ function recoverFromFailedUpdateInstall(reason: string) {
     version: runtimeStatus.updateVersion,
     percent: 100,
   });
-  if (currentSessionId && runtimeStatus.enrolled) {
+  if (hasTrackingSession() && runtimeStatus.enrolled) {
     startTimers();
   }
   updateDisplaySleepBlocker();
@@ -3392,6 +3867,8 @@ app.on("before-quit", (event) => {
   const sessionId = currentSessionId;
   const eventId = randomUUID();
   const endedAt = new Date().toISOString();
+  closeActiveLocalTrackingSession(endedAt, "app_quit");
+  inputIntegrityMonitor.stop();
   const activeSeconds = runtimeStatus.activeSeconds;
   const idleSeconds = runtimeStatus.idleSeconds;
   clearRuntimeTimers();
@@ -3465,7 +3942,9 @@ app.whenReady().then(async () => {
     showMainWindow();
   }
   if (runtimeStatus.enrolled) {
-    await refreshTrackingConfig();
+    if (!trackingPausedByUser) {
+      beginLocalTrackingSession();
+    }
     startScreenshotMonitoring();
     if (!trackingPausedByUser) {
       await startTrackingAutomatically();

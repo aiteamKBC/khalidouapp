@@ -48,6 +48,13 @@ type BackendEmployeeStatus = {
   device?: BackendDevice | null;
   team_ids?: string[];
   team_role?: TeamMemberRole | null;
+  input_integrity?: {
+    state: "unknown" | "clear" | "review" | "suspicious" | "unavailable";
+    confidence: number;
+    injected_events: number;
+    suspicious_reports: number;
+    observed_at?: string | null;
+  };
   managers?: Array<{
     id: string;
     name: string;
@@ -222,6 +229,15 @@ function mapEmployee(status: BackendEmployeeStatus, teamIds: string[]): Employee
     currentTeamId: status.current_session?.team_id ?? undefined,
     currentProjectId: status.current_session?.project_id ?? undefined,
     currentTaskId: status.current_session?.task_id ?? undefined,
+    inputIntegrity: status.input_integrity
+      ? {
+          state: status.input_integrity.state,
+          confidence: status.input_integrity.confidence,
+          injectedEvents: status.input_integrity.injected_events,
+          suspiciousReports: status.input_integrity.suspicious_reports,
+          observedAt: status.input_integrity.observed_at ?? undefined,
+        }
+      : undefined,
     active: employee.status === "active",
     accountStatus: normalizeEmployeeAccountStatus(employee.onboarding_status ?? employee.status),
     invitation: employee.invitation

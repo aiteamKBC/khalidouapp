@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.api.v1 import attendance as attendance_api
+from app.api.v1 import timesheets as timesheets_api
 from app.core.config import settings
 from app.core.security import create_device_token, create_employee_access_token, hash_token
 from app.core.security import create_jwt_token, hash_password
@@ -395,6 +396,114 @@ def test_daily_attendance_includes_start_grace_for_dashboard_alerts(team_client)
         if row["employee_id"] == str(data["employee_a"].id)
     )
     assert employee_row["late_grace_minutes"] == 15
+
+
+def test_dashboard_work_trend_is_lightweight_and_team_scoped(
+    team_client,
+    monkeypatch,
+):
+    client, data = team_client
+    today = local_today("UTC")
+    extra_employee_ids: set[str] = set()
+    with data["session_factory"]() as db:
+        for index in range(15):
+            employee = Employee(
+                company_id=data["employee_a"].company_id,
+                name=f"Trend Employee {index:02d}",
+                email=f"trend-{index:02d}@example.com",
+                employee_code=f"TREND-{index:02d}",
+                timezone="UTC",
+                status="active",
+            )
+            db.add(employee)
+            db.flush()
+            device = Device(
+                company_id=employee.company_id,
+                employee_id=employee.id,
+                device_name=f"Trend Device {index:02d}",
+                installation_id=f"trend-install-{index:02d}",
+                operating_system="Windows 11",
+                agent_version="1.0.0",
+                status="active",
+            )
+            db.add_all(
+                [
+                    device,
+                    TeamMember(
+                        team_id=data["team_a"].id,
+                        employee_id=employee.id,
+                        status="active",
+                    ),
+                ]
+            )
+            db.flush()
+            db.add(
+                WorkSession(
+                    company_id=employee.company_id,
+                    employee_id=employee.id,
+                    device_id=device.id,
+                    started_at=datetime.now(UTC),
+                    status="active",
+                    active_seconds=300 + index,
+                    idle_seconds=index,
+                    team_id=data["team_a"].id,
+                )
+            )
+            extra_employee_ids.add(str(employee.id))
+        db.commit()
+
+    def unexpected_attendance_rebuild(*_args, **_kwargs):
+        raise AssertionError("Dashboard trend must not rebuild employee timelines")
+
+    monkeypatch.setattr(
+        timesheets_api,
+        "cached_daily_attendance",
+        unexpected_attendance_rebuild,
+    )
+    params = {
+        "start_date": (today - timedelta(days=13)).isoformat(),
+        "end_date": today.isoformat(),
+    }
+    query_count = 0
+
+    def count_query(*_args, **_kwargs):
+        nonlocal query_count
+        query_count += 1
+
+    engine = data["session_factory"].kw["bind"]
+    event.listen(engine, "before_cursor_execute", count_query)
+    try:
+        general = client.get(
+            "/api/v1/dashboard/work-trend",
+            params=params,
+            headers=data["general_headers"],
+        )
+    finally:
+        event.remove(engine, "before_cursor_execute", count_query)
+    owner = client.get(
+        "/api/v1/dashboard/work-trend",
+        params=params,
+        headers=data["owner_headers"],
+    )
+
+    assert general.status_code == 200
+    assert owner.status_code == 200
+    assert {
+        row["employee_id"] for row in general.json()["data"]
+    } == {
+        str(data["employee_a"].id),
+        str(data["employee_b"].id),
+        *extra_employee_ids,
+    }
+    assert {
+        row["employee_id"] for row in owner.json()["data"]
+    } == {str(data["employee_a"].id), *extra_employee_ids}
+    assert all(
+        "employee_name" not in row and "screenshot_count" not in row
+        for row in general.json()["data"]
+    )
+    assert query_count <= 10
+    assert len(general.content) < 100_000
 
 
 def test_daily_attendance_list_reuses_materialized_row(team_client, monkeypatch):
@@ -3214,6 +3323,41 @@ def test_monitoring_roster_is_lightweight_scoped_and_has_bounded_queries(team_cl
         device.last_seen_at = now
         employee = db.get(Employee, data["employee_a"].id)
         get_or_create_work_profile(db, employee)
+        integrity_payload = {
+            "input_integrity": {
+                "sensor": "windows_low_level_input",
+                "sensor_available": True,
+                "observed_seconds": 30,
+                "real_mouse_events": 0,
+                "real_keyboard_events": 0,
+                "injected_mouse_events": 6,
+                "injected_keyboard_events": 0,
+            }
+        }
+        db.add_all(
+            [
+                ActivityEvent(
+                    company_id=employee.company_id,
+                    employee_id=employee.id,
+                    device_id=device.id,
+                    session_id=data["session_a"].id,
+                    event_type="heartbeat",
+                    event_timestamp=now - timedelta(seconds=30),
+                    payload=integrity_payload,
+                    idempotency_key=f"integrity-test-{uuid4()}",
+                ),
+                ActivityEvent(
+                    company_id=employee.company_id,
+                    employee_id=employee.id,
+                    device_id=device.id,
+                    session_id=data["session_a"].id,
+                    event_type="heartbeat",
+                    event_timestamp=now,
+                    payload=integrity_payload,
+                    idempotency_key=f"integrity-test-{uuid4()}",
+                ),
+            ]
+        )
         db.commit()
 
     engine = data["session_factory"].kw["bind"]
@@ -3248,6 +3392,7 @@ def test_monitoring_roster_is_lightweight_scoped_and_has_bounded_queries(team_cl
         "last_heartbeat",
         "device",
         "team_ids",
+        "input_integrity",
     }
     assert set(rows[0]["employee"]) == {
         "id",
@@ -3262,6 +3407,12 @@ def test_monitoring_roster_is_lightweight_scoped_and_has_bounded_queries(team_cl
     assert "worked_today_seconds" not in rows[0]
     assert "last_screenshot" not in rows[0]
     assert "managers" not in rows[0]
+    integrity_row = next(
+        row
+        for row in rows
+        if row["employee"]["id"] == str(data["employee_a"].id)
+    )
+    assert integrity_row["input_integrity"]["state"] == "suspicious"
 
 
 def test_monitoring_roster_preserves_break_and_off_shift_statuses(team_client, monkeypatch):

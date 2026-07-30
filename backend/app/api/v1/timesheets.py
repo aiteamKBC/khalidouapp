@@ -55,6 +55,8 @@ def timesheet_rows(
     team_id: UUID | None = None,
     current_admin: AdminUser | None = None,
     device_id: UUID | None = None,
+    refresh_current_attendance: bool = True,
+    include_screenshot_counts: bool = True,
 ):
     # Employees can be up to a calendar day ahead of or behind UTC. Fetch a
     # safe UTC envelope, then assign every row to the employee's local date.
@@ -193,7 +195,10 @@ def timesheet_rows(
             continue
         attendance = stored_attendance_by_key.get((row_employee_id, work_date))
         timeline = None
-        if attendance is None or work_date == local_today(timezone_name, attendance_now):
+        if refresh_current_attendance and (
+            attendance is None
+            or work_date == local_today(timezone_name, attendance_now)
+        ):
             attendance, timeline = cached_daily_attendance(
                 db,
                 employee=employee,
@@ -207,37 +212,44 @@ def timesheet_rows(
             )
             stored_attendance_by_key[(row_employee_id, work_date)] = attendance
 
-        item["idle_seconds"] = accountable_idle_seconds(attendance)
-        item["start_time"] = (
-            _utc(attendance.actual_first_activity_at).isoformat()
-            if attendance.actual_first_activity_at
-            else item["start_time"]
-        )
-        calculation_sources = attendance.calculation_sources or {}
-        is_running = (
-            work_date == local_today(timezone_name, attendance_now)
-            and bool(
-                timeline["is_running"]
-                if timeline is not None
-                else calculation_sources.get("is_running", False)
+        if attendance is not None:
+            item["idle_seconds"] = accountable_idle_seconds(attendance)
+            item["start_time"] = (
+                _utc(attendance.actual_first_activity_at).isoformat()
+                if attendance.actual_first_activity_at
+                else item["start_time"]
             )
-        )
-        attendance_end = attendance.actual_sign_out_at or attendance.actual_last_activity_at
-        item["end_time"] = (
-            None
-            if is_running
-            else _utc(attendance_end).isoformat()
-            if attendance_end
-            else item["end_time"]
-        )
+            calculation_sources = attendance.calculation_sources or {}
+            is_running = (
+                work_date == local_today(timezone_name, attendance_now)
+                and bool(
+                    timeline["is_running"]
+                    if timeline is not None
+                    else calculation_sources.get("is_running", False)
+                )
+            )
+            attendance_end = (
+                attendance.actual_sign_out_at or attendance.actual_last_activity_at
+            )
+            item["end_time"] = (
+                None
+                if is_running
+                else _utc(attendance_end).isoformat()
+                if attendance_end
+                else item["end_time"]
+            )
 
-        # A live session can have authoritative activity events before its
-        # cumulative counters are persisted by the next heartbeat.
-        if timeline is not None:
-            item["active_seconds"] = max(
-                int(item["active_seconds"]),
-                max(0, int(timeline["worked_seconds"]) - int(item["deducted_seconds"])),
-            )
+            # A live session can have authoritative activity events before its
+            # cumulative counters are persisted by the next heartbeat.
+            if timeline is not None:
+                item["active_seconds"] = max(
+                    int(item["active_seconds"]),
+                    max(
+                        0,
+                        int(timeline["worked_seconds"])
+                        - int(item["deducted_seconds"]),
+                    ),
+                )
 
     adjustment_statement = (
         select(
@@ -291,7 +303,7 @@ def timesheet_rows(
 
     employee_ids = {key[0] for key in result_by_key}
     team_by_employee: dict[UUID, str] = {}
-    if employee_ids:
+    if employee_ids and include_screenshot_counts:
         for member_employee_id, member_team_id in db.execute(
             select(TeamMember.employee_id, TeamMember.team_id).where(
                 TeamMember.employee_id.in_(employee_ids),

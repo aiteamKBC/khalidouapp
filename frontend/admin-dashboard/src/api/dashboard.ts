@@ -1,5 +1,5 @@
-import { apiFetch, withQuery } from "./client";
-import type { DashboardSummary } from "@/types";
+import { apiFetch, toMinutes, withQuery } from "./client";
+import type { DashboardSummary, Timesheet } from "@/types";
 
 type BackendDashboardSummary = {
   total_employees: number;
@@ -37,4 +37,46 @@ export async function getDashboardSummary(
     hoursTrackedToday: Math.round(summary.total_hours_today),
     screenshotsToday: summary.screenshots_today,
   };
+}
+
+type BackendDashboardWorkTrend = {
+  employee_id: string;
+  team_id?: string | null;
+  date: string;
+  total_tracked_seconds: number;
+  active_seconds: number;
+  idle_seconds: number;
+  adjustment_seconds: number;
+  deducted_seconds: number;
+};
+
+export async function listDashboardWorkTrend(
+  scopedTeamIds: string[] | undefined,
+  startDate: string,
+  endDate: string,
+  signal?: AbortSignal,
+): Promise<Timesheet[]> {
+  const teamId = scopedTeamIds?.length === 1 ? scopedTeamIds[0] : undefined;
+  const rows = await apiFetch<BackendDashboardWorkTrend[]>(
+    withQuery("/dashboard/work-trend", {
+      team_id: teamId,
+      start_date: startDate,
+      end_date: endDate,
+    }),
+    { signal },
+  );
+  return rows.map((row) => ({
+    id: `${row.employee_id}-${row.team_id ?? "company"}-${row.date}`,
+    employeeId: row.employee_id,
+    teamId: row.team_id ?? teamId ?? "",
+    date: row.date,
+    totalMinutes: toMinutes(row.total_tracked_seconds),
+    activeMinutes: toMinutes(row.active_seconds),
+    idleMinutes: toMinutes(row.idle_seconds),
+    adjustmentMinutes: toMinutes(row.adjustment_seconds),
+    deductedMinutes: toMinutes(row.deducted_seconds),
+    points: Math.round((row.active_seconds / 3600) * 100) / 100,
+    screenshotCount: 0,
+    status: "complete",
+  }));
 }

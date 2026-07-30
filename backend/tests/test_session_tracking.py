@@ -129,6 +129,60 @@ def test_foreground_activity_is_reduced_to_safe_usage_metadata(tracking_context)
     assert "window_title" not in event.payload
 
 
+def test_heartbeat_cannot_credit_more_active_time_than_session_lifetime(
+    tracking_context,
+):
+    db, device = tracking_context
+    started_at = datetime.now(UTC) - timedelta(minutes=2)
+    started = start_or_get_session(
+        db,
+        device,
+        SessionStartRequest(started_at=started_at),
+    )
+    session_id = UUID(started["session"]["id"])
+
+    result = record_heartbeat(
+        db,
+        device=device,
+        session_id=session_id,
+        payload=HeartbeatRequest(
+            event_id=uuid4(),
+            timestamp=started_at + timedelta(minutes=2),
+            status="active",
+            active_seconds=12 * 60 * 60,
+            idle_seconds=0,
+            agent_version="1.1.78",
+        ),
+    )
+
+    assert result["session"]["active_seconds"] == 2 * 60
+
+
+def test_future_heartbeat_timestamp_cannot_create_future_work(tracking_context):
+    db, device = tracking_context
+    started = start_or_get_session(
+        db,
+        device,
+        SessionStartRequest(started_at=datetime.now(UTC)),
+    )
+
+    result = record_heartbeat(
+        db,
+        device=device,
+        session_id=UUID(started["session"]["id"]),
+        payload=HeartbeatRequest(
+            event_id=uuid4(),
+            timestamp=datetime.now(UTC) + timedelta(hours=12),
+            status="active",
+            active_seconds=12 * 60 * 60,
+            idle_seconds=0,
+            agent_version="1.1.78",
+        ),
+    )
+
+    assert result["session"]["active_seconds"] <= 1
+
+
 def test_duplicate_session_end_keeps_original_end_state(tracking_context):
     db, device = tracking_context
     started_at = datetime.now(UTC) - timedelta(minutes=10)
@@ -1125,6 +1179,83 @@ def test_workday_totals_continue_across_restarted_sessions(tracking_context):
 
     assert heartbeat["workday"]["normal_seconds"] == 2 * 60 * 60 + 30 * 60
     assert heartbeat["workday"]["extra_seconds"] == 0
+
+
+def test_offline_recovery_backdates_existing_session_idempotently(tracking_context):
+    db, device = tracking_context
+    original_started_at = datetime(2026, 7, 30, 8, 5, tzinfo=UTC)
+    offline_started_at = original_started_at - timedelta(minutes=5)
+    recovery_id = uuid4()
+    started = start_or_get_session(
+        db,
+        device,
+        SessionStartRequest(started_at=original_started_at),
+    )
+
+    recovered = start_or_get_session(
+        db,
+        device,
+        SessionStartRequest(
+            started_at=offline_started_at,
+            offline_recovery=True,
+            offline_recovery_id=recovery_id,
+        ),
+    )
+    repeated = start_or_get_session(
+        db,
+        device,
+        SessionStartRequest(
+            started_at=offline_started_at,
+            offline_recovery=True,
+            offline_recovery_id=recovery_id,
+        ),
+    )
+
+    session_id = UUID(started["session"]["id"])
+    session = db.get(WorkSession, session_id)
+    recovered_events = db.scalars(
+        select(ActivityEvent).where(
+            ActivityEvent.session_id == session_id,
+            ActivityEvent.event_type == "session_started",
+        )
+    ).all()
+    assert session is not None
+    assert session.started_at.replace(tzinfo=UTC) == offline_started_at
+    assert recovered["session"]["id"] == str(session_id)
+    assert repeated["session"]["id"] == str(session_id)
+    assert sum(
+        event.payload.get("source") == "offline_recovery"
+        for event in recovered_events
+    ) == 1
+
+    end_session(
+        db,
+        device=device,
+        session_id=session_id,
+        payload=SessionEndRequest(
+            ended_at=offline_started_at + timedelta(minutes=30),
+            active_seconds=25 * 60,
+            idle_seconds=5 * 60,
+            reason="Recovered offline segment ended",
+        ),
+    )
+    retry_after_lost_response = start_or_get_session(
+        db,
+        device,
+        SessionStartRequest(
+            started_at=offline_started_at,
+            offline_recovery=True,
+            offline_recovery_id=recovery_id,
+        ),
+    )
+    employee_sessions = db.scalars(
+        select(WorkSession).where(
+            WorkSession.employee_id == device.employee_id,
+        )
+    ).all()
+    assert retry_after_lost_response["session"]["id"] == str(session_id)
+    assert retry_after_lost_response["session"]["status"] == "ended"
+    assert len(employee_sessions) == 1
 
 
 def test_session_end_cannot_replace_newer_server_totals_with_stale_client_values(

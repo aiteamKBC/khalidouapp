@@ -19,6 +19,7 @@ import type {
 } from "./types/electron";
 import {
   TIMELINE_LABELS,
+  timelineIntervalPresentation,
   timelineDisplayType,
 } from "./timelinePresentation";
 import {
@@ -73,6 +74,7 @@ const fallbackStatus: AgentStatus = {
   todayTimeline: null,
   idleRequestPeriods: [],
   lastIdleAlert: null,
+  locallyEndedIdleAt: null,
   updateStatus: "idle",
   updateVersion: null,
   updatePercent: null,
@@ -2198,6 +2200,7 @@ function HomeView({
         {status.todayTimeline && (
           <Timeline
             timeline={status.todayTimeline}
+            locallyEndedIdleAt={status.locallyEndedIdleAt}
             idleRequestOptions={idleRequestOptions}
             onRequestIdleTime={onRequestManualTime}
           />
@@ -2244,10 +2247,12 @@ function Stat({
 
 function Timeline({
   timeline,
+  locallyEndedIdleAt,
   idleRequestOptions,
   onRequestIdleTime,
 }: {
   timeline: WorkdayTimeline;
+  locallyEndedIdleAt: string | null;
   idleRequestOptions: IdleRequestOption[];
   onRequestIdleTime: (option: IdleRequestOption) => void;
 }) {
@@ -2300,6 +2305,10 @@ function Timeline({
           </div>
         ) : null}
         {timeline.intervals.slice(-6).map((interval, index) => {
+          const presentation = timelineIntervalPresentation(
+            interval,
+            locallyEndedIdleAt,
+          );
           const displayType = timelineDisplayType(
             interval.type,
             Boolean(timeline.approved_leave),
@@ -2319,9 +2328,9 @@ function Timeline({
               </i>
               <span>
                 {formatClock(interval.started_at, timeline.timezone)} -{" "}
-                {interval.is_current
+                {presentation.isCurrent
                   ? "Until now"
-                  : formatClock(interval.ended_at, timeline.timezone)}
+                  : formatClock(presentation.endedAt, timeline.timezone)}
               </span>
               <b
                 title={
@@ -2339,7 +2348,7 @@ function Timeline({
               </b>
               <small>
                 {formatDuration(
-                  interval.is_current
+                  presentation.isCurrent
                     ? Math.max(
                         0,
                         Math.floor(
@@ -2348,7 +2357,7 @@ function Timeline({
                             1000,
                         ),
                       )
-                    : interval.duration_seconds,
+                    : presentation.durationSeconds,
                 )}
               </small>
             </div>

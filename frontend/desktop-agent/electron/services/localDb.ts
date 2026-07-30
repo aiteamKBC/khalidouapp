@@ -22,6 +22,25 @@ export type PendingScreenshot = {
   attempts: number;
 };
 
+export type LocalTrackingSession = {
+  sessionId: string;
+  deviceId: string;
+  startedAt: string;
+  endedAt: string | null;
+  status: string;
+  activeSeconds: number;
+  idleSeconds: number;
+  lastCheckpointAt: string;
+};
+
+export type LocalTrackingEvent = {
+  id: string;
+  localSessionId: string;
+  eventType: string;
+  eventTimestamp: string;
+  payloadJson: string;
+};
+
 let database: Database | null = null;
 
 function dbPath() {
@@ -71,6 +90,17 @@ function nextAttemptAt(attempts: number) {
 /** Non-media events stop retrying eventually so one invalid request cannot block the queue. */
 const MAX_SYNC_ATTEMPTS = 10;
 
+function ensureColumn(table: string, column: string, definition: string) {
+  if (
+    rows<{ name: string }>(`pragma table_info(${table})`).some(
+      (item) => item.name === column,
+    )
+  ) {
+    return;
+  }
+  database?.run(`alter table ${table} add column ${column} ${definition}`);
+}
+
 export async function initializeLocalDatabase() {
   if (database) {
     return;
@@ -94,6 +124,14 @@ export async function initializeLocalDatabase() {
       status text not null,
       active_seconds integer not null default 0,
       idle_seconds integer not null default 0
+    );
+    create table if not exists local_session_events (
+      id text primary key,
+      local_session_id text not null,
+      event_type text not null,
+      event_timestamp text not null,
+      payload_json text not null,
+      created_at text not null
     );
     create table if not exists pending_events (
       id text primary key,
@@ -128,6 +166,13 @@ export async function initializeLocalDatabase() {
       updated_at text not null
     );
   `);
+  ensureColumn("local_sessions", "device_id", "text");
+  ensureColumn("local_sessions", "last_checkpoint_at", "text");
+  ensureColumn("local_sessions", "synced_at", "text");
+  database.run(
+    `create index if not exists ix_local_session_events_session_time
+     on local_session_events(local_session_id, event_timestamp, created_at)`,
+  );
   const now = new Date().toISOString();
   for (const screenshot of rows<{ screenshotId: string; filePath: string }>(
     `select screenshot_id as screenshotId, file_path as filePath
@@ -145,6 +190,164 @@ export async function initializeLocalDatabase() {
     );
   }
   persist();
+}
+
+export function createLocalTrackingSession(options: {
+  sessionId: string;
+  deviceId: string;
+  startedAt: string;
+  status: string;
+}) {
+  if (!database) return;
+  database.run(
+    `insert into local_sessions
+      (session_id, device_id, started_at, ended_at, status, active_seconds,
+       idle_seconds, last_checkpoint_at, synced_at)
+     values (?, ?, ?, null, ?, 0, 0, ?, null)`,
+    [
+      options.sessionId,
+      options.deviceId,
+      options.startedAt,
+      options.status,
+      options.startedAt,
+    ],
+  );
+  persist();
+}
+
+export function checkpointLocalTrackingSession(options: {
+  sessionId: string;
+  status: string;
+  activeSeconds: number;
+  idleSeconds: number;
+  checkpointAt?: string;
+}) {
+  if (!database) return;
+  database.run(
+    `update local_sessions
+     set status = ?, active_seconds = ?, idle_seconds = ?,
+         last_checkpoint_at = ?
+     where session_id = ? and synced_at is null`,
+    [
+      options.status,
+      Math.max(0, Math.floor(options.activeSeconds)),
+      Math.max(0, Math.floor(options.idleSeconds)),
+      options.checkpointAt ?? new Date().toISOString(),
+      options.sessionId,
+    ],
+  );
+  persist();
+}
+
+export function closeLocalTrackingSession(options: {
+  sessionId: string;
+  endedAt: string;
+  status: string;
+  activeSeconds: number;
+  idleSeconds: number;
+}) {
+  if (!database) return;
+  database.run(
+    `update local_sessions
+     set ended_at = ?, status = ?, active_seconds = ?, idle_seconds = ?,
+         last_checkpoint_at = ?
+     where session_id = ? and synced_at is null`,
+    [
+      options.endedAt,
+      options.status,
+      Math.max(0, Math.floor(options.activeSeconds)),
+      Math.max(0, Math.floor(options.idleSeconds)),
+      options.endedAt,
+      options.sessionId,
+    ],
+  );
+  persist();
+}
+
+export function getOpenLocalTrackingSession(
+  deviceId: string,
+): LocalTrackingSession | null {
+  return (
+    rows<LocalTrackingSession>(
+      `select session_id as sessionId, device_id as deviceId,
+              started_at as startedAt, ended_at as endedAt, status,
+              active_seconds as activeSeconds, idle_seconds as idleSeconds,
+              coalesce(last_checkpoint_at, started_at) as lastCheckpointAt
+       from local_sessions
+       where device_id = ? and ended_at is null and synced_at is null
+       order by started_at desc, rowid desc
+       limit 1`,
+      [deviceId],
+    )[0] ?? null
+  );
+}
+
+export function getPendingLocalTrackingSessions(
+  deviceId: string,
+): LocalTrackingSession[] {
+  return rows<LocalTrackingSession>(
+    `select session_id as sessionId, device_id as deviceId,
+            started_at as startedAt, ended_at as endedAt, status,
+            active_seconds as activeSeconds, idle_seconds as idleSeconds,
+            coalesce(last_checkpoint_at, started_at) as lastCheckpointAt
+     from local_sessions
+     where device_id = ? and synced_at is null
+     order by started_at asc, rowid asc`,
+    [deviceId],
+  );
+}
+
+export function markLocalTrackingSessionSynced(
+  sessionId: string,
+  syncedAt = new Date().toISOString(),
+) {
+  if (!database) return;
+  database.run(
+    `update local_sessions set synced_at = ? where session_id = ?`,
+    [syncedAt, sessionId],
+  );
+  database.run(
+    `delete from local_session_events where local_session_id = ?`,
+    [sessionId],
+  );
+  persist();
+}
+
+export function appendLocalTrackingEvent(options: {
+  id: string;
+  localSessionId: string;
+  eventType: string;
+  eventTimestamp: string;
+  payload: Record<string, unknown>;
+}) {
+  if (!database) return;
+  database.run(
+    `insert or ignore into local_session_events
+      (id, local_session_id, event_type, event_timestamp, payload_json, created_at)
+     values (?, ?, ?, ?, ?, ?)`,
+    [
+      options.id,
+      options.localSessionId,
+      options.eventType,
+      options.eventTimestamp,
+      JSON.stringify(options.payload),
+      new Date().toISOString(),
+    ],
+  );
+  persist();
+}
+
+export function getLocalTrackingEvents(
+  localSessionId: string,
+): LocalTrackingEvent[] {
+  return rows<LocalTrackingEvent>(
+    `select id, local_session_id as localSessionId, event_type as eventType,
+            event_timestamp as eventTimestamp, payload_json as payloadJson
+     from local_session_events
+     where local_session_id = ?
+     order by event_timestamp asc, created_at asc, rowid asc`,
+    [localSessionId],
+  );
 }
 
 export function enqueuePendingEvent(options: {
@@ -185,7 +388,7 @@ export function getDuePendingEvents(
     `select id, method, endpoint, payload_json as payloadJson, attempts
      from pending_events
      where status in ('pending', 'failed')${ignoreNextAttempt ? '' : ' and next_attempt_at <= ?'}
-     order by created_at asc
+     order by created_at asc, rowid asc
      limit ?`,
     ignoreNextAttempt ? [limit] : [new Date().toISOString(), limit],
   );

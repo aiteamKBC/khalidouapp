@@ -1,7 +1,7 @@
 {
   "name": "khaliduo",
   "private": true,
-  "version": "1.1.76",
+  "version": "1.1.78",
   "type": "module",
   "description": "Khaliduo desktop app by Kent Consultancy.",
   "main": "dist-electron-khaliduo/main.js",
@@ -65,6 +65,10 @@
       {
         "from": "build-runtime.env",
         "to": "khaliduo-runtime.env"
+      },
+      {
+        "from": "native-bin/KhaliduoInputProbe.exe",
+        "to": "input-integrity/KhaliduoInputProbe.exe"
       }
     ],
     "win": {

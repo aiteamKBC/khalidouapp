@@ -6,6 +6,7 @@ $release = Join-Path $desktop "release-khaliduo"
 $tempOutput = Join-Path $env:TEMP ("khaliduo-release-" + [guid]::NewGuid().ToString("N"))
 $internalSigningSubject = "Kent Consultancy Internal Code Signing"
 $runtimeEnvironmentFile = Join-Path $desktop "build-runtime.env"
+$inputProbeDirectory = Join-Path $desktop "native-bin"
 
 if (-not $env:KHALIDUO_UPDATE_URL) {
     throw "KHALIDUO_UPDATE_URL is required for an installer build."
@@ -28,6 +29,10 @@ foreach ($publicUrl in @($env:KHALIDUO_UPDATE_URL, $env:VITE_API_BASE_URL, $env:
 
 try {
     Set-Location $desktop
+    & (Join-Path $PSScriptRoot "build-input-probe.ps1")
+    if ($LASTEXITCODE -ne 0) {
+        throw "Khaliduo input-integrity probe build failed."
+    }
     @(
         "VITE_API_BASE_URL=$($env:VITE_API_BASE_URL)"
         "KHALIDUO_EMPLOYEE_PORTAL_URL=$($env:KHALIDUO_EMPLOYEE_PORTAL_URL)"
@@ -65,6 +70,14 @@ try {
         if (-not (Test-Path -LiteralPath $rootPublicCertificate) -or -not (Test-Path -LiteralPath $publisherPublicCertificate)) {
             throw "Public trust certificates were not found. Run scripts/setup-internal-code-signing.ps1 first."
         }
+        $inputProbeExecutable = Join-Path $inputProbeDirectory "KhaliduoInputProbe.exe"
+        $inputProbeSignature = Set-AuthenticodeSignature `
+            -LiteralPath $inputProbeExecutable `
+            -Certificate $signingCertificate `
+            -HashAlgorithm SHA256
+        if ($inputProbeSignature.Status -ne "Valid") {
+            throw "Input-integrity probe signature validation failed: $($inputProbeSignature.Status) $($inputProbeSignature.StatusMessage)"
+        }
         $builderArguments += "--config.win.signtoolOptions.certificateSha1=$($signingCertificate.Thumbprint)"
         $builderArguments += "--config.forceCodeSigning=true"
         Write-Host "Signing Khaliduo as: $internalSigningSubject"
@@ -98,6 +111,14 @@ try {
         if ($embeddedRuntimeEnvironmentText -notmatch [regex]::Escape($expectedRuntimeValue)) {
             throw "The packaged app is missing the expected runtime URL: $expectedRuntimeValue"
         }
+    }
+    $embeddedInputProbe = Join-Path $tempOutput "win-unpacked\resources\input-integrity\KhaliduoInputProbe.exe"
+    if (-not (Test-Path -LiteralPath $embeddedInputProbe)) {
+        throw "The packaged app does not contain the input-integrity probe."
+    }
+    $embeddedInputProbeSignature = Get-AuthenticodeSignature -LiteralPath $embeddedInputProbe
+    if ($signingCertificate -and $embeddedInputProbeSignature.Status -ne "Valid") {
+        throw "The packaged input-integrity probe signature is invalid: $($embeddedInputProbeSignature.Status)"
     }
 
     New-Item -ItemType Directory -Force -Path $release | Out-Null
@@ -143,6 +164,17 @@ finally {
     }
     if (Test-Path -LiteralPath $runtimeEnvironmentFile) {
         Remove-Item -LiteralPath $runtimeEnvironmentFile -Force
+    }
+    $resolvedDesktop = [System.IO.Path]::GetFullPath($desktop)
+    $resolvedInputProbeDirectory = [System.IO.Path]::GetFullPath($inputProbeDirectory)
+    if (
+        (Test-Path -LiteralPath $resolvedInputProbeDirectory) -and
+        $resolvedInputProbeDirectory.StartsWith(
+            $resolvedDesktop,
+            [System.StringComparison]::OrdinalIgnoreCase
+        )
+    ) {
+        Remove-Item -LiteralPath $resolvedInputProbeDirectory -Recurse -Force
     }
     Set-Location $root
 }

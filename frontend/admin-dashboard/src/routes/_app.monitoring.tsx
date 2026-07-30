@@ -19,6 +19,7 @@ import {
   Check,
   ExternalLink,
   Search,
+  ShieldAlert,
   Users,
 } from "lucide-react";
 
@@ -693,6 +694,24 @@ const MonitoringEmployeeCard = memo(
             <Check className="h-3 w-3" />
           </span>
         )}
+        {employee.inputIntegrity?.state === "suspicious" && (
+          <span
+            className="absolute left-2.5 top-2.5 grid h-6 w-6 place-items-center rounded-full bg-destructive/10 text-destructive"
+            title="Repeated software-injected input detected. Review this employee's activity evidence."
+            aria-label="Suspicious automated input detected"
+          >
+            <ShieldAlert className="h-3.5 w-3.5" />
+          </span>
+        )}
+        {employee.inputIntegrity?.state === "unavailable" && (
+          <span
+            className="absolute left-2.5 top-2.5 grid h-6 w-6 place-items-center rounded-full bg-amber-500/10 text-amber-700 dark:text-amber-300"
+            title="The input-integrity sensor is unavailable on this device."
+            aria-label="Input-integrity sensor unavailable"
+          >
+            <ShieldAlert className="h-3.5 w-3.5" />
+          </span>
+        )}
         <span className="relative">
           <Avatar className="h-14 w-14 border-2 border-background shadow-sm">
             <AvatarFallback className="bg-gradient-to-br from-primary/20 to-violet-500/15 text-base font-extrabold text-primary">
@@ -733,6 +752,8 @@ const MonitoringEmployeeCard = memo(
       previousEmployee.jobTitle === nextEmployee.jobTitle &&
       previousEmployee.status === nextEmployee.status &&
       previousEmployee.accountStatus === nextEmployee.accountStatus &&
+      previousEmployee.inputIntegrity?.state === nextEmployee.inputIntegrity?.state &&
+      previousEmployee.inputIntegrity?.confidence === nextEmployee.inputIntegrity?.confidence &&
       previousEmployee.teamIds.length === nextEmployee.teamIds.length &&
       previousEmployee.teamIds.every((teamId, index) => teamId === nextEmployee.teamIds[index])
     );

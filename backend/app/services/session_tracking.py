@@ -40,6 +40,7 @@ UNENDED_SESSION_STATUSES = ACTIVE_SESSION_STATUSES | {"offline"}
 DEFAULT_REQUIRED_DAILY_SECONDS = 8 * 60 * 60
 DEFAULT_DAILY_PAUSE_SECONDS = 10 * 60
 LONG_IDLE_SESSION_SPLIT_SECONDS = 4 * 60 * 60
+MAX_FUTURE_CLOCK_SKEW = timedelta(seconds=30)
 
 
 def utc(value: datetime | None = None) -> datetime:
@@ -48,6 +49,14 @@ def utc(value: datetime | None = None) -> datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=UTC)
     return value.astimezone(UTC)
+
+
+def bounded_client_timestamp(value: datetime | None = None) -> datetime:
+    reported_at = utc(value)
+    server_now = datetime.now(UTC)
+    if reported_at > server_now + MAX_FUTURE_CLOCK_SKEW:
+        return server_now
+    return reported_at
 
 
 def employee_zone(db: Session, device: Device) -> ZoneInfo:
@@ -628,7 +637,27 @@ def start_or_get_session(
     *,
     start_source: str = "automatic_start",
 ) -> dict[str, Any]:
-    now = utc(payload.started_at)
+    now = bounded_client_timestamp(payload.started_at)
+    recovery_key = (
+        f"offline-session-recovery:{payload.offline_recovery_id}"
+        if payload.offline_recovery and payload.offline_recovery_id is not None
+        else None
+    )
+    if recovery_key is not None:
+        recovered_event = db.scalar(
+            select(ActivityEvent).where(
+                ActivityEvent.company_id == device.company_id,
+                ActivityEvent.device_id == device.id,
+                ActivityEvent.idempotency_key == recovery_key,
+            )
+        )
+        if recovered_event is not None:
+            recovered_session = get_owned_session(
+                db,
+                device,
+                recovered_event.session_id,
+            )
+            return session_response(db, recovered_session, created=False)
     device.last_seen_at = now
     zone = employee_zone(db, device)
     current = get_current_session(db, device)
@@ -677,6 +706,26 @@ def start_or_get_session(
             current = None
 
     if current is not None:
+        if payload.offline_recovery:
+            backdated = now < utc(current.started_at)
+            if backdated:
+                current.started_at = now
+            create_activity_event(
+                db,
+                device=device,
+                session=current,
+                event_type=(
+                    "session_started"
+                    if backdated
+                    else "offline_session_recovered"
+                ),
+                event_timestamp=now,
+                idempotency_key=(
+                    recovery_key
+                    or f"offline-session-start:{device.id}:{now.isoformat()}"
+                ),
+                payload={"source": "offline_recovery"},
+            )
         if payload.task_id is not None and current.task_id != payload.task_id:
             result = switch_session_task(
                 db, device=device, session=current, task_id=payload.task_id
@@ -734,11 +783,13 @@ def start_or_get_session(
         session=session,
         event_type="session_started",
         event_timestamp=started_at,
-        idempotency_key=f"session-started:{session.id}",
+        idempotency_key=recovery_key or f"session-started:{session.id}",
         payload={
             "source": (
                 "daily_rollover"
                 if continued_session_started_at is not None
+                else "offline_recovery"
+                if payload.offline_recovery
                 else start_source
             ),
             "task": task_context,
@@ -938,7 +989,7 @@ def record_heartbeat(
             **restarted,
             "restarted": True,
         }
-    heartbeat_at = utc(payload.timestamp)
+    heartbeat_at = bounded_client_timestamp(payload.timestamp)
     zone = session_zone(db, session)
     current_device_zone = employee_zone(db, device)
     timezone_changed = zone.key != current_device_zone.key
@@ -1061,7 +1112,11 @@ def record_heartbeat(
             if payload.active_seconds is not None
             else max(0, elapsed_seconds - session.idle_seconds)
         )
-        session.active_seconds = max(session.active_seconds, next_active_seconds)
+        # A device counter can never represent more active work than the
+        # wall-clock lifetime of its session. This server-side cap prevents a
+        # modified client from crediting arbitrary future hours.
+        bounded_active_seconds = min(elapsed_seconds, next_active_seconds)
+        session.active_seconds = max(session.active_seconds, bounded_active_seconds)
         # Idle is whatever the session has lasted minus the work in it. The agent
         # counter this used to take a max() of does not accumulate across idle
         # episodes, so a session with two hours away reported only its longest
@@ -1405,14 +1460,20 @@ def end_session(
     if session.ended_at is not None:
         return {"session": serialize_session(session)}
 
-    ended_at = utc(payload.ended_at)
+    ended_at = bounded_client_timestamp(payload.ended_at)
+    elapsed_seconds = max(
+        0, int((ended_at - utc(session.started_at)).total_seconds())
+    )
     if (payload.reason or "").strip().casefold() == "khaliduo update installation":
         # Desktop releases before 1.1.64 attempted to end the active session
         # before installing an update. Treat that legacy request as a final
         # checkpoint so those clients can upgrade without creating an
         # attendance sign-out/sign-in break.
         if payload.active_seconds is not None:
-            session.active_seconds = max(session.active_seconds, payload.active_seconds)
+            session.active_seconds = max(
+                session.active_seconds,
+                min(elapsed_seconds, payload.active_seconds),
+            )
         if payload.idle_seconds is not None:
             session.idle_seconds = max(session.idle_seconds, payload.idle_seconds)
         device.last_seen_at = ended_at
@@ -1424,7 +1485,10 @@ def end_session(
     session.ended_at = ended_at
     session.status = "ended"
     if payload.active_seconds is not None:
-        session.active_seconds = max(session.active_seconds, payload.active_seconds)
+        session.active_seconds = max(
+            session.active_seconds,
+            min(elapsed_seconds, payload.active_seconds),
+        )
     if payload.idle_seconds is not None:
         session.idle_seconds = max(session.idle_seconds, payload.idle_seconds)
     sync_session_time_buckets(db, session, at=ended_at)

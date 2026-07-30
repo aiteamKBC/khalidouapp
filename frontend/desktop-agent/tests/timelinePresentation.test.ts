@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   TIMELINE_LABELS,
+  timelineIntervalPresentation,
   timelineDisplayType,
 } from "../src/timelinePresentation.ts";
 
@@ -21,4 +22,39 @@ test("work performed during a scheduled break is distinguished", () => {
     "break_work",
   );
   assert.equal(TIMELINE_LABELS.break_work, "Worked during break");
+});
+
+test("a locally ended idle interval stops counting before the server refresh returns", () => {
+  const presentation = timelineIntervalPresentation(
+    {
+      type: "idle",
+      started_at: "2026-07-30T11:28:00.000Z",
+      ended_at: null,
+      duration_seconds: 0,
+      is_current: true,
+    },
+    "2026-07-30T11:28:02.900Z",
+  );
+
+  assert.deepEqual(presentation, {
+    isCurrent: false,
+    endedAt: "2026-07-30T11:28:02.900Z",
+    durationSeconds: 2,
+  });
+});
+
+test("a local idle end never closes a later server idle interval", () => {
+  const presentation = timelineIntervalPresentation(
+    {
+      type: "idle",
+      started_at: "2026-07-30T11:29:00.000Z",
+      ended_at: null,
+      duration_seconds: 0,
+      is_current: true,
+    },
+    "2026-07-30T11:28:02.900Z",
+  );
+
+  assert.equal(presentation.isCurrent, true);
+  assert.equal(presentation.endedAt, null);
 });

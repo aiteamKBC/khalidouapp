@@ -9,12 +9,55 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_admin
 from app.api.v1.admin_utils import day_bounds, get_company_settings
 from app.api.v1.team_auth import accessible_employee_ids_statement
+from app.core.exceptions import ApiError
 from app.core.responses import success_response
 from app.database.session import get_db
 from app.models import AdminUser, Device, Employee, Screenshot, WorkSession
 from app.services.attendance import current_idle_contexts
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
+
+
+@router.get("/work-trend")
+def work_trend(
+    current_admin: Annotated[AdminUser, Depends(get_current_admin)],
+    db: Annotated[Session, Depends(get_db)],
+    start_date: date,
+    end_date: date,
+    team_id: UUID | None = None,
+):
+    if end_date < start_date:
+        raise ApiError("INVALID_DATE_RANGE", "End date must be on or after start date.", 400)
+    if (end_date - start_date).days > 30:
+        raise ApiError("DATE_RANGE_TOO_LARGE", "Dashboard trend is limited to 31 days.", 400)
+
+    from app.api.v1.timesheets import timesheet_rows
+
+    rows = timesheet_rows(
+        db,
+        current_admin.company_id,
+        start_date,
+        end_date,
+        team_id=team_id,
+        current_admin=current_admin,
+        refresh_current_attendance=False,
+        include_screenshot_counts=False,
+    )
+    return success_response(
+        data=[
+            {
+                "employee_id": row["employee_id"],
+                "team_id": row["team_id"],
+                "date": row["date"],
+                "total_tracked_seconds": row["total_tracked_seconds"],
+                "active_seconds": row["active_seconds"],
+                "idle_seconds": row["idle_seconds"],
+                "adjustment_seconds": row["adjustment_seconds"],
+                "deducted_seconds": row["deducted_seconds"],
+            }
+            for row in rows
+        ]
+    )
 
 
 @router.get("/summary")

@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -8,6 +8,18 @@ from pydantic import BaseModel, Field
 class SessionStartRequest(BaseModel):
     started_at: datetime | None = None
     task_id: UUID | None = None
+    offline_recovery: bool = False
+    offline_recovery_id: UUID | None = None
+
+
+class InputIntegrityObservation(BaseModel):
+    sensor: Literal["windows_low_level_input"]
+    sensor_available: bool
+    observed_seconds: int = Field(ge=0, le=300)
+    real_mouse_events: int = Field(ge=0, le=1_000_000)
+    real_keyboard_events: int = Field(ge=0, le=1_000_000)
+    injected_mouse_events: int = Field(ge=0, le=1_000_000)
+    injected_keyboard_events: int = Field(ge=0, le=1_000_000)
 
 
 class HeartbeatRequest(BaseModel):
@@ -19,6 +31,7 @@ class HeartbeatRequest(BaseModel):
     agent_version: str = Field(min_length=1, max_length=50)
     mac_address: str | None = Field(default=None, max_length=32)
     timezone: str | None = Field(default=None, min_length=1, max_length=80)
+    input_integrity: InputIntegrityObservation | None = None
 
 
 class ActivityEventRequest(BaseModel):

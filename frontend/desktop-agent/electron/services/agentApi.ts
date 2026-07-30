@@ -8,6 +8,7 @@ import {
   loadIdentity,
   saveEnrollmentIdentity,
 } from "./identityStore.js";
+import type { InputIntegrityObservation } from "./inputIntegrity.js";
 
 // Never let an offline API call freeze quit, sync, or update flows forever.
 const axios = axiosLibrary.create({ timeout: 15_000 });
@@ -533,12 +534,20 @@ export async function deleteAgentTaskChecklistItem(
   return response.data.data;
 }
 
-export async function startSession() {
+export async function startSession(options: {
+  startedAt?: string;
+  offlineRecovery?: boolean;
+  offlineRecoveryId?: string;
+} = {}) {
   const response = await axios.post<
     ApiSuccess<SessionPayload & { created: boolean }>
   >(
     `${getApiBaseUrl()}/agent/sessions/start`,
-    { started_at: new Date().toISOString() },
+    {
+      started_at: options.startedAt ?? new Date().toISOString(),
+      offline_recovery: options.offlineRecovery ?? false,
+      offline_recovery_id: options.offlineRecoveryId ?? null,
+    },
     { headers: getAuthHeaders() },
   );
   return response.data.data;
@@ -617,6 +626,8 @@ export async function sendHeartbeat(options: {
   activeSeconds: number;
   counterDate: string;
   agentVersion: string;
+  timestamp?: string;
+  inputIntegrity?: InputIntegrityObservation;
 }) {
   const response = await axios.post<
     ApiSuccess<SessionPayload & { duplicate: boolean }>
@@ -624,7 +635,7 @@ export async function sendHeartbeat(options: {
     `${getApiBaseUrl()}/agent/sessions/${options.sessionId}/heartbeat`,
     {
       event_id: options.eventId,
-      timestamp: new Date().toISOString(),
+      timestamp: options.timestamp ?? new Date().toISOString(),
       status: options.status,
       idle_seconds: options.idleSeconds,
       active_seconds: options.activeSeconds,
@@ -632,6 +643,7 @@ export async function sendHeartbeat(options: {
       agent_version: options.agentVersion,
       mac_address: getDeviceInfo(options.agentVersion).mac_address,
       timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || null,
+      input_integrity: options.inputIntegrity ?? null,
     },
     { headers: getAuthHeaders() },
   );
