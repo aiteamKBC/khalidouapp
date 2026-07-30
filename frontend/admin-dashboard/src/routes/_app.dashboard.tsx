@@ -773,7 +773,7 @@ function DashboardPage() {
                 </p>
               )}
               {filteredActivity.map(({ employee, shots: images }) => (
-                <Link
+                <div
                   key={employee.id}
                   className="overflow-hidden rounded-[18px] border border-border/80 bg-card/70"
                 >
@@ -795,7 +795,7 @@ function DashboardPage() {
                       </p>
                     )}
                     {images.map((shot) => (
-                      <div
+                      <Link
                         key={shot.id}
                         to="/screenshots"
                         className="group relative overflow-hidden rounded-[12px] border border-border bg-background transition hover:border-primary/40 hover:shadow-md"
@@ -814,7 +814,7 @@ function DashboardPage() {
                       </Link>
                     ))}
                   </div>
-                </Link>
+                </div>
               ))}
             </CardContent>
           </Card>
