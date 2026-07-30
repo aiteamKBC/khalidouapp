@@ -22,6 +22,7 @@ from app.main import app
 from app.services.activity_timeline import local_today, open_session_liveness
 from app.services.request_notifications import request_recipients
 from app.services.work_profiles import get_or_create_work_profile
+from scripts.audit_production_state import _audit_screenshot_storage
 from app.models import (
     AdminUser,
     ActivityEvent,
@@ -2999,6 +3000,35 @@ def test_open_session_liveness_uses_two_queries_for_many_sessions(team_client):
     assert len(result) == 25
     assert all(not item["is_fresh"] for item in result.values())
     assert query_count == 2
+
+
+def test_production_audit_distinguishes_missing_images_from_thumbnail_backfill(
+    team_client,
+    monkeypatch,
+    tmp_path,
+):
+    _, data = team_client
+    monkeypatch.setattr(settings, "screenshot_storage_path", tmp_path)
+    (tmp_path / data["screenshot_a"].storage_path).write_bytes(b"original")
+
+    db: Session = data["session_factory"]()
+    try:
+        result = _audit_screenshot_storage(
+            db,
+            now=datetime.now(UTC),
+            days=1,
+            employee_name=None,
+        )
+    finally:
+        db.close()
+
+    assert result["database_rows_checked"] == 2
+    assert result["missing_original_count"] == 1
+    assert result["missing_original_samples"][0]["screenshot_id"] == str(
+        data["screenshot_b"].id
+    )
+    assert result["thumbnail_backfill_needed"] == 1
+    assert result["storage"]["root_exists"] is True
 
 
 def test_employee_may_belong_to_multiple_teams(team_client):

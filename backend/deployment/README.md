@@ -145,3 +145,48 @@ docker run --rm -v khaliduo_screenshots:/data -v "$PWD:/backup" alpine tar czf /
 ```
 
 Back up both regularly. Nginx allows 20 MB uploads; keep this above `SCREENSHOT_MAX_FILE_SIZE_MB`.
+
+## Current systemd VPS release
+
+The current Khaliduo VPS uses the repository at
+`/var/www/khalidouapp` with the `khaliduo-api` and
+`khaliduo-dashboard` systemd services. From the trusted Windows build
+machine, deploy a tested and pushed `main` commit with:
+
+```powershell
+.\frontend\scripts\deploy-production.ps1
+```
+
+The command intentionally prompts for SSH authentication and never stores the
+password. It verifies the pushed commit and signed desktop artifacts before it
+changes the server, then:
+
+- creates a PostgreSQL backup when `pg_dump` is available;
+- migrates and restarts the API;
+- builds the dashboard into a staging directory and swaps it only after a
+  successful build;
+- enables one-minute API/database and dashboard health recovery;
+- writes a read-only session, attendance, and screenshot-storage audit under
+  `/var/backups/khaliduo/audits/`;
+- publishes the installer, blockmap, and `latest.yml` with `latest.yml` moved
+  last so clients never see metadata for an incomplete upload;
+- verifies the public database health, dashboard, and update feed.
+
+Validate all inputs without changing Production:
+
+```powershell
+.\frontend\scripts\deploy-production.ps1 -ValidateOnly
+```
+
+Run the production audit again without changing data:
+
+```bash
+cd /var/www/khalidouapp/backend
+/var/www/khalidouapp/venv/bin/python scripts/audit_production_state.py --days 7
+```
+
+Use `--employee "Employee Name"` to narrow the report. Missing screenshot
+originals require restoration from backup; missing thumbnails are regenerated
+on demand and are reported separately. Never apply attendance or payroll
+adjustments from this audit alone—confirm the last trusted heartbeat and the
+employee's real work evidence first.

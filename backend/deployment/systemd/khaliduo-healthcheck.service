@@ -1,0 +1,8 @@
+[Unit]
+Description=Khaliduo production health check
+After=network-online.target khaliduo-api.service khaliduo-dashboard.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/khaliduo-healthcheck
