@@ -30,7 +30,11 @@ from app.models import (
     TimeAdjustmentRequest,
     WorkSession,
 )
-from app.services.activity_timeline import local_today
+from app.services.activity_timeline import (
+    SessionLiveness,
+    local_today,
+    open_session_liveness,
+)
 from app.services.audit import record_audit_log
 from app.services.attendance import (
     cached_daily_attendance,
@@ -45,6 +49,7 @@ from app.services.schedules import (
 from app.services.work_profiles import get_or_create_work_profile
 
 router = APIRouter(prefix="/attendance", tags=["attendance"])
+ACTIVE_SESSION_STATUSES = {"active", "idle", "locked", "sleeping"}
 
 
 class AttendanceCorrectionUpdate(BaseModel):
@@ -262,6 +267,30 @@ def daily_attendance(
     leave_by_employee: dict[UUID, LeaveRequest] = {}
     schedules_by_employee: dict[UUID, dict] = {}
     calculated_at = datetime.now(UTC)
+    current_employee_ids = [
+        employee.id
+        for employee in employees
+        if local_today(employee.timezone, calculated_at) == selected_day
+    ]
+    open_sessions_by_employee: dict[UUID, list[WorkSession]] = {}
+    liveness_by_session: dict[UUID, SessionLiveness] = {}
+    if current_employee_ids:
+        open_sessions = db.scalars(
+            select(WorkSession).where(
+                WorkSession.company_id == current_admin.company_id,
+                WorkSession.employee_id.in_(current_employee_ids),
+                WorkSession.ended_at.is_(None),
+                WorkSession.status.in_(ACTIVE_SESSION_STATUSES),
+            )
+        ).all()
+        for session in open_sessions:
+            open_sessions_by_employee.setdefault(session.employee_id, []).append(session)
+        liveness_by_session = open_session_liveness(
+            db,
+            company_id=current_admin.company_id,
+            sessions=open_sessions,
+            now=calculated_at,
+        )
     if missing_employee_ids:
         broad_start = datetime.combine(
             selected_day - timedelta(days=1),
@@ -348,6 +377,36 @@ def daily_attendance(
                 employee_today=local_today(employee.timezone, calculated_at),
                 calculated_at=calculated_at,
             )
+
+        employee_today = local_today(employee.timezone, calculated_at)
+        if selected_day == employee_today:
+            employee_open_sessions = open_sessions_by_employee.get(employee.id, [])
+            has_fresh_session = any(
+                bool(liveness_by_session[session.id]["is_fresh"])
+                for session in employee_open_sessions
+            )
+            data["is_running"] = has_fresh_session
+            if has_fresh_session:
+                data["actual_sign_out_at"] = None
+            elif data["actual_sign_out_at"] is None:
+                stale_signals = [
+                    liveness_by_session[session.id]["last_signal_at"]
+                    for session in employee_open_sessions
+                    if not bool(liveness_by_session[session.id]["is_fresh"])
+                    and local_today(
+                        employee.timezone,
+                        liveness_by_session[session.id]["last_signal_at"],
+                    )
+                    == selected_day
+                ]
+                last_signal_at = max(stale_signals, default=None)
+                data["actual_sign_out_at"] = (
+                    last_signal_at.isoformat() if last_signal_at else data["actual_last_activity_at"]
+                )
+        else:
+            data["is_running"] = False
+            if data["actual_sign_out_at"] is None:
+                data["actual_sign_out_at"] = data["actual_last_activity_at"]
 
         if status and data["status"] != status:
             continue

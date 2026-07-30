@@ -15,17 +15,15 @@ from app.core.responses import success_response
 from app.database.session import get_db
 from app.models import (
     AdminUser,
-    ActivityEvent,
     DailyAttendance,
     Employee,
     EmployeeWorkProfile,
     Screenshot,
     TeamMember,
     TimeAdjustmentRequest,
-    TrackingSettings,
     WorkSession,
 )
-from app.services.activity_timeline import EVENT_STATES, TERMINAL_EVENTS, local_today
+from app.services.activity_timeline import local_today, open_session_liveness
 from app.services.attendance import accountable_idle_seconds, cached_daily_attendance
 
 router = APIRouter(prefix="/timesheets", tags=["timesheets"])
@@ -131,13 +129,7 @@ def timesheet_rows(
             )
         if session.ended_at is None and session.status in ACTIVE_SESSION_STATUSES:
             item["_has_open_session"] = True
-            item["_open_sessions"].append(
-                (
-                    session.id,
-                    started_at,
-                    _utc(session.updated_at),
-                )
-            )
+            item["_open_sessions"].append(session)
         item["active_seconds"] += max(
             0,
             int(session.active_seconds) - int(session.deducted_seconds),
@@ -186,67 +178,26 @@ def timesheet_rows(
                 },
             )
 
-    open_session_ids = {
-        session_id
+    open_sessions = [
+        session
         for item in result_by_key.values()
-        for session_id, _started_at, _updated_at in item["_open_sessions"]
-    }
-    if open_session_ids:
-        signal_by_session: dict[UUID, dict[str, datetime]] = {}
-        signal_rows = db.execute(
-            select(
-                ActivityEvent.session_id,
-                ActivityEvent.event_type,
-                func.max(ActivityEvent.event_timestamp),
-            )
-            .where(
-                ActivityEvent.company_id == company_id,
-                ActivityEvent.session_id.in_(open_session_ids),
-                or_(
-                    ActivityEvent.event_type == "heartbeat",
-                    ActivityEvent.event_type.in_(set(EVENT_STATES) - TERMINAL_EVENTS),
-                ),
-            )
-            .group_by(ActivityEvent.session_id, ActivityEvent.event_type)
-        ).all()
-        for session_id, event_type, event_at in signal_rows:
-            if event_at is not None:
-                signal_by_session.setdefault(session_id, {})[event_type] = _utc(event_at)
-
-        offline_threshold_minutes = (
-            db.scalar(
-                select(TrackingSettings.offline_threshold_minutes).where(
-                    TrackingSettings.company_id == company_id
-                )
-            )
-            or 3
+        for session in item["_open_sessions"]
+    ]
+    if open_sessions:
+        liveness_by_session = open_session_liveness(
+            db,
+            company_id=company_id,
+            sessions=open_sessions,
         )
-        freshness_limit = timedelta(minutes=max(1, int(offline_threshold_minutes)))
-        now_utc = datetime.now(UTC)
         for item in result_by_key.values():
             fresh_open_session = False
             latest_end_at = item["_latest_end_at"]
-            for session_id, session_started_at, session_updated_at in item["_open_sessions"]:
-                signals = signal_by_session.get(session_id, {})
-                heartbeat_at = signals.get("heartbeat")
-                if heartbeat_at is not None:
-                    last_signal_at = max(
-                        session_started_at,
-                        heartbeat_at,
-                        *(
-                            event_at
-                            for event_type, event_at in signals.items()
-                            if event_type != "heartbeat"
-                        ),
-                    )
-                else:
-                    last_signal_at = max(
-                        session_started_at,
-                        min(session_updated_at, now_utc),
-                    )
-                if now_utc - last_signal_at <= freshness_limit:
+            for session in item["_open_sessions"]:
+                liveness = liveness_by_session[session.id]
+                if bool(liveness["is_fresh"]):
                     fresh_open_session = True
                 else:
+                    last_signal_at = liveness["last_signal_at"]
                     latest_end_at = max(
                         value
                         for value in (latest_end_at, last_signal_at)

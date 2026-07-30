@@ -19,7 +19,7 @@ from app.core.security import create_jwt_token, hash_password
 from app.database.base import Base
 from app.database.session import get_db
 from app.main import app
-from app.services.activity_timeline import local_today
+from app.services.activity_timeline import local_today, open_session_liveness
 from app.services.request_notifications import request_recipients
 from app.services.work_profiles import get_or_create_work_profile
 from app.models import (
@@ -2876,6 +2876,129 @@ def test_workday_timeline_stops_stale_open_session_at_last_heartbeat(team_client
     )
     assert timesheet_response.status_code == 200
     assert timesheet_row["end_time"] == heartbeat_at.isoformat()
+
+
+def test_daily_attendance_stops_stale_materialized_session_at_last_heartbeat(
+    team_client,
+):
+    client, data = team_client
+    now = datetime.now(UTC).replace(microsecond=0)
+    work_day = local_today("UTC", now)
+    started_at = now - timedelta(hours=2)
+    heartbeat_at = now - timedelta(hours=1)
+
+    db: Session = data["session_factory"]()
+    try:
+        session = db.get(WorkSession, data["session_a"].id)
+        session.started_at = started_at
+        session.updated_at = started_at
+        session.ended_at = None
+        session.status = "active"
+        db.add(
+            ActivityEvent(
+                company_id=session.company_id,
+                employee_id=session.employee_id,
+                device_id=session.device_id,
+                session_id=session.id,
+                event_type="heartbeat",
+                event_timestamp=heartbeat_at,
+                payload={"status": "active"},
+                idempotency_key=str(uuid4()),
+            )
+        )
+        db.add(
+            DailyAttendance(
+                company_id=session.company_id,
+                employee_id=session.employee_id,
+                work_date=work_day,
+                timezone="UTC",
+                actual_first_activity_at=started_at,
+                actual_last_activity_at=heartbeat_at,
+                actual_sign_out_at=None,
+                normal_worked_seconds=3600,
+                status="present",
+                issues=[],
+                calculation_sources={"is_running": True},
+                calculated_at=heartbeat_at,
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    response = client.get(
+        "/api/v1/attendance/daily",
+        params={
+            "day": work_day.isoformat(),
+            "employee_id": str(data["employee_a"].id),
+        },
+        headers=data["general_headers"],
+    )
+
+    assert response.status_code == 200
+    [row] = response.json()["data"]["rows"]
+    assert row["is_running"] is False
+    assert row["actual_sign_out_at"] == heartbeat_at.isoformat()
+    assert row["normal_worked_seconds"] == 3600
+
+
+def test_open_session_liveness_uses_two_queries_for_many_sessions(team_client):
+    _, data = team_client
+    now = datetime.now(UTC).replace(microsecond=0)
+    heartbeat_at = now - timedelta(minutes=10)
+    query_count = 0
+
+    db: Session = data["session_factory"]()
+    try:
+        sessions = []
+        for index in range(25):
+            session = WorkSession(
+                company_id=data["employee_a"].company_id,
+                employee_id=data["employee_a"].id,
+                device_id=data["session_a"].device_id,
+                started_at=now - timedelta(minutes=20, seconds=index),
+                status="active",
+                active_seconds=60,
+                idle_seconds=0,
+            )
+            db.add(session)
+            db.flush()
+            sessions.append(session)
+            db.add(
+                ActivityEvent(
+                    company_id=session.company_id,
+                    employee_id=session.employee_id,
+                    device_id=session.device_id,
+                    session_id=session.id,
+                    event_type="heartbeat",
+                    event_timestamp=heartbeat_at,
+                    payload={"status": "active"},
+                    idempotency_key=str(uuid4()),
+                )
+            )
+        db.commit()
+
+        def count_query(*_args, **_kwargs):
+            nonlocal query_count
+            query_count += 1
+
+        engine = db.get_bind()
+        event.listen(engine, "before_cursor_execute", count_query)
+        try:
+            result = open_session_liveness(
+                db,
+                company_id=data["employee_a"].company_id,
+                sessions=sessions,
+                now=now,
+            )
+        finally:
+            event.remove(engine, "before_cursor_execute", count_query)
+    finally:
+        db.close()
+
+    assert len(result) == 25
+    assert all(not item["is_fresh"] for item in result.values())
+    assert query_count == 2
 
 
 def test_employee_may_belong_to_multiple_teams(team_client):

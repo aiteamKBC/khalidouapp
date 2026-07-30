@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import UTC, date, datetime, time, timedelta
+from typing import TypedDict
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.models import ActivityEvent, LeaveRequest, Project, Task, TrackingSettings, WorkSession
@@ -26,10 +27,95 @@ TERMINAL_EVENTS = {"agent_stopped", "session_ended"}
 TIMELINE_EVENTS = set(EVENT_STATES) | TERMINAL_EVENTS
 
 
+class SessionLiveness(TypedDict):
+    is_fresh: bool
+    last_signal_at: datetime
+
+
 def _utc(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=UTC)
     return value.astimezone(UTC)
+
+
+def open_session_liveness(
+    db: Session,
+    *,
+    company_id: UUID,
+    sessions: list[WorkSession],
+    now: datetime | None = None,
+) -> dict[UUID, SessionLiveness]:
+    """Resolve open-session freshness in a fixed number of database queries.
+
+    WorkSession rows can remain open when the desktop process is killed or a
+    device disappears without sending a terminal event.  A cached attendance
+    row must not turn that stale database state into "Open until now".  Use the
+    same heartbeat/event evidence and company threshold as the full timeline,
+    but do it in bulk so list endpoints do not introduce an N+1 query.
+    """
+    open_sessions = {
+        session.id: session for session in sessions if session.ended_at is None
+    }
+    if not open_sessions:
+        return {}
+
+    signal_by_session: dict[UUID, dict[str, datetime]] = {}
+    signal_rows = db.execute(
+        select(
+            ActivityEvent.session_id,
+            ActivityEvent.event_type,
+            func.max(ActivityEvent.event_timestamp),
+        )
+        .where(
+            ActivityEvent.company_id == company_id,
+            ActivityEvent.session_id.in_(open_sessions),
+            or_(
+                ActivityEvent.event_type == "heartbeat",
+                ActivityEvent.event_type.in_(EVENT_STATES),
+            ),
+        )
+        .group_by(ActivityEvent.session_id, ActivityEvent.event_type)
+    ).all()
+    for session_id, event_type, event_at in signal_rows:
+        if event_at is not None:
+            signal_by_session.setdefault(session_id, {})[event_type] = _utc(event_at)
+
+    offline_threshold_minutes = (
+        db.scalar(
+            select(TrackingSettings.offline_threshold_minutes).where(
+                TrackingSettings.company_id == company_id
+            )
+        )
+        or 3
+    )
+    freshness_limit = timedelta(minutes=max(1, int(offline_threshold_minutes)))
+    now_utc = _utc(now or datetime.now(UTC))
+    result: dict[UUID, SessionLiveness] = {}
+    for session_id, session in open_sessions.items():
+        session_start = _utc(session.started_at)
+        signals = signal_by_session.get(session_id, {})
+        heartbeat_at = signals.get("heartbeat")
+        if heartbeat_at is not None:
+            last_signal_at = max(
+                session_start,
+                heartbeat_at,
+                *(
+                    event_at
+                    for event_type, event_at in signals.items()
+                    if event_type != "heartbeat"
+                ),
+            )
+        else:
+            last_signal_at = max(
+                session_start,
+                min(_utc(session.updated_at), now_utc),
+            )
+        last_signal_at = min(last_signal_at, now_utc)
+        result[session_id] = {
+            "is_fresh": now_utc - last_signal_at <= freshness_limit,
+            "last_signal_at": last_signal_at,
+        }
+    return result
 
 
 def _continued_session_started_at(events: list[ActivityEvent]) -> datetime | None:
