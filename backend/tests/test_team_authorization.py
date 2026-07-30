@@ -1816,6 +1816,45 @@ def test_revoked_device_token_requires_desktop_reenrollment(team_client):
     }
 
 
+def test_legacy_device_token_bootstraps_once_after_registry_repair(team_client):
+    client, data = team_client
+    device_id = data["session_a"].device_id
+    db: Session = data["session_factory"]()
+    try:
+        device = db.get(Device, device_id)
+        device.legacy_token_bootstrap_allowed = True
+        db.execute(delete(DeviceToken).where(DeviceToken.device_id == device_id))
+        db.commit()
+    finally:
+        db.close()
+
+    first_response = client.get(
+        "/api/v1/agent/summary",
+        headers=data["device_headers"],
+    )
+
+    assert first_response.status_code == 200
+    db = data["session_factory"]()
+    try:
+        device = db.get(Device, device_id)
+        token_rows = db.scalars(
+            select(DeviceToken).where(DeviceToken.device_id == device_id)
+        ).all()
+        assert device.legacy_token_bootstrap_allowed is False
+        assert len(token_rows) == 1
+        db.delete(token_rows[0])
+        db.commit()
+    finally:
+        db.close()
+
+    replay_after_bootstrap = client.get(
+        "/api/v1/agent/summary",
+        headers=data["device_headers"],
+    )
+    assert replay_after_bootstrap.status_code == 401
+    assert replay_after_bootstrap.json()["error"]["code"] == "DEVICE_REENROLLMENT_REQUIRED"
+
+
 def test_team_owner_cannot_retrieve_reports_from_another_team(team_client):
     client, data = team_client
 

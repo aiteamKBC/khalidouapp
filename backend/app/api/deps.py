@@ -5,7 +5,8 @@ from uuid import UUID
 
 import jwt
 from fastapi import Depends, Header
-from sqlalchemy import select
+from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import ApiError
@@ -76,19 +77,6 @@ def get_current_device(
     except (KeyError, TypeError, ValueError):
         raise ApiError("UNAUTHORIZED", "Invalid device token claims.", 401) from None
 
-    token_record = db.scalar(
-        select(DeviceToken).where(
-            DeviceToken.token_hash == hash_token(token),
-            DeviceToken.company_id == company_id,
-            DeviceToken.device_id == device_id,
-            DeviceToken.revoked_at.is_(None),
-        )
-    )
-    if token_record is None:
-        raise ApiError("DEVICE_REENROLLMENT_REQUIRED", DEVICE_REENROLLMENT_REQUIRED, 401)
-    if token_record.expires_at is not None and token_record.expires_at <= datetime.now(UTC):
-        raise ApiError("DEVICE_REENROLLMENT_REQUIRED", DEVICE_REENROLLMENT_REQUIRED, 401)
-
     device = db.scalar(
         select(Device).where(
             Device.id == device_id,
@@ -99,6 +87,119 @@ def get_current_device(
     )
     if device is None:
         raise ApiError("DEVICE_REENROLLMENT_REQUIRED", DEVICE_REENROLLMENT_REQUIRED, 401)
+
+    token_hash = hash_token(token)
+    token_record = db.scalar(
+        select(DeviceToken).where(
+            DeviceToken.token_hash == token_hash,
+            DeviceToken.company_id == company_id,
+            DeviceToken.device_id == device_id,
+            DeviceToken.revoked_at.is_(None),
+        )
+    )
+    if token_record is None:
+        token_history_exists = db.scalar(
+            select(DeviceToken.id).where(
+                DeviceToken.company_id == company_id,
+                DeviceToken.device_id == device_id,
+            )
+        )
+        if (
+            token_history_exists is not None
+            or not device.legacy_token_bootstrap_allowed
+            or device.employee_id != token_employee_id
+        ):
+            raise ApiError("DEVICE_REENROLLMENT_REQUIRED", DEVICE_REENROLLMENT_REQUIRED, 401)
+
+        bootstrap_claim = db.execute(
+            update(Device)
+            .where(
+                Device.id == device_id,
+                Device.company_id == company_id,
+                Device.employee_id == token_employee_id,
+                Device.status == "active",
+                Device.revoked_at.is_(None),
+                Device.legacy_token_bootstrap_allowed.is_(True),
+            )
+            .values(legacy_token_bootstrap_allowed=False)
+            .execution_options(synchronize_session="fetch")
+        )
+        if bootstrap_claim.rowcount != 1:
+            # Another request may have claimed the one-time migration window.
+            # Accept it only when that same token is now the registered token.
+            db.rollback()
+            token_record = db.scalar(
+                select(DeviceToken).where(
+                    DeviceToken.token_hash == token_hash,
+                    DeviceToken.company_id == company_id,
+                    DeviceToken.device_id == device_id,
+                    DeviceToken.revoked_at.is_(None),
+                )
+            )
+            device = db.scalar(
+                select(Device).where(
+                    Device.id == device_id,
+                    Device.company_id == company_id,
+                    Device.status == "active",
+                    Device.revoked_at.is_(None),
+                )
+            )
+            if token_record is None or device is None:
+                raise ApiError(
+                    "DEVICE_REENROLLMENT_REQUIRED",
+                    DEVICE_REENROLLMENT_REQUIRED,
+                    401,
+                )
+        else:
+            issued_at_claim = payload.get("iat")
+            try:
+                issued_at = datetime.fromtimestamp(int(issued_at_claim), UTC)
+            except (TypeError, ValueError, OSError):
+                db.rollback()
+                raise ApiError(
+                    "DEVICE_REENROLLMENT_REQUIRED",
+                    DEVICE_REENROLLMENT_REQUIRED,
+                    401,
+                ) from None
+            token_record = DeviceToken(
+                company_id=company_id,
+                device_id=device_id,
+                token_hash=token_hash,
+                issued_at=issued_at,
+            )
+            db.add(token_record)
+            try:
+                db.commit()
+            except IntegrityError:
+                # Two agent requests can arrive together after a network outage.
+                # The unique token hash makes the bootstrap idempotent.
+                db.rollback()
+                token_record = db.scalar(
+                    select(DeviceToken).where(
+                        DeviceToken.token_hash == token_hash,
+                        DeviceToken.company_id == company_id,
+                        DeviceToken.device_id == device_id,
+                        DeviceToken.revoked_at.is_(None),
+                    )
+                )
+                device = db.scalar(
+                    select(Device).where(
+                        Device.id == device_id,
+                        Device.company_id == company_id,
+                        Device.status == "active",
+                        Device.revoked_at.is_(None),
+                    )
+                )
+                if token_record is None or device is None:
+                    raise ApiError(
+                        "DEVICE_REENROLLMENT_REQUIRED",
+                        DEVICE_REENROLLMENT_REQUIRED,
+                        401,
+                    ) from None
+
+    if token_record.expires_at is not None and token_record.expires_at <= datetime.now(UTC):
+        raise ApiError("DEVICE_REENROLLMENT_REQUIRED", DEVICE_REENROLLMENT_REQUIRED, 401)
+
     if device.employee_id != token_employee_id:
         # A valid, non-revoked device token is the durable identity for the
         # installation. Repair a stale employee foreign key so an app update

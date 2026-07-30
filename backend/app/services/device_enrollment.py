@@ -52,6 +52,8 @@ def issue_device_token(db: Session, device: Device) -> str:
         company_id=device.company_id,
         employee_id=device.employee_id,
     )
+    device.legacy_token_bootstrap_allowed = False
+    db.add(device)
     db.add(
         DeviceToken(
             company_id=device.company_id,

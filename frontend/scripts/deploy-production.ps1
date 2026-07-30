@@ -199,7 +199,7 @@ systemctl enable --now khaliduo-healthcheck.timer
 healthy=0
 for attempt in $(seq 1 30); do
   if curl -fsS --max-time 10 \
-      "http://127.0.0.1:8000/api/v1/health/db" >/dev/null &&
+      "http://127.0.0.1:8100/api/v1/health/db" >/dev/null &&
     curl -fsS --max-time 10 \
       "http://127.0.0.1:3100/" >/dev/null; then
     healthy=1
@@ -314,8 +314,11 @@ echo "DESKTOP_BACKUP=$BACKUP"
 }
 
 $health = Invoke-RestMethod -Uri "$ApiBaseUrl/health/db"
-if ($health.data.database -ne "reachable") {
-    throw "The public database health check did not report reachable."
+if (
+    $health.data.database -ne "reachable" -or
+    $health.data.schema -ne "ready"
+) {
+    throw "The public database health check did not report a ready schema."
 }
 $dashboard = Invoke-WebRequest -UseBasicParsing -Uri $DashboardUrl
 if ($dashboard.StatusCode -ne 200) {
@@ -336,5 +339,5 @@ Write-Host "Commit: $commit"
 if (-not $SkipDesktop) {
     Write-Host "Desktop: $version"
 }
-Write-Host "API database: reachable"
+Write-Host "API database: reachable; schema: ready"
 Write-Host "Dashboard: HTTP $($dashboard.StatusCode)"
