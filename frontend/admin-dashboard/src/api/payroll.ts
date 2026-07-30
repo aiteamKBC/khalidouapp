@@ -133,12 +133,12 @@ export type PayrollEntryUpdate = Partial<
   >
 >;
 
-export function getPayrollSheet(filters: PayrollFilters) {
-  return apiFetch<PayrollSheet>(withQuery("/payroll/sheet", filters));
+export function getPayrollSheet(filters: PayrollFilters, signal?: AbortSignal) {
+  return apiFetch<PayrollSheet>(withQuery("/payroll/sheet", filters), { signal });
 }
 
-export function getPayrollEntry(entryId: string) {
-  return apiFetch<PayrollEntry>(`/payroll/entries/${entryId}`);
+export function getPayrollEntry(entryId: string, signal?: AbortSignal) {
+  return apiFetch<PayrollEntry>(`/payroll/entries/${entryId}`, { signal });
 }
 
 export function updatePayrollEntry(entryId: string, input: PayrollEntryUpdate) {
@@ -178,9 +178,11 @@ export function updatePayrollRunStatus(
 export function getPayrollExceptions(
   month: string,
   range?: { start_date?: string; end_date?: string },
+  signal?: AbortSignal,
 ) {
   return apiFetch<Record<string, PayrollEntry[]>>(
     withQuery("/payroll/exceptions", { month, ...range }),
+    { signal },
   );
 }
 
@@ -190,8 +192,8 @@ export type PayrollSettings = {
   timezone: string;
 };
 
-export function getPayrollSettings() {
-  return apiFetch<PayrollSettings>("/payroll/settings");
+export function getPayrollSettings(signal?: AbortSignal) {
+  return apiFetch<PayrollSettings>("/payroll/settings", { signal });
 }
 
 export function updatePayrollSettings(input: PayrollSettings) {
@@ -248,9 +250,10 @@ export type ScheduleOverride = {
   created_at: string;
 };
 
-export function listScheduleOverrides(upcomingOnly = true) {
+export function listScheduleOverrides(upcomingOnly = true, signal?: AbortSignal) {
   return apiFetch<ScheduleOverride[]>(
     withQuery("/payroll/schedule-overrides", { upcoming_only: upcomingOnly }),
+    { signal },
   );
 }
 

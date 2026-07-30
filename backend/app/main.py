@@ -70,6 +70,11 @@ def create_app() -> FastAPI:
             "Permissions-Policy",
             "camera=(), microphone=(), geolocation=(), payment=()",
         )
+        if production:
+            response.headers.setdefault(
+                "Strict-Transport-Security",
+                "max-age=31536000; includeSubDomains",
+            )
         response.headers.setdefault("X-Request-ID", uuid4().hex)
         response.headers.setdefault("Server-Timing", f"app;dur={duration_ms:.1f}")
         if request.url.path.startswith(("/api/v1/auth", "/api/v1/employee-auth")):

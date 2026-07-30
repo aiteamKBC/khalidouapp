@@ -217,7 +217,10 @@ export async function updatePersonRole(
   };
 }
 
-export async function getPersonInvitation(token: string): Promise<PublicPersonInvitation> {
+export async function getPersonInvitation(
+  token: string,
+  signal?: AbortSignal,
+): Promise<PublicPersonInvitation> {
   const row = await apiFetch<{
     valid: boolean;
     status: PersonInvitationStatus | "invalid";
@@ -225,7 +228,7 @@ export async function getPersonInvitation(token: string): Promise<PublicPersonIn
     email?: string;
     kind?: PersonInvitationKind;
     expires_at?: string;
-  }>(`/people/invitations/${encodeURIComponent(token)}`);
+  }>(`/people/invitations/${encodeURIComponent(token)}`, { signal });
   if (!row.valid || row.status !== "pending") {
     return { valid: false, status: row.status };
   }

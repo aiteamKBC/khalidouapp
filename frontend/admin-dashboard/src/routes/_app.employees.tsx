@@ -47,15 +47,16 @@ export function EmployeesList({ embedded = false }: { embedded?: boolean }) {
   const scope = scopedTeamIds();
   const emps = useQuery({
     queryKey: ["employees", scope],
-    queryFn: () => listEmployees(scope),
+    queryFn: ({ signal }) => listEmployees(scope, signal),
     staleTime: 20_000,
     refetchOnWindowFocus: false,
     placeholderData: (previous) => previous,
   });
   const teams = useQuery({
     queryKey: ["teams", scope],
-    queryFn: () => listTeams(scope),
-    staleTime: 60_000,
+    queryFn: ({ signal }) => listTeams(scope, signal),
+    staleTime: 10 * 60_000,
+    gcTime: 30 * 60_000,
     refetchOnWindowFocus: false,
     placeholderData: (previous) => previous,
   });

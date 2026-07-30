@@ -51,13 +51,14 @@ function NotificationsPage() {
   const { scopedTeamIds, user } = useAuth();
   const scope = scopedTeamIds();
   const notifications = useQuery({
-    queryKey: ["task-notifications"],
-    queryFn: listTaskNotifications,
+    queryKey: ["task-notifications", scope],
+    queryFn: ({ signal }) => listTaskNotifications(signal),
     refetchInterval: 30_000,
+    refetchIntervalInBackground: false,
   });
   const tasks = useQuery({
     queryKey: ["tasks", scope],
-    queryFn: () => listTasks({ scopedTeamIds: scope }),
+    queryFn: ({ signal }) => listTasks({ scopedTeamIds: scope }, signal),
   });
   const refresh = () => queryClient.invalidateQueries({ queryKey: ["task-notifications"] });
   const readOne = useMutation({ mutationFn: readTaskNotification, onSuccess: refresh });

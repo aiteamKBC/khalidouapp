@@ -153,10 +153,14 @@ function mapTask(task: BackendTask): Task {
   };
 }
 
-export async function listProjects(scopedTeamIds?: string[]): Promise<Project[]> {
+export async function listProjects(
+  scopedTeamIds?: string[],
+  signal?: AbortSignal,
+): Promise<Project[]> {
   const teamId = scopedTeamIds?.length === 1 ? scopedTeamIds[0] : undefined;
   const projects = await apiFetch<BackendProject[]>(
     withQuery("/projects", { page_size: 200, team_id: teamId }),
+    { signal },
   );
   return projects
     .map(mapProject)
@@ -176,8 +180,8 @@ export async function createProject(input: ProjectCreateInput): Promise<Project>
   return mapProject(project);
 }
 
-export async function getProject(id: string): Promise<Project> {
-  return mapProject(await apiFetch<BackendProject>(`/projects/${id}`));
+export async function getProject(id: string, signal?: AbortSignal): Promise<Project> {
+  return mapProject(await apiFetch<BackendProject>(`/projects/${id}`, { signal }));
 }
 
 export async function updateProject(
@@ -212,11 +216,14 @@ export async function archiveProject(id: string): Promise<void> {
   await apiFetch(`/projects/${id}`, { method: "DELETE" });
 }
 
-export async function listTasks(options?: {
-  scopedTeamIds?: string[];
-  projectId?: string;
-  teamId?: string;
-}): Promise<Task[]> {
+export async function listTasks(
+  options?: {
+    scopedTeamIds?: string[];
+    projectId?: string;
+    teamId?: string;
+  },
+  signal?: AbortSignal,
+): Promise<Task[]> {
   const teamId =
     options?.teamId ??
     (options?.scopedTeamIds?.length === 1 ? options.scopedTeamIds[0] : undefined);
@@ -226,6 +233,7 @@ export async function listTasks(options?: {
       project_id: options?.projectId,
       team_id: teamId,
     }),
+    { signal },
   );
   return tasks
     .map(mapTask)
@@ -238,10 +246,11 @@ export async function listTasks(options?: {
 
 export async function listTaskMetrics(
   teamId?: string,
+  signal?: AbortSignal,
 ): Promise<Array<{ taskId: string; activeMinutes: number; idleMinutes: number }>> {
   const rows = await apiFetch<
     Array<{ task_id: string; active_seconds: number; idle_seconds: number }>
-  >(withQuery("/task-metrics", { team_id: teamId }));
+  >(withQuery("/task-metrics", { team_id: teamId }), { signal });
   return rows.map((row) => ({
     taskId: row.task_id,
     activeMinutes: Math.round(row.active_seconds / 60),
@@ -298,7 +307,10 @@ export type TaskWorkspace = {
   }>;
 };
 
-export async function getTaskWorkspace(taskId: string): Promise<TaskWorkspace> {
+export async function getTaskWorkspace(
+  taskId: string,
+  signal?: AbortSignal,
+): Promise<TaskWorkspace> {
   const data = await apiFetch<{
     comments: Array<{ id: string; body: string; author_name: string; created_at: string }>;
     attachments: Array<{
@@ -324,7 +336,7 @@ export async function getTaskWorkspace(taskId: string): Promise<TaskWorkspace> {
       details: Record<string, unknown>;
       created_at: string;
     }>;
-  }>(`/tasks/${taskId}/workspace`);
+  }>(`/tasks/${taskId}/workspace`, { signal });
   return {
     comments: data.comments.map((item) => ({
       id: item.id,
@@ -530,7 +542,7 @@ export type TaskNotification = {
   createdAt: string;
 };
 
-export async function listTaskNotifications(): Promise<TaskNotification[]> {
+export async function listTaskNotifications(signal?: AbortSignal): Promise<TaskNotification[]> {
   const rows = await apiFetch<
     Array<{
       id: string;
@@ -557,7 +569,7 @@ export async function listTaskNotifications(): Promise<TaskNotification[]> {
       read_at?: string | null;
       created_at: string;
     }>
-  >("/notifications");
+  >("/notifications", { signal });
   return rows.map((row) => ({
     id: row.id,
     taskId: row.task_id ?? undefined,

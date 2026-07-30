@@ -1,6 +1,7 @@
 import { QueryClient } from "@tanstack/react-query";
 import { createRouter } from "@tanstack/react-router";
 import { routeTree } from "./routeTree.gen";
+import { retryTransientRequest } from "./lib/query-retry-policy";
 
 export const getRouter = () => {
   const queryClient = new QueryClient({
@@ -10,7 +11,7 @@ export const getRouter = () => {
         gcTime: 10 * 60_000,
         refetchOnWindowFocus: false,
         refetchOnReconnect: true,
-        retry: 1,
+        retry: retryTransientRequest,
       },
     },
   });

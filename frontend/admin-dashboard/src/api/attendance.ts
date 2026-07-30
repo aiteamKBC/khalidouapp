@@ -160,7 +160,7 @@ export async function listDailyAttendance(filters: {
   status?: string;
   q?: string;
   issue?: "late" | "missing_check_in" | "overtime" | "idle" | "leave" | "all";
-}) {
+}, signal?: AbortSignal) {
   const params = new URLSearchParams({ day: filters.day });
   if (filters.teamId && filters.teamId !== "all") params.set("team_id", filters.teamId);
   if (filters.status && filters.status !== "all") params.set("status", filters.status);
@@ -172,6 +172,7 @@ export async function listDailyAttendance(filters: {
   if (filters.issue === "leave") params.set("leave_only", "true");
   const result = await apiFetch<{ date: string; rows: BackendAttendance[] }>(
     `/attendance/daily?${params.toString()}`,
+    { signal },
   );
   return result.rows.map(mapAttendance);
 }
@@ -239,6 +240,7 @@ export async function getEmployeeAttendanceRange(
   employeeId: string,
   startDate: string,
   endDate: string,
+  signal?: AbortSignal,
 ): Promise<EmployeeAttendanceRange> {
   const result = await apiFetch<{
     employee_id: string;
@@ -262,6 +264,7 @@ export async function getEmployeeAttendanceRange(
       start_date: startDate,
       end_date: endDate,
     }).toString()}`,
+    { signal },
   );
   return {
     employeeId: result.employee_id,

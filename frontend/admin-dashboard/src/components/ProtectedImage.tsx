@@ -6,6 +6,7 @@ import {
   SCREENSHOT_FULL_IMAGE_CACHE_MS,
   SCREENSHOT_THUMBNAIL_CACHE_MS,
 } from "@/lib/screenshot-display";
+import { protectedImageQueryKey } from "@/lib/private-query-scope";
 
 type ProtectedImageProps = Omit<ImgHTMLAttributes<HTMLImageElement>, "src"> & {
   src: string;
@@ -29,6 +30,8 @@ export function ProtectedImage({
   const errorReported = useRef(false);
   const [visible, setVisible] = useState(eager);
   const [objectUrl, setObjectUrl] = useState<string>();
+  const effectiveCacheTime =
+    cacheTimeMs ?? (eager ? SCREENSHOT_FULL_IMAGE_CACHE_MS : SCREENSHOT_THUMBNAIL_CACHE_MS);
 
   useEffect(() => {
     if (eager || visible) return;
@@ -51,11 +54,11 @@ export function ProtectedImage({
   }, [eager, visible]);
 
   const image = useQuery({
-    queryKey: ["protected-image", src],
-    queryFn: ({ signal }) => apiImageFile(src, signal),
+    queryKey: protectedImageQueryKey(src, authToken),
+    queryFn: ({ signal }) => apiImageFile(src, signal, authToken),
     enabled: visible && Boolean(src),
-    staleTime: Number.POSITIVE_INFINITY,
-    gcTime: 30 * 60_000,
+    staleTime: effectiveCacheTime,
+    gcTime: effectiveCacheTime,
     meta: { suppressGlobalLoading: true },
     retry: false,
   });

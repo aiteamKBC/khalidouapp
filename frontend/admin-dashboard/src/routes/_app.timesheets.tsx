@@ -37,8 +37,16 @@ export const Route = createFileRoute("/_app/timesheets")({
 function TimesheetsPage() {
   const { scopedTeamIds } = useAuth();
   const scope = scopedTeamIds();
-  const emps = useQuery({ queryKey: ["employees", scope], queryFn: () => listEmployees(scope) });
-  const teams = useQuery({ queryKey: ["teams", scope], queryFn: () => listTeams(scope) });
+  const emps = useQuery({
+    queryKey: ["employees", scope],
+    queryFn: ({ signal }) => listEmployees(scope, signal),
+  });
+  const teams = useQuery({
+    queryKey: ["teams", scope],
+    queryFn: ({ signal }) => listTeams(scope, signal),
+    staleTime: 10 * 60_000,
+    gcTime: 30 * 60_000,
+  });
 
   const [view, setView] = useState<"daily" | "weekly" | "monthly">("daily");
   const [date, setDate] = useState(todayDateValue);
@@ -48,7 +56,8 @@ function TimesheetsPage() {
   const perPage = 15;
   const ts = useQuery({
     queryKey: ["ts", scope, view, date, teamId],
-    queryFn: () => listTimesheets(scope, view, date, teamId),
+    queryFn: ({ signal }) => listTimesheets(scope, view, date, teamId, signal),
+    placeholderData: (previous) => previous,
   });
 
   const filtered = useMemo(

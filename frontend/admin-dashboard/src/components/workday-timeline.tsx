@@ -27,12 +27,6 @@ const intervalStyles: Record<
     badge: "bg-violet-500/15 text-violet-800",
     icon: Activity,
   },
-  break: {
-    label: "Break",
-    bar: "bg-slate-300",
-    badge: "bg-slate-500/10 text-slate-700",
-    icon: Coffee,
-  },
   idle: {
     label: "Idle",
     bar: "bg-amber-400",

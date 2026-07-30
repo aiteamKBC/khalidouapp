@@ -58,35 +58,39 @@ def record_employee_portal_login(employee: Employee, request: Request, db: Sessi
 @router.post("/login")
 def login(payload: EmployeePortalLogin, request: Request, db: Annotated[Session, Depends(get_db)]):
     enforce_rate_limit(request, action="employee-login", limit=10, window_seconds=60)
+    normalized_email = payload.email.strip().lower()
     candidates = db.scalars(
         select(Employee).where(
-            func.lower(Employee.email) == payload.email.lower(),
+            func.lower(Employee.email) == normalized_email,
             Employee.status == "active",
             Employee.portal_password_hash.is_not(None),
         )
     ).all()
-    employee = next(
-        (
-            candidate
-            for candidate in candidates
-            if (
-                candidate.portal_password_hash
-                and verify_password(payload.password, candidate.portal_password_hash)
-            )
-        ),
-        None,
-    )
+    matching_employees = [
+        candidate
+        for candidate in candidates
+        if candidate.portal_password_hash
+        and verify_password(payload.password, candidate.portal_password_hash)
+    ]
+    employee = matching_employees[0] if len(matching_employees) == 1 else None
+    ambiguous = len(matching_employees) > 1
     if employee is None:
-        admin = db.scalar(
+        admin_candidates = db.scalars(
             select(AdminUser).where(
-                func.lower(AdminUser.email) == payload.email.lower(),
+                func.lower(AdminUser.email) == normalized_email,
                 AdminUser.status == "active",
             )
-        )
-        if admin is not None and verify_password(payload.password, admin.password_hash):
-            employee = ensure_tracked_employee(db, admin)
+        ).all()
+        matching_admins = [
+            candidate
+            for candidate in admin_candidates
+            if verify_password(payload.password, candidate.password_hash)
+        ]
+        ambiguous = ambiguous or len(matching_admins) > 1
+        if not ambiguous and len(matching_admins) == 1:
+            employee = ensure_tracked_employee(db, matching_admins[0])
 
-    if employee is None:
+    if employee is None or ambiguous:
         raise ApiError(
             "INVALID_EMPLOYEE_LOGIN",
             "Email or employee password is incorrect.",

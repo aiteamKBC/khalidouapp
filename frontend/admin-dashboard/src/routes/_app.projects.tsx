@@ -158,19 +158,28 @@ function ProjectsPage() {
   const navigate = useNavigate();
   const scope = scopedTeamIds();
   const queryClient = useQueryClient();
-  const teams = useQuery({ queryKey: ["teams", scope], queryFn: () => listTeams(scope) });
+  const teams = useQuery({
+    queryKey: ["teams", scope],
+    queryFn: ({ signal }) => listTeams(scope, signal),
+    staleTime: 10 * 60_000,
+    gcTime: 30 * 60_000,
+  });
   const projects = useQuery({
     queryKey: ["projects", scope],
-    queryFn: () => listProjects(scope),
+    queryFn: ({ signal }) => listProjects(scope, signal),
   });
   const tasks = useQuery({
     queryKey: ["tasks", scope],
-    queryFn: () => listTasks({ scopedTeamIds: scope }),
+    queryFn: ({ signal }) => listTasks({ scopedTeamIds: scope }, signal),
   });
-  const taskMetrics = useQuery({ queryKey: ["task-metrics"], queryFn: () => listTaskMetrics() });
+  const taskMetrics = useQuery({
+    queryKey: ["task-metrics", scope],
+    queryFn: ({ signal }) =>
+      listTaskMetrics(scope?.length === 1 ? scope[0] : undefined, signal),
+  });
   const employees = useQuery({
     queryKey: ["employees", scope],
-    queryFn: () => listEmployees(scope),
+    queryFn: ({ signal }) => listEmployees(scope, signal),
   });
 
   const [q, setQ] = useState("");
@@ -2379,7 +2388,7 @@ function TaskWorkspacePanel({
   const [label, setLabel] = useState("");
   const workspace = useQuery({
     queryKey: ["task-workspace", task.id],
-    queryFn: () => getTaskWorkspace(task.id),
+    queryFn: ({ signal }) => getTaskWorkspace(task.id, signal),
   });
   const refresh = () => queryClient.invalidateQueries({ queryKey: ["task-workspace", task.id] });
   const commentMutation = useMutation({

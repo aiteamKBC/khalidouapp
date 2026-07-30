@@ -12,10 +12,14 @@ type BackendDashboardSummary = {
   screenshots_today: number;
 };
 
-export async function getDashboardSummary(scopedTeamIds?: string[]): Promise<DashboardSummary> {
+export async function getDashboardSummary(
+  scopedTeamIds?: string[],
+  signal?: AbortSignal,
+): Promise<DashboardSummary> {
   const teamId = scopedTeamIds?.length === 1 ? scopedTeamIds[0] : undefined;
   const summary = await apiFetch<BackendDashboardSummary>(
     withQuery("/dashboard/summary", { team_id: teamId }),
+    { signal },
   );
   const onBreakEmployees = summary.on_break_employees ?? 0;
   return {

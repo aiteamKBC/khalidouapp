@@ -43,13 +43,16 @@ function mapRequest(row: BackendTimeAdjustmentRequest): TimeAdjustmentRequest {
   };
 }
 
-export async function listTimeAdjustmentRequests(options?: {
-  scopedTeamIds?: string[];
-  teamId?: string;
-  employeeId?: string;
-  status?: TimeAdjustmentStatus | "all";
-  requestGroup?: "time" | "early_leave";
-}): Promise<TimeAdjustmentRequest[]> {
+export async function listTimeAdjustmentRequests(
+  options?: {
+    scopedTeamIds?: string[];
+    teamId?: string;
+    employeeId?: string;
+    status?: TimeAdjustmentStatus | "all";
+    requestGroup?: "time" | "early_leave";
+  },
+  signal?: AbortSignal,
+): Promise<TimeAdjustmentRequest[]> {
   const scopedTeamIds = options?.scopedTeamIds;
   const teamId =
     options?.teamId && options.teamId !== "all"
@@ -66,6 +69,7 @@ export async function listTimeAdjustmentRequests(options?: {
       status: options?.status && options.status !== "all" ? options.status : undefined,
       request_group: options?.requestGroup,
     }),
+    { signal },
   );
   return rows.map(mapRequest);
 }

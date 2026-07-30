@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   Activity,
@@ -32,7 +32,7 @@ import { ProtectedImage } from "@/components/ProtectedImage";
 import { SCREENSHOT_REFRESH_INTERVAL_MS } from "@/lib/screenshot-display";
 import { useAuth } from "@/lib/auth";
 import { listDailyAttendance } from "@/api/attendance";
-import { employeeIsOnline, listEmployees } from "@/api/employees";
+import { employeeIsOnline, listMonitoringEmployees } from "@/api/employees";
 import { listScreenshotFolderPage } from "@/api/screenshots";
 import { listTimesheets } from "@/api/timesheets";
 import { listTeams } from "@/api/teams";
@@ -46,9 +46,13 @@ export const Route = createFileRoute("/_app/dashboard")({
   component: DashboardPage,
 });
 
-const LIVE_REFRESH_MS = 15_000;
+const LIVE_REFRESH_MS = 30_000;
 const ACTION_REFRESH_MS = 30_000;
 const MEDIA_REFRESH_MS = 15 * 60_000;
+const employeeNameCollator = new Intl.Collator(undefined, {
+  numeric: true,
+  sensitivity: "base",
+});
 
 // ---------- date helpers ----------
 function startOfWeek(d: Date): Date {
@@ -148,7 +152,7 @@ function DashboardPage() {
   const [activityFilter, setActivityFilter] = useState<"all" | Employee["status"]>("all");
   const [showAllActivity, setShowAllActivity] = useState(false);
   const [attentionOpen, setAttentionOpen] = useState(false);
-  const [loadActions, setLoadActions] = useState(false);
+  const activitySectionRef = useRef<HTMLDivElement>(null);
   const [loadMedia, setLoadMedia] = useState(false);
   const [activityRotationSeed, setActivityRotationSeed] = useState(0);
   const { scopedTeamIds } = useAuth();
@@ -157,36 +161,44 @@ function DashboardPage() {
   const dashboardDay = isoDate(new Date());
 
   const emps = useQuery({
-    queryKey: ["employees", scope],
-    queryFn: () => listEmployees(scope),
-    staleTime: LIVE_REFRESH_MS,
+    queryKey: ["dashboard-monitoring-employees", scope],
+    queryFn: ({ signal }) => listMonitoringEmployees(scope, signal),
+    staleTime: 20_000,
     refetchInterval: LIVE_REFRESH_MS,
     refetchIntervalInBackground: false,
     placeholderData: (previous) => previous,
   });
   const month = useQuery({
     queryKey: ["timesheets", "monthly", scope],
-    queryFn: () => listTimesheets(scope, "monthly"),
+    queryFn: ({ signal }) =>
+      listTimesheets(scope, "monthly", undefined, undefined, signal),
     staleTime: ACTION_REFRESH_MS,
     refetchInterval: ACTION_REFRESH_MS,
     refetchIntervalInBackground: false,
     placeholderData: (previous) => previous,
   });
-  const primaryReady = emps.isFetched;
   useEffect(() => {
-    setLoadActions(false);
     setLoadMedia(false);
     setShowAllActivity(false);
   }, [scopeKey]);
   useEffect(() => {
-    if (!primaryReady) return;
-    const actionsTimer = window.setTimeout(() => setLoadActions(true), 120);
-    const mediaTimer = window.setTimeout(() => setLoadMedia(true), 500);
-    return () => {
-      window.clearTimeout(actionsTimer);
-      window.clearTimeout(mediaTimer);
-    };
-  }, [primaryReady, scopeKey]);
+    const section = activitySectionRef.current;
+    if (!section || loadMedia) return;
+    if (typeof IntersectionObserver === "undefined") {
+      setLoadMedia(true);
+      return;
+    }
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (!entry?.isIntersecting) return;
+        setLoadMedia(true);
+        observer.disconnect();
+      },
+      { rootMargin: "300px" },
+    );
+    observer.observe(section);
+    return () => observer.disconnect();
+  }, [loadMedia, scopeKey]);
 
   // Select six stable rows first, then request only their previews. Fetching the
   // latest screenshots company-wide allowed one busy employee to consume the
@@ -198,18 +210,16 @@ function DashboardPage() {
   const visibleActivityEmployees = showAllActivity
     ? matchingActivityEmployees
     : matchingActivityEmployees.slice(0, 6);
-  const previewEmployeeIds = visibleActivityEmployees.map((employee) => employee.id);
-
   const shots = useQuery({
     queryKey: ["screenshot-folders", scope, "dashboard", dashboardDay],
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       listScreenshotFolderPage({
         scopedTeamIds: scope,
         page: 1,
         pageSize: 250,
         day: dashboardDay,
         previewLimit: 3,
-      }),
+      }, signal),
     enabled: loadMedia,
     staleTime: MEDIA_REFRESH_MS - 15_000,
     refetchInterval: MEDIA_REFRESH_MS,
@@ -222,17 +232,14 @@ function DashboardPage() {
   }, [shots.dataUpdatedAt]);
   const teams = useQuery({
     queryKey: ["teams", scope],
-    queryFn: () => listTeams(scope),
-    enabled: loadActions,
-    staleTime: ACTION_REFRESH_MS,
-    refetchInterval: ACTION_REFRESH_MS,
-    refetchIntervalInBackground: false,
+    queryFn: ({ signal }) => listTeams(scope, signal),
+    staleTime: 10 * 60_000,
+    gcTime: 30 * 60_000,
     placeholderData: (previous) => previous,
   });
   const devices = useQuery({
     queryKey: ["devices", scope],
-    queryFn: () => listDevices(scope),
-    enabled: loadActions,
+    queryFn: ({ signal }) => listDevices(scope, signal),
     staleTime: LIVE_REFRESH_MS,
     refetchInterval: LIVE_REFRESH_MS,
     refetchIntervalInBackground: false,
@@ -240,8 +247,8 @@ function DashboardPage() {
   });
   const requests = useQuery({
     queryKey: ["time-adjustments", scope, "pending"],
-    queryFn: () => listTimeAdjustmentRequests({ scopedTeamIds: scope, status: "pending" }),
-    enabled: loadActions,
+    queryFn: ({ signal }) =>
+      listTimeAdjustmentRequests({ scopedTeamIds: scope, status: "pending" }, signal),
     staleTime: ACTION_REFRESH_MS,
     refetchInterval: ACTION_REFRESH_MS,
     refetchIntervalInBackground: false,
@@ -249,12 +256,11 @@ function DashboardPage() {
   });
   const todayAttendance = useQuery({
     queryKey: ["daily-attendance", "dashboard", dashboardDay, scope],
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       listDailyAttendance({
         day: dashboardDay,
         teamId: scope?.length === 1 ? scope[0] : undefined,
-      }),
-    enabled: loadActions,
+      }, signal),
     staleTime: ACTION_REFRESH_MS,
     refetchInterval: ACTION_REFRESH_MS,
     refetchIntervalInBackground: false,
@@ -737,7 +743,10 @@ function DashboardPage() {
             )}
           </div>
 
-          <Card className="studio-card overflow-hidden rounded-2xl border-border/70 shadow-none">
+          <Card
+            ref={activitySectionRef}
+            className="studio-card overflow-hidden rounded-2xl border-border/70 shadow-none"
+          >
             <CardHeader className="gap-3 space-y-0 border-b border-border/70 p-[18px] xl:flex-row xl:items-center xl:justify-between">
               <div className="flex flex-wrap items-center gap-2.5">
                 <CardTitle className="text-sm font-extrabold">Member activity</CardTitle>

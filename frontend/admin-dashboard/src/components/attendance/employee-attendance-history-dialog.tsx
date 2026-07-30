@@ -37,6 +37,11 @@ type EmployeeAttendanceHistoryDialogProps = {
   onOpenChange: (open: boolean) => void;
 };
 
+function localDateKey(date = new Date()) {
+  const offset = date.getTimezoneOffset();
+  return new Date(date.getTime() - offset * 60_000).toISOString().slice(0, 10);
+}
+
 export function EmployeeAttendanceHistoryDialog({
   employeeId,
   employeeName,
@@ -46,17 +51,23 @@ export function EmployeeAttendanceHistoryDialog({
   onOpenChange,
 }: EmployeeAttendanceHistoryDialogProps) {
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
+  const currentDay = localDateKey();
   const history = useQuery({
     queryKey: ["attendance-employee-history", employeeId, startDate, endDate],
-    queryFn: () => getEmployeeAttendanceRange(employeeId!, startDate, endDate),
+    queryFn: ({ signal }) =>
+      getEmployeeAttendanceRange(employeeId!, startDate, endDate, signal),
     enabled: open && Boolean(employeeId),
-    refetchInterval: open ? 30_000 : false,
+    staleTime: 5 * 60_000,
+    placeholderData: (previous) => previous,
   });
   const dayDetail = useQuery({
     queryKey: ["attendance-employee-history-day", employeeId, selectedDay],
-    queryFn: () => getDailyAttendance(employeeId!, selectedDay!),
+    queryFn: ({ signal }) => getDailyAttendance(employeeId!, selectedDay!, signal),
     enabled: open && Boolean(employeeId) && Boolean(selectedDay),
-    refetchInterval: selectedDay ? 15_000 : false,
+    staleTime: selectedDay === currentDay ? 30_000 : 5 * 60_000,
+    refetchInterval: open && selectedDay === currentDay ? 60_000 : false,
+    refetchIntervalInBackground: false,
+    placeholderData: (previous) => previous,
   });
   const rows = history.data?.rows ?? [];
 

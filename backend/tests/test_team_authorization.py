@@ -1,4 +1,4 @@
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, time, timedelta
 from io import BytesIO
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
@@ -34,6 +34,7 @@ from app.models import (
     Project,
     Screenshot,
     Task,
+    TaskComment,
     TaskNotification,
     TaskWorkflowRequest,
     Team,
@@ -759,6 +760,66 @@ def test_group_schedule_override_validates_every_employee_company(team_client):
     assert isolated.status_code in {403, 404}
 
 
+def test_team_owner_permanent_group_schedule_updates_only_selected_employees(team_client):
+    client, data = team_client
+    db: Session = data["session_factory"]()
+    try:
+        employee_a_profile = get_or_create_work_profile(db, data["employee_a"])
+        shared_profile = get_or_create_work_profile(db, data["shared_employee"])
+        employee_b_profile = get_or_create_work_profile(db, data["employee_b"])
+        employee_a_profile.shift_start = time(9, 0)
+        shared_profile.shift_start = time(9, 0)
+        employee_b_profile.shift_start = time(8, 30)
+        db.commit()
+    finally:
+        db.close()
+
+    selected = client.post(
+        "/api/v1/payroll/schedule-overrides",
+        json={
+            "scope": "employees",
+            "override_type": "shift",
+            "employee_ids": [
+                str(data["employee_a"].id),
+                str(data["shared_employee"].id),
+            ],
+            "permanent": True,
+            "shift_start": "10:00",
+            "shift_end": "18:00",
+            "reason": "Selected team members schedule",
+        },
+        headers=data["owner_headers"],
+    )
+    assert selected.status_code == 200
+    assert selected.json()["data"]["affected_employees"] == 2
+
+    db = data["session_factory"]()
+    try:
+        employee_a_profile = get_or_create_work_profile(db, data["employee_a"])
+        shared_profile = get_or_create_work_profile(db, data["shared_employee"])
+        employee_b_profile = get_or_create_work_profile(db, data["employee_b"])
+        assert employee_a_profile.shift_start == time(10, 0)
+        assert shared_profile.shift_start == time(10, 0)
+        assert employee_b_profile.shift_start == time(8, 30)
+    finally:
+        db.close()
+
+    outside_scope = client.post(
+        "/api/v1/payroll/schedule-overrides",
+        json={
+            "scope": "employees",
+            "override_type": "shift",
+            "employee_ids": [str(data["employee_b"].id)],
+            "permanent": True,
+            "shift_start": "10:00",
+            "shift_end": "18:00",
+            "reason": "Forbidden employee schedule",
+        },
+        headers=data["owner_headers"],
+    )
+    assert outside_scope.status_code in {403, 404}
+
+
 def test_schedule_override_rejects_overlapping_breaks(team_client):
     client, data = team_client
     response = client.post(
@@ -1070,6 +1131,164 @@ def submit_employee_task_for_review(client: TestClient, data, name: str) -> dict
     assert submitted.status_code == 200
     assert submitted.json()["data"]["stage"] == "ready_for_review"
     return submitted.json()["data"]
+
+
+def test_task_workspaces_load_many_comment_authors_with_bounded_queries(team_client):
+    client, data = team_client
+    author_names = {f"Workspace Author {index}" for index in range(25)}
+    with data["session_factory"]() as db:
+        task = db.get(Task, data["task_a"].id)
+        task.assignee_employee_id = data["employee_a"].id
+        session = db.get(WorkSession, data["session_a"].id)
+        session.idle_seconds = 0
+        authors = [
+            Employee(
+                company_id=data["employee_a"].company_id,
+                name=name,
+                email=f"workspace-author-{index}@example.com",
+                employee_code=f"WORKSPACE-{index}",
+                status="active",
+            )
+            for index, name in enumerate(sorted(author_names))
+        ]
+        db.add_all(authors)
+        db.flush()
+        db.add_all(
+            [
+                TaskComment(
+                    task_id=task.id,
+                    employee_id=author.id,
+                    body=f"Comment from {author.name}",
+                )
+                for author in authors
+            ]
+        )
+        db.commit()
+
+    employee_token = create_employee_access_token(
+        employee_id=data["employee_a"].id,
+        company_id=data["employee_a"].company_id,
+    )
+    engine = data["session_factory"].kw["bind"]
+    counts = {"admin": 0, "employee": 0}
+    active_endpoint = {"name": "admin"}
+
+    def count_statement(*_args):
+        counts[active_endpoint["name"]] += 1
+
+    event.listen(engine, "before_cursor_execute", count_statement)
+    try:
+        admin_response = client.get(
+            f"/api/v1/tasks/{data['task_a'].id}/workspace",
+            headers=data["owner_headers"],
+        )
+        active_endpoint["name"] = "employee"
+        employee_response = client.get(
+            f"/api/v1/employee-portal/tasks/{data['task_a'].id}/workspace",
+            headers={"Authorization": f"Bearer {employee_token}"},
+        )
+    finally:
+        event.remove(engine, "before_cursor_execute", count_statement)
+
+    assert admin_response.status_code == 200
+    assert employee_response.status_code == 200
+    assert {
+        comment["author_name"] for comment in admin_response.json()["data"]["comments"]
+    } == author_names
+    assert {
+        comment["author_name"] for comment in employee_response.json()["data"]["comments"]
+    } == author_names
+    assert counts["admin"] <= 15
+    assert counts["employee"] <= 10
+
+
+def test_task_metrics_aggregate_active_only_employees_with_bounded_queries(team_client):
+    client, data = team_client
+    now = datetime.now(UTC)
+    with data["session_factory"]() as db:
+        existing_session = db.get(WorkSession, data["session_a"].id)
+        existing_session.idle_seconds = 0
+        employees = [
+            Employee(
+                company_id=data["employee_a"].company_id,
+                name=f"Metric Employee {index}",
+                email=f"metric-employee-{index}@example.com",
+                employee_code=f"METRIC-{index}",
+                timezone="UTC",
+                status="active",
+            )
+            for index in range(25)
+        ]
+        db.add_all(employees)
+        db.flush()
+        devices = [
+            Device(
+                company_id=data["employee_a"].company_id,
+                employee_id=employee.id,
+                device_name=f"Metric Device {index}",
+                installation_id=f"metric-install-{index}",
+                operating_system="Windows 11",
+                agent_version="1.0.0",
+                status="active",
+                registered_at=now,
+            )
+            for index, employee in enumerate(employees)
+        ]
+        db.add_all(devices)
+        db.flush()
+        db.add_all(
+            [
+                TeamMember(
+                    team_id=data["team_a"].id,
+                    employee_id=employee.id,
+                    status="active",
+                )
+                for employee in employees
+            ]
+        )
+        db.add_all(
+            [
+                WorkSession(
+                    company_id=data["employee_a"].company_id,
+                    employee_id=employee.id,
+                    device_id=device.id,
+                    started_at=now,
+                    ended_at=now + timedelta(minutes=1),
+                    status="ended",
+                    active_seconds=60,
+                    idle_seconds=0,
+                    team_id=data["team_a"].id,
+                    project_id=data["project_a"].id,
+                    task_id=data["task_a"].id,
+                )
+                for employee, device in zip(employees, devices, strict=True)
+            ]
+        )
+        db.commit()
+
+    engine = data["session_factory"].kw["bind"]
+    query_count = 0
+
+    def count_statement(*_args):
+        nonlocal query_count
+        query_count += 1
+
+    event.listen(engine, "before_cursor_execute", count_statement)
+    try:
+        response = client.get(
+            f"/api/v1/task-metrics?team_id={data['team_a'].id}",
+            headers=data["owner_headers"],
+        )
+    finally:
+        event.remove(engine, "before_cursor_execute", count_statement)
+
+    assert response.status_code == 200
+    metric = next(
+        row for row in response.json()["data"] if row["task_id"] == str(data["task_a"].id)
+    )
+    assert metric["active_seconds"] == 120 + 25 * 60
+    assert metric["idle_seconds"] == 0
+    assert query_count <= 6
 
 
 def test_general_admin_can_access_all_company_teams(team_client):

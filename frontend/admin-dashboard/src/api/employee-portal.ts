@@ -180,8 +180,8 @@ export async function exchangeEmployeeHandoff(handoffToken: string) {
   ).then((result) => ({ ...result, employee: mapPortalEmployee(result.employee) }));
 }
 
-export const employeeMe = (token: string) =>
-  apiFetch<PortalEmployee>("/employee-auth/me", {}, token).then(mapPortalEmployee);
+export const employeeMe = (token: string, signal?: AbortSignal) =>
+  apiFetch<PortalEmployee>("/employee-auth/me", { signal }, token).then(mapPortalEmployee);
 
 export const updateEmployeeProfile = (
   token: string,
@@ -196,24 +196,27 @@ export const updateEmployeeProfile = (
     token,
   ).then(mapPortalEmployee);
 
-export async function employeeSummary(token: string): Promise<PortalSummary> {
+export async function employeeSummary(
+  token: string,
+  signal?: AbortSignal,
+): Promise<PortalSummary> {
   const result = await apiFetch<
     Omit<PortalSummary, "todayTimeline"> & { today_timeline: BackendWorkdayTimeline }
-  >("/employee-portal/summary", {}, token);
+  >("/employee-portal/summary", { signal }, token);
   const { today_timeline, ...summary } = result;
   return { ...summary, todayTimeline: mapWorkdayTimeline(today_timeline) };
 }
 
-export const employeeWorkProfile = (token: string) =>
-  apiFetch<PortalWorkProfile>("/employee-portal/work-profile", {}, token);
+export const employeeWorkProfile = (token: string, signal?: AbortSignal) =>
+  apiFetch<PortalWorkProfile>("/employee-portal/work-profile", { signal }, token);
 
-export const employeeTasks = (token: string) =>
-  apiFetch<PortalTask[]>("/employee-portal/tasks", {}, token).then((tasks) =>
+export const employeeTasks = (token: string, signal?: AbortSignal) =>
+  apiFetch<PortalTask[]>("/employee-portal/tasks", { signal }, token).then((tasks) =>
     tasks.map(mapPortalTask),
   );
 
-export const employeeProjects = (token: string) =>
-  apiFetch<PortalProject[]>("/employee-portal/projects", {}, token);
+export const employeeProjects = (token: string, signal?: AbortSignal) =>
+  apiFetch<PortalProject[]>("/employee-portal/projects", { signal }, token);
 
 export const createEmployeeTask = (
   token: string,
@@ -286,8 +289,8 @@ export type PortalNotification = {
   created_at: string;
 };
 
-export const employeeNotifications = (token: string) =>
-  apiFetch<PortalNotification[]>("/employee-portal/notifications", {}, token);
+export const employeeNotifications = (token: string, signal?: AbortSignal) =>
+  apiFetch<PortalNotification[]>("/employee-portal/notifications", { signal }, token);
 
 export const readEmployeeNotification = (token: string, id: string) =>
   apiFetch(`/employee-portal/notifications/${id}/read`, { method: "PATCH" }, token);
@@ -322,8 +325,16 @@ export type PortalTaskWorkspace = {
   attachments: Array<{ id: string; file_name: string; size_bytes: number; created_at: string }>;
 };
 
-export const employeeTaskWorkspace = (token: string, taskId: string) =>
-  apiFetch<PortalTaskWorkspace>(`/employee-portal/tasks/${taskId}/workspace`, {}, token);
+export const employeeTaskWorkspace = (
+  token: string,
+  taskId: string,
+  signal?: AbortSignal,
+) =>
+  apiFetch<PortalTaskWorkspace>(
+    `/employee-portal/tasks/${taskId}/workspace`,
+    { signal },
+    token,
+  );
 
 export const createEmployeeTaskComment = (token: string, taskId: string, body: string) =>
   apiFetch(
@@ -341,8 +352,12 @@ export const uploadEmployeeTaskAttachment = (token: string, taskId: string, file
   return apiFetch(`/employee-portal/tasks/${taskId}/attachments`, { method: "POST", body }, token);
 };
 
-export const employeeTimeRequests = (token: string) =>
-  apiFetch<PortalTimeRequest[]>("/employee-portal/time-adjustment-requests", {}, token);
+export const employeeTimeRequests = (token: string, signal?: AbortSignal) =>
+  apiFetch<PortalTimeRequest[]>(
+    "/employee-portal/time-adjustment-requests",
+    { signal },
+    token,
+  );
 
 export const createEmployeeTimeRequest = (
   token: string,
@@ -361,8 +376,8 @@ export const createEmployeeTimeRequest = (
     token,
   );
 
-export const employeeLeaveRequests = (token: string) =>
-  apiFetch<PortalLeaveData>("/employee-portal/leave-requests", {}, token);
+export const employeeLeaveRequests = (token: string, signal?: AbortSignal) =>
+  apiFetch<PortalLeaveData>("/employee-portal/leave-requests", { signal }, token);
 
 export const createEmployeeLeaveRequest = (
   token: string,
@@ -385,6 +400,7 @@ export const createEmployeeLeaveRequest = (
 export async function employeeScreenshots(
   token: string,
   day?: string,
+  signal?: AbortSignal,
 ): Promise<PortalScreenshot[]> {
   const rows = await apiFetch<
     Array<{
@@ -394,7 +410,7 @@ export async function employeeScreenshots(
       thumbnail_url: string;
       tracked_seconds: number;
     }>
-  >(withQuery("/employee-portal/screenshots", { day }), {}, token);
+  >(withQuery("/employee-portal/screenshots", { day }), { signal }, token);
   return rows.map((row) => ({
     id: row.id,
     captured_at: row.captured_at,

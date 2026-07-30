@@ -7,6 +7,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import type { User, Role } from "@/types";
 import {
   changePassword as apiChangePassword,
@@ -69,6 +70,7 @@ function readPersisted(): Persisted | null {
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
+  const queryClient = useQueryClient();
   const [state, setState] = useState<{
     user: User | null;
     accessToken: string | null;
@@ -104,7 +106,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         forgetAuthTokens();
         localStorage.removeItem(STORAGE_KEY);
         sessionStorage.removeItem(STORAGE_KEY);
-        if (!cancelled) setState({ user: null, accessToken: null, refreshToken: null });
+        if (!cancelled) {
+          queryClient.getQueryCache().clear();
+          setState({ user: null, accessToken: null, refreshToken: null });
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -113,7 +118,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [queryClient]);
 
   useEffect(() => {
     if (!state.accessToken) return;
@@ -152,11 +157,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       });
     };
     const onSessionExpired = () => {
+      queryClient.getQueryCache().clear();
       setState({ user: null, accessToken: null, refreshToken: null });
     };
     const onAuthStorageChanged = (event: StorageEvent) => {
       if (event.key !== STORAGE_KEY || event.newValue !== null) return;
       forgetAuthTokens();
+      queryClient.getQueryCache().clear();
       setState({ user: null, accessToken: null, refreshToken: null });
     };
 
@@ -168,10 +175,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       window.removeEventListener("khaliduo:auth-expired", onSessionExpired);
       window.removeEventListener("storage", onAuthStorageChanged);
     };
-  }, []);
+  }, [queryClient]);
 
   const login = useCallback(async (email: string, password: string, remember = true) => {
     const res = await apiLogin(email, password);
+    queryClient.getQueryCache().clear();
     const payload: Persisted = {
       user: res.user,
       accessToken: res.accessToken,
@@ -185,7 +193,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     );
     setState({ user: res.user, accessToken: res.accessToken, refreshToken: res.refreshToken });
     return res.user;
-  }, []);
+  }, [queryClient]);
 
   const logout = useCallback(async () => {
     try {
@@ -194,9 +202,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       forgetAuthTokens();
       localStorage.removeItem(STORAGE_KEY);
       sessionStorage.removeItem(STORAGE_KEY);
+      queryClient.getQueryCache().clear();
       setState({ user: null, accessToken: null, refreshToken: null });
     }
-  }, [state.refreshToken]);
+  }, [queryClient, state.refreshToken]);
 
   const refreshUser = useCallback(async () => {
     const user = await apiMe();

@@ -119,15 +119,18 @@ function TeamDetailPage() {
   const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
   const [editingTeamRole, setEditingTeamRole] = useState<TeamMemberRole>("member");
   const [ownerId, setOwnerId] = useState("");
-  const team = useQuery({ queryKey: ["team", teamId], queryFn: () => getTeam(teamId) });
+  const team = useQuery({
+    queryKey: ["team", teamId],
+    queryFn: ({ signal }) => getTeam(teamId, signal),
+  });
   const stats = useQuery({
     queryKey: ["team-stats", teamId],
-    queryFn: () => teamStats(teamId),
+    queryFn: ({ signal }) => teamStats(teamId, signal),
     enabled: activeTab === "overview",
   });
   const emps = useQuery({
     queryKey: ["team-emps", teamId],
-    queryFn: () => listEmployees([teamId]),
+    queryFn: ({ signal }) => listEmployees([teamId], signal),
     enabled:
       activeTab === "overview" ||
       activeTab === "members" ||
@@ -137,7 +140,7 @@ function TeamDetailPage() {
   });
   const allEmps = useQuery({
     queryKey: ["employees-all"],
-    queryFn: () => listEmployees(),
+    queryFn: ({ signal }) => listEmployees(undefined, signal),
     enabled:
       (canManage && activeTab === "members") ||
       activeTab === "devices" ||
@@ -145,42 +148,42 @@ function TeamDetailPage() {
   });
   const ownerUsers = useQuery({
     queryKey: ["team-owners", teamId],
-    queryFn: () => listTeamOwners(teamId),
+    queryFn: ({ signal }) => listTeamOwners(teamId, signal),
     enabled: activeTab === "overview" || activeTab === "members",
   });
   const adminUsers = useQuery({
     queryKey: ["users"],
-    queryFn: listUsers,
+    queryFn: ({ signal }) => listUsers(signal),
     enabled: canManage && (activeTab === "overview" || activeTab === "members"),
   });
   const shots = useQuery({
     queryKey: ["team-shots", teamId],
-    queryFn: () => listScreenshots([teamId]),
+    queryFn: ({ signal }) => listScreenshots([teamId], {}, signal),
     enabled: activeTab === "screenshots",
   });
   const ts = useQuery({
     queryKey: ["team-ts", teamId],
-    queryFn: () => listTimesheets([teamId], "monthly"),
+    queryFn: ({ signal }) => listTimesheets([teamId], "monthly", undefined, undefined, signal),
     enabled: activeTab === "timesheets",
   });
   const devs = useQuery({
     queryKey: ["team-devs", teamId],
-    queryFn: () => listDevices([teamId]),
+    queryFn: ({ signal }) => listDevices([teamId], signal),
     enabled: activeTab === "devices",
   });
   const workTasks = useQuery({
     queryKey: ["tasks", "team", teamId],
-    queryFn: () => listTasks({ teamId }),
+    queryFn: ({ signal }) => listTasks({ teamId }, signal),
     enabled: activeTab === "work",
   });
   const workProjects = useQuery({
     queryKey: ["projects", "team", teamId],
-    queryFn: () => listProjects([teamId]),
+    queryFn: ({ signal }) => listProjects([teamId], signal),
     enabled: activeTab === "work",
   });
   const workMetrics = useQuery({
     queryKey: ["task-metrics", teamId],
-    queryFn: () => listTaskMetrics(teamId),
+    queryFn: ({ signal }) => listTaskMetrics(teamId, signal),
     enabled: activeTab === "work",
   });
   const [memberId, setMemberId] = useState("");

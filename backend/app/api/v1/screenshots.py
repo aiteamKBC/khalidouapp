@@ -651,7 +651,15 @@ def get_screenshot_file(
     db: Annotated[Session, Depends(get_db)],
 ):
     screenshot = get_accessible_screenshot_or_404(db, current_admin, screenshot_id)
-    path = (settings.screenshot_storage_path / screenshot.storage_path).resolve()
+    storage = LocalScreenshotStorage()
+    try:
+        path = storage.resolve(screenshot.storage_path)
+    except ValueError as exc:
+        raise ApiError(
+            "SCREENSHOT_FILE_NOT_FOUND",
+            "Screenshot file was not found in private storage.",
+            404,
+        ) from exc
     if not path.exists():
         raise ApiError(
             "SCREENSHOT_FILE_NOT_FOUND", "Screenshot file was not found in private storage.", 404
@@ -674,12 +682,15 @@ def get_screenshot_thumbnail(
 ):
     screenshot = get_accessible_screenshot_or_404(db, current_admin, screenshot_id)
     storage = LocalScreenshotStorage()
-    original_path = (settings.screenshot_storage_path / screenshot.storage_path).resolve()
-    thumbnail_path = (
-        (settings.screenshot_storage_path / screenshot.thumbnail_path).resolve()
-        if screenshot.thumbnail_path
-        else None
-    )
+    try:
+        original_path = storage.resolve(screenshot.storage_path)
+        thumbnail_path = storage.resolve(screenshot.thumbnail_path) if screenshot.thumbnail_path else None
+    except ValueError as exc:
+        raise ApiError(
+            "SCREENSHOT_FILE_NOT_FOUND",
+            "Screenshot preview was not found.",
+            404,
+        ) from exc
 
     # Older captures predate stored thumbnails. Materialize a compact preview on
     # the first request so every subsequent grid view avoids the full original.

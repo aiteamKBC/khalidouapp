@@ -43,7 +43,8 @@ function ApplicationHistoryPage() {
   const scope = scopedTeamIds();
   const employees = useQuery({
     queryKey: ["employees", scope],
-    queryFn: () => listEmployees(scope),
+    queryFn: ({ signal }) => listEmployees(scope, signal),
+    staleTime: 30_000,
   });
   const [employeeId, setEmployeeId] = useState(search.employeeId ?? "");
   const [day, setDay] = useState(search.day ?? todayIsoDate());

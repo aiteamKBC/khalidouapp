@@ -47,17 +47,20 @@ function mapTeam(team: BackendTeam, employeeIds: string[], owners: TeamOwnerSumm
   };
 }
 
-export async function listTeamMembers(teamId: string) {
-  return apiFetch<BackendEmployee[]>(`/teams/${teamId}/members`);
+export async function listTeamMembers(teamId: string, signal?: AbortSignal) {
+  return apiFetch<BackendEmployee[]>(`/teams/${teamId}/members`, { signal });
 }
 
-export async function listTeamOwners(teamId: string): Promise<User[]> {
-  const owners = await apiFetch<BackendUser[]>(`/teams/${teamId}/owners`);
+export async function listTeamOwners(teamId: string, signal?: AbortSignal): Promise<User[]> {
+  const owners = await apiFetch<BackendUser[]>(`/teams/${teamId}/owners`, { signal });
   return owners.map(mapUser);
 }
 
-async function enrichTeam(team: BackendTeam): Promise<Team> {
-  const [members, owners] = await Promise.all([listTeamMembers(team.id), listTeamOwners(team.id)]);
+async function enrichTeam(team: BackendTeam, signal?: AbortSignal): Promise<Team> {
+  const [members, owners] = await Promise.all([
+    listTeamMembers(team.id, signal),
+    listTeamOwners(team.id, signal),
+  ]);
   return mapTeam(
     team,
     members.map((member) => member.id),
@@ -96,8 +99,8 @@ export async function listMonitoringTeams(
     .map((team) => mapTeam(team, [], []));
 }
 
-export async function getTeam(id: string): Promise<Team | undefined> {
-  return enrichTeam(await apiFetch<BackendTeam>(`/teams/${id}`));
+export async function getTeam(id: string, signal?: AbortSignal): Promise<Team | undefined> {
+  return enrichTeam(await apiFetch<BackendTeam>(`/teams/${id}`, { signal }), signal);
 }
 
 export async function createTeam(input: TeamCreateInput): Promise<Team> {
@@ -168,7 +171,7 @@ export async function removeTeamOwner(teamId: string, adminUserId: string): Prom
   await apiFetch(`/teams/${teamId}/owners/${adminUserId}`, { method: "DELETE" });
 }
 
-export async function teamStats(id: string) {
+export async function teamStats(id: string, signal?: AbortSignal) {
   const summary = await apiFetch<{
     total_employees: number;
     online_employees: number;
@@ -180,7 +183,7 @@ export async function teamStats(id: string) {
     total_hours_today: number;
     screenshots_today: number;
     screenshot_count: number;
-  }>(`/teams/${id}/summary`);
+  }>(`/teams/${id}/summary`, { signal });
   return {
     total: summary.total_employees,
     online: summary.online_employees,

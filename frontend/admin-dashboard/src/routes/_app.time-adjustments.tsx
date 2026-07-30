@@ -74,21 +74,26 @@ function TimeAdjustmentsPage() {
   const [selectedRequestIds, setSelectedRequestIds] = useState<string[]>([]);
   const [bulkAction, setBulkAction] = useState<BulkReviewAction | null>(null);
 
-  const teams = useQuery({ queryKey: ["teams", scope], queryFn: () => listTeams(scope) });
+  const teams = useQuery({
+    queryKey: ["teams", scope],
+    queryFn: ({ signal }) => listTeams(scope, signal),
+    staleTime: 10 * 60_000,
+    gcTime: 30 * 60_000,
+  });
   const employees = useQuery({
     queryKey: ["employees", scope],
-    queryFn: () => listEmployees(scope),
+    queryFn: ({ signal }) => listEmployees(scope, signal),
   });
   const requests = useQuery({
     queryKey: ["time-adjustments", scope, teamId, employeeId, status],
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       listTimeAdjustmentRequests({
         scopedTeamIds: scope,
         teamId,
         employeeId,
         status,
         requestGroup: "time",
-      }),
+      }, signal),
   });
 
   const reviewMutation = useMutation({

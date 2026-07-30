@@ -10,7 +10,8 @@ class LocalScreenshotStorage:
     def __init__(self, root: Path | None = None) -> None:
         self.root = (root or settings.screenshot_storage_path).resolve()
 
-    def _resolve_path(self, relative_path: str) -> Path:
+    def resolve(self, relative_path: str) -> Path:
+        """Resolve a private storage path without allowing it to escape the root."""
         path = (self.root / relative_path).resolve()
         try:
             path.relative_to(self.root)
@@ -23,7 +24,7 @@ class LocalScreenshotStorage:
         return path
 
     def save(self, relative_path: str, content: bytes) -> Path:
-        path = self._resolve_path(relative_path)
+        path = self.resolve(relative_path)
         path.parent.mkdir(parents=True, exist_ok=True)
         temporary_path = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
         try:
@@ -34,7 +35,7 @@ class LocalScreenshotStorage:
         return path
 
     def delete(self, relative_path: str) -> bool:
-        path = self._resolve_path(relative_path)
+        path = self.resolve(relative_path)
         if not path.is_file():
             return False
         path.unlink()

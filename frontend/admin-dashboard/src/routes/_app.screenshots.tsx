@@ -49,6 +49,7 @@ import { permissions } from "@/lib/permissions";
 import { formatDateTime } from "@/lib/format";
 import { toast } from "sonner";
 import type { Screenshot } from "@/types";
+import { retryTransientRequest } from "@/api/client";
 
 export const Route = createFileRoute("/_app/screenshots")({
   validateSearch: (
@@ -98,11 +99,24 @@ function ScreenshotsPage() {
   const canManageScreenshots = can(permissions.screenshotsManage);
   const scope = scopedTeamIds();
   const queryClient = useQueryClient();
-  const emps = useQuery({ queryKey: ["employees", scope], queryFn: () => listEmployees(scope) });
-  const teams = useQuery({ queryKey: ["teams", scope], queryFn: () => listTeams(scope) });
+  const emps = useQuery({
+    queryKey: ["employees", scope],
+    queryFn: ({ signal }) => listEmployees(scope, signal),
+    staleTime: 30_000,
+    retry: retryTransientRequest,
+  });
+  const teams = useQuery({
+    queryKey: ["teams", scope],
+    queryFn: ({ signal }) => listTeams(scope, signal),
+    staleTime: 10 * 60_000,
+    gcTime: 30 * 60_000,
+    retry: retryTransientRequest,
+  });
   const tasks = useQuery({
     queryKey: ["tasks", scope],
-    queryFn: () => listTasks({ scopedTeamIds: scope }),
+    queryFn: ({ signal }) => listTasks({ scopedTeamIds: scope }, signal),
+    staleTime: 5 * 60_000,
+    retry: retryTransientRequest,
   });
 
   const initialRangeMode = Boolean(search.startDate && search.endDate);
@@ -123,6 +137,7 @@ function ScreenshotsPage() {
   );
   const [auditOpen, setAuditOpen] = useState(false);
   const validRange = !rangeMode || Boolean(rangeStart && rangeEnd && rangeStart <= rangeEnd);
+  const isLiveDay = !rangeMode && date === todayIsoDate();
   const folders = useQuery({
     queryKey: [
       "screenshot-folders",
@@ -134,7 +149,7 @@ function ScreenshotsPage() {
       workCategory,
       folderStatus,
     ],
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       listScreenshotFolderPage({
         scopedTeamIds: scope,
         page: folderPage,
@@ -143,10 +158,13 @@ function ScreenshotsPage() {
         day: date,
         workCategory,
         folderStatus,
-      }),
+      }, signal),
     enabled: !rangeMode,
-    staleTime: SCREENSHOT_REFRESH_INTERVAL_MS,
-    refetchInterval: SCREENSHOT_REFRESH_INTERVAL_MS,
+    staleTime: isLiveDay ? SCREENSHOT_REFRESH_INTERVAL_MS : 5 * 60_000,
+    refetchInterval: isLiveDay ? SCREENSHOT_REFRESH_INTERVAL_MS : false,
+    refetchIntervalInBackground: false,
+    placeholderData: (previous) => previous,
+    retry: retryTransientRequest,
   });
   const shots = useQuery({
     queryKey: [
@@ -161,7 +179,7 @@ function ScreenshotsPage() {
       rangeEnd,
       workCategory,
     ],
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       listScreenshotPage({
         scopedTeamIds: scope,
         page: screenshotPage,
@@ -172,22 +190,28 @@ function ScreenshotsPage() {
         startDate: rangeMode ? rangeStart : undefined,
         endDate: rangeMode ? rangeEnd : undefined,
         workCategory,
-      }),
+      }, signal),
     enabled: selectedFolderId !== null && validRange,
-    staleTime: SCREENSHOT_REFRESH_INTERVAL_MS,
-    refetchInterval: selectedFolderId !== null ? SCREENSHOT_REFRESH_INTERVAL_MS : false,
+    staleTime: isLiveDay ? SCREENSHOT_REFRESH_INTERVAL_MS : 5 * 60_000,
+    refetchInterval:
+      selectedFolderId !== null && isLiveDay ? SCREENSHOT_REFRESH_INTERVAL_MS : false,
+    refetchIntervalInBackground: false,
+    placeholderData: (previous) => previous,
+    retry: retryTransientRequest,
   });
   const [openIdx, setOpenIdx] = useState<number | null>(null);
   const [failedIds, setFailedIds] = useState<Set<string>>(new Set());
   const captureAudit = useQuery({
-    queryKey: ["screenshot-capture-audit", empId, date],
-    queryFn: () =>
+    queryKey: ["screenshot-capture-audit", scope, empId, date],
+    queryFn: ({ signal }) =>
       listScreenshotCaptureEvents({
         employeeId: empId === "all" ? undefined : empId,
         day: date || undefined,
         pageSize: 75,
-      }),
+      }, signal),
     enabled: auditOpen,
+    staleTime: 5 * 60_000,
+    retry: retryTransientRequest,
   });
 
   const deleteMutation = useMutation({

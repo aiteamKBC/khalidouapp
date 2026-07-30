@@ -66,7 +66,12 @@ def login(payload: LoginRequest, request: Request, db: Annotated[Session, Depend
 
 
 @router.post("/refresh")
-def refresh(payload: RefreshRequest, db: Annotated[Session, Depends(get_db)]):
+def refresh(
+    payload: RefreshRequest,
+    request: Request,
+    db: Annotated[Session, Depends(get_db)],
+):
+    enforce_rate_limit(request, action="admin-refresh", limit=60, window_seconds=60)
     return success_response(data=refresh_admin_tokens(db, payload.refresh_token))
 
 
@@ -156,11 +161,12 @@ def forgot_password(
     db: Annotated[Session, Depends(get_db)],
 ):
     enforce_rate_limit(request, action="admin-forgot-password", limit=10, window_seconds=300)
-    admin = db.scalar(
+    matching_admins = db.scalars(
         select(AdminUser).where(
             func.lower(AdminUser.email) == payload.email.lower(), AdminUser.status == "active"
         ).with_for_update()
-    )
+    ).all()
+    admin = matching_admins[0] if len(matching_admins) == 1 else None
     if admin is not None:
         try:
             ensure_email_allowed(
@@ -220,7 +226,7 @@ def reset_password(
         select(AdminPasswordResetToken).where(
             AdminPasswordResetToken.token_hash == hash_token(payload.token),
             AdminPasswordResetToken.used_at.is_(None),
-        )
+        ).with_for_update()
     )
     expires_at = token.expires_at if token else None
     if expires_at is not None and expires_at.tzinfo is None:

@@ -24,8 +24,8 @@ function mapSettings(settings: BackendTrackingSettings): TrackingSettings {
   };
 }
 
-export async function getTrackingSettings(): Promise<TrackingSettings> {
-  return mapSettings(await apiFetch<BackendTrackingSettings>("/settings/tracking"));
+export async function getTrackingSettings(signal?: AbortSignal): Promise<TrackingSettings> {
+  return mapSettings(await apiFetch<BackendTrackingSettings>("/settings/tracking", { signal }));
 }
 
 export async function updateTrackingSettings(next: TrackingSettings): Promise<TrackingSettings> {

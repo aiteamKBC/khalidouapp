@@ -1,6 +1,11 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState, type FormEvent } from "react";
+import {
+  keepPreviousData,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import {
   CalendarClock,
   Camera,
@@ -57,7 +62,11 @@ import {
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { WorkdayTimeline } from "@/components/workday-timeline";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import { ProtectedImage } from "@/components/ProtectedImage";
+import { retryTransientRequest } from "@/api/client";
 import { formatAttendanceStart, formatClock, formatDateTime, formatTimeOfDay } from "@/lib/format";
+import { SCREENSHOT_REFRESH_INTERVAL_MS } from "@/lib/screenshot-display";
+import { jwtSubjectScopeKey } from "@/lib/private-query-scope";
 
 export const Route = createFileRoute("/employee")({ component: EmployeePortalPage });
 
@@ -225,7 +234,10 @@ function EmployeeLogin({
 function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () => void }) {
   const { prompt, dialog: notePromptDialog } = useNotePrompt();
   const queryClient = useQueryClient();
-  const employeePortalQueryKey = ["employee-portal", token] as const;
+  const employeePortalQueryKey = useMemo(
+    () => ["employee-portal", jwtSubjectScopeKey(token)] as const,
+    [token],
+  );
   const handleLogout = () => {
     clearEmployeeToken();
     queryClient.removeQueries({ queryKey: ["employee-portal"] });
@@ -233,75 +245,99 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
     onLogout();
   };
   const [screenshotDay, setScreenshotDay] = useState(() => localDateKey());
-  const [loadSecondary, setLoadSecondary] = useState(false);
-  const [loadMedia, setLoadMedia] = useState(false);
+  const screenshotSectionRef = useRef<HTMLDivElement>(null);
+  const [screenshotsVisible, setScreenshotsVisible] = useState(
+    () =>
+      typeof window !== "undefined" &&
+      new URLSearchParams(window.location.search).get("view") === "screenshots",
+  );
   const me = useQuery({
     queryKey: [...employeePortalQueryKey, "me"],
-    queryFn: () => employeeMe(token),
+    queryFn: ({ signal }) => employeeMe(token, signal),
     retry: false,
   });
   const summary = useQuery({
     queryKey: [...employeePortalQueryKey, "summary"],
-    queryFn: () => employeeSummary(token),
+    queryFn: ({ signal }) => employeeSummary(token, signal),
+    staleTime: 10_000,
     refetchInterval: 15_000,
+    refetchIntervalInBackground: false,
+    placeholderData: keepPreviousData,
+    retry: retryTransientRequest,
   });
-  const primaryReady = me.isFetched && summary.isFetched;
   useEffect(() => {
-    setLoadSecondary(false);
-    setLoadMedia(false);
-  }, [token]);
-  useEffect(() => {
-    if (!primaryReady) return;
-    const secondaryTimer = window.setTimeout(() => setLoadSecondary(true), 100);
-    const mediaTimer = window.setTimeout(() => setLoadMedia(true), 400);
-    return () => {
-      window.clearTimeout(secondaryTimer);
-      window.clearTimeout(mediaTimer);
-    };
-  }, [primaryReady, token]);
+    const section = screenshotSectionRef.current;
+    if (!section || screenshotsVisible) return;
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (!entry?.isIntersecting) return;
+        setScreenshotsVisible(true);
+        observer.disconnect();
+      },
+      { rootMargin: "300px" },
+    );
+    observer.observe(section);
+    return () => observer.disconnect();
+  }, [screenshotsVisible]);
   const workProfile = useQuery({
     queryKey: [...employeePortalQueryKey, "work-profile"],
-    queryFn: () => employeeWorkProfile(token),
-    enabled: loadSecondary,
+    queryFn: ({ signal }) => employeeWorkProfile(token, signal),
+    staleTime: 5 * 60_000,
+    retry: retryTransientRequest,
   });
   const tasks = useQuery({
     queryKey: [...employeePortalQueryKey, "tasks"],
-    queryFn: () => employeeTasks(token),
+    queryFn: ({ signal }) => employeeTasks(token, signal),
+    staleTime: 10_000,
     refetchInterval: 15_000,
+    refetchIntervalInBackground: false,
+    placeholderData: keepPreviousData,
+    retry: retryTransientRequest,
   });
   const projects = useQuery({
     queryKey: [...employeePortalQueryKey, "projects"],
-    queryFn: () => employeeProjects(token),
-    enabled: loadSecondary,
+    queryFn: ({ signal }) => employeeProjects(token, signal),
+    staleTime: 5 * 60_000,
+    retry: retryTransientRequest,
   });
   const screenshots = useQuery({
     queryKey: [...employeePortalQueryKey, "screenshots", screenshotDay],
-    queryFn: () => employeeScreenshots(token, screenshotDay),
-    enabled: loadMedia,
-    staleTime: SCREENSHOT_REFRESH_INTERVAL_MS,
-    refetchInterval: SCREENSHOT_REFRESH_INTERVAL_MS,
+    queryFn: ({ signal }) => employeeScreenshots(token, screenshotDay, signal),
+    enabled: screenshotsVisible,
+    staleTime:
+      screenshotDay === localDateKey() ? SCREENSHOT_REFRESH_INTERVAL_MS : 5 * 60_000,
+    refetchInterval:
+      screenshotsVisible && screenshotDay === localDateKey()
+        ? SCREENSHOT_REFRESH_INTERVAL_MS
+        : false,
+    refetchIntervalInBackground: false,
+    placeholderData: keepPreviousData,
+    retry: retryTransientRequest,
   });
   useEffect(() => {
     if (new URLSearchParams(window.location.search).get("view") !== "screenshots") return;
-    window.setTimeout(() => {
-      document.getElementById("my-screenshots")?.scrollIntoView({ behavior: "smooth" });
-    }, 100);
-  }, [screenshots.isSuccess]);
+    document.getElementById("my-screenshots")?.scrollIntoView({ behavior: "smooth" });
+  }, []);
   const requests = useQuery({
     queryKey: [...employeePortalQueryKey, "requests"],
-    queryFn: () => employeeTimeRequests(token),
-    enabled: loadSecondary,
+    queryFn: ({ signal }) => employeeTimeRequests(token, signal),
+    staleTime: 30_000,
+    retry: retryTransientRequest,
   });
   const leaveRequests = useQuery({
     queryKey: [...employeePortalQueryKey, "leave-requests"],
-    queryFn: () => employeeLeaveRequests(token),
-    enabled: loadSecondary,
+    queryFn: ({ signal }) => employeeLeaveRequests(token, signal),
+    staleTime: 30_000,
+    retry: retryTransientRequest,
   });
   const notifications = useQuery({
     queryKey: [...employeePortalQueryKey, "notifications"],
-    queryFn: () => employeeNotifications(token),
-    enabled: loadSecondary,
+    queryFn: ({ signal }) => employeeNotifications(token, signal),
+    staleTime: 20_000,
     refetchInterval: 30_000,
+    refetchIntervalInBackground: false,
+    placeholderData: keepPreviousData,
+    retry: retryTransientRequest,
   });
   const [minutes, setMinutes] = useState(30);
   const [previewScreenshot, setPreviewScreenshot] = useState<PortalScreenshot | null>(null);
@@ -330,8 +366,9 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
   const [workspaceTaskId, setWorkspaceTaskId] = useState<string | null>(null);
   const taskWorkspace = useQuery({
     queryKey: [...employeePortalQueryKey, "task-workspace", workspaceTaskId],
-    queryFn: () => employeeTaskWorkspace(token, workspaceTaskId!),
+    queryFn: ({ signal }) => employeeTaskWorkspace(token, workspaceTaskId!, signal),
     enabled: Boolean(workspaceTaskId),
+    retry: retryTransientRequest,
   });
   const createTaskMutation = useMutation({
     mutationFn: () =>
@@ -925,7 +962,7 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
                   onClick={async () => {
                     if (!item.read_at) await readEmployeeNotification(token, item.id);
                     await queryClient.invalidateQueries({
-                      queryKey: ["employee-portal", "notifications"],
+                      queryKey: [...employeePortalQueryKey, "notifications"],
                     });
                   }}
                 >
@@ -1084,60 +1121,61 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
             ))}
           </CardContent>
         </Card>
-        <Card
-          id="my-screenshots"
-          className="border-[#e7e1f1] bg-white shadow-[0_10px_28px_-24px_rgba(23,19,62,.7)] dark:border-[#3a3156] dark:bg-[#1e1832]"
-        >
-          <CardHeader>
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-              <div>
-                <CardTitle>My screenshots</CardTitle>
+        <div ref={screenshotSectionRef} id="my-screenshots">
+          <Card className="border-[#e7e1f1] bg-white shadow-[0_10px_28px_-24px_rgba(23,19,62,.7)] dark:border-[#3a3156] dark:bg-[#1e1832]">
+            <CardHeader>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+                <div>
+                  <CardTitle>My screenshots</CardTitle>
+                  <p className="text-sm text-muted-foreground">
+                    Only screenshots from the selected day are loaded.
+                  </p>
+                </div>
+                <div className="w-full sm:w-48">
+                  <Label htmlFor="employee-screenshot-day">Day</Label>
+                  <Input
+                    id="employee-screenshot-day"
+                    type="date"
+                    value={screenshotDay}
+                    onChange={(event) => setScreenshotDay(event.target.value)}
+                  />
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {(screenshots.data ?? []).map((shot) => (
+                  <figure key={shot.id} className="overflow-hidden rounded-lg border">
+                    <button
+                      type="button"
+                      className="block w-full cursor-zoom-in"
+                      onClick={() => setPreviewScreenshot(shot)}
+                      aria-label="Preview screenshot"
+                    >
+                      <ProtectedImage
+                        src={shot.thumbnailUrl}
+                        authToken={token}
+                        alt="Work screenshot"
+                        className="aspect-video w-full object-cover transition hover:opacity-90"
+                      />
+                    </button>
+                    <figcaption className="p-2 text-xs text-muted-foreground">
+                      {formatDateTime(shot.captured_at)}
+                    </figcaption>
+                  </figure>
+                ))}
+              </div>
+              {screenshots.isLoading && (
                 <p className="text-sm text-muted-foreground">
-                  Only screenshots from the selected day are loaded.
+                  Loading screenshots for this day...
                 </p>
-              </div>
-              <div className="w-full sm:w-48">
-                <Label htmlFor="employee-screenshot-day">Day</Label>
-                <Input
-                  id="employee-screenshot-day"
-                  type="date"
-                  value={screenshotDay}
-                  onChange={(event) => setScreenshotDay(event.target.value)}
-                />
-              </div>
-            </div>
-          </CardHeader>
-          <CardContent>
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {(screenshots.data ?? []).map((shot) => (
-                <figure key={shot.id} className="overflow-hidden rounded-lg border">
-                  <button
-                    type="button"
-                    className="block w-full cursor-zoom-in"
-                    onClick={() => setPreviewScreenshot(shot)}
-                    aria-label="Preview screenshot"
-                  >
-                    <ProtectedImage
-                      src={shot.thumbnailUrl}
-                      authToken={token}
-                      alt="Work screenshot"
-                      className="aspect-video w-full object-cover transition hover:opacity-90"
-                    />
-                  </button>
-                  <figcaption className="p-2 text-xs text-muted-foreground">
-                    {formatDateTime(shot.captured_at)}
-                  </figcaption>
-                </figure>
-              ))}
-            </div>
-            {screenshots.isLoading && (
-              <p className="text-sm text-muted-foreground">Loading screenshots for this day...</p>
-            )}
-            {screenshots.data?.length === 0 && (
-              <p className="text-sm text-muted-foreground">No screenshots for this day.</p>
-            )}
-          </CardContent>
-        </Card>
+              )}
+              {screenshots.data?.length === 0 && (
+                <p className="text-sm text-muted-foreground">No screenshots for this day.</p>
+              )}
+            </CardContent>
+          </Card>
+        </div>
       </div>
       <Dialog
         open={previewScreenshot !== null}

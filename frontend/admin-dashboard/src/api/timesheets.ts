@@ -40,6 +40,7 @@ export async function listTimesheets(
   view: "daily" | "weekly" | "monthly" = "daily",
   selectedDate?: string,
   selectedTeamId?: string,
+  signal?: AbortSignal,
 ): Promise<Timesheet[]> {
   const teamId =
     selectedTeamId && selectedTeamId !== "all"
@@ -66,8 +67,25 @@ export async function listTimesheets(
       week_start: view === "weekly" ? periodDate : undefined,
       month_start: view === "monthly" ? periodDate : undefined,
     }),
+    { signal },
   );
   return rows.map((row) => mapTimesheet(row, row.team_id ?? teamId ?? ""));
+}
+
+export async function listEmployeeTimesheets(
+  employeeId: string,
+  startDate: string,
+  endDate: string,
+  signal?: AbortSignal,
+): Promise<Timesheet[]> {
+  const rows = await apiFetch<BackendTimesheet[]>(
+    withQuery(`/timesheets/employee/${employeeId}`, {
+      start_date: startDate,
+      end_date: endDate,
+    }),
+    { signal },
+  );
+  return rows.map((row) => mapTimesheet(row, row.team_id ?? ""));
 }
 
 function startOfWeek(value?: string): string | undefined {

@@ -75,8 +75,8 @@ function mapAccess(row: BackendAccess): AdminAccess {
   };
 }
 
-export async function getPermissionCatalog(): Promise<PermissionCatalog> {
-  const row = await apiFetch<BackendCatalog>("/users/permissions/catalog");
+export async function getPermissionCatalog(signal?: AbortSignal): Promise<PermissionCatalog> {
+  const row = await apiFetch<BackendCatalog>("/users/permissions/catalog", { signal });
   return {
     permissions: row.permissions,
     rolePresets: row.role_presets,
@@ -85,8 +85,11 @@ export async function getPermissionCatalog(): Promise<PermissionCatalog> {
   };
 }
 
-export async function getAdminAccess(adminUserId: string): Promise<AdminAccess> {
-  return mapAccess(await apiFetch<BackendAccess>(`/users/${adminUserId}/access`));
+export async function getAdminAccess(
+  adminUserId: string,
+  signal?: AbortSignal,
+): Promise<AdminAccess> {
+  return mapAccess(await apiFetch<BackendAccess>(`/users/${adminUserId}/access`, { signal }));
 }
 
 export async function updateAdminAccess(

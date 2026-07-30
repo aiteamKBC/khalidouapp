@@ -16,14 +16,19 @@ PREFIX = "enc:v1:"
 AAD = b"khaliduo:payroll:v1"
 
 
-@lru_cache(maxsize=1)
-def _cipher() -> AESGCM:
-    secret = settings.salary_encryption_key
-    if not secret:
-        # Production rejects an empty dedicated key. This fallback is only for
-        # local development and isolated tests.
-        secret = f"development-only:{settings.jwt_secret_key}"
+def _legacy_secret() -> str:
+    return f"development-only:{settings.jwt_secret_key}"
+
+
+@lru_cache(maxsize=4)
+def _cipher_for_secret(secret: str) -> AESGCM:
     return AESGCM(hashlib.sha256(secret.encode("utf-8")).digest())
+
+
+def _cipher() -> AESGCM:
+    # Production requires a dedicated key. The legacy derivation remains the
+    # development/test default and a read-only rotation fallback below.
+    return _cipher_for_secret(settings.salary_encryption_key or _legacy_secret())
 
 
 def encrypt_text(value: str) -> str:
@@ -37,9 +42,22 @@ def decrypt_text(value: str) -> str:
         return value
     try:
         payload = base64.urlsafe_b64decode(value[len(PREFIX) :].encode("ascii"))
-        return _cipher().decrypt(payload[:12], payload[12:], AAD).decode("utf-8")
-    except Exception as exc:  # pragma: no cover - crypto backend errors vary
+    except Exception as exc:
         raise RuntimeError("Encrypted payroll data could not be decrypted.") from exc
+    ciphers = [_cipher()]
+    # Older releases derived payroll encryption from JWT_SECRET_KEY when no
+    # dedicated salary key was configured. Keep that data readable while new
+    # writes use SALARY_ENCRYPTION_KEY; a controlled re-encryption can then
+    # remove this compatibility path in a later release.
+    if settings.salary_encryption_key:
+        ciphers.append(_cipher_for_secret(_legacy_secret()))
+    last_error: Exception | None = None
+    for cipher in ciphers:
+        try:
+            return cipher.decrypt(payload[:12], payload[12:], AAD).decode("utf-8")
+        except Exception as exc:  # pragma: no cover - crypto backend errors vary
+            last_error = exc
+    raise RuntimeError("Encrypted payroll data could not be decrypted.") from last_error
 
 
 def encrypt_decimal(value: Decimal | int | float | str) -> str:

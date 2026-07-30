@@ -80,6 +80,7 @@ from app.services.screenshots import (
     record_screenshot_skip,
     upload_screenshot_content,
 )
+from app.storage.local import LocalScreenshotStorage
 from app.services.request_notifications import enqueue_request_review_emails
 from app.services.projects import (
     ensure_general_work_project,
@@ -1047,11 +1048,21 @@ def own_screenshot_file(
     )
     if screenshot is None:
         raise ApiError("SCREENSHOT_NOT_FOUND", "Screenshot was not found.", 404)
-    storage_root = settings.screenshot_storage_path.resolve()
-    file_path = (storage_root / screenshot.storage_path).resolve()
-    if not file_path.is_relative_to(storage_root) or not file_path.exists():
+    storage = LocalScreenshotStorage()
+    try:
+        file_path = storage.resolve(screenshot.storage_path)
+    except ValueError as exc:
+        raise ApiError("SCREENSHOT_FILE_NOT_FOUND", "Screenshot file was not found.", 404) from exc
+    if not file_path.exists():
         raise ApiError("SCREENSHOT_FILE_NOT_FOUND", "Screenshot file was not found.", 404)
-    return FileResponse(file_path, media_type=screenshot.mime_type)
+    return FileResponse(
+        file_path,
+        media_type=screenshot.mime_type,
+        headers={
+            "Cache-Control": "private, max-age=1800",
+            "Vary": "Authorization",
+        },
+    )
 
 
 @router.post("/screenshots/{screenshot_id}/upload")
@@ -1061,7 +1072,8 @@ async def screenshot_upload(
     context: Annotated[DeviceAuthContext, Depends(get_current_device)],
     db: Annotated[Session, Depends(get_db)],
 ):
-    content = await file.read()
+    max_bytes = settings.screenshot_max_file_size_mb * 1024 * 1024
+    content = await file.read(max_bytes + 1)
     return success_response(
         data=upload_screenshot_content(
             db,

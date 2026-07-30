@@ -65,21 +65,27 @@ function ProjectDetailPage() {
   const [teamId, setTeamId] = useState("");
   const project = useQuery({
     queryKey: ["project", projectId],
-    queryFn: () => getProject(projectId),
+    queryFn: ({ signal }) => getProject(projectId, signal),
   });
   const tasks = useQuery({
     queryKey: ["tasks", "project", projectId],
-    queryFn: () => listTasks({ projectId }),
+    queryFn: ({ signal }) => listTasks({ projectId }, signal),
   });
-  const teams = useQuery({ queryKey: ["teams", "project-detail"], queryFn: () => listTeams() });
+  const teams = useQuery({
+    queryKey: ["teams", "project-detail"],
+    queryFn: ({ signal }) => listTeams(undefined, signal),
+    staleTime: 10 * 60_000,
+    gcTime: 30 * 60_000,
+  });
   const employees = useQuery({
     queryKey: ["employees", project.data?.teamId],
-    queryFn: () => listEmployees(project.data?.teamId ? [project.data.teamId] : undefined),
+    queryFn: ({ signal }) =>
+      listEmployees(project.data?.teamId ? [project.data.teamId] : undefined, signal),
     enabled: Boolean(project.data?.teamId),
   });
   const metrics = useQuery({
     queryKey: ["task-metrics", project.data?.teamId],
-    queryFn: () => listTaskMetrics(project.data?.teamId),
+    queryFn: ({ signal }) => listTaskMetrics(project.data?.teamId, signal),
     enabled: Boolean(project.data?.teamId),
   });
   const refresh = async () => {

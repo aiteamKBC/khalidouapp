@@ -267,10 +267,14 @@ function mapWorkProfile(row: BackendWorkProfile): WorkProfile {
   };
 }
 
-export async function listEmployees(scopedTeamIds?: string[]): Promise<Employee[]> {
+export async function listEmployees(
+  scopedTeamIds?: string[],
+  signal?: AbortSignal,
+): Promise<Employee[]> {
   const teamId = scopedTeamIds?.length === 1 ? scopedTeamIds[0] : undefined;
   const statuses = await apiFetch<BackendEmployeeStatus[]>(
     withQuery("/employees-overview", { team_id: teamId }),
+    { signal },
   );
   return statuses.map((status) => mapEmployee(status, status.team_ids ?? []));
 }
@@ -287,9 +291,10 @@ export async function listMonitoringEmployees(
   return statuses.map((status) => mapEmployee(status, status.team_ids ?? []));
 }
 
-export async function getEmployee(id: string): Promise<Employee | undefined> {
+export async function getEmployee(id: string, signal?: AbortSignal): Promise<Employee | undefined> {
   const statuses = await apiFetch<BackendEmployeeStatus[]>(
     withQuery("/employees-overview", { employee_id: id }),
+    { signal },
   );
   const status = statuses[0];
   return status ? mapEmployee(status, status.team_ids ?? []) : undefined;
@@ -341,8 +346,15 @@ export async function updateEmployeePassword(
   return (await getEmployee(employeeId))!;
 }
 
-export async function getWorkProfile(employeeId: string): Promise<WorkProfile> {
-  return mapWorkProfile(await apiFetch(`/employees/${employeeId}/work-profile`));
+export async function getWorkProfile(
+  employeeId: string,
+  signal?: AbortSignal,
+): Promise<WorkProfile> {
+  return mapWorkProfile(
+    await apiFetch(`/employees/${employeeId}/work-profile`, {
+      signal,
+    }),
+  );
 }
 
 export type EmployeeBreakRules = {
@@ -367,6 +379,7 @@ export type EmployeeBreakRules = {
 
 export async function listEmployeeBreakRules(
   scopedTeamIds?: string[],
+  signal?: AbortSignal,
 ): Promise<EmployeeBreakRules[]> {
   const teamId = scopedTeamIds?.length === 1 ? scopedTeamIds[0] : undefined;
   const rows = await apiFetch<
@@ -389,7 +402,7 @@ export async function listEmployeeBreakRules(
       salary_currency?: WorkProfile["salaryCurrency"];
       salary_type?: WorkProfile["salaryType"];
     }>
-  >(withQuery("/employees/break-rules", { team_id: teamId }));
+  >(withQuery("/employees/break-rules", { team_id: teamId }), { signal });
   return rows.map((row) => ({
     employeeId: row.employee_id,
     name: row.name,
@@ -463,6 +476,7 @@ export type EmployeeChangeHistory = {
 
 export async function getEmployeeChangeHistory(
   employeeId: string,
+  signal?: AbortSignal,
 ): Promise<EmployeeChangeHistory[]> {
   const rows = await apiFetch<
     Array<{
@@ -474,7 +488,7 @@ export async function getEmployeeChangeHistory(
       actor_name: string;
       details: Record<string, unknown>;
     }>
-  >(`/employees/${employeeId}/change-history`);
+  >(`/employees/${employeeId}/change-history`, { signal });
   return rows.map((row) => ({
     id: row.id,
     at: row.at,

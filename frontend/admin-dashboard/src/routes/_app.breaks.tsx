@@ -132,15 +132,15 @@ function BreaksPage() {
 
   const rows = useQuery({
     queryKey: ["break-profiles", scope],
-    queryFn: () => listEmployeeBreakRules(scope),
+    queryFn: ({ signal }) => listEmployeeBreakRules(scope, signal),
   });
   const teams = useQuery({
     queryKey: ["teams", scope],
-    queryFn: () => listTeams(scope),
+    queryFn: ({ signal }) => listTeams(scope, signal),
   });
   const overrides = useQuery({
     queryKey: ["schedule-overrides", "upcoming"],
-    queryFn: () => listScheduleOverrides(true),
+    queryFn: ({ signal }) => listScheduleOverrides(true, signal),
     enabled: can(permissions.breaksView),
   });
   const cancelOverride = useMutation({
@@ -183,7 +183,7 @@ function BreaksPage() {
               </Button>
               {canUseCompanyScope && (
                 <Button onClick={() => setEditor({ kind: "company" })}>
-                  <Users /> Set schedule for everyone
+                  <Users /> Set work schedule
                 </Button>
               )}
             </>
@@ -428,6 +428,10 @@ function BreakEditorDialog({
   onSaved: () => void;
 }) {
   const [scope, setScope] = useState<"employee" | "employees" | "team" | "company">("company");
+  // Both questions - who the change covers and whether it is the normal policy
+  // or a single day - are answered inside the dialog, so a break edit can never
+  // silently overwrite the people who have a custom one.
+  const [isPermanent, setIsPermanent] = useState(true);
   const [employeeId, setEmployeeId] = useState("");
   const [employeeIds, setEmployeeIds] = useState<string[]>([]);
   const [teamId, setTeamId] = useState("");
@@ -451,25 +455,41 @@ function BreakEditorDialog({
   const [showSalary, setShowSalary] = useState(false);
 
   const selectedEmployee = people.find((person) => person.employeeId === employeeId);
-  const permanent = intent?.kind !== "day";
+  const permanent = intent?.kind === "employee" ? true : isPermanent;
+  // The employee card edits that one profile directly; the other entry points
+  // let the admin choose the target here.
+  const choosesTarget = Boolean(intent) && intent?.kind !== "employee";
+  const scopeLabel =
+    scope === "company"
+      ? "everyone"
+      : scope === "team"
+        ? "one team"
+        : scope === "employees"
+          ? `${employeeIds.length} employee(s)`
+          : selectedEmployee?.name || "one employee";
   const heading =
-    intent?.kind === "company"
-      ? "Set schedule for everyone"
-      : intent?.kind === "employee"
-        ? `Edit ${selectedEmployee?.name || "employee"} schedule`
-        : "Schedule a one-day exception";
+    intent?.kind === "employee"
+      ? `Edit ${selectedEmployee?.name || "employee"} schedule`
+      : permanent
+        ? `Set schedule for ${scopeLabel}`
+        : `One-day exception for ${scopeLabel}`;
 
   useEffect(() => {
     if (!intent) return;
     const nextScope =
       intent.kind === "employee"
         ? "employee"
-        : intent.kind === "company" || canUseCompanyScope
+        : canUseCompanyScope
           ? "company"
-          : "team";
+          : // Without company-wide scope the admin picks targets they can reach,
+            // and a team is only a valid target for a one-day exception.
+            intent.kind === "day"
+            ? "team"
+            : "employees";
     const nextEmployeeId = intent.kind === "employee" ? intent.employeeId : "";
     const source = people.find((person) => person.employeeId === nextEmployeeId) ?? people[0];
     setScope(nextScope);
+    setIsPermanent(intent.kind !== "day");
     setEmployeeId(nextEmployeeId);
     setEmployeeIds([]);
     setTeamId("");
@@ -578,9 +598,7 @@ function BreakEditorDialog({
     updateBreaks ? breakProblems.flatMap((problem) => problem.indexes) : [],
   );
   const validationMessages = [
-    ...(!updateShift && !updateBreaks
-      ? ["Choose working hours, break schedule, or both."]
-      : []),
+    ...(!updateShift && !updateBreaks ? ["Choose working hours, break schedule, or both."] : []),
     ...(updateShift && (!shiftStart || !shiftEnd || minutesBetween(shiftStart, shiftEnd) <= 0)
       ? ["Shift end must be later than shift start."]
       : []),
@@ -612,9 +630,7 @@ function BreakEditorDialog({
                 shiftEnd,
                 requiredDailyMinutes: minutesBetween(shiftStart, shiftEnd),
                 workingDays,
-                weeklyOffDays: [0, 1, 2, 3, 4, 5, 6].filter(
-                  (day) => !workingDays.includes(day),
-                ),
+                weeklyOffDays: [0, 1, 2, 3, 4, 5, 6].filter((day) => !workingDays.includes(day)),
                 lateGraceMinutes,
                 ...(canManagePayroll
                   ? {
@@ -689,7 +705,7 @@ function BreakEditorDialog({
           </DialogDescription>
         </DialogHeader>
 
-        {intent?.kind === "day" && (
+        {choosesTarget && (
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="Apply to">
               <Select
@@ -712,19 +728,44 @@ function BreakEditorDialog({
                 <SelectContent>
                   {canUseCompanyScope && <SelectItem value="company">All employees</SelectItem>}
                   <SelectItem value="employees">Selected employees</SelectItem>
-                  <SelectItem value="team">One team</SelectItem>
+                  {/* A permanent team policy is not supported by the server. */}
+                  {!permanent && <SelectItem value="team">One team</SelectItem>}
                   <SelectItem value="employee">One employee</SelectItem>
                 </SelectContent>
               </Select>
             </Field>
-            <Field label="Date">
-              <Input
-                type="date"
-                min={todayIso()}
-                value={effectiveDate}
-                onChange={(event) => setEffectiveDate(event.target.value)}
-              />
+            <Field label="Applies">
+              <Select
+                value={permanent ? "always" : "day"}
+                onValueChange={(value) => {
+                  const nextPermanent = value === "always";
+                  setIsPermanent(nextPermanent);
+                  // Team scope only exists for one-day exceptions.
+                  if (nextPermanent && scope === "team") {
+                    setScope(canUseCompanyScope ? "company" : "employees");
+                    setTeamId("");
+                  }
+                }}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="always">Every day, from now on</SelectItem>
+                  <SelectItem value="day">One day only</SelectItem>
+                </SelectContent>
+              </Select>
             </Field>
+            {!permanent && (
+              <Field label="Date">
+                <Input
+                  type="date"
+                  min={todayIso()}
+                  value={effectiveDate}
+                  onChange={(event) => setEffectiveDate(event.target.value)}
+                />
+              </Field>
+            )}
             {scope === "employee" && (
               <div className="sm:col-span-2">
                 <Field label="Employee">
@@ -806,9 +847,7 @@ function BreakEditorDialog({
           <div className="grid gap-3 sm:grid-cols-2">
             <label
               className={`flex cursor-pointer items-start gap-3 rounded-xl border p-3 transition ${
-                updateShift
-                  ? "border-primary/40 bg-primary/5"
-                  : "bg-card hover:border-primary/30"
+                updateShift ? "border-primary/40 bg-primary/5" : "bg-card hover:border-primary/30"
               }`}
             >
               <Checkbox
@@ -825,9 +864,7 @@ function BreakEditorDialog({
             </label>
             <label
               className={`flex cursor-pointer items-start gap-3 rounded-xl border p-3 transition ${
-                updateBreaks
-                  ? "border-primary/40 bg-primary/5"
-                  : "bg-card hover:border-primary/30"
+                updateBreaks ? "border-primary/40 bg-primary/5" : "bg-card hover:border-primary/30"
               }`}
             >
               <Checkbox

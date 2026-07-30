@@ -95,23 +95,38 @@ function mapActivity(event: BackendActivityEvent): ActivityEvent {
   };
 }
 
-export async function listSessions(employeeId?: string, teamId?: string): Promise<WorkSession[]> {
+export async function listSessions(
+  employeeId?: string,
+  teamId?: string,
+  signal?: AbortSignal,
+): Promise<WorkSession[]> {
   const sessions = await apiFetch<BackendSession[]>(
     withQuery("/sessions", { employee_id: employeeId, team_id: teamId, page_size: 100 }),
+    { signal },
   );
   return sessions.map(mapSession);
 }
 
-export async function listActivity(employeeId?: string, teamId?: string): Promise<ActivityEvent[]> {
+export async function listActivity(
+  employeeId?: string,
+  teamId?: string,
+  signal?: AbortSignal,
+): Promise<ActivityEvent[]> {
   const events = await apiFetch<BackendActivityEvent[]>(
     withQuery("/activity", { employee_id: employeeId, team_id: teamId, page_size: 100 }),
+    { signal },
   );
   return events.map(mapActivity);
 }
 
-export async function getWorkdayTimeline(employeeId: string, day: string) {
+export async function getWorkdayTimeline(
+  employeeId: string,
+  day: string,
+  signal?: AbortSignal,
+) {
   const timeline = await apiFetch<BackendWorkdayTimeline>(
     withQuery("/activity/timeline", { employee_id: employeeId, day }),
+    { signal },
   );
   return mapWorkdayTimeline(timeline);
 }

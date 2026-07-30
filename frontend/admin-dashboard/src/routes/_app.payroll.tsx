@@ -136,9 +136,10 @@ function PayrollPage() {
     };
   }, [showAmounts]);
 
+  const scope = scopedTeamIds();
   const employees = useQuery({
-    queryKey: ["employees", scopedTeamIds()],
-    queryFn: () => listEmployees(scopedTeamIds()),
+    queryKey: ["employees", scope],
+    queryFn: ({ signal }) => listEmployees(scope, signal),
   });
   const filters = useMemo(
     () => ({
@@ -157,17 +158,19 @@ function PayrollPage() {
     [month, team, employeeId, status, signal, customRange, customStart, customEnd],
   );
   const sheet = useQuery({
-    queryKey: ["payroll-sheet", filters],
-    queryFn: () => getPayrollSheet(filters),
+    queryKey: ["payroll-sheet", scope, filters],
+    queryFn: ({ signal }) => getPayrollSheet(filters, signal),
     refetchInterval: 60_000,
+    refetchIntervalInBackground: false,
+    placeholderData: (previous) => previous,
   });
   const exceptions = useQuery({
     queryKey: ["payroll-exceptions", month, filters.start_date, filters.end_date],
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       getPayrollExceptions(month, {
         start_date: filters.start_date,
         end_date: filters.end_date,
-      }),
+      }, signal),
     enabled: tab === "exceptions",
   });
 
@@ -682,15 +685,18 @@ function MonthlyAttendanceDialog({
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
   const history = useQuery({
     queryKey: ["employee-attendance-range", employeeId, startDate, endDate],
-    queryFn: () => getEmployeeAttendanceRange(employeeId!, startDate, endDate),
+    queryFn: ({ signal }) =>
+      getEmployeeAttendanceRange(employeeId!, startDate, endDate, signal),
     enabled: open && Boolean(employeeId),
-    refetchInterval: open ? 30_000 : false,
+    staleTime: 5 * 60_000,
+    placeholderData: (previous) => previous,
   });
   const dayDetail = useQuery({
     queryKey: ["employee-attendance-day", employeeId, selectedDay],
-    queryFn: () => getDailyAttendance(employeeId!, selectedDay!),
+    queryFn: ({ signal }) => getDailyAttendance(employeeId!, selectedDay!, signal),
     enabled: open && Boolean(employeeId) && Boolean(selectedDay),
-    refetchInterval: selectedDay ? 15_000 : false,
+    staleTime: 5 * 60_000,
+    placeholderData: (previous) => previous,
   });
   const rows = history.data?.rows ?? [];
 
@@ -987,7 +993,7 @@ function PayrollReviewSheet({
   const [adjustmentOpen, setAdjustmentOpen] = useState(false);
   const detail = useQuery({
     queryKey: ["payroll-entry", entryId],
-    queryFn: () => getPayrollEntry(entryId!),
+    queryFn: ({ signal }) => getPayrollEntry(entryId!, signal),
     enabled: Boolean(entryId),
   });
   useEffect(() => {
@@ -1404,7 +1410,7 @@ function EmployeeProfileDialog({
   const queryClient = useQueryClient();
   const profile = useQuery({
     queryKey: ["employee-work-profile", employeeId],
-    queryFn: () => getWorkProfile(employeeId),
+    queryFn: ({ signal }) => getWorkProfile(employeeId, signal),
     enabled: open,
   });
   const [form, setForm] = useState<WorkProfileInput>({});
@@ -2079,7 +2085,7 @@ function PayrollCycleDialog({
 }) {
   const settings = useQuery({
     queryKey: ["payroll-settings"],
-    queryFn: getPayrollSettings,
+    queryFn: ({ signal }) => getPayrollSettings(signal),
     enabled: open,
   });
   const [form, setForm] = useState<PayrollSettings>({

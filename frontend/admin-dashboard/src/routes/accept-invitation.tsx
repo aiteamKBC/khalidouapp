@@ -37,7 +37,7 @@ function AcceptInvitationPage() {
 
   const invitation = useQuery({
     queryKey: ["public-invitation", token],
-    queryFn: () => getPersonInvitation(token!),
+    queryFn: ({ signal }) => getPersonInvitation(token!, signal),
     enabled: Boolean(token),
     retry: false,
   });

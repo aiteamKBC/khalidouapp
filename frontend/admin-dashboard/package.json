@@ -10,6 +10,7 @@
     "start": "node .output/server/index.mjs",
     "preview": "vite preview",
     "test:monitoring": "node --experimental-strip-types --test src/lib/monitoring-query-policy.test.ts",
+    "test:security": "node --experimental-strip-types --test src/lib/security-boundaries.test.ts",
     "lint": "eslint src",
     "format": "prettier --write ."
   },

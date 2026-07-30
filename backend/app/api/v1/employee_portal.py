@@ -630,12 +630,40 @@ def own_task_workspace(
         select(TaskComment)
         .where(TaskComment.task_id == task.id)
         .order_by(TaskComment.created_at.desc())
+        .limit(200)
     ).all()
     attachments = db.scalars(
         select(TaskAttachment)
         .where(TaskAttachment.task_id == task.id)
         .order_by(TaskAttachment.created_at.desc())
+        .limit(200)
     ).all()
+    employee_ids = {comment.employee_id for comment in comments if comment.employee_id}
+    admin_ids = {comment.admin_user_id for comment in comments if comment.admin_user_id}
+    employee_names = (
+        dict(
+            db.execute(
+                select(Employee.id, Employee.name).where(
+                    Employee.company_id == current_employee.company_id,
+                    Employee.id.in_(employee_ids),
+                )
+            ).all()
+        )
+        if employee_ids
+        else {}
+    )
+    admin_names = (
+        dict(
+            db.execute(
+                select(AdminUser.id, AdminUser.name).where(
+                    AdminUser.company_id == current_employee.company_id,
+                    AdminUser.id.in_(admin_ids),
+                )
+            ).all()
+        )
+        if admin_ids
+        else {}
+    )
     return success_response(
         data={
             "comments": [
@@ -643,10 +671,10 @@ def own_task_workspace(
                     "id": str(comment.id),
                     "body": comment.body,
                     "author_name": (
-                        db.get(Employee, comment.employee_id).name
-                        if comment.employee_id and db.get(Employee, comment.employee_id)
-                        else db.get(AdminUser, comment.admin_user_id).name
-                        if comment.admin_user_id and db.get(AdminUser, comment.admin_user_id)
+                        employee_names.get(comment.employee_id, "Employee")
+                        if comment.employee_id
+                        else admin_names.get(comment.admin_user_id, "Admin")
+                        if comment.admin_user_id
                         else "System"
                     ),
                     "created_at": comment.created_at.isoformat(),
@@ -885,7 +913,11 @@ def screenshot_file(
     db: Annotated[Session, Depends(get_db)],
 ):
     screenshot = _employee_screenshot_or_404(db, current_employee, screenshot_id)
-    path = (settings.screenshot_storage_path / screenshot.storage_path).resolve()
+    storage = LocalScreenshotStorage()
+    try:
+        path = storage.resolve(screenshot.storage_path)
+    except ValueError as exc:
+        raise ApiError("SCREENSHOT_FILE_NOT_FOUND", "Screenshot file was not found.", 404) from exc
     if not path.exists():
         raise ApiError("SCREENSHOT_FILE_NOT_FOUND", "Screenshot file was not found.", 404)
     return FileResponse(
@@ -906,12 +938,15 @@ def screenshot_thumbnail(
 ):
     screenshot = _employee_screenshot_or_404(db, current_employee, screenshot_id)
     storage = LocalScreenshotStorage()
-    original_path = (settings.screenshot_storage_path / screenshot.storage_path).resolve()
-    thumbnail_path = (
-        (settings.screenshot_storage_path / screenshot.thumbnail_path).resolve()
-        if screenshot.thumbnail_path
-        else None
-    )
+    try:
+        original_path = storage.resolve(screenshot.storage_path)
+        thumbnail_path = storage.resolve(screenshot.thumbnail_path) if screenshot.thumbnail_path else None
+    except ValueError as exc:
+        raise ApiError(
+            "SCREENSHOT_FILE_NOT_FOUND",
+            "Screenshot preview was not found.",
+            404,
+        ) from exc
 
     if thumbnail_path is None or not thumbnail_path.is_file():
         if not original_path.is_file():

@@ -7,6 +7,8 @@ import { StatusBadge } from "@/components/ui/status-badge";
 import { getDevice } from "@/api/devices";
 import { listEmployees } from "@/api/employees";
 import { formatDate, formatRelative } from "@/lib/format";
+import { useAuth } from "@/lib/auth";
+import { retryTransientRequest } from "@/api/client";
 
 export const Route = createFileRoute("/_app/devices/$deviceId")({
   component: DeviceDetailPage,
@@ -14,8 +16,18 @@ export const Route = createFileRoute("/_app/devices/$deviceId")({
 
 function DeviceDetailPage() {
   const { deviceId } = Route.useParams();
-  const device = useQuery({ queryKey: ["device", deviceId], queryFn: () => getDevice(deviceId) });
-  const employees = useQuery({ queryKey: ["employees"], queryFn: () => listEmployees() });
+  const scope = useAuth().scopedTeamIds();
+  const device = useQuery({
+    queryKey: ["device", scope, deviceId],
+    queryFn: ({ signal }) => getDevice(deviceId, signal),
+    retry: retryTransientRequest,
+  });
+  const employees = useQuery({
+    queryKey: ["employees", scope],
+    queryFn: ({ signal }) => listEmployees(scope, signal),
+    staleTime: 30_000,
+    retry: retryTransientRequest,
+  });
 
   if (!device.data) return <div className="text-sm text-muted-foreground">Loading device...</div>;
   const employee = (employees.data ?? []).find((item) => item.id === device.data!.employeeId);

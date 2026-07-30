@@ -89,47 +89,52 @@ function AttendancePage() {
   } | null>(null);
   const debouncedQuery = useDebouncedValue(q);
   const debouncedHistoryQuery = useDebouncedValue(historyQuery);
+  const isToday = day === today();
   const teams = useQuery({
     queryKey: ["teams", scope],
-    queryFn: () => listTeams(scope),
-    staleTime: 5 * 60_000,
+    queryFn: ({ signal }) => listTeams(scope, signal),
+    staleTime: 10 * 60_000,
+    gcTime: 30 * 60_000,
   });
   const attendance = useQuery({
-    queryKey: ["daily-attendance", day, teamId, status, issue, debouncedQuery],
-    queryFn: () => listDailyAttendance({ day, teamId, status, issue, q: debouncedQuery }),
-    staleTime: 55_000,
-    refetchInterval: 60_000,
+    queryKey: ["daily-attendance", scope, day, teamId, status, issue, debouncedQuery],
+    queryFn: ({ signal }) =>
+      listDailyAttendance({ day, teamId, status, issue, q: debouncedQuery }, signal),
+    staleTime: isToday ? 30_000 : 5 * 60_000,
+    refetchInterval: isToday ? 60_000 : false,
     refetchIntervalInBackground: false,
     refetchOnWindowFocus: false,
     placeholderData: (previous) => previous,
   });
   const detail = useQuery({
-    queryKey: ["daily-attendance-detail", selectedEmployeeId, day],
-    queryFn: () => getDailyAttendance(selectedEmployeeId!, day),
+    queryKey: ["daily-attendance-detail", scope, selectedEmployeeId, day],
+    queryFn: ({ signal }) => getDailyAttendance(selectedEmployeeId!, day, signal),
     enabled: Boolean(selectedEmployeeId),
-    staleTime: 55_000,
-    refetchInterval: selectedEmployeeId ? 60_000 : false,
+    staleTime: isToday ? 30_000 : 5 * 60_000,
+    refetchInterval: selectedEmployeeId && isToday ? 60_000 : false,
     refetchIntervalInBackground: false,
     refetchOnWindowFocus: false,
   });
   const historyRoster = useQuery({
     queryKey: [
       "attendance-employee-history-roster",
+      scope,
       historyEndDate,
       historyTeamId,
       debouncedHistoryQuery,
     ],
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       listDailyAttendance({
         day: historyEndDate,
         teamId: historyTeamId,
         status: "all",
         issue: "all",
         q: debouncedHistoryQuery,
-      }),
+      }, signal),
     enabled: activeTab === "employee-history" && Boolean(historyEndDate),
     staleTime: 55_000,
-    refetchInterval: activeTab === "employee-history" ? 60_000 : false,
+    refetchInterval:
+      activeTab === "employee-history" && historyEndDate === today() ? 60_000 : false,
     refetchIntervalInBackground: false,
     refetchOnWindowFocus: false,
     placeholderData: (previous) => previous,

@@ -64,17 +64,38 @@ const mapLeave = (row: BackendLeaveRequest): LeaveRequest => ({
   createdAt: row.created_at,
 });
 
-export async function listLeaveRequests(status?: string): Promise<LeaveRequest[]> {
+export async function listLeaveRequests(
+  status?: string,
+  signal?: AbortSignal,
+): Promise<LeaveRequest[]> {
   const rows = await apiFetch<BackendLeaveRequest[]>(
     withQuery("/leave-requests", {
       status: status && status !== "all" ? status : undefined,
       page_size: 100,
     }),
+    { signal },
   );
   return rows.map(mapLeave);
 }
 
-export async function listLeaveBalanceOverview(year: number): Promise<LeaveBalanceOverview[]> {
+export async function listEmployeeLeaveRequests(
+  employeeId: string,
+  signal?: AbortSignal,
+): Promise<LeaveRequest[]> {
+  const rows = await apiFetch<BackendLeaveRequest[]>(
+    withQuery("/leave-requests", {
+      employee_id: employeeId,
+      page_size: 100,
+    }),
+    { signal },
+  );
+  return rows.map(mapLeave);
+}
+
+export async function listLeaveBalanceOverview(
+  year: number,
+  signal?: AbortSignal,
+): Promise<LeaveBalanceOverview[]> {
   const rows = await apiFetch<
     Array<{
       employee_id: string;
@@ -91,7 +112,7 @@ export async function listLeaveBalanceOverview(year: number): Promise<LeaveBalan
         request_id: string;
       }>;
     }>
-  >(withQuery("/leave-requests/balances", { year }));
+  >(withQuery("/leave-requests/balances", { year }), { signal });
   return rows.map((row) => ({
     employeeId: row.employee_id,
     employeeName: row.employee_name,

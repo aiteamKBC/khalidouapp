@@ -1,3 +1,6 @@
+import { resolveApiUrl } from "@/lib/api-url";
+export { retryTransientRequest } from "@/lib/query-retry-policy";
+
 export const API_BASE_URL = (
   import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000/api/v1"
 ).replace(/\/$/, "");
@@ -29,15 +32,6 @@ export class ApiClientError extends Error {
     super(message);
     this.name = "ApiClientError";
   }
-}
-
-export function retryTransientRequest(failureCount: number, error: unknown) {
-  if (error instanceof DOMException && error.name === "AbortError") return false;
-  if (error instanceof ApiClientError) {
-    if ([400, 401, 403, 404].includes(error.status)) return false;
-    return (error.status === 0 || error.status >= 500) && failureCount < 2;
-  }
-  return failureCount < 2;
 }
 
 type PersistedAuth = {
@@ -335,13 +329,16 @@ function shouldRefresh(path: string, tokenOverride?: string) {
 }
 
 export function apiUrl(path: string) {
-  if (path.startsWith("http://") || path.startsWith("https://") || path.startsWith("blob:")) {
-    return path;
+  const runtimeOrigin = typeof window === "undefined" ? "http://localhost" : window.location.origin;
+  const url = resolveApiUrl(API_BASE_URL, path, runtimeOrigin);
+  if (!url) {
+    throw new ApiClientError(
+      "The requested URL is outside the configured Khaliduo API.",
+      "UNSAFE_API_URL",
+      400,
+    );
   }
-  if (path.startsWith("/api/v1/")) {
-    return `${API_BASE_URL}${path.slice("/api/v1".length)}`;
-  }
-  return `${API_BASE_URL}${path.startsWith("/") ? path : `/${path}`}`;
+  return url;
 }
 
 export async function apiFetch<T>(
@@ -397,9 +394,13 @@ export async function apiFetchWithMeta<T>(
   return coalesceInFlight(requestDedupeKey("meta", path, init, token), execute);
 }
 
-export async function apiFile(path: string, signal?: AbortSignal): Promise<Blob> {
-  const authLocation = readAuth();
-  const token = authLocation?.auth.accessToken;
+export async function apiFile(
+  path: string,
+  signal?: AbortSignal,
+  tokenOverride?: string,
+): Promise<Blob> {
+  const authLocation = tokenOverride ? null : readAuth();
+  const token = tokenOverride ?? authLocation?.auth.accessToken;
   const fetchFile = (token?: string) =>
     fetchWithTimeout(apiUrl(path), {
       headers: token ? { Authorization: `Bearer ${token}` } : undefined,
@@ -426,7 +427,11 @@ export async function apiFile(path: string, signal?: AbortSignal): Promise<Blob>
  * Keep protected screenshot grids from opening dozens of authenticated file
  * requests at once. Queued requests are cancelled after navigation or paging.
  */
-export function apiImageFile(path: string, signal?: AbortSignal): Promise<Blob> {
+export function apiImageFile(
+  path: string,
+  signal?: AbortSignal,
+  tokenOverride?: string,
+): Promise<Blob> {
   return new Promise<Blob>((resolve, reject) => {
     if (signal?.aborted) {
       reject(abortError(signal));
@@ -442,7 +447,7 @@ export function apiImageFile(path: string, signal?: AbortSignal): Promise<Blob> 
         reject(abortError(signal));
       },
       run: () => {
-        apiFile(path, signal)
+        apiFile(path, signal, tokenOverride)
           .then(resolve, reject)
           .finally(() => {
             activeImageRequests = Math.max(0, activeImageRequests - 1);

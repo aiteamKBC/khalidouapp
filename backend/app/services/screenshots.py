@@ -3,6 +3,7 @@ from io import BytesIO
 from pathlib import PurePosixPath
 from typing import Any
 from uuid import UUID
+import warnings
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -28,6 +29,7 @@ from app.services.work_profiles import get_or_create_work_profile
 from app.storage.local import LocalScreenshotStorage
 
 ALLOWED_SCREENSHOT_MIME_TYPES = {"image/jpeg", "image/webp"}
+SCREENSHOT_FORMAT_MIME_TYPES = {"JPEG": "image/jpeg", "WEBP": "image/webp"}
 
 
 def build_thumbnail(content: bytes, storage_path: str) -> tuple[str, bytes] | None:
@@ -64,6 +66,67 @@ def validate_screenshot_size(file_size: int) -> None:
             "Screenshot exceeds the configured maximum file size.",
             413,
             {"max_bytes": max_bytes},
+        )
+
+
+def validate_screenshot_dimensions(width: int, height: int) -> None:
+    if (
+        width > settings.screenshot_max_dimension
+        or height > settings.screenshot_max_dimension
+        or width * height > settings.screenshot_max_pixels
+    ):
+        raise ApiError(
+            "SCREENSHOT_DIMENSIONS_TOO_LARGE",
+            "Screenshot dimensions exceed the configured maximum.",
+            413,
+            {
+                "max_dimension": settings.screenshot_max_dimension,
+                "max_pixels": settings.screenshot_max_pixels,
+            },
+        )
+
+
+def validate_screenshot_image(
+    content: bytes,
+    *,
+    expected_mime_type: str,
+    expected_width: int,
+    expected_height: int,
+) -> None:
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            with Image.open(BytesIO(content)) as image:
+                detected_mime_type = SCREENSHOT_FORMAT_MIME_TYPES.get(image.format or "")
+                actual_width, actual_height = image.size
+                validate_screenshot_dimensions(actual_width, actual_height)
+                image.verify()
+    except ApiError:
+        raise
+    except (
+        Image.DecompressionBombError,
+        Image.DecompressionBombWarning,
+        UnidentifiedImageError,
+        OSError,
+        ValueError,
+    ) as exc:
+        raise ApiError(
+            "INVALID_SCREENSHOT_IMAGE",
+            "Screenshot content is not a valid supported image.",
+            400,
+        ) from exc
+
+    if detected_mime_type != expected_mime_type:
+        raise ApiError(
+            "SCREENSHOT_MIME_MISMATCH",
+            "Screenshot content does not match the declared MIME type.",
+            400,
+        )
+    if (actual_width, actual_height) != (expected_width, expected_height):
+        raise ApiError(
+            "SCREENSHOT_DIMENSION_MISMATCH",
+            "Screenshot dimensions do not match the initiated metadata.",
+            400,
         )
 
 
@@ -127,6 +190,7 @@ def initiate_screenshot(
     db: Session, device: Device, payload: ScreenshotInitiateRequest
 ) -> dict[str, Any]:
     validate_screenshot_size(payload.file_size)
+    validate_screenshot_dimensions(payload.width, payload.height)
     if payload.power_source != "ac":
         raise ApiError(
             "SCREENSHOT_AC_POWER_REQUIRED",
@@ -318,11 +382,17 @@ def upload_screenshot_content(
         raise ApiError("INVALID_SCREENSHOT_TYPE", "Unsupported screenshot MIME type.", 400)
 
     validate_screenshot_size(len(content))
+    if len(content) != screenshot.file_size:
+        raise ApiError("FILE_SIZE_MISMATCH", "Screenshot file size does not match metadata.", 400)
     checksum = sha256(content).hexdigest()
     if checksum.lower() != screenshot.checksum.lower():
         raise ApiError("CHECKSUM_MISMATCH", "Screenshot checksum does not match metadata.", 400)
-    if len(content) != screenshot.file_size:
-        raise ApiError("FILE_SIZE_MISMATCH", "Screenshot file size does not match metadata.", 400)
+    validate_screenshot_image(
+        content,
+        expected_mime_type=screenshot.mime_type,
+        expected_width=screenshot.width,
+        expected_height=screenshot.height,
+    )
 
     storage = LocalScreenshotStorage()
     storage.save(screenshot.storage_path, content)

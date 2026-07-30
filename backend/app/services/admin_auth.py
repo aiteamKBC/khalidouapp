@@ -13,16 +13,19 @@ from app.models import AdminRefreshToken, AdminUser
 
 def authenticate_admin(db: Session, email: str, password: str) -> AdminUser:
     normalized_email = email.strip().lower()
-    admin = db.scalar(
+    candidates = db.scalars(
         select(AdminUser).where(func.lower(AdminUser.email) == normalized_email)
-    )
-    if (
-        admin is None
-        or admin.status != "active"
-        or not verify_password(password, admin.password_hash)
-    ):
+    ).all()
+    matches = [
+        candidate
+        for candidate in candidates
+        if candidate.status == "active" and verify_password(password, candidate.password_hash)
+    ]
+    # Email addresses are unique inside a company, not across all tenants. Never
+    # select an arbitrary tenant when credentials match more than one account.
+    if len(matches) != 1:
         raise ApiError("INVALID_CREDENTIALS", "Invalid email or password.", 401)
-    return admin
+    return matches[0]
 
 
 def create_admin_token_pair(db: Session, admin: AdminUser) -> dict[str, object]:
@@ -71,7 +74,9 @@ def refresh_admin_tokens(db: Session, refresh_token: str) -> dict[str, object]:
         raise ApiError("UNAUTHORIZED", "Invalid token type.", 401)
 
     token_record = db.scalar(
-        select(AdminRefreshToken).where(AdminRefreshToken.token_hash == hash_token(refresh_token))
+        select(AdminRefreshToken)
+        .where(AdminRefreshToken.token_hash == hash_token(refresh_token))
+        .with_for_update()
     )
     if token_record is None or token_record.revoked_at is not None:
         raise ApiError("UNAUTHORIZED", "Refresh token has been revoked.", 401)

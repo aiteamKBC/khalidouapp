@@ -1,5 +1,6 @@
 from functools import lru_cache
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -50,6 +51,16 @@ class Settings(BaseSettings):
         alias="DESKTOP_UPDATE_DIRECTORY",
     )
     screenshot_max_file_size_mb: int = Field(default=10, alias="SCREENSHOT_MAX_FILE_SIZE_MB")
+    screenshot_max_pixels: int = Field(
+        default=80_000_000,
+        ge=1,
+        alias="SCREENSHOT_MAX_PIXELS",
+    )
+    screenshot_max_dimension: int = Field(
+        default=16_384,
+        ge=1,
+        alias="SCREENSHOT_MAX_DIMENSION",
+    )
     default_screenshot_interval_minutes: int = Field(
         default=10, alias="DEFAULT_SCREENSHOT_INTERVAL_MINUTES"
     )
@@ -137,12 +148,45 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def reject_insecure_production_secrets(self) -> "Settings":
         if self.app_env.lower() == "production":
-            if self.jwt_secret_key == INSECURE_DEFAULT_SECRET:
-                raise ValueError("JWT_SECRET_KEY must be set to a real secret in production.")
-            if self.device_token_secret == INSECURE_DEFAULT_SECRET:
-                raise ValueError("DEVICE_TOKEN_SECRET must be set to a real secret in production.")
-            if not self.salary_encryption_key:
-                raise ValueError("SALARY_ENCRYPTION_KEY must be set in production.")
+            if (
+                self.jwt_secret_key == INSECURE_DEFAULT_SECRET
+                or len(self.jwt_secret_key) < 32
+            ):
+                raise ValueError(
+                    "JWT_SECRET_KEY must be a secret of at least 32 characters in production."
+                )
+            if (
+                self.device_token_secret == INSECURE_DEFAULT_SECRET
+                or len(self.device_token_secret) < 32
+            ):
+                raise ValueError(
+                    "DEVICE_TOKEN_SECRET must be a secret of at least 32 characters in production."
+                )
+            if len(self.salary_encryption_key) < 32:
+                raise ValueError(
+                    "SALARY_ENCRYPTION_KEY must be at least 32 characters in production."
+                )
+            if not self.database_url:
+                raise ValueError("DATABASE_URL must be configured in production.")
+            if not self.cors_origins or "*" in self.cors_origins:
+                raise ValueError(
+                    "CORS_ORIGINS must contain explicit HTTPS origins in production."
+                )
+            for origin in self.cors_origins:
+                parsed_origin = urlsplit(origin)
+                if (
+                    parsed_origin.scheme != "https"
+                    or not parsed_origin.netloc
+                    or parsed_origin.path not in {"", "/"}
+                    or parsed_origin.query
+                    or parsed_origin.fragment
+                ):
+                    raise ValueError(
+                        "CORS_ORIGINS must contain only explicit HTTPS origins in production."
+                    )
+            public_url = urlsplit(self.app_public_url)
+            if public_url.scheme != "https" or not public_url.netloc:
+                raise ValueError("APP_PUBLIC_URL must use HTTPS in production.")
         return self
 
 

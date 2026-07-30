@@ -64,15 +64,22 @@ function TeamsList() {
   const scope = scopedTeamIds();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
-  const teams = useQuery({ queryKey: ["teams", scope], queryFn: () => listTeams(scope) });
+  const teams = useQuery({
+    queryKey: ["teams", scope],
+    queryFn: ({ signal }) => listTeams(scope, signal),
+    staleTime: 10 * 60_000,
+    gcTime: 30 * 60_000,
+  });
   const emps = useQuery({
-    queryKey: ["employees-all"],
-    queryFn: () => listEmployees(),
+    queryKey: ["employees-all", scope],
+    queryFn: ({ signal }) => listEmployees(scope, signal),
+    staleTime: 20_000,
     refetchInterval: 30_000,
+    refetchIntervalInBackground: false,
   });
   const owners = useQuery({
     queryKey: ["users"],
-    queryFn: listUsers,
+    queryFn: ({ signal }) => listUsers(signal),
     enabled: canManageAccess,
   });
 

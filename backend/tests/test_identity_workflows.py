@@ -10,7 +10,13 @@ from sqlalchemy import create_engine
 
 from app.api.v1 import people as people_api
 from app.core.config import settings
-from app.core.security import create_jwt_token, hash_password, hash_token, verify_password
+from app.core.security import (
+    create_jwt_token,
+    decode_jwt_token,
+    hash_password,
+    hash_token,
+    verify_password,
+)
 from app.database.base import Base
 from app.database.session import get_db
 from app.main import app
@@ -220,6 +226,117 @@ def test_admin_login_is_case_insensitive_for_legacy_mixed_case_email(identity_cl
     assert lowercase_login.status_code == 200
 
 
+def test_admin_login_selects_the_unique_password_matching_tenant(identity_client):
+    client, data = identity_client
+    db: Session = data["session_factory"]()
+    try:
+        other_company = Company(name="Other tenant", status="active")
+        db.add(other_company)
+        db.flush()
+        db.add(
+            AdminUser(
+                company_id=other_company.id,
+                name="Other Admin",
+                email=data["general_admin"].email,
+                password_hash=hash_password("DifferentPassword456!"),
+                role="general_admin",
+                status="active",
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    response = client.post(
+        "/api/v1/auth/login",
+        json={
+            "email": data["general_admin"].email,
+            "password": "OldPassword123!",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = decode_jwt_token(response.json()["data"]["access_token"])
+    assert payload["company_id"] == str(data["general_admin"].company_id)
+
+
+def test_admin_login_rejects_credentials_matching_multiple_tenants(identity_client):
+    client, data = identity_client
+    db: Session = data["session_factory"]()
+    try:
+        other_company = Company(name="Ambiguous tenant", status="active")
+        db.add(other_company)
+        db.flush()
+        db.add(
+            AdminUser(
+                company_id=other_company.id,
+                name="Ambiguous Admin",
+                email=data["general_admin"].email,
+                password_hash=hash_password("OldPassword123!"),
+                role="general_admin",
+                status="active",
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    response = client.post(
+        "/api/v1/auth/login",
+        json={
+            "email": data["general_admin"].email,
+            "password": "OldPassword123!",
+        },
+    )
+
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "INVALID_CREDENTIALS"
+
+
+def test_employee_login_rejects_credentials_matching_multiple_tenants(identity_client):
+    client, data = identity_client
+    db: Session = data["session_factory"]()
+    try:
+        other_company = Company(name="Employee tenant", status="active")
+        db.add(other_company)
+        db.flush()
+        shared_password = hash_password("SharedPassword123!")
+        db.add_all(
+            [
+                Employee(
+                    company_id=data["general_admin"].company_id,
+                    name="First Employee",
+                    email="shared.employee@example.com",
+                    employee_code="SHARED-1",
+                    portal_password_hash=shared_password,
+                    status="active",
+                ),
+                Employee(
+                    company_id=other_company.id,
+                    name="Second Employee",
+                    email="shared.employee@example.com",
+                    employee_code="SHARED-2",
+                    portal_password_hash=shared_password,
+                    status="active",
+                ),
+            ]
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    response = client.post(
+        "/api/v1/employee-auth/login",
+        json={
+            "email": "shared.employee@example.com",
+            "password": "SharedPassword123!",
+        },
+    )
+
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "INVALID_EMPLOYEE_LOGIN"
+
+
 def test_each_allowed_password_reset_click_creates_a_new_link_and_silently_throttles_rapid_resends(
     identity_client,
     monkeypatch,
@@ -312,6 +429,42 @@ def test_unknown_password_reset_is_non_enumerating(identity_client):
         json={"email": "missing@kentconsultancy.co"},
     )
     db: Session = data["session_factory"]()
+    try:
+        assert db.scalar(select(AdminPasswordResetToken.id)) is None
+        assert db.scalar(select(EmailDelivery.id)) is None
+    finally:
+        db.close()
+    assert response.status_code == 200
+    assert "If the account exists" in response.json()["data"]["message"]
+
+
+def test_ambiguous_cross_tenant_password_reset_does_not_choose_an_account(identity_client):
+    client, data = identity_client
+    db: Session = data["session_factory"]()
+    try:
+        other_company = Company(name="Reset ambiguity tenant", status="active")
+        db.add(other_company)
+        db.flush()
+        db.add(
+            AdminUser(
+                company_id=other_company.id,
+                name="Other Reset Admin",
+                email=data["general_admin"].email,
+                password_hash=hash_password("OtherPassword123!"),
+                role="general_admin",
+                status="active",
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    response = client.post(
+        "/api/v1/auth/forgot-password",
+        json={"email": data["general_admin"].email},
+    )
+
+    db = data["session_factory"]()
     try:
         assert db.scalar(select(AdminPasswordResetToken.id)) is None
         assert db.scalar(select(EmailDelivery.id)) is None

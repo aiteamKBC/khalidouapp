@@ -77,11 +77,11 @@ import {
   updatePayrollEntry,
   type PayrollEntry,
 } from "@/api/payroll";
-import { listLeaveRequests } from "@/api/leaveRequests";
+import { listEmployeeLeaveRequests } from "@/api/leaveRequests";
 import { listTimeAdjustmentRequests } from "@/api/timeAdjustments";
 import { getWorkdayTimeline, listSessions, listActivity } from "@/api/sessions";
 import { downloadScreenshot, listScreenshotPage } from "@/api/screenshots";
-import { listTimesheets } from "@/api/timesheets";
+import { listEmployeeTimesheets } from "@/api/timesheets";
 import { listDevices } from "@/api/devices";
 import { listTeams } from "@/api/teams";
 import { listTasks } from "@/api/projects";
@@ -94,6 +94,7 @@ import {
 } from "@/lib/format";
 import { useAuth } from "@/lib/auth";
 import { permissions } from "@/lib/permissions";
+import { retryTransientRequest } from "@/api/client";
 
 export const Route = createFileRoute("/_app/employees/$employeeId")({
   component: EmployeeDetailPage,
@@ -119,120 +120,166 @@ function EmployeeDetailPage() {
   const canManageAttendance = can(permissions.timesheetsManage);
   const canViewPayroll = can(permissions.payrollView);
   const canManagePayroll = can(permissions.payrollManage);
+  const scope = scopedTeamIds();
+  const todayKey = toDateKey(new Date());
   const emp = useQuery({
-    queryKey: ["employee", employeeId],
-    queryFn: () => getEmployee(employeeId),
+    queryKey: ["employee", scope, employeeId],
+    queryFn: ({ signal }) => getEmployee(employeeId, signal),
     staleTime: 30_000,
     placeholderData: (previous) => previous,
+    retry: retryTransientRequest,
   });
   const sessions = useQuery({
-    queryKey: ["sessions", employeeId],
-    queryFn: () => listSessions(employeeId),
+    queryKey: ["sessions", scope, employeeId],
+    queryFn: ({ signal }) => listSessions(employeeId, undefined, signal),
     enabled: activeTab === "sessions",
+    retry: retryTransientRequest,
   });
   const activity = useQuery({
-    queryKey: ["activity", employeeId],
-    queryFn: () => listActivity(employeeId),
+    queryKey: ["activity", scope, employeeId],
+    queryFn: ({ signal }) => listActivity(employeeId, undefined, signal),
     enabled: activeTab === "activity",
+    retry: retryTransientRequest,
   });
   const timeline = useQuery({
-    queryKey: ["workday-timeline", employeeId, timelineDay],
-    queryFn: () => getWorkdayTimeline(employeeId, timelineDay),
+    queryKey: ["workday-timeline", scope, employeeId, timelineDay],
+    queryFn: ({ signal }) => getWorkdayTimeline(employeeId, timelineDay, signal),
     enabled: activeTab === "profile" || activeTab === "workday",
-    refetchInterval: activeTab === "profile" || activeTab === "workday" ? 60_000 : false,
+    staleTime: timelineDay === todayKey ? 30_000 : 5 * 60_000,
+    refetchInterval:
+      (activeTab === "profile" || activeTab === "workday") && timelineDay === todayKey
+        ? 60_000
+        : false,
+    refetchIntervalInBackground: false,
+    placeholderData: (previous) => previous,
+    retry: retryTransientRequest,
   });
   const shots = useQuery({
-    queryKey: ["emp-shots", employeeId, screenshotDay],
-    queryFn: () =>
+    queryKey: ["emp-shots", scope, employeeId, screenshotDay],
+    queryFn: ({ signal }) =>
       listScreenshotPage({
         page: 1,
         pageSize: 24,
         employeeId,
         day: screenshotDay ?? undefined,
-      }).then((page) => page.items),
+      }, signal).then((page) => page.items),
     enabled: activeTab === "screenshots",
-    staleTime: SCREENSHOT_REFRESH_INTERVAL_MS,
+    staleTime:
+      !screenshotDay || screenshotDay === todayKey
+        ? SCREENSHOT_REFRESH_INTERVAL_MS
+        : 5 * 60_000,
     placeholderData: (previous) => previous,
-    refetchInterval: activeTab === "screenshots" ? SCREENSHOT_REFRESH_INTERVAL_MS : false,
+    refetchInterval:
+      activeTab === "screenshots" && (!screenshotDay || screenshotDay === todayKey)
+        ? SCREENSHOT_REFRESH_INTERVAL_MS
+        : false,
+    refetchIntervalInBackground: false,
+    retry: retryTransientRequest,
   });
   const ts = useQuery({
-    queryKey: ["emp-ts", employeeId],
-    queryFn: () => listTimesheets(),
+    queryKey: ["emp-ts", scope, employeeId, todayKey],
+    queryFn: ({ signal }) =>
+      listEmployeeTimesheets(employeeId, todayKey, todayKey, signal),
     enabled: activeTab === "profile" || activeTab === "timesheets",
     staleTime: 60_000,
     placeholderData: (previous) => previous,
+    retry: retryTransientRequest,
   });
   const devs = useQuery({
-    queryKey: ["devices"],
-    queryFn: () => listDevices(),
+    queryKey: ["devices", scope],
+    queryFn: ({ signal }) => listDevices(scope, signal),
     enabled: activeTab === "devices",
     staleTime: 30_000,
     placeholderData: (previous) => previous,
+    retry: retryTransientRequest,
   });
   const teams = useQuery({
-    queryKey: ["teams"],
-    queryFn: () => listTeams(),
+    queryKey: ["teams", scope],
+    queryFn: ({ signal }) => listTeams(scope, signal),
     enabled: activeTab === "profile",
-    staleTime: 60_000,
+    staleTime: 10 * 60_000,
+    gcTime: 30 * 60_000,
     placeholderData: (previous) => previous,
+    retry: retryTransientRequest,
   });
   const tasks = useQuery({
-    queryKey: ["employee-detail-tasks", employeeId],
-    queryFn: () => listTasks(),
+    queryKey: ["employee-detail-tasks", scope, employeeId],
+    queryFn: ({ signal }) => listTasks({ scopedTeamIds: scope }, signal),
     enabled: activeTab === "profile",
-    staleTime: 30_000,
+    staleTime: 5 * 60_000,
     refetchOnWindowFocus: false,
+    retry: retryTransientRequest,
   });
   const profile = useQuery({
-    queryKey: ["employee-work-profile", employeeId],
-    queryFn: () => getWorkProfile(employeeId),
+    queryKey: ["employee-work-profile", scope, employeeId],
+    queryFn: ({ signal }) => getWorkProfile(employeeId, signal),
     enabled: activeTab === "schedule" || activeTab === "profile",
+    staleTime: 5 * 60_000,
+    retry: retryTransientRequest,
   });
   const attendanceBounds = monthBounds(attendanceMonth);
   const attendance = useQuery({
-    queryKey: ["employee-attendance-range", employeeId, attendanceMonth],
-    queryFn: () =>
-      getEmployeeAttendanceRange(employeeId, attendanceBounds.start, attendanceBounds.end),
+    queryKey: ["employee-attendance-range", scope, employeeId, attendanceMonth],
+    queryFn: ({ signal }) =>
+      getEmployeeAttendanceRange(
+        employeeId,
+        attendanceBounds.start,
+        attendanceBounds.end,
+        signal,
+      ),
     enabled: activeTab === "attendance",
     staleTime: 30_000,
     placeholderData: (previous) => previous,
     refetchOnWindowFocus: false,
-    refetchInterval: activeTab === "attendance" ? 10_000 : false,
+    retry: retryTransientRequest,
   });
   const attendanceDetail = useQuery({
-    queryKey: ["employee-attendance-day", employeeId, selectedAttendanceDay],
-    queryFn: () => getDailyAttendance(employeeId, selectedAttendanceDay!),
-    enabled: Boolean(selectedAttendanceDay),
+    queryKey: ["employee-attendance-day", scope, employeeId, selectedAttendanceDay],
+    queryFn: ({ signal }) => getDailyAttendance(employeeId, selectedAttendanceDay!, signal),
+    enabled: activeTab === "attendance" && Boolean(selectedAttendanceDay),
+    staleTime: selectedAttendanceDay === todayKey ? 30_000 : 5 * 60_000,
+    retry: retryTransientRequest,
   });
   const payroll = useQuery({
-    queryKey: ["employee-payroll-sheet", employeeId, payrollMonth],
-    queryFn: () => getPayrollSheet({ month: payrollMonth, employee_id: employeeId }),
+    queryKey: ["employee-payroll-sheet", scope, employeeId, payrollMonth],
+    queryFn: ({ signal }) =>
+      getPayrollSheet({ month: payrollMonth, employee_id: employeeId }, signal),
     enabled: activeTab === "payroll" && canViewPayroll,
+    staleTime: 5 * 60_000,
+    retry: retryTransientRequest,
   });
   const payrollEntryId = payroll.data?.entries[0]?.id;
   const payrollDetail = useQuery({
-    queryKey: ["employee-payroll-entry", payrollEntryId],
-    queryFn: () => getPayrollEntry(payrollEntryId!),
+    queryKey: ["employee-payroll-entry", scope, employeeId, payrollEntryId],
+    queryFn: ({ signal }) => getPayrollEntry(payrollEntryId!, signal),
     enabled: activeTab === "payroll" && Boolean(payrollEntryId),
+    staleTime: 5 * 60_000,
+    retry: retryTransientRequest,
   });
   const leaveRequests = useQuery({
-    queryKey: ["employee-leave-requests", employeeId],
-    queryFn: () => listLeaveRequests(),
+    queryKey: ["employee-leave-requests", scope, employeeId],
+    queryFn: ({ signal }) => listEmployeeLeaveRequests(employeeId, signal),
     enabled: activeTab === "requests",
+    staleTime: 30_000,
+    retry: retryTransientRequest,
   });
   const timeRequests = useQuery({
-    queryKey: ["employee-time-requests", employeeId],
-    queryFn: () =>
+    queryKey: ["employee-time-requests", scope, employeeId],
+    queryFn: ({ signal }) =>
       listTimeAdjustmentRequests({
-        scopedTeamIds: scopedTeamIds(),
+        scopedTeamIds: scope,
         employeeId,
-      }),
+      }, signal),
     enabled: activeTab === "requests",
+    staleTime: 30_000,
+    retry: retryTransientRequest,
   });
   const history = useQuery({
-    queryKey: ["employee-change-history", employeeId],
-    queryFn: () => getEmployeeChangeHistory(employeeId),
+    queryKey: ["employee-change-history", scope, employeeId],
+    queryFn: ({ signal }) => getEmployeeChangeHistory(employeeId, signal),
     enabled: activeTab === "history",
+    staleTime: 5 * 60_000,
+    retry: retryTransientRequest,
   });
 
   useEffect(() => {
@@ -255,7 +302,6 @@ function EmployeeDetailPage() {
   const previewScreenshot =
     empShots.find((screenshot) => screenshot.id === previewScreenshotId) ?? null;
   const empTs = (ts.data ?? []).filter((timesheet) => timesheet.employeeId === e.id);
-  const todayKey = toDateKey(new Date());
   const weekStart = startOfWeek(new Date());
   const monthKey = todayKey.slice(0, 7);
   const todayTimesheet = empTs.find((timesheet) => timesheet.date === todayKey);

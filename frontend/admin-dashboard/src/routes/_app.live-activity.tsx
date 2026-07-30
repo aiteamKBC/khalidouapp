@@ -12,7 +12,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { StatusBadge } from "@/components/ui/status-badge";
-import { listEmployees } from "@/api/employees";
+import { listMonitoringEmployees } from "@/api/employees";
 import { listTeams } from "@/api/teams";
 import { listTasks } from "@/api/projects";
 import { useAuth } from "@/lib/auth";
@@ -27,19 +27,23 @@ export function LiveActivityPage({ embedded = false }: { embedded?: boolean }) {
   const scope = scopedTeamIds();
   const emps = useQuery({
     queryKey: ["live", scope],
-    queryFn: () => listEmployees(scope),
-    refetchInterval: 15_000,
+    queryFn: ({ signal }) => listMonitoringEmployees(scope, signal),
+    staleTime: 20_000,
+    refetchInterval: 30_000,
+    refetchIntervalInBackground: false,
+    placeholderData: (previous) => previous,
   });
   const teams = useQuery({
     queryKey: ["teams", scope],
-    queryFn: () => listTeams(scope),
-    staleTime: 60_000,
+    queryFn: ({ signal }) => listTeams(scope, signal),
+    staleTime: 10 * 60_000,
+    gcTime: 30 * 60_000,
     refetchOnWindowFocus: false,
   });
   const tasks = useQuery({
     queryKey: ["tasks", scope],
-    queryFn: () => listTasks({ scopedTeamIds: scope }),
-    staleTime: 30_000,
+    queryFn: ({ signal }) => listTasks({ scopedTeamIds: scope }, signal),
+    staleTime: 5 * 60_000,
     refetchOnWindowFocus: false,
   });
 
@@ -52,7 +56,7 @@ export function LiveActivityPage({ embedded = false }: { embedded?: boolean }) {
           actions={
             <span className="inline-flex items-center gap-2 rounded-md border border-border bg-card px-3 py-1.5 text-xs text-muted-foreground">
               <RefreshCw className={`h-3 w-3 ${emps.isFetching ? "animate-spin" : ""}`} />
-              {emps.isFetching ? "Refreshing..." : "Auto-refresh 15s"}
+              {emps.isFetching ? "Refreshing..." : "Auto-refresh 30s"}
             </span>
           }
         />

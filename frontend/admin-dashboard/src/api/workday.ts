@@ -55,7 +55,7 @@ export function mapWorkdayTimeline(row: BackendWorkdayTimeline): WorkdayTimeline
       startedAt: interval.started_at,
       endedAt: interval.ended_at ?? undefined,
       durationSeconds: interval.duration_seconds,
-      sessionId: interval.session_id,
+      sessionId: interval.session_id ?? undefined,
       projectId: interval.project_id ?? undefined,
       taskId: interval.task_id ?? undefined,
       projectName: interval.project_name ?? undefined,

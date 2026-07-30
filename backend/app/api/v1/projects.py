@@ -371,21 +371,27 @@ def task_metrics(
         .join(Project, Project.id == Task.project_id)
         .where(Task.company_id == current_admin.company_id)
     )
-    employee_statement = (
-        select(WorkSession.employee_id)
+    session_statement = (
+        select(
+            WorkSession.employee_id,
+            WorkSession.task_id,
+            func.coalesce(func.sum(WorkSession.active_seconds), 0),
+            func.coalesce(func.sum(WorkSession.idle_seconds), 0),
+            func.coalesce(func.sum(WorkSession.deducted_seconds), 0),
+        )
         .join(Task, Task.id == WorkSession.task_id)
         .join(Project, Project.id == Task.project_id)
         .where(WorkSession.company_id == current_admin.company_id, WorkSession.task_id.is_not(None))
-        .distinct()
+        .group_by(WorkSession.employee_id, WorkSession.task_id)
     )
     if team_id:
         ensure_team_access(db, current_admin, team_id)
         task_statement = task_statement.where(Project.team_id == team_id)
-        employee_statement = employee_statement.where(Project.team_id == team_id)
+        session_statement = session_statement.where(Project.team_id == team_id)
     else:
         accessible_teams = accessible_team_ids_statement(current_admin)
         task_statement = task_statement.where(Project.team_id.in_(accessible_teams))
-        employee_statement = employee_statement.where(
+        session_statement = session_statement.where(
             Project.team_id.in_(accessible_team_ids_statement(current_admin))
         )
     task_ids = list(db.scalars(task_statement).all())
@@ -393,7 +399,23 @@ def task_metrics(
         task_id: {"active_seconds": 0, "idle_seconds": 0, "tracked_seconds": 0}
         for task_id in task_ids
     }
-    for employee_id in db.scalars(employee_statement).all():
+    session_rows = list(db.execute(session_statement).all())
+    employees_requiring_idle_rebuild = {
+        employee_id
+        for employee_id, _task_id, _active, idle, _deducted in session_rows
+        if int(idle or 0) > 0
+    }
+    for employee_id, task_id, raw_active, _idle, deducted in session_rows:
+        if employee_id in employees_requiring_idle_rebuild or task_id not in totals:
+            continue
+        active_seconds = max(0, int(raw_active or 0) - int(deducted or 0))
+        totals[task_id]["active_seconds"] += active_seconds
+        totals[task_id]["tracked_seconds"] += active_seconds
+
+    # Accurate idle attribution needs the schedule-scoped workday timeline.
+    # Only employees with actual idle counters take that more expensive path;
+    # active-only employees are aggregated in the bounded query above.
+    for employee_id in employees_requiring_idle_rebuild:
         employee_totals = employee_task_time_totals(
             db,
             company_id=current_admin.company_id,
@@ -857,11 +879,13 @@ def task_workspace(
         select(TaskComment)
         .where(TaskComment.task_id == task.id)
         .order_by(TaskComment.created_at.desc())
+        .limit(200)
     ).all()
     attachments = db.scalars(
         select(TaskAttachment)
         .where(TaskAttachment.task_id == task.id)
         .order_by(TaskAttachment.created_at.desc())
+        .limit(200)
     ).all()
     dependencies = db.execute(
         select(TaskDependency, Task)
@@ -873,35 +897,74 @@ def task_workspace(
         select(
             WorkSession.employee_id,
             func.coalesce(func.sum(WorkSession.active_seconds), 0),
+            func.coalesce(func.sum(WorkSession.idle_seconds), 0),
+            func.coalesce(func.sum(WorkSession.deducted_seconds), 0),
             func.min(WorkSession.started_at),
             func.max(WorkSession.ended_at),
         )
         .where(WorkSession.task_id == task.id)
         .group_by(WorkSession.employee_id)
+        .limit(200)
     ).all()
-    work_metrics = {
-        employee_id: employee_task_time_totals(
-            db,
-            company_id=current_admin.company_id,
-            employee_id=employee_id,
-            task_ids=[task.id],
-        ).get(task.id, {"active_seconds": 0, "idle_seconds": 0})
-        for employee_id, *_rest in work_rows
-    }
+    work_metrics = {}
+    for employee_id, active_seconds, idle_seconds, deducted_seconds, *_rest in work_rows:
+        if int(idle_seconds or 0) > 0:
+            work_metrics[employee_id] = employee_task_time_totals(
+                db,
+                company_id=current_admin.company_id,
+                employee_id=employee_id,
+                task_ids=[task.id],
+            ).get(task.id, {"active_seconds": 0, "idle_seconds": 0})
+            continue
+        work_metrics[employee_id] = {
+            "active_seconds": max(0, int(active_seconds or 0) - int(deducted_seconds or 0)),
+            "idle_seconds": 0,
+        }
     history = db.scalars(
         select(TaskActivity)
         .where(TaskActivity.company_id == current_admin.company_id, TaskActivity.task_id == task.id)
         .order_by(TaskActivity.created_at.desc())
         .limit(100)
     ).all()
+    employee_ids = {
+        *[comment.employee_id for comment in comments if comment.employee_id],
+        *[row.employee_id for row in history if row.employee_id],
+        *[employee_id for employee_id, *_rest in work_rows],
+    }
+    admin_ids = {
+        *[comment.admin_user_id for comment in comments if comment.admin_user_id],
+        *[row.admin_user_id for row in history if row.admin_user_id],
+    }
+    employee_names = (
+        dict(
+            db.execute(
+                select(Employee.id, Employee.name).where(
+                    Employee.company_id == current_admin.company_id,
+                    Employee.id.in_(employee_ids),
+                )
+            ).all()
+        )
+        if employee_ids
+        else {}
+    )
+    admin_names = (
+        dict(
+            db.execute(
+                select(AdminUser.id, AdminUser.name).where(
+                    AdminUser.company_id == current_admin.company_id,
+                    AdminUser.id.in_(admin_ids),
+                )
+            ).all()
+        )
+        if admin_ids
+        else {}
+    )
 
     def comment_author(comment: TaskComment) -> str:
         if comment.admin_user_id:
-            admin = db.get(AdminUser, comment.admin_user_id)
-            return admin.name if admin else "Admin"
+            return admin_names.get(comment.admin_user_id, "Admin")
         if comment.employee_id:
-            employee = db.get(Employee, comment.employee_id)
-            return employee.name if employee else "Employee"
+            return employee_names.get(comment.employee_id, "Employee")
         return "System"
 
     return success_response(
@@ -937,27 +1000,30 @@ def task_workspace(
             "work_logs": [
                 {
                     "employee_id": str(employee_id),
-                    "employee_name": (
-                        db.get(Employee, employee_id).name
-                        if db.get(Employee, employee_id)
-                        else "Employee"
-                    ),
+                    "employee_name": employee_names.get(employee_id, "Employee"),
                     "active_seconds": work_metrics[employee_id]["active_seconds"],
                     "idle_seconds": work_metrics[employee_id]["idle_seconds"],
                     "started_at": started_at.isoformat() if started_at else None,
                     "ended_at": ended_at.isoformat() if ended_at else None,
                 }
-                for employee_id, _active_seconds, started_at, ended_at in work_rows
+                for (
+                    employee_id,
+                    _active_seconds,
+                    _idle_seconds,
+                    _deducted_seconds,
+                    started_at,
+                    ended_at,
+                ) in work_rows
             ],
             "history": [
                 {
                     "id": str(row.id),
                     "action": row.action,
                     "actor_name": (
-                        db.get(AdminUser, row.admin_user_id).name
-                        if row.admin_user_id and db.get(AdminUser, row.admin_user_id)
-                        else db.get(Employee, row.employee_id).name
-                        if row.employee_id and db.get(Employee, row.employee_id)
+                        admin_names.get(row.admin_user_id, "Admin")
+                        if row.admin_user_id
+                        else employee_names.get(row.employee_id, "Employee")
+                        if row.employee_id
                         else "System"
                     ),
                     "details": row.details or {},

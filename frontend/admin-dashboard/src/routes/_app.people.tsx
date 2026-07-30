@@ -297,29 +297,31 @@ function PeopleDirectory({
   embedded?: boolean;
   archiveOnly?: boolean;
 }) {
-  const { can, user: currentUser, refreshUser } = useAuth();
+  const { can, user: currentUser, refreshUser, scopedTeamIds } = useAuth();
+  const scope = scopedTeamIds();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
 
   const users = useQuery({
-    queryKey: ["users"],
-    queryFn: listUsers,
+    queryKey: ["users", scope],
+    queryFn: ({ signal }) => listUsers(signal),
     enabled: can(permissions.accessManage),
     staleTime: 60_000,
     placeholderData: (previous) => previous,
   });
   const employees = useQuery({
-    queryKey: ["employees"],
-    queryFn: () => listEmployees(),
+    queryKey: ["employees", scope],
+    queryFn: ({ signal }) => listEmployees(scope, signal),
     staleTime: 20_000,
-    refetchInterval: 15_000,
+    refetchInterval: 30_000,
     refetchIntervalInBackground: false,
     placeholderData: (previous) => previous,
   });
   const teams = useQuery({
-    queryKey: ["teams"],
-    queryFn: () => listTeams(),
-    staleTime: 60_000,
+    queryKey: ["teams", scope],
+    queryFn: ({ signal }) => listTeams(scope, signal),
+    staleTime: 10 * 60_000,
+    gcTime: 30 * 60_000,
     placeholderData: (previous) => previous,
   });
   const [q, setQ] = useState("");
@@ -380,8 +382,8 @@ function PeopleDirectory({
     : (editPersonRow?.dashboardEmployeeId ?? editPersonRow?.employee?.id ?? null);
 
   const managedWorkProfile = useQuery({
-    queryKey: ["employee-work-profile", managedEmployeeId],
-    queryFn: () => getWorkProfile(managedEmployeeId!),
+    queryKey: ["employee-work-profile", scope, managedEmployeeId],
+    queryFn: ({ signal }) => getWorkProfile(managedEmployeeId!, signal),
     enabled: Boolean(managedEmployeeId && editPersonRow),
   });
 
@@ -403,14 +405,14 @@ function PeopleDirectory({
 
   const catalog = useQuery({
     queryKey: ["permission-catalog"],
-    queryFn: getPermissionCatalog,
+    queryFn: ({ signal }) => getPermissionCatalog(signal),
     enabled: Boolean(editUser) && canManageAccess,
     staleTime: 5 * 60_000,
   });
 
   const access = useQuery({
     queryKey: ["admin-access", editUser?.id],
-    queryFn: () => getAdminAccess(editUser!.id),
+    queryFn: ({ signal }) => getAdminAccess(editUser!.id, signal),
     enabled: Boolean(editUser) && can(permissions.accessManage),
   });
 

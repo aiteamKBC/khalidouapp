@@ -53,25 +53,25 @@ function HolidayRequestsPage() {
   const scope = scopedTeamIds();
   const queryClient = useQueryClient();
   const requests = useQuery({
-    queryKey: ["leave-requests", status],
-    queryFn: () => listLeaveRequests(status),
+    queryKey: ["leave-requests", scope, status],
+    queryFn: ({ signal }) => listLeaveRequests(status, signal),
   });
   const earlyLeaveRequests = useQuery({
     queryKey: ["early-leave-requests", scope, earlyLeaveStatus],
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       listTimeAdjustmentRequests({
         scopedTeamIds: scope,
         status: earlyLeaveStatus,
         requestGroup: "early_leave",
-      }),
+      }, signal),
   });
   const balances = useQuery({
     queryKey: ["leave-balances", scope, balanceYear],
-    queryFn: () => listLeaveBalanceOverview(balanceYear),
+    queryFn: ({ signal }) => listLeaveBalanceOverview(balanceYear, signal),
   });
   const employees = useQuery({
     queryKey: ["employees", scope],
-    queryFn: () => listEmployees(scope),
+    queryFn: ({ signal }) => listEmployees(scope, signal),
   });
   const review = useMutation({
     mutationFn: ({ id, decision }: { id: string; decision: "approved" | "rejected" }) =>

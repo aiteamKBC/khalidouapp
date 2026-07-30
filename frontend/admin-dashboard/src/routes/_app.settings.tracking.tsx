@@ -31,10 +31,15 @@ function TrackingSettingsPage() {
   const { can } = useAuth();
   const canEdit = can(permissions.settingsManage);
   const qc = useQueryClient();
-  const query = useQuery({ queryKey: ["tracking-settings"], queryFn: getTrackingSettings });
+  const query = useQuery({
+    queryKey: ["tracking-settings"],
+    queryFn: ({ signal }) => getTrackingSettings(signal),
+    staleTime: 10 * 60_000,
+    gcTime: 30 * 60_000,
+  });
   const storage = useQuery({
     queryKey: ["screenshot-storage-status"],
-    queryFn: getScreenshotStorageStatus,
+    queryFn: ({ signal }) => getScreenshotStorageStatus(signal),
     enabled: canEdit,
     refetchInterval: 60_000,
   });

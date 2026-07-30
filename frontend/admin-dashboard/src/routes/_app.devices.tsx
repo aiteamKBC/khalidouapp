@@ -46,8 +46,14 @@ function DevicesList() {
   const canManageDevices = can(permissions.devicesManage);
   const scope = scopedTeamIds();
   const queryClient = useQueryClient();
-  const devs = useQuery({ queryKey: ["devices", scope], queryFn: () => listDevices(scope) });
-  const emps = useQuery({ queryKey: ["employees", scope], queryFn: () => listEmployees(scope) });
+  const devs = useQuery({
+    queryKey: ["devices", scope],
+    queryFn: ({ signal }) => listDevices(scope, signal),
+  });
+  const emps = useQuery({
+    queryKey: ["employees", scope],
+    queryFn: ({ signal }) => listEmployees(scope, signal),
+  });
   const [revokeId, setRevokeId] = useState<string | null>(null);
   const [reactivateId, setReactivateId] = useState<string | null>(null);
   const revokeMutation = useMutation({
