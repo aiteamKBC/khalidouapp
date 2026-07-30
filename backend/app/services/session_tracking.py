@@ -545,7 +545,13 @@ def workday_state_payload(db: Session, session: WorkSession) -> dict[str, Any]:
     }
 
 
-def get_current_session(db: Session, device: Device) -> WorkSession | None:
+def get_current_session(
+    db: Session,
+    device: Device,
+    *,
+    include_offline: bool = False,
+) -> WorkSession | None:
+    statuses = UNENDED_SESSION_STATUSES if include_offline else ACTIVE_SESSION_STATUSES
     return db.scalar(
         select(WorkSession)
         .where(
@@ -553,7 +559,7 @@ def get_current_session(db: Session, device: Device) -> WorkSession | None:
             WorkSession.employee_id == device.employee_id,
             WorkSession.device_id == device.id,
             WorkSession.ended_at.is_(None),
-            WorkSession.status.in_(ACTIVE_SESSION_STATUSES),
+            WorkSession.status.in_(statuses),
         )
         .order_by(WorkSession.started_at.desc())
     )
@@ -660,7 +666,11 @@ def start_or_get_session(
             return session_response(db, recovered_session, created=False)
     device.last_seen_at = now
     zone = employee_zone(db, device)
-    current = get_current_session(db, device)
+    current = get_current_session(
+        db,
+        device,
+        include_offline=payload.offline_recovery,
+    )
     continued_session_started_at: datetime | None = None
     if current is not None:
         current_zone = session_zone(db, current)
@@ -696,14 +706,22 @@ def start_or_get_session(
             )
             current = None
         elif current.status == "offline":
-            close_open_session(
-                db,
-                device=device,
-                session=current,
-                ended_at=now,
-                reason="Previous agent run was offline",
-            )
-            current = None
+            if payload.offline_recovery:
+                # A signed-in employee may restart Khaliduo while an update or
+                # API outage has temporarily marked the still-open session
+                # offline. Recovery carries an idempotent local-session ID, so
+                # reconnect to that same server session instead of resetting
+                # the employee's current-session counter.
+                current.status = "active"
+            else:
+                close_open_session(
+                    db,
+                    device=device,
+                    session=current,
+                    ended_at=now,
+                    reason="Previous agent run was offline",
+                )
+                current = None
 
     if current is not None:
         if payload.offline_recovery:

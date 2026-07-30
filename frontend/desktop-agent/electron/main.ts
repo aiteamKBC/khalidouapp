@@ -91,6 +91,7 @@ import { createCoalescedRefresh } from "./services/coalescedRefresh.js";
 import {
   mergeRecoveredCounters,
   offsetRecoveredEventPayload,
+  restoreOpenLocalTrackingSnapshot,
 } from "./services/offlineTracking.js";
 import {
   InputIntegrityMonitor,
@@ -972,13 +973,31 @@ function beginLocalTrackingSession(startedAt = new Date()) {
 
   const staleOpen = getOpenLocalTrackingSession(runtimeStatus.deviceId);
   if (staleOpen) {
-    closeLocalTrackingSession({
-      sessionId: staleOpen.sessionId,
-      endedAt: staleOpen.lastCheckpointAt,
-      status: "app_interrupted",
-      activeSeconds: staleOpen.activeSeconds,
-      idleSeconds: staleOpen.idleSeconds,
+    const restored = restoreOpenLocalTrackingSnapshot(staleOpen, startedAt);
+    localTrackingSessionId = staleOpen.sessionId;
+    lastLocalTrackingCheckpointAt = startedAt.getTime();
+    activeCounterDate = localDateKey(new Date(restored.lastCheckpointAt));
+    runtimeStatus.sessionStartedAt = restored.startedAt;
+    runtimeStatus.activeSeconds = restored.activeSeconds;
+    runtimeStatus.idleSeconds = restored.idleSeconds;
+    runtimeStatus.eligibleIdleSeconds = restored.idleSeconds;
+    runtimeStatus.workedTodaySeconds = Math.max(
+      runtimeStatus.workedTodaySeconds,
+      workedTodayBaseSeconds + restored.activeSeconds,
+    );
+    runtimeStatus.trackingStatus = restored.status;
+    runtimeStatus.trackingPaused = false;
+    lastDurationTickAt = startedAt.getTime();
+    startTimers();
+    startScreenshotMonitoring();
+    notifyRendererStatus();
+    rebuildTrayMenu();
+    log.info("Open local tracking session resumed after app restart", {
+      localSessionId: staleOpen.sessionId,
+      startedAt: restored.startedAt,
+      lastCheckpointAt: restored.lastCheckpointAt,
     });
+    return true;
   }
 
   const preservedWorkedToday = runtimeStatus.workedTodaySeconds;

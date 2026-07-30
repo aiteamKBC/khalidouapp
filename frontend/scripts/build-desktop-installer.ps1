@@ -7,6 +7,19 @@ $tempOutput = Join-Path $env:TEMP ("khaliduo-release-" + [guid]::NewGuid().ToStr
 $internalSigningSubject = "Kent Consultancy Internal Code Signing"
 $runtimeEnvironmentFile = Join-Path $desktop "build-runtime.env"
 $inputProbeDirectory = Join-Path $desktop "native-bin"
+$packageConfiguration = Get-Content -LiteralPath (Join-Path $desktop "package.json") -Raw |
+    ConvertFrom-Json
+$nsisConfiguration = $packageConfiguration.build.nsis
+
+if ($nsisConfiguration.perMachine -ne $false) {
+    throw "Desktop releases must remain per-user so automatic updates do not require elevation."
+}
+if ($nsisConfiguration.allowElevation -ne $false) {
+    throw "Desktop releases must not request administrator elevation."
+}
+if ($nsisConfiguration.allowToChangeInstallationDirectory -ne $false) {
+    throw "The install directory must be fixed to the per-user location."
+}
 
 if (-not $env:KHALIDUO_UPDATE_URL) {
     throw "KHALIDUO_UPDATE_URL is required for an installer build."

@@ -375,6 +375,45 @@ def test_offline_session_is_not_returned_as_current(tracking_context):
     assert offline.status == "ended"
 
 
+def test_offline_recovery_resumes_same_unended_session(tracking_context):
+    db, device = tracking_context
+    started_at = datetime.now(UTC) - timedelta(minutes=20)
+    offline = WorkSession(
+        company_id=device.company_id,
+        employee_id=device.employee_id,
+        device_id=device.id,
+        started_at=started_at,
+        status="offline",
+        active_seconds=15 * 60,
+        idle_seconds=60,
+    )
+    db.add(offline)
+    db.commit()
+
+    recovered = start_or_get_session(
+        db,
+        device,
+        SessionStartRequest(
+            started_at=datetime.now(UTC) - timedelta(seconds=10),
+            offline_recovery=True,
+            offline_recovery_id=uuid4(),
+        ),
+    )
+    db.refresh(offline)
+    employee_sessions = db.scalars(
+        select(WorkSession).where(
+            WorkSession.employee_id == device.employee_id,
+        )
+    ).all()
+
+    assert recovered["created"] is False
+    assert recovered["session"]["id"] == str(offline.id)
+    assert offline.status == "active"
+    assert offline.ended_at is None
+    assert offline.active_seconds == 15 * 60
+    assert len(employee_sessions) == 1
+
+
 def test_heartbeat_after_local_day_changes_restarts_session(tracking_context):
     db, device = tracking_context
     started_at = datetime(2026, 7, 16, 9, 0, tzinfo=UTC)
