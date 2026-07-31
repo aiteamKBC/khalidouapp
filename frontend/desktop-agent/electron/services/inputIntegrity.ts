@@ -20,6 +20,9 @@ type ProbeReport = {
 
 const SENSOR_STALE_AFTER_MS = 5_000;
 const MAX_EVENT_COUNT = 1_000_000;
+export const TRUSTED_ACTIVITY_CONFIRMATION_WINDOW_MS = 8_000;
+export const TRUSTED_ACTIVITY_MIN_REPORTS = 3;
+export const TRUSTED_ACTIVITY_MIN_SPAN_MS = 1_500;
 
 function safeCount(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value)
@@ -56,6 +59,27 @@ export function effectiveTrustedIdleSeconds(options: {
   );
 }
 
+export function hasSustainedTrustedActivity(
+  reportTimes: number[],
+  now: number,
+) {
+  const recentReports = reportTimes
+    .filter(
+      (reportedAt) =>
+        Number.isFinite(reportedAt) &&
+        reportedAt <= now &&
+        now - reportedAt <= TRUSTED_ACTIVITY_CONFIRMATION_WINDOW_MS,
+    )
+    .sort((left, right) => left - right);
+  if (recentReports.length < TRUSTED_ACTIVITY_MIN_REPORTS) {
+    return false;
+  }
+  return (
+    recentReports[recentReports.length - 1] - recentReports[0] >=
+    TRUSTED_ACTIVITY_MIN_SPAN_MS
+  );
+}
+
 export class InputIntegrityMonitor {
   private child: ChildProcessByStdio<null, Readable, Readable> | null = null;
   private stdoutBuffer = "";
@@ -66,6 +90,8 @@ export class InputIntegrityMonitor {
   private realKeyboardEvents = 0;
   private injectedMouseEvents = 0;
   private injectedKeyboardEvents = 0;
+  private realInputReportTimes: number[] = [];
+  private lastRealInputAt = 0;
 
   get running() {
     return Boolean(this.child && !this.child.killed);
@@ -78,6 +104,8 @@ export class InputIntegrityMonitor {
       now - Math.max(0, Math.floor(initialSystemIdleSeconds)) * 1_000;
     this.lastReportAt = 0;
     this.stdoutBuffer = "";
+    this.realInputReportTimes = [];
+    this.lastRealInputAt = 0;
     try {
       const child = spawn(executablePath, [], {
         windowsHide: true,
@@ -103,6 +131,8 @@ export class InputIntegrityMonitor {
   stop() {
     const child = this.child;
     this.child = null;
+    this.realInputReportTimes = [];
+    this.lastRealInputAt = 0;
     if (child && !child.killed) child.kill();
   }
 
@@ -117,6 +147,24 @@ export class InputIntegrityMonitor {
       systemIdleSeconds,
       now,
     });
+  }
+
+  latestRealInputAt(now = Date.now()) {
+    return this.sensorAvailable(now) && this.lastRealInputAt > 0
+      ? this.lastRealInputAt
+      : null;
+  }
+
+  sustainedActivitySince(startedAt: number, now = Date.now()) {
+    if (!this.sensorAvailable(now)) {
+      return null;
+    }
+    return hasSustainedTrustedActivity(
+      this.realInputReportTimes.filter(
+        (reportedAt) => reportedAt >= startedAt,
+      ),
+      now,
+    );
   }
 
   takeObservation(now = Date.now()): InputIntegrityObservation {
@@ -157,7 +205,17 @@ export class InputIntegrityMonitor {
       this.injectedMouseEvents += report.injected_mouse;
       this.injectedKeyboardEvents += report.injected_keyboard;
       if (report.real_mouse + report.real_keyboard > 0) {
-        this.lastTrustedInputAt = now;
+        this.lastRealInputAt = now;
+        this.realInputReportTimes = [
+          ...this.realInputReportTimes.filter(
+            (reportedAt) =>
+              now - reportedAt <= TRUSTED_ACTIVITY_CONFIRMATION_WINDOW_MS,
+          ),
+          now,
+        ];
+        if (hasSustainedTrustedActivity(this.realInputReportTimes, now)) {
+          this.lastTrustedInputAt = now;
+        }
       }
     }
   }

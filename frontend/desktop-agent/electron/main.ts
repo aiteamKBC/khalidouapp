@@ -81,10 +81,13 @@ import {
   type LocalTrackingSession,
 } from "./services/localDb.js";
 import {
+  automaticIdleReturnAction,
   hasReachedIdleThreshold,
   IDLE_THRESHOLD_MINUTES,
   idleDurationAfterThreshold,
+  idleReturnVerificationExpired,
   inputResumedAfterIdle,
+  reclassifyVerifiedReturnCounters,
   shouldWaitForInputBeforeRestart,
 } from "./services/idlePolicy.js";
 import { createCoalescedRefresh } from "./services/coalescedRefresh.js";
@@ -224,6 +227,14 @@ type IdleLossAlert = {
   endedAt: string;
 };
 
+type IdleReturnVerification = {
+  startedAt: number;
+  eventTimestamp: string;
+  counterDate: string | null;
+  idleSecondsAtStart: number;
+  eligibleIdleSecondsAtStart: number;
+};
+
 type ForegroundActivity = {
   applicationName: string;
   processName: string;
@@ -276,6 +287,8 @@ let eligibleIdleSecondsBeforeCurrentIdle = 0;
 let idleWallClockStartedAt: number | null = null;
 let automaticIdleStartedDuringBreak = false;
 let lastObservedSystemIdleSeconds: number | null = null;
+let lastHandledIdleReturnInputAt = 0;
+let idleReturnVerification: IdleReturnVerification | null = null;
 let waitingForInputAfterIdleSessionClose = false;
 let lastDurationTickAt: number | null = null;
 let workedTodayBaseSeconds = 0;
@@ -529,6 +542,8 @@ function resetForDeviceReenrollment() {
   automaticIdleFinishPromise = null;
   isFinishingAutomaticIdle = false;
   lastObservedSystemIdleSeconds = null;
+  lastHandledIdleReturnInputAt = 0;
+  clearIdleReturnVerification();
   waitingForInputAfterIdleSessionClose = false;
   Object.assign(runtimeStatus, {
     enrolled: false,
@@ -1225,6 +1240,8 @@ function ensureCurrentCounterDate(now = new Date()) {
   runtimeStatus.todayTimeline = null;
   runtimeStatus.idleRequestPeriods = [];
   runtimeStatus.locallyEndedIdleAt = null;
+  clearIdleReturnVerification();
+  lastHandledIdleReturnInputAt = now.getTime();
   idleSecondsBeforeCurrentIdle = 0;
   eligibleIdleSecondsBeforeCurrentIdle = 0;
   lastDurationTickAt = now.getTime();
@@ -1337,6 +1354,7 @@ function timeToMinuteOfDay(value?: string | null) {
 function waitForInputAfterIdleSessionClose(
   status: "idle" | "locked" | "sleeping",
 ) {
+  clearIdleReturnVerification();
   waitingForInputAfterIdleSessionClose = true;
   runtimeStatus.trackingStatus = status;
   lastObservedSystemIdleSeconds = observedIdleSeconds();
@@ -1349,6 +1367,7 @@ function resumeAfterIdleSessionClose() {
     return false;
   }
   waitingForInputAfterIdleSessionClose = false;
+  clearIdleReturnVerification();
   lastObservedSystemIdleSeconds = null;
   runtimeStatus.trackingStatus = "starting";
   scheduleAutomaticTrackingRestart(0);
@@ -1727,6 +1746,7 @@ async function sendStateEvent(
     waitForDelivery?: Promise<boolean> | null;
   } = {},
 ) {
+  clearIdleReturnVerification();
   runtimeStatus.trackingStatus = status;
   notifyRendererStatus();
   rebuildTrayMenu();
@@ -1823,36 +1843,163 @@ async function sendStateEvent(
   }
 }
 
-function finishAutomaticIdleImmediately() {
+function automaticIdleDurationSnapshot(
+  options: {
+    endedAt?: number;
+    idleSecondsAtEnd?: number;
+    eligibleIdleSecondsAtEnd?: number;
+  } = {},
+) {
+  recalculateWorkedTime();
+  const endedAt = options.endedAt ?? Date.now();
+  const idleSecondsAtEnd =
+    options.idleSecondsAtEnd ?? runtimeStatus.idleSeconds;
+  const eligibleIdleSecondsAtEnd =
+    options.eligibleIdleSecondsAtEnd ?? runtimeStatus.eligibleIdleSeconds;
+  const lostSeconds = Math.max(
+    0,
+    idleWallClockStartedAt === null
+      ? idleSecondsAtEnd - idleSecondsBeforeCurrentIdle
+      : Math.floor((endedAt - idleWallClockStartedAt) / 1000),
+  );
+  return {
+    lostSeconds,
+    eligibleLostSeconds: Math.max(
+      0,
+      eligibleIdleSecondsAtEnd - eligibleIdleSecondsBeforeCurrentIdle,
+    ),
+    idleStartedAt: new Date(
+      idleWallClockStartedAt ?? endedAt - lostSeconds * 1000,
+    ).toISOString(),
+    idleSecondsBeforeGap: idleSecondsBeforeCurrentIdle,
+  };
+}
+
+function clearIdleReturnVerification() {
+  idleReturnVerification = null;
+}
+
+function immediateIdleReturnInputDetected(
+  idleSeconds: number,
+  previousIdleSeconds: number | null,
+) {
+  const latestRealInputAt = inputIntegrityMonitor.latestRealInputAt();
+  if (latestRealInputAt !== null) {
+    if (latestRealInputAt <= lastHandledIdleReturnInputAt) {
+      return false;
+    }
+    lastHandledIdleReturnInputAt = latestRealInputAt;
+    return true;
+  }
+  return inputResumedAfterIdle(idleSeconds, previousIdleSeconds);
+}
+
+function creditVerifiedReturnPeriod(
+  verification: IdleReturnVerification,
+  now: number,
+) {
+  if (activeCounterDate !== verification.counterDate) {
+    return;
+  }
+  const verifiedSeconds = Math.max(
+    0,
+    Math.floor((now - verification.startedAt) / 1_000),
+  );
+  if (verifiedSeconds === 0) {
+    return;
+  }
+
+  const counters = reclassifyVerifiedReturnCounters({
+    activeSeconds: runtimeStatus.activeSeconds,
+    idleSeconds: runtimeStatus.idleSeconds,
+    eligibleIdleSeconds: runtimeStatus.eligibleIdleSeconds,
+    idleSecondsAtVerificationStart: verification.idleSecondsAtStart,
+    eligibleIdleSecondsAtVerificationStart:
+      verification.eligibleIdleSecondsAtStart,
+    verifiedSeconds,
+  });
+  runtimeStatus.activeSeconds = counters.activeSeconds;
+  runtimeStatus.idleSeconds = counters.idleSeconds;
+  runtimeStatus.eligibleIdleSeconds = counters.eligibleIdleSeconds;
+
+  let extraSeconds = 0;
+  for (let offset = 1; offset <= verifiedSeconds; offset += 1) {
+    const at = new Date(verification.startedAt + offset * 1_000);
+    if (activeTimeBucket(at) === "normal") {
+      runtimeStatus.normalSeconds += 1;
+    } else {
+      runtimeStatus.extraSeconds += 1;
+      extraSeconds += 1;
+    }
+  }
+  if (extraSeconds > 0) {
+    runtimeStatus.extraTimeStatus = runtimeStatus.overtimeEnabled
+      ? "pending_overtime"
+      : "recorded_not_counted";
+  }
+  runtimeStatus.workedTodaySeconds =
+    workedTodayBaseSeconds + runtimeStatus.activeSeconds;
+  runtimeStatus.dailyTargetProgressPercent = Math.min(
+    100,
+    Math.round(
+      (runtimeStatus.normalSeconds /
+        Math.max(1, runtimeStatus.dailyTargetSeconds)) *
+        100,
+    ),
+  );
+  checkpointActiveLocalTrackingSession(true);
+}
+
+function showAutomaticIdleReturnReview() {
+  if (
+    unpaidPauseActive ||
+    runtimeStatus.trackingStatus !== "idle" ||
+    !hasTrackingSession() ||
+    runtimeStatus.lastIdleAlert
+  ) {
+    return;
+  }
+  const { lostSeconds, eligibleLostSeconds } =
+    automaticIdleDurationSnapshot();
+  showIdleLossAlert(lostSeconds, eligibleLostSeconds);
+}
+
+function finishAutomaticIdleAfterVerification(
+  verification: IdleReturnVerification,
+) {
   if (
     unpaidPauseActive ||
     isFinishingAutomaticIdle ||
     runtimeStatus.trackingStatus !== "idle" ||
     !hasTrackingSession()
   ) {
-    return;
+    return null;
   }
-  recalculateWorkedTime();
-  const lostSeconds = Math.max(
-    0,
-    idleWallClockStartedAt === null
-      ? runtimeStatus.idleSeconds - idleSecondsBeforeCurrentIdle
-      : Math.floor((Date.now() - idleWallClockStartedAt) / 1000),
-  );
-  const eligibleLostSeconds = Math.max(
-    0,
-    runtimeStatus.eligibleIdleSeconds - eligibleIdleSecondsBeforeCurrentIdle,
-  );
-  const idleStartedAt = new Date(
-    idleWallClockStartedAt ?? Date.now() - lostSeconds * 1000,
-  ).toISOString();
-  const idleSecondsBeforeGap = idleSecondsBeforeCurrentIdle;
+  const now = Date.now();
+  const canBackdateReturn = activeCounterDate === verification.counterDate;
+  const automaticIdleEndedAt = canBackdateReturn
+    ? verification.eventTimestamp
+    : new Date(now).toISOString();
+  const { lostSeconds, idleStartedAt, idleSecondsBeforeGap } =
+    automaticIdleDurationSnapshot(
+      canBackdateReturn
+        ? {
+            endedAt: verification.startedAt,
+            idleSecondsAtEnd: verification.idleSecondsAtStart,
+            eligibleIdleSecondsAtEnd:
+              verification.eligibleIdleSecondsAtStart,
+          }
+        : { endedAt: now },
+    );
+  if (canBackdateReturn) {
+    creditVerifiedReturnPeriod(verification, now);
+  }
   idleSecondsBeforeCurrentIdle = runtimeStatus.idleSeconds;
   eligibleIdleSecondsBeforeCurrentIdle = runtimeStatus.eligibleIdleSeconds;
   idleWallClockStartedAt = null;
   automaticIdleStartedDuringBreak = false;
+  clearIdleReturnVerification();
   isFinishingAutomaticIdle = true;
-  const automaticIdleEndedAt = new Date().toISOString();
   runtimeStatus.locallyEndedIdleAt = automaticIdleEndedAt;
   const finishPromise = sendStateEvent(
     "idle_ended",
@@ -1874,21 +2021,17 @@ function finishAutomaticIdleImmediately() {
     }
     isFinishingAutomaticIdle = false;
   });
+  runtimeStatus.lastIdleAlert = null;
   if (lostSeconds > LONG_IDLE_SESSION_SPLIT_SECONDS) {
-    runtimeStatus.lastIdleAlert = null;
-    setIdleAlertAttention(false);
     log.info("Started a new work session after more than four hours away");
-  } else {
-    showIdleLossAlert(lostSeconds, eligibleLostSeconds);
   }
+  return finishPromise;
 }
 
 async function resumeAutomaticIdle() {
   if (!hasTrackingSession()) {
     return { success: false, message: "The idle review is no longer active." };
   }
-  idleWallClockStartedAt = null;
-  automaticIdleStartedDuringBreak = false;
   if (automaticIdleFinishPromise) {
     await automaticIdleFinishPromise;
     return { success: true };
@@ -1899,15 +2042,51 @@ async function resumeAutomaticIdle() {
   if (runtimeStatus.trackingStatus !== "idle") {
     return { success: false, message: "The idle review is no longer active." };
   }
-  const resumedAt = new Date().toISOString();
-  runtimeStatus.locallyEndedIdleAt = resumedAt;
-  await sendStateEvent(
-    "idle_ended",
-    "active",
-    {},
-    { eventTimestamp: resumedAt, waitForDelivery: automaticIdleStartPromise },
-  );
-  return { success: true };
+  if (idleReturnVerification) {
+    return {
+      success: true,
+      message: "Checking for continued activity. Keep working to resume tracking.",
+    };
+  }
+  if (
+    automaticIdleReturnAction({
+      trackingStatus: runtimeStatus.trackingStatus,
+      immediateInputDetected: false,
+      confirmationAccepted: true,
+      sustainedInputConfirmed: false,
+    }) !== "verify"
+  ) {
+    return { success: false, message: "Return confirmation is required." };
+  }
+  recalculateWorkedTime();
+  const startedAt = Date.now();
+  const verification: IdleReturnVerification = {
+    startedAt,
+    eventTimestamp: new Date(startedAt).toISOString(),
+    counterDate: activeCounterDate,
+    idleSecondsAtStart: runtimeStatus.idleSeconds,
+    eligibleIdleSecondsAtStart: runtimeStatus.eligibleIdleSeconds,
+  };
+  idleReturnVerification = verification;
+  if (!inputIntegrityMonitor.sensorAvailable(startedAt)) {
+    log.warn(
+      "Input-integrity probe unavailable during return verification; explicit confirmation accepted",
+    );
+    const finishPromise = finishAutomaticIdleAfterVerification(verification);
+    if (!finishPromise) {
+      return {
+        success: false,
+        message: "The idle review could not be completed.",
+      };
+    }
+    await finishPromise;
+    return { success: true };
+  }
+  notifyRendererStatus();
+  return {
+    success: true,
+    message: "Checking for continued activity. Keep working to resume tracking.",
+  };
 }
 
 function showIdleStartedNotification() {
@@ -1975,6 +2154,42 @@ function startIdleMonitor() {
     const idleSeconds = observedIdleSeconds();
     const previousSystemIdleSeconds = lastObservedSystemIdleSeconds;
     lastObservedSystemIdleSeconds = idleSeconds;
+    if (
+      runtimeStatus.trackingStatus === "idle" &&
+      idleReturnVerification
+    ) {
+      const now = Date.now();
+      const sustainedInputConfirmed =
+        inputIntegrityMonitor.sustainedActivitySince(
+          idleReturnVerification.startedAt,
+          now,
+        ) === true;
+      if (
+        automaticIdleReturnAction({
+          trackingStatus: runtimeStatus.trackingStatus,
+          immediateInputDetected: false,
+          confirmationAccepted: true,
+          sustainedInputConfirmed,
+        }) === "resume"
+      ) {
+        const verification = idleReturnVerification;
+        void finishAutomaticIdleAfterVerification(verification);
+      } else if (
+        idleReturnVerificationExpired(
+          idleReturnVerification.startedAt,
+          now,
+        )
+      ) {
+        clearIdleReturnVerification();
+        lastHandledIdleReturnInputAt =
+          inputIntegrityMonitor.latestRealInputAt(now) ?? now;
+        log.info(
+          "Return verification expired without sustained activity; tracking remains idle",
+        );
+        notifyRendererStatus();
+      }
+      return;
+    }
     const insideScheduledBreak = isInsideScheduledBreak(new Date());
     if (
       hasReachedIdleThreshold(idleSeconds, insideScheduledBreak) &&
@@ -1984,6 +2199,9 @@ function startIdleMonitor() {
       idleSecondsBeforeCurrentIdle = runtimeStatus.idleSeconds;
       eligibleIdleSecondsBeforeCurrentIdle = runtimeStatus.eligibleIdleSeconds;
       idleWallClockStartedAt = Date.now();
+      clearIdleReturnVerification();
+      lastHandledIdleReturnInputAt =
+        inputIntegrityMonitor.latestRealInputAt() ?? Date.now();
       automaticIdleStartedDuringBreak = insideScheduledBreak;
       runtimeStatus.locallyEndedIdleAt = null;
       const startPromise = sendStateEvent("idle_started", "idle");
@@ -1995,10 +2213,17 @@ function startIdleMonitor() {
       });
       showIdleStartedNotification();
     } else if (
-      runtimeStatus.trackingStatus === "idle" &&
-      inputResumedAfterIdle(idleSeconds, previousSystemIdleSeconds)
+      automaticIdleReturnAction({
+        trackingStatus: runtimeStatus.trackingStatus,
+        immediateInputDetected: immediateIdleReturnInputDetected(
+          idleSeconds,
+          previousSystemIdleSeconds,
+        ),
+        confirmationAccepted: false,
+        sustainedInputConfirmed: false,
+      }) === "review"
     ) {
-      finishAutomaticIdleImmediately();
+      showAutomaticIdleReturnReview();
     }
   }, 250);
 }
@@ -3833,12 +4058,6 @@ function wireSystemEvents() {
       void sendStateEvent("screen_unlocked", "active");
     }
     log.info("Windows unlock detected");
-  });
-
-  powerMonitor.on("user-did-become-active", () => {
-    if (!resumeAfterIdleSessionClose()) {
-      finishAutomaticIdleImmediately();
-    }
   });
 
   powerMonitor.on("suspend", () => {

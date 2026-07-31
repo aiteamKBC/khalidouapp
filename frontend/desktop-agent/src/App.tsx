@@ -1245,12 +1245,10 @@ function App() {
     let result: SweetAlertResult;
     try {
       result = await Swal.fire({
-        title: canRequestManualTime
-          ? "Do you want to continue tracking?"
-          : "Extra time resumed",
+        title: "Confirm you are back",
         text: canRequestManualTime
-          ? `Mouse activity returned after ${formatDuration(alert.lostSeconds)} away. ${formatDuration(alert.eligibleLostSeconds)} was inside your paid shift and is available to explain.`
-          : `Mouse activity returned after ${formatDuration(alert.lostSeconds)} away. The extra-time timer was paused, and this period was not recorded as idle because it was outside your paid shift.`,
+          ? `Input was detected after ${formatDuration(alert.lostSeconds)} away. Tracking stays idle until you choose Continue and keep working; ${formatDuration(alert.eligibleLostSeconds)} inside your paid shift remains available to explain.`
+          : `Input was detected after ${formatDuration(alert.lostSeconds)} away. Choose Continue and keep working so Khaliduo can verify your return.`,
         icon: "warning",
         showDenyButton: true,
         showCancelButton: canRequestManualTime,

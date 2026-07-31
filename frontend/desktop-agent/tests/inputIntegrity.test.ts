@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   effectiveTrustedIdleSeconds,
+  hasSustainedTrustedActivity,
   parseProbeReport,
 } from "../electron/services/inputIntegrity.ts";
 
@@ -27,6 +28,29 @@ test("the operating-system idle clock remains the safe fallback", () => {
       now: 601_000,
     }),
     42,
+  );
+});
+
+test("one isolated real input report does not grant another idle grace period", () => {
+  assert.equal(hasSustainedTrustedActivity([600_000], 600_000), false);
+  assert.equal(
+    hasSustainedTrustedActivity([599_000, 600_000], 600_000),
+    false,
+  );
+});
+
+test("sustained real activity across probe reports confirms a return", () => {
+  assert.equal(
+    hasSustainedTrustedActivity([600_000, 600_750, 601_000], 601_000),
+    false,
+  );
+  assert.equal(
+    hasSustainedTrustedActivity([600_000, 601_000, 602_000], 602_000),
+    true,
+  );
+  assert.equal(
+    hasSustainedTrustedActivity([580_000, 581_000, 600_000], 600_000),
+    false,
   );
 });
 

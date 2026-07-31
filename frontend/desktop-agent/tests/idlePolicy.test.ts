@@ -2,13 +2,17 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  automaticIdleReturnAction,
   BREAK_IDLE_THRESHOLD_MINUTES,
   BREAK_IDLE_THRESHOLD_SECONDS,
   hasReachedIdleThreshold,
   idleDurationAfterThreshold,
+  idleReturnVerificationExpired,
+  IDLE_RETURN_VERIFICATION_SECONDS,
   IDLE_THRESHOLD_MINUTES,
   IDLE_THRESHOLD_SECONDS,
   inputResumedAfterIdle,
+  reclassifyVerifiedReturnCounters,
   shouldWaitForInputBeforeRestart,
 } from "../electron/services/idlePolicy.ts";
 
@@ -40,6 +44,105 @@ test("returning early from a break is detected from fresh input", () => {
   assert.equal(inputResumedAfterIdle(181, 180), false);
   assert.equal(inputResumedAfterIdle(0, 240), true);
   assert.equal(inputResumedAfterIdle(3, 240), true);
+});
+
+test("input opens a review and confirmed work completes return verification", () => {
+  assert.equal(
+    automaticIdleReturnAction({
+      trackingStatus: "idle",
+      immediateInputDetected: true,
+      confirmationAccepted: false,
+      sustainedInputConfirmed: false,
+    }),
+    "review",
+  );
+  assert.equal(
+    automaticIdleReturnAction({
+      trackingStatus: "idle",
+      immediateInputDetected: true,
+      confirmationAccepted: true,
+      sustainedInputConfirmed: false,
+    }),
+    "verify",
+  );
+  assert.equal(
+    automaticIdleReturnAction({
+      trackingStatus: "idle",
+      immediateInputDetected: true,
+      confirmationAccepted: true,
+      sustainedInputConfirmed: true,
+    }),
+    "resume",
+  );
+  assert.equal(
+    automaticIdleReturnAction({
+      trackingStatus: "active",
+      immediateInputDetected: true,
+      confirmationAccepted: true,
+      sustainedInputConfirmed: true,
+    }),
+    "wait",
+  );
+});
+
+test("an unconfirmed return expires after three minutes", () => {
+  assert.equal(IDLE_RETURN_VERIFICATION_SECONDS, 180);
+  assert.equal(idleReturnVerificationExpired(1_000, 180_999), false);
+  assert.equal(idleReturnVerificationExpired(1_000, 181_000), true);
+});
+
+test("verified return time moves from idle to active exactly once", () => {
+  assert.deepEqual(
+    reclassifyVerifiedReturnCounters({
+      activeSeconds: 100,
+      idleSeconds: 63,
+      eligibleIdleSeconds: 53,
+      idleSecondsAtVerificationStart: 60,
+      eligibleIdleSecondsAtVerificationStart: 50,
+      verifiedSeconds: 3,
+    }),
+    {
+      activeSeconds: 103,
+      idleSeconds: 60,
+      eligibleIdleSeconds: 50,
+    },
+  );
+});
+
+test("verified return never removes unrelated server idle counters", () => {
+  assert.deepEqual(
+    reclassifyVerifiedReturnCounters({
+      activeSeconds: 100,
+      idleSeconds: 70,
+      eligibleIdleSeconds: 65,
+      idleSecondsAtVerificationStart: 60,
+      eligibleIdleSecondsAtVerificationStart: 60,
+      verifiedSeconds: 2,
+    }),
+    {
+      activeSeconds: 102,
+      idleSeconds: 68,
+      eligibleIdleSeconds: 63,
+    },
+  );
+});
+
+test("failed return verification does not create payable time", () => {
+  assert.deepEqual(
+    reclassifyVerifiedReturnCounters({
+      activeSeconds: 100,
+      idleSeconds: 240,
+      eligibleIdleSeconds: 200,
+      idleSecondsAtVerificationStart: 60,
+      eligibleIdleSecondsAtVerificationStart: 20,
+      verifiedSeconds: 0,
+    }),
+    {
+      activeSeconds: 100,
+      idleSeconds: 240,
+      eligibleIdleSeconds: 200,
+    },
+  );
 });
 
 test("an idle server close waits for input instead of opening empty sessions", () => {
