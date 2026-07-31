@@ -173,22 +173,9 @@ export async function initializeLocalDatabase() {
     `create index if not exists ix_local_session_events_session_time
      on local_session_events(local_session_id, event_timestamp, created_at)`,
   );
-  const now = new Date().toISOString();
-  for (const screenshot of rows<{ screenshotId: string; filePath: string }>(
-    `select screenshot_id as screenshotId, file_path as filePath
-     from pending_screenshots
-     where status = 'dead'`,
-  )) {
-    if (!fs.existsSync(screenshot.filePath)) {
-      continue;
-    }
-    database.run(
-      `update pending_screenshots
-       set status = 'failed', next_attempt_at = ?, updated_at = ?
-       where screenshot_id = ?`,
-      [now, now, screenshot.screenshotId],
-    );
-  }
+  // Permanently rejected screenshots stay quarantined. Reviving them on every
+  // launch created an infinite retry loop and could make an otherwise-online
+  // device appear offline because of one historical payload.
   persist();
 }
 

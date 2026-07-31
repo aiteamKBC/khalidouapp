@@ -100,6 +100,10 @@ import {
   InputIntegrityMonitor,
   type InputIntegrityObservation,
 } from "./services/inputIntegrity.js";
+import {
+  connectionStatusAfterApiFailure,
+  isPermanentScreenshotSyncFailure,
+} from "./services/runtimePolicies.js";
 
 const { nativeImage, shell } = electronCommon;
 const {
@@ -504,6 +508,39 @@ function getUserFacingError(error: unknown, fallback: string) {
   }
 
   return error instanceof Error ? error.message : fallback;
+}
+
+type ApiErrorPayload = {
+  error?: { code?: string; message?: string };
+  detail?: string;
+};
+
+function apiResponseStatus(error: unknown) {
+  return axios.isAxiosError(error) ? error.response?.status : undefined;
+}
+
+function apiErrorCode(error: unknown) {
+  if (!axios.isAxiosError(error)) return undefined;
+  return (error.response?.data as ApiErrorPayload | undefined)?.error?.code;
+}
+
+/** Keep credentials and request headers out of persistent desktop logs. */
+function safeErrorForLog(error: unknown) {
+  if (axios.isAxiosError(error)) {
+    const payload = error.response?.data as ApiErrorPayload | undefined;
+    return {
+      name: error.name,
+      message: error.message,
+      code: error.code,
+      status: error.response?.status,
+      apiCode: payload?.error?.code,
+      apiMessage: payload?.error?.message ?? payload?.detail,
+    };
+  }
+  if (error instanceof Error) {
+    return { name: error.name, message: error.message };
+  }
+  return { message: String(error) };
 }
 
 function isDeviceIdentityMismatch(error: unknown) {
@@ -1641,7 +1678,7 @@ async function refreshWorkedTodayTotalOnce() {
       workedTodayBaseSeconds + runtimeStatus.activeSeconds,
     );
   } catch (error) {
-    log.warn("Failed to refresh today's worked time", error);
+    log.warn("Failed to refresh today's worked time", safeErrorForLog(error));
   }
 }
 
@@ -1678,7 +1715,10 @@ async function refreshTimeAdjustmentRequests() {
   try {
     runtimeStatus.timeAdjustmentRequests = await listTimeAdjustmentRequests();
   } catch (error) {
-    log.warn("Failed to refresh time adjustment requests", error);
+    log.warn(
+      "Failed to refresh time adjustment requests",
+      safeErrorForLog(error),
+    );
   } finally {
     isRefreshingTimeAdjustments = false;
   }
@@ -1696,7 +1736,7 @@ async function refreshLeaveRequests() {
   try {
     runtimeStatus.leaveRequests = await listLeaveRequests();
   } catch (error) {
-    log.warn("Failed to refresh leave requests", error);
+    log.warn("Failed to refresh leave requests", safeErrorForLog(error));
   } finally {
     isRefreshingLeaveRequests = false;
   }
@@ -1731,7 +1771,7 @@ async function refreshTasks() {
       .slice(0, 3);
     selectRuntimeTask(runtimeStatus.selectedTask?.id ?? null);
   } catch (error) {
-    log.warn("Failed to refresh tasks", error);
+    log.warn("Failed to refresh tasks", safeErrorForLog(error));
   } finally {
     isRefreshingTasks = false;
   }
@@ -1823,7 +1863,9 @@ async function sendStateEvent(
     runtimeStatus.lastSuccessfulSyncAt = new Date().toISOString();
     return true;
   } catch (error) {
-    runtimeStatus.connectionStatus = "offline";
+    runtimeStatus.connectionStatus = connectionStatusAfterApiFailure(
+      apiResponseStatus(error),
+    );
     enqueuePendingEvent({
       id: eventId,
       method: "POST",
@@ -1831,7 +1873,7 @@ async function sendStateEvent(
       payload,
       idempotencyKey: eventId,
     });
-    log.warn(`Failed to send ${eventType}`, error);
+    log.warn(`Failed to send ${eventType}`, safeErrorForLog(error));
     return false;
   } finally {
     if (!isQuitting) {
@@ -2379,7 +2421,10 @@ async function uploadForegroundActivitySegment(
       },
       idempotencyKey: eventId,
     });
-    log.warn("Foreground application segment was queued for sync", error);
+    log.warn(
+      "Foreground application segment was queued for sync",
+      safeErrorForLog(error),
+    );
   }
 }
 
@@ -2549,10 +2594,15 @@ async function heartbeatTick(options: { refreshMetadata?: boolean } = {}) {
       }
     }
   } catch (error) {
-    runtimeStatus.connectionStatus = "offline";
+    runtimeStatus.connectionStatus = connectionStatusAfterApiFailure(
+      apiResponseStatus(error),
+    );
     if (isDeviceIdentityMismatch(error)) {
       resetForDeviceReenrollment();
-      log.warn("Device identity mismatch; local enrollment was cleared", error);
+      log.warn(
+        "Device identity mismatch; local enrollment was cleared",
+        safeErrorForLog(error),
+      );
       return;
     }
     const sessionNotFound =
@@ -2575,7 +2625,7 @@ async function heartbeatTick(options: { refreshMetadata?: boolean } = {}) {
         idempotencyKey: eventId,
       });
     }
-    log.warn("Heartbeat failed", error);
+    log.warn("Heartbeat failed", safeErrorForLog(error));
   } finally {
     if (
       options.refreshMetadata !== false &&
@@ -2768,7 +2818,7 @@ async function refreshTrackingConfig() {
       rebuildTrayMenu();
     }
   } catch (error) {
-    log.warn("Failed to refresh tracking config", error);
+    log.warn("Failed to refresh tracking config", safeErrorForLog(error));
   } finally {
     isRefreshingTrackingConfig = false;
   }
@@ -2789,7 +2839,10 @@ async function captureAndUploadScreenshot() {
           trackingStatus: runtimeStatus.trackingStatus,
         });
       } catch (error) {
-        log.warn("Failed to report screenshot skip reason", error);
+        log.warn(
+          "Failed to report screenshot skip reason",
+          safeErrorForLog(error),
+        );
       }
     }
     return;
@@ -2852,15 +2905,26 @@ async function captureAndUploadScreenshot() {
       });
       uploaded += 1;
     } catch (error) {
+      const responseStatus = apiResponseStatus(error);
       const pendingDirectory = getPendingScreenshotDirectory();
       fs.mkdirSync(pendingDirectory, { recursive: true });
       const filePath = path.join(pendingDirectory, `${screenshotId}.jpg`);
       fs.writeFileSync(filePath, jpeg);
       enqueuePendingScreenshot({ screenshotId, metadata, filePath });
+      if (
+        isPermanentScreenshotSyncFailure({
+          responseStatus,
+          apiErrorCode: apiErrorCode(error),
+        })
+      ) {
+        markPendingScreenshotFailed(screenshotId, 0, true);
+      }
       queued += 1;
+      runtimeStatus.connectionStatus =
+        connectionStatusAfterApiFailure(responseStatus);
       log.warn("Screen capture queued for retry", {
         displayId: metadata.displayId,
-        error,
+        error: safeErrorForLog(error),
       });
     }
   }
@@ -2870,7 +2934,11 @@ async function captureAndUploadScreenshot() {
     runtimeStatus.lastSuccessfulSyncAt = new Date().toISOString();
   if (uploaded > 0) {
     runtimeStatus.connectionStatus = "online";
-  } else if (queued > 0 && runtimeStatus.lastSuccessfulSyncAt === null) {
+  } else if (
+    queued > 0 &&
+    runtimeStatus.lastSuccessfulSyncAt === null &&
+    runtimeStatus.connectionStatus !== "online"
+  ) {
     runtimeStatus.connectionStatus = "offline";
   }
   rebuildTrayMenu();
@@ -2927,12 +2995,13 @@ async function syncPendingQueues(forcePendingQueues = false) {
       runtimeStatus.connectionStatus = "online";
       runtimeStatus.lastSuccessfulSyncAt = new Date().toISOString();
     } catch (error) {
-      const responseStatus = axios.isAxiosError(error) ? error.response?.status : undefined;
+      const responseStatus = apiResponseStatus(error);
       markPendingEventFailed(event.id, event.attempts);
       // Any HTTP response proves that the API is reachable. Keep the agent
       // online while the rejected item remains pending for a later decision.
-      runtimeStatus.connectionStatus = responseStatus === undefined ? "offline" : "online";
-      log.warn("Pending event sync failed", error);
+      runtimeStatus.connectionStatus =
+        connectionStatusAfterApiFailure(responseStatus);
+      log.warn("Pending event sync failed", safeErrorForLog(error));
       continue;
     }
   }
@@ -2961,19 +3030,19 @@ async function syncPendingQueues(forcePendingQueues = false) {
       runtimeStatus.connectionStatus = "online";
       runtimeStatus.lastSuccessfulSyncAt = new Date().toISOString();
     } catch (error) {
-      const responseStatus = axios.isAxiosError(error)
-        ? error.response?.status
-        : undefined;
-      const permanentlyRejected =
-        responseStatus !== undefined &&
-        [400, 403, 404, 413, 422].includes(responseStatus);
+      const responseStatus = apiResponseStatus(error);
+      const permanentlyRejected = isPermanentScreenshotSyncFailure({
+        responseStatus,
+        apiErrorCode: apiErrorCode(error),
+      });
       markPendingScreenshotFailed(
         screenshot.screenshotId,
         screenshot.attempts,
         permanentlyRejected,
       );
-      runtimeStatus.connectionStatus = "offline";
-      log.warn("Pending screenshot sync failed", error);
+      runtimeStatus.connectionStatus =
+        connectionStatusAfterApiFailure(responseStatus);
+      log.warn("Pending screenshot sync failed", safeErrorForLog(error));
       continue;
     }
   }
@@ -3034,8 +3103,7 @@ function scheduleNextScreenshot() {
     screenshotTimer = null;
     captureAndUploadScreenshot()
       .catch((error) => {
-        runtimeStatus.connectionStatus = "offline";
-        log.warn("Screenshot capture/upload failed", error);
+        log.warn("Screenshot capture/upload failed", safeErrorForLog(error));
       })
       .finally(() => scheduleNextScreenshot());
   }, delayMs);
@@ -3123,14 +3191,16 @@ async function startTrackingAutomatically() {
     void refreshTimeAdjustmentRequests();
     void refreshLeaveRequests();
   } catch (error) {
-    runtimeStatus.connectionStatus = "offline";
+    runtimeStatus.connectionStatus = connectionStatusAfterApiFailure(
+      apiResponseStatus(error),
+    );
     if (!localTrackingSessionId) {
       beginLocalTrackingSession();
     }
     if (!hasTrackingSession()) {
       runtimeStatus.trackingStatus = "offline";
     }
-    log.error("Automatic tracking start failed", error);
+    log.error("Automatic tracking start failed", safeErrorForLog(error));
     if (isDeviceIdentityMismatch(error)) {
       resetForDeviceReenrollment();
       return;
@@ -3241,10 +3311,12 @@ async function stopTrackingSession(reason = "Stopped by employee") {
     if (!syncTimer) {
       syncTimer = setInterval(() => void syncPendingQueues(), 30_000);
     }
-    runtimeStatus.connectionStatus = "offline";
+    runtimeStatus.connectionStatus = connectionStatusAfterApiFailure(
+      apiResponseStatus(error),
+    );
     log.warn(
       "Tracking paused locally, but session end could not be synced",
-      error,
+      safeErrorForLog(error),
     );
     return {
       success: true,
@@ -3357,7 +3429,7 @@ async function logoutDevice() {
     try {
       await syncPendingQueues(true);
     } catch (error) {
-      log.warn("Final sync before sign-out failed", error);
+      log.warn("Final sync before sign-out failed", safeErrorForLog(error));
     }
     await stopTrackingSession("Employee signed out from this device");
   }
@@ -3781,7 +3853,7 @@ async function checkForUpdates(
   } catch (error) {
     setUpdateStatus("error", { percent: null });
     scheduleUpdateRetry("the update check failed");
-    log.error("Khaliduo update check failed", error);
+    log.error("Khaliduo update check failed", safeErrorForLog(error));
     const message = getUserFacingError(
       error,
       "Khaliduo could not check for updates. Check the internet connection and try again.",
@@ -3810,7 +3882,7 @@ async function preserveTrackingBeforeUpdate() {
   } catch (error) {
     log.warn(
       "Could not persist foreground activity before installing the update",
-      error,
+      safeErrorForLog(error),
     );
   }
   if (hasTrackingSession() && runtimeStatus.enrolled) {
@@ -3822,7 +3894,7 @@ async function preserveTrackingBeforeUpdate() {
     } catch (error) {
       log.warn(
         "Could not persist the active session before installing the update",
-        error,
+        safeErrorForLog(error),
       );
     }
   }
@@ -3907,7 +3979,10 @@ async function installDownloadedUpdate(): Promise<UpdateActionResult> {
     recoverFromFailedUpdateInstall(
       "the downloaded update could not be installed",
     );
-    log.error("Could not launch the downloaded update installer", error);
+    log.error(
+      "Could not launch the downloaded update installer",
+      safeErrorForLog(error),
+    );
     return {
       success: false,
       message: getUserFacingError(error, "Could not install the update."),
@@ -3998,7 +4073,7 @@ function configureAutoUpdater() {
       scheduleUpdateRetry("the updater reported an error");
     }
     manualUpdateCheckRequested = false;
-    log.error("Khaliduo automatic update error", error);
+    log.error("Khaliduo automatic update error", safeErrorForLog(error));
   });
 
   initialUpdateCheckTimer = setTimeout(runScheduledUpdatePass, 1_000);
@@ -4142,7 +4217,10 @@ app.on("before-quit", (event) => {
           idempotencyKey: eventId,
         });
       }
-      log.warn("Failed to close the work session before quitting", error);
+      log.warn(
+        "Failed to close the work session before quitting",
+        safeErrorForLog(error),
+      );
     })
     .finally(() => {
       app.quit();
@@ -4213,7 +4291,7 @@ ipcMain.handle("agent:check-for-updates", async () => {
   try {
     return await checkForUpdates(true, false);
   } catch (error) {
-    log.error("Manual update check failed", error);
+    log.error("Manual update check failed", safeErrorForLog(error));
     return {
       success: false,
       message: getUserFacingError(error, "Could not check for updates."),
@@ -4225,7 +4303,7 @@ ipcMain.handle("agent:install-update", async () => {
   try {
     return await installDownloadedUpdate();
   } catch (error) {
-    log.error("Update installation failed", error);
+    log.error("Update installation failed", safeErrorForLog(error));
     setUpdateAttention(true);
     return {
       success: false,
@@ -4320,7 +4398,7 @@ ipcMain.handle("agent:open-employee-dashboard", async (_, section?: string) => {
     await shell.openExternal(portalUrl.toString());
     return { success: true };
   } catch (error) {
-    log.error("Employee dashboard handoff failed", error);
+    log.error("Employee dashboard handoff failed", safeErrorForLog(error));
     return {
       success: false,
       message: getUserFacingError(
@@ -4346,7 +4424,10 @@ ipcMain.handle("agent:get-recent-screenshots", async () => {
     }
     return { success: true, screenshots: data };
   } catch (error) {
-    log.error("Recent screenshots could not be loaded", error);
+    log.error(
+      "Recent screenshots could not be loaded",
+      safeErrorForLog(error),
+    );
     return {
       success: false,
       message: getUserFacingError(
@@ -4374,9 +4455,11 @@ ipcMain.handle("agent:set-current-task", async (_, taskId: string | null) => {
     rebuildTrayMenu();
     return { success: true, status: runtimeStatusPayload() };
   } catch (error) {
-    runtimeStatus.connectionStatus = "offline";
+    runtimeStatus.connectionStatus = connectionStatusAfterApiFailure(
+      apiResponseStatus(error),
+    );
     rebuildTrayMenu();
-    log.error("Task selection failed", error);
+    log.error("Task selection failed", safeErrorForLog(error));
     return {
       success: false,
       message: getUserFacingError(error, "Task selection failed."),
@@ -4412,7 +4495,7 @@ ipcMain.handle(
         status: runtimeStatusPayload(),
       };
     } catch (error) {
-      log.error("Task creation failed", error);
+      log.error("Task creation failed", safeErrorForLog(error));
       return {
         success: false,
         message: getUserFacingError(error, "Task creation failed."),
@@ -4437,7 +4520,7 @@ ipcMain.handle(
       rebuildTrayMenu();
       return { success: true, status: runtimeStatusPayload() };
     } catch (error) {
-      log.error("Task stage update failed", error);
+      log.error("Task stage update failed", safeErrorForLog(error));
       return {
         success: false,
         message: getUserFacingError(error, "Task stage update failed."),
@@ -4461,7 +4544,7 @@ ipcMain.handle(
       await refreshTasks();
       return { success: true, status: runtimeStatusPayload() };
     } catch (error) {
-      log.error("Task checklist creation failed", error);
+      log.error("Task checklist creation failed", safeErrorForLog(error));
       return {
         success: false,
         message: getUserFacingError(error, "Checklist update failed."),
@@ -4485,7 +4568,7 @@ ipcMain.handle(
       await refreshTasks();
       return { success: true, status: runtimeStatusPayload() };
     } catch (error) {
-      log.error("Task checklist update failed", error);
+      log.error("Task checklist update failed", safeErrorForLog(error));
       return {
         success: false,
         message: getUserFacingError(error, "Checklist update failed."),
@@ -4520,7 +4603,7 @@ ipcMain.handle(
       await refreshTasks();
       return { success: true, status: runtimeStatusPayload() };
     } catch (error) {
-      log.error("Task checklist deletion failed", error);
+      log.error("Task checklist deletion failed", safeErrorForLog(error));
       return {
         success: false,
         message: getUserFacingError(error, "Checklist deletion failed."),
@@ -4589,9 +4672,11 @@ ipcMain.handle(
       });
       return { success: true, request, status };
     } catch (error) {
-      runtimeStatus.connectionStatus = "offline";
+      runtimeStatus.connectionStatus = connectionStatusAfterApiFailure(
+        apiResponseStatus(error),
+      );
       rebuildTrayMenu();
-      log.error("Time adjustment request failed", error);
+      log.error("Time adjustment request failed", safeErrorForLog(error));
       return {
         success: false,
         message: getUserFacingError(error, "Time adjustment request failed."),
@@ -4624,9 +4709,11 @@ ipcMain.handle(
       rebuildTrayMenu();
       return { success: true, request, status: runtimeStatusPayload() };
     } catch (error) {
-      runtimeStatus.connectionStatus = "offline";
+      runtimeStatus.connectionStatus = connectionStatusAfterApiFailure(
+        apiResponseStatus(error),
+      );
       rebuildTrayMenu();
-      log.error("Holiday request failed", error);
+      log.error("Holiday request failed", safeErrorForLog(error));
       return {
         success: false,
         message: getUserFacingError(error, "Holiday request failed."),

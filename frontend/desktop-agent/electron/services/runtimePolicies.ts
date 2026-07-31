@@ -14,6 +14,37 @@ export type RuntimeTrackingStatus =
   | "offline"
   | "error";
 
+export type RuntimeConnectionStatus = "online" | "offline";
+
+/**
+ * An HTTP response proves that the API is reachable, even when that response
+ * rejects an individual queued item. Only failures without a response are
+ * network/offline failures.
+ */
+export function connectionStatusAfterApiFailure(
+  responseStatus?: number,
+): RuntimeConnectionStatus {
+  return responseStatus === undefined ? "offline" : "online";
+}
+
+/**
+ * These screenshot requests cannot become valid by retrying the same payload.
+ * Authentication and server failures remain retryable so a repaired identity
+ * or recovered service can still upload the locally preserved image.
+ */
+export function isPermanentScreenshotSyncFailure(options: {
+  responseStatus?: number;
+  apiErrorCode?: string;
+}): boolean {
+  if (options.apiErrorCode === "SCREENSHOT_AC_POWER_REQUIRED") {
+    return true;
+  }
+  return (
+    options.responseStatus !== undefined &&
+    [400, 403, 404, 413, 422].includes(options.responseStatus)
+  );
+}
+
 export function screenshotCaptureBlockReasonForState(options: {
   enrolled: boolean;
   screenshotsEnabled: boolean;
