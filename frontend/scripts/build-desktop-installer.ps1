@@ -11,6 +11,9 @@ $packageConfiguration = Get-Content -LiteralPath (Join-Path $desktop "package.js
     ConvertFrom-Json
 $nsisConfiguration = $packageConfiguration.build.nsis
 
+if ($nsisConfiguration.oneClick -ne $true) {
+    throw "Desktop releases must use one-click installation to force per-user scope without an install-mode prompt."
+}
 if ($nsisConfiguration.perMachine -ne $false) {
     throw "Desktop releases must remain per-user so automatic updates do not require elevation."
 }

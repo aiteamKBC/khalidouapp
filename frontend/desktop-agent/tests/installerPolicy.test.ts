@@ -7,6 +7,7 @@ const packageConfiguration = JSON.parse(
 ) as {
   build: {
     nsis: {
+      oneClick: boolean;
       perMachine: boolean;
       allowElevation: boolean;
       allowToChangeInstallationDirectory: boolean;
@@ -15,6 +16,7 @@ const packageConfiguration = JSON.parse(
 };
 
 test("Windows installation remains fixed to the non-elevated per-user scope", () => {
+  assert.equal(packageConfiguration.build.nsis.oneClick, true);
   assert.equal(packageConfiguration.build.nsis.perMachine, false);
   assert.equal(packageConfiguration.build.nsis.allowElevation, false);
   assert.equal(
