@@ -149,7 +149,7 @@ function periodTotals(byDate: Map<string, DayAgg>, dates: string[]) {
 }
 
 function DashboardPage() {
-  const [activityFilter, setActivityFilter] = useState<"all" | Employee["status"]>("all");
+  const [activityFilter, setActivityFilter] = useState<"all" | Employee["status"]>("active");
   const [attentionOpen, setAttentionOpen] = useState(false);
   const activitySectionRef = useRef<HTMLDivElement>(null);
   const [loadMedia, setLoadMedia] = useState(false);

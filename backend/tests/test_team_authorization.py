@@ -1,5 +1,6 @@
 from datetime import UTC, datetime, time, timedelta
 from io import BytesIO
+from time import perf_counter
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
@@ -694,6 +695,96 @@ def test_daily_attendance_empty_roster_has_bounded_query_count(team_client):
     assert response.status_code == 200
     assert len(response.json()["data"]["rows"]) == 20
     assert len(statements) <= 20
+
+
+def test_daily_attendance_source_roster_has_bounded_request_queries(team_client, monkeypatch):
+    client, data = team_client
+    now = datetime.now(UTC)
+    queued_refreshes = []
+
+    def capture_background_refresh(_tasks, function, *args, **kwargs):
+        queued_refreshes.append((function, args, kwargs))
+
+    monkeypatch.setattr(
+        attendance_api.BackgroundTasks,
+        "add_task",
+        capture_background_refresh,
+    )
+    with data["session_factory"]() as db:
+        engine = db.get_bind()
+        for index in range(12):
+            employee = Employee(
+                company_id=data["employee_a"].company_id,
+                name=f"Source Roster Perf {index:02d}",
+                email=f"source-roster-perf-{index:02d}@example.com",
+                employee_code=f"SOURCE-ROSTER-PERF-{index:02d}",
+                timezone="UTC",
+                status="active",
+            )
+            db.add(employee)
+            db.flush()
+            get_or_create_work_profile(db, employee)
+            db.add(
+                WorkSession(
+                    company_id=employee.company_id,
+                    employee_id=employee.id,
+                    device_id=data["session_a"].device_id,
+                    started_at=now - timedelta(minutes=10),
+                    status="active",
+                    active_seconds=600,
+                )
+            )
+        db.commit()
+
+    statements = []
+
+    def count_statement(*_args):
+        statements.append(1)
+
+    event.listen(engine, "before_cursor_execute", count_statement)
+    started_at = perf_counter()
+    try:
+        response = client.get(
+            "/api/v1/attendance/daily",
+            params={
+                "day": local_today("UTC").isoformat(),
+                "q": "Source Roster Perf",
+            },
+            headers=data["general_headers"],
+        )
+    finally:
+        elapsed_ms = (perf_counter() - started_at) * 1000
+        event.remove(engine, "before_cursor_execute", count_statement)
+
+    assert response.status_code == 200
+    assert len(response.json()["data"]["rows"]) == 12
+    assert response.json()["meta"]["pending_refresh_count"] == 12
+    assert response.json()["meta"]["refresh_queued"] is True
+    assert len(queued_refreshes) == 1
+    assert all(row["refresh_pending"] is True for row in response.json()["data"]["rows"])
+    assert len(response.content) < 100_000, (
+        f"daily roster response was {len(response.content)} bytes"
+    )
+    assert len(statements) <= 25, (
+        f"daily roster executed {len(statements)} statements in {elapsed_ms:.1f}ms"
+    )
+
+    refresh_function, refresh_args, refresh_kwargs = queued_refreshes[0]
+    refresh_function(*refresh_args, **refresh_kwargs)
+    refreshed = client.get(
+        "/api/v1/attendance/daily",
+        params={
+            "day": local_today("UTC").isoformat(),
+            "q": "Source Roster Perf",
+        },
+        headers=data["general_headers"],
+    )
+    assert refreshed.status_code == 200
+    assert refreshed.json()["meta"]["pending_refresh_count"] == 0
+    assert all(
+        row.get("refresh_pending") is not True
+        for row in refreshed.json()["data"]["rows"]
+    )
 
 
 def test_attendance_range_stops_at_employee_today(team_client):

@@ -1,12 +1,16 @@
+import logging
 from datetime import UTC, date, datetime, time, timedelta
+from threading import Lock
 from typing import Annotated
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.engine import Engine
+from sqlalchemy.exc import IntegrityError
 
 from app.api.deps import get_current_admin
 from app.api.v1.team_auth import (
@@ -50,6 +54,9 @@ from app.services.work_profiles import get_or_create_work_profile
 
 router = APIRouter(prefix="/attendance", tags=["attendance"])
 ACTIVE_SESSION_STATUSES = {"active", "idle", "locked", "sleeping"}
+logger = logging.getLogger(__name__)
+_daily_refresh_lock = Lock()
+_daily_refreshes: set[tuple[int, UUID, date]] = set()
 
 
 class AttendanceCorrectionUpdate(BaseModel):
@@ -221,10 +228,104 @@ def _team_names(db: Session, employee_ids: list[UUID]) -> dict[UUID, list[str]]:
     return result
 
 
+def _refresh_missing_daily_attendance(
+    engine: Engine,
+    company_id: UUID,
+    employee_ids: tuple[UUID, ...],
+    work_date: date,
+    refresh_key: tuple[int, UUID, date],
+) -> None:
+    """Materialize missing roster rows after the HTTP response has been sent."""
+    calculated_at = datetime.now(UTC)
+    try:
+        with Session(engine) as db:
+            employees = db.scalars(
+                select(Employee)
+                .options(selectinload(Employee.work_profile))
+                .where(
+                    Employee.company_id == company_id,
+                    Employee.id.in_(employee_ids),
+                    Employee.status != "deleted",
+                )
+                .order_by(Employee.name)
+            ).all()
+            for employee in employees:
+                existing = db.scalar(
+                    select(DailyAttendance).where(
+                        DailyAttendance.company_id == company_id,
+                        DailyAttendance.employee_id == employee.id,
+                        DailyAttendance.work_date == work_date,
+                    )
+                )
+                if existing is not None:
+                    continue
+                try:
+                    cached_daily_attendance(
+                        db,
+                        employee=employee,
+                        work_date=work_date,
+                        now=calculated_at,
+                        max_age_seconds=45,
+                        existing_attendance=None,
+                        profile=employee.work_profile,
+                    )
+                    # Commit each employee independently so polling can reveal
+                    # completed rows progressively and one bad row cannot block
+                    # the rest of the roster.
+                    db.commit()
+                except IntegrityError:
+                    # A heartbeat or another worker won the materialization
+                    # race; the unique employee/day row is already available.
+                    db.rollback()
+                except Exception:
+                    db.rollback()
+                    logger.exception(
+                        "Unable to refresh daily attendance employee_id=%s work_date=%s",
+                        employee.id,
+                        work_date,
+                    )
+    finally:
+        with _daily_refresh_lock:
+            _daily_refreshes.discard(refresh_key)
+
+
+def _queue_missing_daily_attendance_refresh(
+    background_tasks: BackgroundTasks,
+    *,
+    db: Session,
+    company_id: UUID,
+    employee_ids: list[UUID],
+    work_date: date,
+) -> bool:
+    if not employee_ids:
+        return False
+    engine = db.get_bind()
+    refresh_key = (id(engine), company_id, work_date)
+    with _daily_refresh_lock:
+        if refresh_key in _daily_refreshes:
+            return False
+        _daily_refreshes.add(refresh_key)
+    try:
+        background_tasks.add_task(
+            _refresh_missing_daily_attendance,
+            engine,
+            company_id,
+            tuple(employee_ids),
+            work_date,
+            refresh_key,
+        )
+    except Exception:
+        with _daily_refresh_lock:
+            _daily_refreshes.discard(refresh_key)
+        raise
+    return True
+
+
 @router.get("/daily")
 def daily_attendance(
     current_admin: Annotated[AdminUser, Depends(get_current_admin)],
     db: Annotated[Session, Depends(get_db)],
+    background_tasks: BackgroundTasks,
     day: date | None = None,
     team_id: UUID | None = None,
     employee_id: UUID | None = None,
@@ -353,21 +454,26 @@ def daily_attendance(
         )
 
     rows = []
+    refresh_employee_ids: list[UUID] = []
     for employee in employees:
         attendance = attendance_by_employee.get(employee.id)
         if attendance is not None:
             data = serialize_daily_attendance(attendance)
         elif employee.id in source_employee_ids:
-            attendance, _ = cached_daily_attendance(
-                db,
+            # Rebuilding a complete timeline here caused an N+1 request
+            # waterfall (17+ queries per missing employee). Return the roster
+            # immediately and materialize these rows after the response.
+            refresh_employee_ids.append(employee.id)
+            data = _empty_attendance_item(
                 employee=employee,
                 work_date=selected_day,
-                now=calculated_at,
-                max_age_seconds=45,
-                existing_attendance=None,
-                profile=employee.work_profile,
+                schedule=schedules_by_employee[employee.id],
+                leave=leave_by_employee.get(employee.id),
+                employee_today=local_today(employee.timezone, calculated_at),
+                calculated_at=calculated_at,
             )
-            data = serialize_daily_attendance(attendance)
+            data["refresh_pending"] = True
+            data["calculation_sources"]["refresh_pending"] = True
         else:
             data = _empty_attendance_item(
                 employee=employee,
@@ -437,8 +543,21 @@ def daily_attendance(
             }
         )
         rows.append(data)
+    refresh_queued = _queue_missing_daily_attendance_refresh(
+        background_tasks,
+        db=db,
+        company_id=current_admin.company_id,
+        employee_ids=refresh_employee_ids,
+        work_date=selected_day,
+    )
     db.commit()
-    return success_response(data={"date": selected_day.isoformat(), "rows": rows})
+    return success_response(
+        data={"date": selected_day.isoformat(), "rows": rows},
+        meta={
+            "pending_refresh_count": len(refresh_employee_ids),
+            "refresh_queued": refresh_queued,
+        },
+    )
 
 
 @router.get("/employee/{employee_id}/{work_date}")

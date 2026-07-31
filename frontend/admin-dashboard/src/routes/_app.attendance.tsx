@@ -13,7 +13,7 @@ import {
   Users,
 } from "lucide-react";
 
-import { getDailyAttendance, listDailyAttendance } from "@/api/attendance";
+import { getDailyAttendance, listDailyAttendanceWithMeta } from "@/api/attendance";
 import { listTeams } from "@/api/teams";
 import { EmployeeAttendanceHistoryDialog } from "@/components/attendance/employee-attendance-history-dialog";
 import { WorkdayTimeline } from "@/components/workday-timeline";
@@ -41,6 +41,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAuth } from "@/lib/auth";
 import { formatAttendanceStart, formatClock } from "@/lib/format";
+import { attendanceRefetchInterval, attendanceTabIsActive } from "@/lib/attendance-query-policy";
 
 export const Route = createFileRoute("/_app/attendance")({ component: AttendancePage });
 
@@ -93,15 +94,23 @@ function AttendancePage() {
   const teams = useQuery({
     queryKey: ["teams", scope],
     queryFn: ({ signal }) => listTeams(scope, signal),
+    meta: { suppressGlobalLoading: true },
     staleTime: 10 * 60_000,
     gcTime: 30 * 60_000,
   });
   const attendance = useQuery({
     queryKey: ["daily-attendance", scope, day, teamId, status, issue, debouncedQuery],
     queryFn: ({ signal }) =>
-      listDailyAttendance({ day, teamId, status, issue, q: debouncedQuery }, signal),
+      listDailyAttendanceWithMeta({ day, teamId, status, issue, q: debouncedQuery }, signal),
+    meta: { suppressGlobalLoading: true },
+    enabled: attendanceTabIsActive(activeTab, "daily"),
     staleTime: isToday ? 30_000 : 5 * 60_000,
-    refetchInterval: isToday ? 60_000 : false,
+    refetchInterval: (query) =>
+      attendanceRefetchInterval({
+        active: attendanceTabIsActive(activeTab, "daily"),
+        pendingRefreshCount: query.state.data?.pendingRefreshCount ?? 0,
+        isToday,
+      }),
     refetchIntervalInBackground: false,
     refetchOnWindowFocus: false,
     placeholderData: (previous) => previous,
@@ -109,6 +118,7 @@ function AttendancePage() {
   const detail = useQuery({
     queryKey: ["daily-attendance-detail", scope, selectedEmployeeId, day],
     queryFn: ({ signal }) => getDailyAttendance(selectedEmployeeId!, day, signal),
+    meta: { suppressGlobalLoading: true },
     enabled: Boolean(selectedEmployeeId),
     staleTime: isToday ? 30_000 : 5 * 60_000,
     refetchInterval: selectedEmployeeId && isToday ? 60_000 : false,
@@ -124,23 +134,31 @@ function AttendancePage() {
       debouncedHistoryQuery,
     ],
     queryFn: ({ signal }) =>
-      listDailyAttendance({
-        day: historyEndDate,
-        teamId: historyTeamId,
-        status: "all",
-        issue: "all",
-        q: debouncedHistoryQuery,
-      }, signal),
-    enabled: activeTab === "employee-history" && Boolean(historyEndDate),
+      listDailyAttendanceWithMeta(
+        {
+          day: historyEndDate,
+          teamId: historyTeamId,
+          status: "all",
+          issue: "all",
+          q: debouncedHistoryQuery,
+        },
+        signal,
+      ),
+    meta: { suppressGlobalLoading: true },
+    enabled: attendanceTabIsActive(activeTab, "employee-history") && Boolean(historyEndDate),
     staleTime: 55_000,
-    refetchInterval:
-      activeTab === "employee-history" && historyEndDate === today() ? 60_000 : false,
+    refetchInterval: (query) =>
+      attendanceRefetchInterval({
+        active: attendanceTabIsActive(activeTab, "employee-history") && Boolean(historyEndDate),
+        pendingRefreshCount: query.state.data?.pendingRefreshCount ?? 0,
+        isToday: historyEndDate === today(),
+      }),
     refetchIntervalInBackground: false,
     refetchOnWindowFocus: false,
     placeholderData: (previous) => previous,
   });
-  const rows = attendance.data ?? [];
-  const historyRows = historyRoster.data ?? [];
+  const rows = attendance.data?.rows ?? [];
+  const historyRows = historyRoster.data?.rows ?? [];
   const historyRangeDays =
     historyStartDate && historyEndDate
       ? Math.floor(
@@ -265,6 +283,15 @@ function AttendancePage() {
             </div>
           </Card>
           <Card className="overflow-hidden [&>div]:max-h-[70vh] [&>div]:overflow-auto">
+            {(attendance.data?.pendingRefreshCount ?? 0) > 0 && (
+              <div
+                className="flex items-center gap-2 border-b bg-primary/5 px-4 py-2 text-xs font-semibold text-primary"
+                role="status"
+              >
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                Updating {attendance.data?.pendingRefreshCount} attendance rows in the background…
+              </div>
+            )}
             <Table>
               <TableHeader className="sticky top-0 z-20 bg-card shadow-sm [&_th]:bg-card">
                 <TableRow>
@@ -284,105 +311,129 @@ function AttendancePage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {attendance.isLoading
-                  ? Array.from({ length: 6 }).map((_, index) => (
-                      <TableRow key={index}>
-                        <TableCell colSpan={13}>
-                          <div className="h-10 animate-pulse rounded bg-muted" />
-                        </TableCell>
-                      </TableRow>
-                    ))
-                  : rows.map((row) => (
-                      <TableRow key={row.id}>
-                        <TableCell>
-                          <p className="font-bold">{row.employeeName}</p>
-                          <p className="text-xs text-muted-foreground">
-                            {row.teamNames.join(", ") || row.jobTitle || "No team"}
-                          </p>
-                        </TableCell>
-                        <TableCell className="text-xs">
-                          {formatClock(row.scheduledStartAt, row.timezone)} –{" "}
-                          {formatClock(row.scheduledEndAt, row.timezone)}
-                        </TableCell>
-                        <TableCell className="text-xs">
-                          {formatAttendanceStart(
-                            row.actualFirstActivityAt,
-                            row.timezone,
-                            row.continuedFromPreviousDay,
-                            row.continuedSessionStartedAt,
-                          )}{" "}
-                          – {formatClock(row.actualLastActivityAt, row.timezone)}
-                          <span
-                            className={`block text-[10px] ${
-                              row.isRunning
-                                ? "font-semibold text-emerald-700"
-                                : "text-muted-foreground"
-                            }`}
-                          >
-                            Sign-out{" "}
-                            {row.isRunning
-                              ? "Open until now"
-                              : formatClock(row.actualSignOutAt, row.timezone)}
+                {attendance.isLoading ? (
+                  Array.from({ length: 6 }).map((_, index) => (
+                    <TableRow key={index}>
+                      <TableCell colSpan={13}>
+                        <div className="h-10 animate-pulse rounded bg-muted" />
+                      </TableCell>
+                    </TableRow>
+                  ))
+                ) : attendance.isError && rows.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={13} className="py-12 text-center">
+                      <AlertTriangle className="mx-auto h-7 w-7 text-destructive" />
+                      <p className="mt-2 font-bold">Attendance couldn&apos;t be loaded</p>
+                      <Button
+                        className="mt-3"
+                        size="sm"
+                        type="button"
+                        onClick={() => attendance.refetch()}
+                      >
+                        Retry
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  rows.map((row) => (
+                    <TableRow key={row.id}>
+                      <TableCell>
+                        <p className="font-bold">{row.employeeName}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {row.teamNames.join(", ") || row.jobTitle || "No team"}
+                        </p>
+                      </TableCell>
+                      <TableCell className="text-xs">
+                        {formatClock(row.scheduledStartAt, row.timezone)} –{" "}
+                        {formatClock(row.scheduledEndAt, row.timezone)}
+                      </TableCell>
+                      <TableCell className="text-xs">
+                        {formatAttendanceStart(
+                          row.actualFirstActivityAt,
+                          row.timezone,
+                          row.continuedFromPreviousDay,
+                          row.continuedSessionStartedAt,
+                        )}{" "}
+                        – {formatClock(row.actualLastActivityAt, row.timezone)}
+                        <span
+                          className={`block text-[10px] ${
+                            row.isRunning
+                              ? "font-semibold text-emerald-700"
+                              : "text-muted-foreground"
+                          }`}
+                        >
+                          Sign-out{" "}
+                          {row.isRunning
+                            ? "Open until now"
+                            : formatClock(row.actualSignOutAt, row.timezone)}
+                        </span>
+                      </TableCell>
+                      <TableCell>{duration(row.normalWorkedSeconds)}</TableCell>
+                      <TableCell>{duration(row.paidBreakSeconds)}</TableCell>
+                      <TableCell>{duration(row.idleSeconds)}</TableCell>
+                      <TableCell>
+                        {duration(row.deductibleLateSeconds)}
+                        <span className="block text-[10px] text-muted-foreground">
+                          {duration(row.rawLateSeconds)} from shift start
+                        </span>
+                      </TableCell>
+                      <TableCell>{duration(row.earlyLeaveSeconds)}</TableCell>
+                      <TableCell>
+                        {duration(row.recordedOvertimeSeconds)}
+                        <span className="block text-[10px] text-muted-foreground">
+                          {duration(row.approvedOvertimeSeconds)} approved
+                        </span>
+                      </TableCell>
+                      <TableCell>
+                        {duration(row.approvedManualSeconds)}
+                        {row.pendingManualSeconds > 0 && (
+                          <span className="block text-[10px] text-amber-700">
+                            {duration(row.pendingManualSeconds)} pending
                           </span>
-                        </TableCell>
-                        <TableCell>{duration(row.normalWorkedSeconds)}</TableCell>
-                        <TableCell>{duration(row.paidBreakSeconds)}</TableCell>
-                        <TableCell>{duration(row.idleSeconds)}</TableCell>
-                        <TableCell>
-                          {duration(row.deductibleLateSeconds)}
-                          <span className="block text-[10px] text-muted-foreground">
-                            {duration(row.rawLateSeconds)} from shift start
+                        )}
+                      </TableCell>
+                      <TableCell className="font-bold">
+                        {duration(row.totalPayableSeconds)}
+                      </TableCell>
+                      <TableCell>
+                        {row.refreshPending ? (
+                          <span className="inline-flex items-center gap-1 text-xs font-semibold text-primary">
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            Calculating…
                           </span>
-                        </TableCell>
-                        <TableCell>{duration(row.earlyLeaveSeconds)}</TableCell>
-                        <TableCell>
-                          {duration(row.recordedOvertimeSeconds)}
-                          <span className="block text-[10px] text-muted-foreground">
-                            {duration(row.approvedOvertimeSeconds)} approved
-                          </span>
-                        </TableCell>
-                        <TableCell>
-                          {duration(row.approvedManualSeconds)}
-                          {row.pendingManualSeconds > 0 && (
-                            <span className="block text-[10px] text-amber-700">
-                              {duration(row.pendingManualSeconds)} pending
-                            </span>
-                          )}
-                        </TableCell>
-                        <TableCell className="font-bold">
-                          {duration(row.totalPayableSeconds)}
-                        </TableCell>
-                        <TableCell>
+                        ) : (
                           <StatusBadge status={row.status} />
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <div className="flex justify-end gap-2">
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="outline"
-                              onClick={() => setSelectedEmployeeId(row.employeeId)}
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex justify-end gap-2">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={() => setSelectedEmployeeId(row.employeeId)}
+                          >
+                            Details
+                          </Button>
+                          <Button type="button" size="sm" variant="outline" asChild>
+                            <Link
+                              to="/monitoring"
+                              search={{
+                                employeeId: row.employeeId,
+                                day,
+                                tab: "attendance",
+                              }}
                             >
-                              Details
-                            </Button>
-                            <Button type="button" size="sm" variant="outline" asChild>
-                              <Link
-                                to="/monitoring"
-                                search={{
-                                  employeeId: row.employeeId,
-                                  day,
-                                  tab: "attendance",
-                                }}
-                              >
-                                <MonitorCheck className="mr-1 h-4 w-4" />
-                                Monitor
-                              </Link>
-                            </Button>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                {!attendance.isLoading && rows.length === 0 && (
+                              <MonitorCheck className="mr-1 h-4 w-4" />
+                              Monitor
+                            </Link>
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))
+                )}
+                {!attendance.isLoading && !attendance.isError && rows.length === 0 && (
                   <TableRow>
                     <TableCell colSpan={13} className="py-12 text-center text-muted-foreground">
                       No attendance rows match these filters.
@@ -473,6 +524,15 @@ function AttendancePage() {
           </Card>
 
           <Card className="overflow-hidden [&>div]:max-h-[70vh] [&>div]:overflow-auto">
+            {(historyRoster.data?.pendingRefreshCount ?? 0) > 0 && (
+              <div
+                className="flex items-center gap-2 border-b bg-primary/5 px-4 py-2 text-xs font-semibold text-primary"
+                role="status"
+              >
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                Updating {historyRoster.data?.pendingRefreshCount} employee rows…
+              </div>
+            )}
             <Table>
               <TableHeader className="sticky top-0 z-20 bg-card shadow-sm [&_th]:bg-card">
                 <TableRow>

@@ -1,4 +1,4 @@
-import { apiFetch } from "@/api/client";
+import { apiFetch, apiFetchWithMeta } from "@/api/client";
 import { mapWorkdayTimeline, type BackendWorkdayTimeline } from "@/api/workday";
 import type { WorkdayTimeline } from "@/types";
 import type { AnyStatus } from "@/components/ui/status-badge";
@@ -49,6 +49,7 @@ export type DailyAttendance = {
   leaveStatus?: string | null;
   issues: Array<{ code: string; seconds?: number }>;
   screenshotCount: number;
+  refreshPending: boolean;
   timeline?: WorkdayTimeline;
 };
 
@@ -98,6 +99,7 @@ type BackendAttendance = {
   leave_status?: string | null;
   issues?: Array<{ code: string; seconds?: number }>;
   screenshot_count?: number;
+  refresh_pending?: boolean;
   timeline?: BackendWorkdayTimeline;
 };
 
@@ -150,17 +152,21 @@ function mapAttendance(row: BackendAttendance): DailyAttendance {
     leaveStatus: row.leave_status,
     issues: row.issues ?? [],
     screenshotCount: row.screenshot_count ?? 0,
+    refreshPending: row.refresh_pending ?? false,
     timeline: row.timeline ? mapWorkdayTimeline(row.timeline) : undefined,
   };
 }
 
-export async function listDailyAttendance(filters: {
-  day: string;
-  teamId?: string;
-  status?: string;
-  q?: string;
-  issue?: "late" | "missing_check_in" | "overtime" | "idle" | "leave" | "all";
-}, signal?: AbortSignal) {
+export async function listDailyAttendanceWithMeta(
+  filters: {
+    day: string;
+    teamId?: string;
+    status?: string;
+    q?: string;
+    issue?: "late" | "missing_check_in" | "overtime" | "idle" | "leave" | "all";
+  },
+  signal?: AbortSignal,
+) {
   const params = new URLSearchParams({ day: filters.day });
   if (filters.teamId && filters.teamId !== "all") params.set("team_id", filters.teamId);
   if (filters.status && filters.status !== "all") params.set("status", filters.status);
@@ -170,11 +176,22 @@ export async function listDailyAttendance(filters: {
   if (filters.issue === "overtime") params.set("overtime_only", "true");
   if (filters.issue === "idle") params.set("unexplained_idle", "true");
   if (filters.issue === "leave") params.set("leave_only", "true");
-  const result = await apiFetch<{ date: string; rows: BackendAttendance[] }>(
+  const result = await apiFetchWithMeta<{ date: string; rows: BackendAttendance[] }>(
     `/attendance/daily?${params.toString()}`,
     { signal },
   );
-  return result.rows.map(mapAttendance);
+  return {
+    rows: result.data.rows.map(mapAttendance),
+    pendingRefreshCount: Number(result.meta.pending_refresh_count ?? 0),
+  };
+}
+
+export async function listDailyAttendance(
+  filters: Parameters<typeof listDailyAttendanceWithMeta>[0],
+  signal?: AbortSignal,
+) {
+  const result = await listDailyAttendanceWithMeta(filters, signal);
+  return result.rows;
 }
 
 export async function getDailyAttendance(employeeId: string, day: string, signal?: AbortSignal) {
