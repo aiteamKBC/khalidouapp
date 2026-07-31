@@ -26,6 +26,10 @@ import {
   requestableIdleMinutes,
   totalRequestableIdleMinutes,
 } from "./idleRequests";
+import {
+  OperationTimeoutError,
+  withOperationTimeout,
+} from "./promiseTimeout";
 import "sweetalert2/dist/sweetalert2.min.css";
 import "./App.css";
 
@@ -85,6 +89,7 @@ const fallbackStatus: AgentStatus = {
 const TRACKABLE_TASK_STAGES = new Set(["backlog", "assigned", "in_progress"]);
 const THEME_STORAGE_KEY = "khaliduo-theme";
 const LIGHT_DEFAULT_RESET_KEY = "khaliduo-desktop-light-default-applied";
+const TRACKING_CONTROL_TIMEOUT_MS = 20_000;
 
 type IdleRequestOption = {
   key: string;
@@ -1136,9 +1141,13 @@ function App() {
         status.trackingStatus === "paused" ||
         status.trackingStatus === "offline" ||
         status.trackingStatus === "error";
-      const result = shouldResume
-        ? await window.khaliduo.resumeTracking()
-        : await window.khaliduo.pauseTracking();
+      const result = await withOperationTimeout(
+        shouldResume
+          ? window.khaliduo.resumeTracking()
+          : window.khaliduo.pauseTracking(),
+        TRACKING_CONTROL_TIMEOUT_MS,
+        "Tracking control did not respond within 20 seconds.",
+      );
       if (!result.success) {
         setTrackingControlMessage(
           result.message ?? "The tracking state could not be changed.",
@@ -1152,6 +1161,24 @@ function App() {
             : "Paused. Resume when you return; screenshot monitoring remains active."),
       );
       setStatus(await window.khaliduo.getAgentStatus());
+    } catch (error) {
+      try {
+        const nextStatus = await withOperationTimeout(
+          window.khaliduo.getAgentStatus(),
+          2_000,
+        );
+        setStatus(nextStatus);
+      } catch {
+        // The control must still be released if the Electron main process is
+        // temporarily unable to answer the follow-up status request.
+      }
+      setTrackingControlMessage(
+        error instanceof OperationTimeoutError
+          ? "The button was released because syncing took too long. Your locally saved time is safe; check the current status before trying again."
+          : error instanceof Error
+            ? error.message
+            : "The tracking state could not be changed.",
+      );
     } finally {
       setIsChangingTracking(false);
     }

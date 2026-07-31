@@ -278,6 +278,7 @@ let idleAlertAttentionActive = false;
 let isFinishingAutomaticIdle = false;
 let automaticIdleStartPromise: Promise<boolean> | null = null;
 let automaticIdleFinishPromise: Promise<boolean> | null = null;
+let manualPauseTransitionPromise: Promise<boolean> | null = null;
 let updateAttentionActive = false;
 let screenshotTimer: ReturnType<typeof setTimeout> | null = null;
 let screenshotQueue: number[] = [];
@@ -577,6 +578,7 @@ function resetForDeviceReenrollment() {
   automaticIdleStartedDuringBreak = false;
   automaticIdleStartPromise = null;
   automaticIdleFinishPromise = null;
+  manualPauseTransitionPromise = null;
   isFinishingAutomaticIdle = false;
   lastObservedSystemIdleSeconds = null;
   lastHandledIdleReturnInputAt = 0;
@@ -1915,6 +1917,30 @@ function automaticIdleDurationSnapshot(
     ).toISOString(),
     idleSecondsBeforeGap: idleSecondsBeforeCurrentIdle,
   };
+}
+
+function dispatchManualPauseTransition(
+  eventType: "manual_pause_started" | "manual_pause_ended",
+  status: "idle" | "active",
+) {
+  const delivery = sendStateEvent(eventType, status, {}, {
+    waitForDelivery: manualPauseTransitionPromise,
+  });
+  manualPauseTransitionPromise = delivery;
+  void delivery.then(
+    (delivered) => {
+      // A failed delivery has been persisted in the ordered local queue. Keep
+      // that result as the predecessor so a fast Pause -> Resume cannot
+      // overtake the queued pause event when connectivity is intermittent.
+      if (delivered && manualPauseTransitionPromise === delivery) {
+        manualPauseTransitionPromise = null;
+      }
+    },
+    (error: unknown) => {
+      log.error("Manual pause transition failed unexpectedly", safeErrorForLog(error));
+    },
+  );
+  return delivery;
 }
 
 function clearIdleReturnVerification() {
@@ -3348,7 +3374,9 @@ async function pauseTracking(
   eligibleIdleSecondsBeforeCurrentIdle = runtimeStatus.eligibleIdleSeconds;
   idleWallClockStartedAt = Date.now();
   saveTrackingPreferences();
-  await sendStateEvent("manual_pause_started", "idle");
+  // Pause is local-first. The employee must never wait for API latency before
+  // the timer stops; sendStateEvent persists failed delivery in the local queue.
+  void dispatchManualPauseTransition("manual_pause_started", "idle");
   rebuildTrayMenu();
   return {
     success: true,
@@ -3387,6 +3415,8 @@ async function resumeTracking() {
           "Pause could not be resumed. Check the connection and try again.",
       };
     }
+    rebuildTrayMenu();
+    return { success: true, message: "Tracking resumed." };
   }
 
   if (unpaidPauseActive && hasTrackingSession()) {
@@ -3397,7 +3427,9 @@ async function resumeTracking() {
     eligibleIdleSecondsBeforeCurrentIdle = runtimeStatus.eligibleIdleSeconds;
     idleWallClockStartedAt = null;
     saveTrackingPreferences();
-    await sendStateEvent("manual_pause_ended", "active");
+    // Resume counting locally immediately. Delivery remains ordered behind a
+    // still-in-flight/queued pause transition and syncs in the background.
+    void dispatchManualPauseTransition("manual_pause_ended", "active");
     rebuildTrayMenu();
     return {
       success: true,
@@ -3414,7 +3446,9 @@ async function resumeTracking() {
   beginLocalTrackingSession();
   runtimeStatus.trackingStatus = hasTrackingSession() ? "active" : "starting";
   saveTrackingPreferences();
-  await startTrackingAutomatically();
+  // Local tracking and five-second checkpoints are already active. API
+  // recovery (including historical queue promotion) must not hold the UI.
+  void startTrackingAutomatically();
   const success = hasTrackingSession();
   return {
     success,
@@ -3440,6 +3474,7 @@ async function logoutDevice() {
   configureAutoStart(false);
   trackingPausedByUser = false;
   unpaidPauseActive = false;
+  manualPauseTransitionPromise = null;
   saveTrackingPreferences();
   currentSessionId = null;
   waitingForInputAfterIdleSessionClose = false;
