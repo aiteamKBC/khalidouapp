@@ -26,10 +26,7 @@ import {
   requestableIdleMinutes,
   totalRequestableIdleMinutes,
 } from "./idleRequests";
-import {
-  OperationTimeoutError,
-  withOperationTimeout,
-} from "./promiseTimeout";
+import { OperationTimeoutError, withOperationTimeout } from "./promiseTimeout";
 import "sweetalert2/dist/sweetalert2.min.css";
 import "./App.css";
 
@@ -757,13 +754,13 @@ function App() {
     ? "Off shift"
     : isPaused
       ? "Paused"
-    : isTracking
-      ? isExtraTime
-        ? "Extra time"
-        : isIdleState
-          ? "Shift idle"
-          : "Paid shift"
-      : "No timer running";
+      : isTracking
+        ? isExtraTime
+          ? "Extra time"
+          : isIdleState
+            ? "Shift idle"
+            : "Paid shift"
+        : "No timer running";
   const displayedTimerSeconds =
     status.trackingStatus === "idle" && !isPaused
       ? status.currentIdleSeconds
@@ -1267,20 +1264,27 @@ function App() {
     if (shownIdleAlertId.current === alert.id) return;
     shownIdleAlertId.current = alert.id;
     window.khaliduo?.setIdleAlertAttention(true);
+    const isExtraTimeStart = alert.kind === "extra_time_start";
     const canRequestManualTime =
-      !alert.outsideScheduledShift && alert.eligibleLostSeconds > 0;
+      !isExtraTimeStart &&
+      !alert.outsideScheduledShift &&
+      alert.eligibleLostSeconds > 0;
     let result: SweetAlertResult;
     try {
       result = await Swal.fire({
-        title: "Confirm you are back",
-        text: canRequestManualTime
-          ? `Input was detected after ${formatDuration(alert.lostSeconds)} away. Tracking stays idle until you choose Continue and keep working; ${formatDuration(alert.eligibleLostSeconds)} inside your paid shift remains available to explain.`
-          : `Input was detected after ${formatDuration(alert.lostSeconds)} away. Choose Continue and keep working so Khaliduo can verify your return.`,
+        title: isExtraTimeStart ? "Start extra time?" : "Confirm you are back",
+        text: isExtraTimeStart
+          ? "You are outside your scheduled shift. Mouse or keyboard movement alone will not start time. Confirm only if you are actually working."
+          : canRequestManualTime
+            ? `Input was detected after ${formatDuration(alert.lostSeconds)} away. Tracking stays idle until you choose Continue and keep working; ${formatDuration(alert.eligibleLostSeconds)} inside your paid shift remains available to explain.`
+            : `Input was detected after ${formatDuration(alert.lostSeconds)} away. Choose Continue and keep working so Khaliduo can verify your return.`,
         icon: "warning",
         showDenyButton: true,
         showCancelButton: canRequestManualTime,
-        confirmButtonText: "Continue tracking",
-        denyButtonText: "Stop tracking",
+        confirmButtonText: isExtraTimeStart
+          ? "Start extra time"
+          : "Continue tracking",
+        denyButtonText: isExtraTimeStart ? "Not working" : "Stop tracking",
         cancelButtonText: "Request manual time",
         confirmButtonColor: "#1f7a4d",
         denyButtonColor: "#842029",
@@ -1292,13 +1296,17 @@ function App() {
     }
 
     if (result.isConfirmed) {
-      const resumeResult = await window.khaliduo?.resumeAutomaticIdle();
+      const resumeResult = isExtraTimeStart
+        ? await window.khaliduo?.confirmExtraTimeStart()
+        : await window.khaliduo?.resumeAutomaticIdle();
       if (resumeResult?.message)
         setTrackingControlMessage(resumeResult.message);
       const nextStatus = await window.khaliduo?.getAgentStatus();
       if (nextStatus) setStatus(nextStatus);
     } else if (result.isDenied) {
-      const pauseResult = await window.khaliduo?.pauseTracking();
+      const pauseResult = isExtraTimeStart
+        ? await window.khaliduo?.declineExtraTimeStart()
+        : await window.khaliduo?.pauseTracking();
       if (pauseResult?.message) setTrackingControlMessage(pauseResult.message);
       const nextStatus = await window.khaliduo?.getAgentStatus();
       if (nextStatus) setStatus(nextStatus);
@@ -1354,16 +1362,16 @@ function App() {
     status.updateStatus === "installing"
       ? "Installing update..."
       : status.updateStatus === "ready"
-      ? "Install update"
-      : status.updateStatus === "downloading"
-        ? `Updating ${Math.round(status.updatePercent ?? 0)}%`
-        : status.updateStatus === "available"
-          ? "Downloading update"
-          : status.updateStatus === "error"
-            ? "Retry update"
-            : isCheckingUpdate || status.updateStatus === "checking"
-              ? "Checking..."
-              : "Check update";
+        ? "Install update"
+        : status.updateStatus === "downloading"
+          ? `Updating ${Math.round(status.updatePercent ?? 0)}%`
+          : status.updateStatus === "available"
+            ? "Downloading update"
+            : status.updateStatus === "error"
+              ? "Retry update"
+              : isCheckingUpdate || status.updateStatus === "checking"
+                ? "Checking..."
+                : "Check update";
   const updateButtonDisabled =
     isCheckingUpdate ||
     status.updateStatus === "checking" ||
@@ -1498,10 +1506,10 @@ function App() {
             {status.updateStatus === "installing"
               ? "Installing automatically now. Khaliduo will restart when it finishes."
               : status.updateStatus === "ready"
-              ? "Downloaded and ready. Automatic installation is starting now; you can also click Install update."
-              : status.updateStatus === "downloading"
-                ? `Downloading: ${Math.round(status.updatePercent ?? 0)}%`
-                : "Preparing the required download..."}
+                ? "Downloaded and ready. Automatic installation is starting now; you can also click Install update."
+                : status.updateStatus === "downloading"
+                  ? `Downloading: ${Math.round(status.updatePercent ?? 0)}%`
+                  : "Preparing the required download..."}
           </span>
         </section>
       )}
@@ -1934,15 +1942,16 @@ function HomeView({
   const heroStatusLabel = !hasRunningSession
     ? statusLabel
     : isExtraTime &&
-        (isPaused || ["idle", "locked", "sleeping"].includes(status.trackingStatus))
+        (isPaused ||
+          ["idle", "locked", "sleeping"].includes(status.trackingStatus))
       ? "Off shift"
       : isPaused
         ? "Paused"
-      : isExtraTime
-        ? "Extra time active"
-        : ["idle", "locked", "sleeping"].includes(status.trackingStatus)
-          ? "Paid shift idle"
-          : "Paid shift active";
+        : isExtraTime
+          ? "Extra time active"
+          : ["idle", "locked", "sleeping"].includes(status.trackingStatus)
+            ? "Paid shift idle"
+            : "Paid shift active";
   const arcDegrees = Math.round((targetProgress / 100) * 300);
   return (
     <section className="k-home">
@@ -2011,8 +2020,8 @@ function HomeView({
               isAutomaticIdle
                 ? `Idle for ${formatDuration(displayedTimerSeconds)} after the ten-minute grace period`
                 : isExtraTime
-                ? `Recorded overtime ${formatDuration(displayedTimerSeconds)}`
-                : `Worked ${formatDuration(countedTodaySeconds)} of ${formatDuration(status.dailyTargetSeconds)}`
+                  ? `Recorded overtime ${formatDuration(displayedTimerSeconds)}`
+                  : `Worked ${formatDuration(countedTodaySeconds)} of ${formatDuration(status.dailyTargetSeconds)}`
             }
           >
             <span className="k-gauge-mark mark-0">0h</span>
@@ -2026,8 +2035,8 @@ function HomeView({
                 {isAutomaticIdle
                   ? "Idle time after 10-minute grace"
                   : isExtraTime
-                  ? "Overtime recorded today"
-                  : `${targetProgress}% of ${formatDuration(status.dailyTargetSeconds)}`}
+                    ? "Overtime recorded today"
+                    : `${targetProgress}% of ${formatDuration(status.dailyTargetSeconds)}`}
               </small>
             </div>
           </div>

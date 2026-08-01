@@ -228,6 +228,7 @@ export type LeaveRequestsPayload = {
 
 export type IdleAlert = {
   id: string;
+  kind: "idle_return" | "extra_time_start";
   lostSeconds: number;
   eligibleLostSeconds: number;
   outsideScheduledShift: boolean;
@@ -257,6 +258,14 @@ declare global {
       }) => Promise<{ success: boolean; message?: string }>;
       resumeTracking: () => Promise<{ success: boolean; message?: string }>;
       resumeAutomaticIdle: () => Promise<{
+        success: boolean;
+        message?: string;
+      }>;
+      confirmExtraTimeStart: () => Promise<{
+        success: boolean;
+        message?: string;
+      }>;
+      declineExtraTimeStart: () => Promise<{
         success: boolean;
         message?: string;
       }>;
