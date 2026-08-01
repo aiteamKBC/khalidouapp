@@ -250,6 +250,8 @@ export interface Timesheet {
   date: string;
   startTime?: string;
   endTime?: string;
+  lastSignalAt?: string;
+  sessionCount: number;
   totalMinutes: number;
   activeMinutes: number;
   idleMinutes: number;

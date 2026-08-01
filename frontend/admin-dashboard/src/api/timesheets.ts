@@ -8,6 +8,8 @@ type BackendTimesheet = {
   date: string;
   start_time?: string | null;
   end_time?: string | null;
+  last_signal_at?: string | null;
+  session_count?: number;
   total_tracked_seconds: number;
   active_seconds: number;
   idle_seconds: number;
@@ -26,6 +28,8 @@ function mapTimesheet(row: BackendTimesheet, teamId: string): Timesheet {
     date: row.date,
     startTime: row.start_time ?? undefined,
     endTime: row.end_time ?? undefined,
+    lastSignalAt: row.last_signal_at ?? undefined,
+    sessionCount: row.session_count ?? 0,
     totalMinutes: toMinutes(row.total_tracked_seconds),
     activeMinutes: toMinutes(row.active_seconds),
     idleMinutes: toMinutes(row.idle_seconds),

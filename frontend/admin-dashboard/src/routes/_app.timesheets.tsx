@@ -19,7 +19,7 @@ import { listTimesheetEmployeeOptions, listTimesheets } from "@/api/timesheets";
 import { listTeams } from "@/api/teams";
 import { retryTransientRequest } from "@/api/client";
 import { useAuth } from "@/lib/auth";
-import { downloadCSV, formatClock, formatMinutes } from "@/lib/format";
+import { downloadCSV, formatClock, formatMinutes, formatRelative } from "@/lib/format";
 import { paginateRows } from "@/lib/timesheet-pagination";
 import type { LucideIcon } from "lucide-react";
 
@@ -234,7 +234,7 @@ function TimesheetsPage() {
       </Card>
 
       <div className="mb-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <TimesheetMetric icon={Clock3} label="Total time" value={formatMinutes(totals.total)} />
+        <TimesheetMetric icon={Clock3} label="Tracked time" value={formatMinutes(totals.total)} />
         <TimesheetMetric
           icon={Activity}
           label="Active"
@@ -311,17 +311,26 @@ function TimesheetsPage() {
                       {teamName(t.teamId)} · {t.date}
                     </p>
                     <p className="mt-1 text-xs text-muted-foreground">
-                      {t.status === "missing"
-                        ? "No time recorded"
-                        : `${formatClock(t.startTime)} → ${
-                            t.endTime ? formatClock(t.endTime) : "Open until now"
-                          }`}
+                      {t.status === "missing" ? (
+                        "No time recorded"
+                      ) : (
+                        <>
+                          First start {formatClock(t.startTime)} ·{" "}
+                          {t.endTime ? `Last end ${formatClock(t.endTime)}` : "Open session"}
+                          {t.sessionCount > 1 ? ` · ${t.sessionCount} separate sessions` : ""}
+                        </>
+                      )}
                     </p>
+                    {t.status === "in_progress" && t.lastSignalAt && (
+                      <p className="mt-1 text-[11px] font-semibold text-muted-foreground">
+                        Last device sync {formatRelative(t.lastSignalAt)}
+                      </p>
+                    )}
                   </div>
 
                   <div>
                     <div className="mb-2 flex items-center justify-between text-xs">
-                      <span className="font-bold text-muted-foreground">Work mix</span>
+                      <span className="font-bold text-muted-foreground">Tracked time mix</span>
                       <span className="font-mono-numeric font-extrabold">
                         {formatMinutes(t.totalMinutes)}
                       </span>

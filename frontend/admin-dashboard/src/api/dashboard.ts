@@ -70,6 +70,7 @@ export async function listDashboardWorkTrend(
     employeeId: row.employee_id,
     teamId: row.team_id ?? teamId ?? "",
     date: row.date,
+    sessionCount: 0,
     totalMinutes: toMinutes(row.total_tracked_seconds),
     activeMinutes: toMinutes(row.active_seconds),
     idleMinutes: toMinutes(row.idle_seconds),

@@ -563,6 +563,11 @@ def test_daily_timesheet_includes_scoped_empty_employees_in_bounded_queries(
     assert rows_by_employee[shared_employee_id]["total_tracked_seconds"] == 0
     assert rows_by_employee[shared_employee_id]["active_seconds"] == 0
     assert rows_by_employee[shared_employee_id]["idle_seconds"] == 0
+    assert rows_by_employee[shared_employee_id]["session_count"] == 0
+    assert rows_by_employee[shared_employee_id]["last_signal_at"] is None
+    employee_a_row = rows_by_employee[str(data["employee_a"].id)]
+    assert employee_a_row["session_count"] == 1
+    assert employee_a_row["last_signal_at"] is not None
     assert extra_employee_ids.issubset(rows_by_employee)
     assert len(rows) == 78
     assert query_count <= 10, query_count
@@ -826,14 +831,16 @@ def test_attendance_range_does_not_rebuild_empty_historical_days(team_client, mo
     client, data = team_client
     today = local_today("UTC")
     start_date = today - timedelta(days=29)
-    leave_day = next(
-        start_date + timedelta(days=offset)
-        for offset in range(29)
-        if (start_date + timedelta(days=offset)).weekday() < 5
-    )
     db: Session = data["session_factory"]()
     try:
         engine = db.get_bind()
+        profile = get_or_create_work_profile(db, data["employee_a"])
+        working_days = set(profile.working_days)
+        leave_day = next(
+            start_date + timedelta(days=offset)
+            for offset in range(29)
+            if (start_date + timedelta(days=offset)).weekday() in working_days
+        )
         db.add(
             LeaveRequest(
                 company_id=data["employee_a"].company_id,
@@ -890,7 +897,7 @@ def test_attendance_range_does_not_rebuild_empty_historical_days(team_client, mo
     historical_weekday = next(
         row
         for row in rows[:-1]
-        if datetime.fromisoformat(row["date"]).weekday() < 5
+        if datetime.fromisoformat(row["date"]).weekday() in working_days
         and row["date"] != leave_day.isoformat()
     )
     assert historical_weekday["status"] == "absent"

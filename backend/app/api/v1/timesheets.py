@@ -108,8 +108,10 @@ def timesheet_rows(
                 "date": work_date.isoformat(),
                 "_start_at": None,
                 "_latest_end_at": None,
+                "_last_signal_at": None,
                 "_has_open_session": False,
                 "_open_sessions": [],
+                "_session_count": 0,
                 "active_seconds": 0,
                 "idle_seconds": 0,
                 "deducted_seconds": 0,
@@ -118,6 +120,7 @@ def timesheet_rows(
         )
         started_at = _utc(session.started_at)
         ended_at = _utc(session.ended_at) if session.ended_at else None
+        item["_session_count"] += 1
         item["_start_at"] = min(
             value for value in (item["_start_at"], started_at) if value is not None
         )
@@ -125,6 +128,11 @@ def timesheet_rows(
             item["_latest_end_at"] = max(
                 value
                 for value in (item["_latest_end_at"], ended_at)
+                if value is not None
+            )
+            item["_last_signal_at"] = max(
+                value
+                for value in (item["_last_signal_at"], ended_at)
                 if value is not None
             )
         if session.ended_at is None and session.status in ACTIVE_SESSION_STATUSES:
@@ -169,8 +177,10 @@ def timesheet_rows(
                     "date": start_day.isoformat(),
                     "_start_at": None,
                     "_latest_end_at": None,
+                    "_last_signal_at": None,
                     "_has_open_session": False,
                     "_open_sessions": [],
+                    "_session_count": 0,
                     "active_seconds": 0,
                     "idle_seconds": 0,
                     "deducted_seconds": 0,
@@ -194,6 +204,12 @@ def timesheet_rows(
             latest_end_at = item["_latest_end_at"]
             for session in item["_open_sessions"]:
                 liveness = liveness_by_session[session.id]
+                last_signal_at = liveness["last_signal_at"]
+                item["_last_signal_at"] = max(
+                    value
+                    for value in (item["_last_signal_at"], last_signal_at)
+                    if value is not None
+                )
                 if bool(liveness["is_fresh"]):
                     fresh_open_session = True
                 else:
@@ -366,6 +382,8 @@ def timesheet_rows(
                 "date": work_date.isoformat(),
                 "start_time": None,
                 "end_time": None,
+                "_last_signal_at": None,
+                "_session_count": 0,
                 "active_seconds": 0,
                 "idle_seconds": 0,
                 "adjustment_seconds": 0,
@@ -434,6 +452,12 @@ def timesheet_rows(
                 "date": item["date"],
                 "start_time": item["start_time"],
                 "end_time": item["end_time"],
+                "last_signal_at": (
+                    item.get("_last_signal_at").isoformat()
+                    if item.get("_last_signal_at")
+                    else None
+                ),
+                "session_count": int(item.get("_session_count", 0)),
                 "total_tracked_seconds": active_seconds + idle_seconds,
                 "active_seconds": active_seconds,
                 "idle_seconds": idle_seconds,
