@@ -1264,27 +1264,35 @@ function App() {
     if (shownIdleAlertId.current === alert.id) return;
     shownIdleAlertId.current = alert.id;
     window.khaliduo?.setIdleAlertAttention(true);
-    const isExtraTimeStart = alert.kind === "extra_time_start";
+    const isTrackingStart = alert.kind === "tracking_start";
     const canRequestManualTime =
-      !isExtraTimeStart &&
+      !isTrackingStart &&
       !alert.outsideScheduledShift &&
       alert.eligibleLostSeconds > 0;
     let result: SweetAlertResult;
     try {
       result = await Swal.fire({
-        title: isExtraTimeStart ? "Start extra time?" : "Confirm you are back",
-        text: isExtraTimeStart
-          ? "You are outside your scheduled shift. Mouse or keyboard movement alone will not start time. Confirm only if you are actually working."
+        title: isTrackingStart
+          ? alert.outsideScheduledShift
+            ? "Start extra time?"
+            : "Start work tracking?"
+          : "Confirm you are back",
+        text: isTrackingStart
+          ? alert.outsideScheduledShift
+            ? "You are outside your scheduled shift. A device being on or mouse and keyboard movement alone will not start time. Confirm only if you are actually working."
+            : "Khaliduo will not count time just because this device is on. Confirm that you are present and actually starting work."
           : canRequestManualTime
             ? `Input was detected after ${formatDuration(alert.lostSeconds)} away. Tracking stays idle until you choose Continue and keep working; ${formatDuration(alert.eligibleLostSeconds)} inside your paid shift remains available to explain.`
             : `Input was detected after ${formatDuration(alert.lostSeconds)} away. Choose Continue and keep working so Khaliduo can verify your return.`,
         icon: "warning",
         showDenyButton: true,
         showCancelButton: canRequestManualTime,
-        confirmButtonText: isExtraTimeStart
-          ? "Start extra time"
+        confirmButtonText: isTrackingStart
+          ? alert.outsideScheduledShift
+            ? "Start extra time"
+            : "Start work"
           : "Continue tracking",
-        denyButtonText: isExtraTimeStart ? "Not working" : "Stop tracking",
+        denyButtonText: isTrackingStart ? "Not working" : "Stop tracking",
         cancelButtonText: "Request manual time",
         confirmButtonColor: "#1f7a4d",
         denyButtonColor: "#842029",
@@ -1296,16 +1304,16 @@ function App() {
     }
 
     if (result.isConfirmed) {
-      const resumeResult = isExtraTimeStart
-        ? await window.khaliduo?.confirmExtraTimeStart()
+      const resumeResult = isTrackingStart
+        ? await window.khaliduo?.confirmTrackingStart()
         : await window.khaliduo?.resumeAutomaticIdle();
       if (resumeResult?.message)
         setTrackingControlMessage(resumeResult.message);
       const nextStatus = await window.khaliduo?.getAgentStatus();
       if (nextStatus) setStatus(nextStatus);
     } else if (result.isDenied) {
-      const pauseResult = isExtraTimeStart
-        ? await window.khaliduo?.declineExtraTimeStart()
+      const pauseResult = isTrackingStart
+        ? await window.khaliduo?.declineTrackingStart()
         : await window.khaliduo?.pauseTracking();
       if (pauseResult?.message) setTrackingControlMessage(pauseResult.message);
       const nextStatus = await window.khaliduo?.getAgentStatus();

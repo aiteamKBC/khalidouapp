@@ -44,19 +44,19 @@ test("renderer releases a tracking control that stops responding", () => {
   assert.match(rendererSource, /finally \{\s*setIsChangingTracking\(false\)/);
 });
 
-test("a fresh automatic start checks extra-time confirmation before opening a session", () => {
+test("a fresh automatic start checks presence confirmation before opening a session", () => {
   const source = sourceBetween(
     "async function startTrackingAutomatically()",
     "function clearPaidPauseTimer()",
   );
-  const policyAt = source.indexOf("requiresExplicitExtraTimeStart({");
+  const policyAt = source.indexOf("requiresExplicitFreshSessionStart({");
   const sessionStartAt = source.indexOf("const started = await startSession()");
-  assert.ok(policyAt >= 0, "extra-time start policy is missing");
+  assert.ok(policyAt >= 0, "fresh-session start policy is missing");
   assert.ok(
     sessionStartAt > policyAt,
-    "session starts before the extra-time policy check",
+    "session starts before the presence policy check",
   );
-  assert.match(source, /showExtraTimeStartConfirmation\(\)/);
+  assert.match(source, /showFreshSessionStartConfirmation\([^)]*\)/);
 });
 
 test("Windows startup does not create a local session before schedule checks", () => {
@@ -68,8 +68,8 @@ test("Windows startup does not create a local session before schedule checks", (
   assert.match(source, /await startTrackingAutomatically\(\)/);
 });
 
-test("the extra-time prompt requires an explicit renderer action", () => {
-  assert.match(rendererSource, /Start extra time\?/);
-  assert.match(rendererSource, /confirmExtraTimeStart\(\)/);
-  assert.match(rendererSource, /declineExtraTimeStart\(\)/);
+test("the fresh-session prompt requires an explicit renderer action", () => {
+  assert.match(rendererSource, /Start work tracking\?/);
+  assert.match(rendererSource, /confirmTrackingStart\(\)/);
+  assert.match(rendererSource, /declineTrackingStart\(\)/);
 });

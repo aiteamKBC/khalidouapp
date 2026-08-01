@@ -1,13 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { requiresExplicitExtraTimeStart } from "../electron/services/trackingStartPolicy.ts";
+import { requiresExplicitFreshSessionStart } from "../electron/services/trackingStartPolicy.ts";
 
 test("a fresh session outside the shift requires employee confirmation", () => {
   assert.equal(
-    requiresExplicitExtraTimeStart({
+    requiresExplicitFreshSessionStart({
       hasExistingSession: false,
-      outsideScheduledShift: true,
       confirmationAccepted: false,
     }),
     true,
@@ -16,9 +15,8 @@ test("a fresh session outside the shift requires employee confirmation", () => {
 
 test("confirmation permits a fresh extra-time session", () => {
   assert.equal(
-    requiresExplicitExtraTimeStart({
+    requiresExplicitFreshSessionStart({
       hasExistingSession: false,
-      outsideScheduledShift: true,
       confirmationAccepted: true,
     }),
     false,
@@ -27,22 +25,20 @@ test("confirmation permits a fresh extra-time session", () => {
 
 test("an existing session continues across the shift boundary", () => {
   assert.equal(
-    requiresExplicitExtraTimeStart({
+    requiresExplicitFreshSessionStart({
       hasExistingSession: true,
-      outsideScheduledShift: true,
       confirmationAccepted: false,
     }),
     false,
   );
 });
 
-test("scheduled shift tracking still starts automatically", () => {
+test("a fresh scheduled-shift session also requires presence confirmation", () => {
   assert.equal(
-    requiresExplicitExtraTimeStart({
+    requiresExplicitFreshSessionStart({
       hasExistingSession: false,
-      outsideScheduledShift: false,
       confirmationAccepted: false,
     }),
-    false,
+    true,
   );
 });

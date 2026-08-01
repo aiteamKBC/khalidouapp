@@ -1,11 +1,6 @@
-export function requiresExplicitExtraTimeStart(options: {
+export function requiresExplicitFreshSessionStart(options: {
   hasExistingSession: boolean;
-  outsideScheduledShift: boolean;
   confirmationAccepted: boolean;
 }) {
-  return (
-    !options.hasExistingSession &&
-    options.outsideScheduledShift &&
-    !options.confirmationAccepted
-  );
+  return !options.hasExistingSession && !options.confirmationAccepted;
 }

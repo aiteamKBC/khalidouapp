@@ -104,7 +104,7 @@ import {
   connectionStatusAfterApiFailure,
   isPermanentScreenshotSyncFailure,
 } from "./services/runtimePolicies.js";
-import { requiresExplicitExtraTimeStart } from "./services/trackingStartPolicy.js";
+import { requiresExplicitFreshSessionStart } from "./services/trackingStartPolicy.js";
 
 const { nativeImage, shell } = electronCommon;
 const {
@@ -226,7 +226,7 @@ type RuntimeTask = {
 
 type IdleLossAlert = {
   id: string;
-  kind: "idle_return" | "extra_time_start";
+  kind: "idle_return" | "tracking_start";
   lostSeconds: number;
   eligibleLostSeconds: number;
   outsideScheduledShift: boolean;
@@ -297,8 +297,8 @@ let lastObservedSystemIdleSeconds: number | null = null;
 let lastHandledIdleReturnInputAt = 0;
 let idleReturnVerification: IdleReturnVerification | null = null;
 let waitingForInputAfterIdleSessionClose = false;
-let extraTimeStartConfirmed = false;
-let extraTimeStartPromptActive = false;
+let freshSessionStartConfirmed = false;
+let freshSessionStartPromptActive = false;
 let lastDurationTickAt: number | null = null;
 let workedTodayBaseSeconds = 0;
 let activeCounterDate: string | null = null;
@@ -589,8 +589,8 @@ function resetForDeviceReenrollment() {
   lastHandledIdleReturnInputAt = 0;
   clearIdleReturnVerification();
   waitingForInputAfterIdleSessionClose = false;
-  extraTimeStartConfirmed = false;
-  extraTimeStartPromptActive = false;
+  freshSessionStartConfirmed = false;
+  freshSessionStartPromptActive = false;
   Object.assign(runtimeStatus, {
     enrolled: false,
     employeeName: "Not enrolled",
@@ -1715,19 +1715,19 @@ function showIdleLossAlert(lostSeconds: number, eligibleLostSeconds: number) {
   mainWindow?.webContents.send("agent:idle-alert", runtimeStatus.lastIdleAlert);
 }
 
-function showExtraTimeStartConfirmation() {
-  if (extraTimeStartPromptActive || trackingPausedByUser || isQuitting) {
+function showFreshSessionStartConfirmation(outsideScheduledShift: boolean) {
+  if (freshSessionStartPromptActive || trackingPausedByUser || isQuitting) {
     return;
   }
-  extraTimeStartPromptActive = true;
+  freshSessionStartPromptActive = true;
   runtimeStatus.trackingPaused = true;
   runtimeStatus.trackingStatus = "paused";
   runtimeStatus.lastIdleAlert = {
     id: randomUUID(),
-    kind: "extra_time_start",
+    kind: "tracking_start",
     lostSeconds: 0,
     eligibleLostSeconds: 0,
-    outsideScheduledShift: true,
+    outsideScheduledShift,
     endedAt: new Date().toISOString(),
   };
   setIdleAlertAttention(true);
@@ -1737,22 +1737,23 @@ function showExtraTimeStartConfirmation() {
   rebuildTrayMenu();
 }
 
-async function confirmExtraTimeStart() {
+async function confirmFreshSessionStart() {
   if (!runtimeStatus.enrolled) {
     return {
       success: false,
       message: "Enroll this device before starting tracking.",
     };
   }
-  extraTimeStartPromptActive = false;
-  extraTimeStartConfirmed = true;
+  const outsideScheduledShift = activeTimeBucket(new Date()) === "extra";
+  freshSessionStartPromptActive = false;
+  freshSessionStartConfirmed = true;
   trackingPausedByUser = false;
   runtimeStatus.lastIdleAlert = null;
   runtimeStatus.trackingPaused = false;
   runtimeStatus.trackingStatus = "starting";
   saveTrackingPreferences();
-  // The employee explicitly confirmed extra time, so local-first tracking is
-  // safe even if the API is temporarily unavailable.
+  // The employee explicitly confirmed that work is starting, so local-first
+  // tracking is safe even if the API is temporarily unavailable.
   beginLocalTrackingSession();
   await startTrackingAutomatically();
   notifyRendererStatus();
@@ -1760,14 +1761,16 @@ async function confirmExtraTimeStart() {
   return {
     success: hasTrackingSession(),
     message: hasTrackingSession()
-      ? "Extra-time tracking started."
+      ? outsideScheduledShift
+        ? "Extra-time tracking started."
+        : "Work tracking started."
       : "Tracking could not start. Check the connection and try again.",
   };
 }
 
-function declineExtraTimeStart() {
-  extraTimeStartPromptActive = false;
-  extraTimeStartConfirmed = false;
+function declineFreshSessionStart() {
+  freshSessionStartPromptActive = false;
+  freshSessionStartConfirmed = false;
   trackingPausedByUser = true;
   runtimeStatus.lastIdleAlert = null;
   runtimeStatus.trackingPaused = true;
@@ -1776,7 +1779,7 @@ function declineExtraTimeStart() {
   saveTrackingPreferences();
   notifyRendererStatus();
   rebuildTrayMenu();
-  return { success: true, message: "Extra time was not started." };
+  return { success: true, message: "Work tracking was not started." };
 }
 
 async function refreshTimeAdjustmentRequests() {
@@ -2753,7 +2756,7 @@ function automaticTrackingIsExpected() {
     !trackingPausedByUser &&
     !unpaidPauseActive &&
     !waitingForInputAfterIdleSessionClose &&
-    !extraTimeStartPromptActive &&
+    !freshSessionStartPromptActive &&
     !isQuitting
   );
 }
@@ -2858,7 +2861,7 @@ function clearRuntimeTimers() {
 function screenshotCaptureBlockReason(): string | null {
   if (!runtimeStatus.enrolled) return "device_not_enrolled";
   if (!trackingConfig.screenshot_enabled) return "capture_disabled";
-  if (extraTimeStartPromptActive) return "extra_time_not_confirmed";
+  if (freshSessionStartPromptActive) return "work_start_not_confirmed";
   if (!onAcPower) return "battery_power";
   if (
     runtimeStatus.trackingStatus === "locked" ||
@@ -3224,7 +3227,7 @@ async function startTrackingAutomatically() {
     !runtimeStatus.enrolled ||
     trackingPausedByUser ||
     currentSessionId ||
-    extraTimeStartPromptActive ||
+    freshSessionStartPromptActive ||
     isStartingTrackingAutomatically
   ) {
     return;
@@ -3267,8 +3270,8 @@ async function startTrackingAutomatically() {
       // made the employee's current-session counter jump back to zero even
       // though the workday and overtime totals were still continuing.
       syncRuntimeFromSession(current.session);
-      extraTimeStartConfirmed = false;
-      extraTimeStartPromptActive = false;
+      freshSessionStartConfirmed = false;
+      freshSessionStartPromptActive = false;
       applyWorkdayState(current.workday);
       applyPauseState(current.pause);
       await refreshWorkedTodayTotal();
@@ -3295,21 +3298,21 @@ async function startTrackingAutomatically() {
       return;
     }
     if (
-      requiresExplicitExtraTimeStart({
+      requiresExplicitFreshSessionStart({
         hasExistingSession: Boolean(openLocalSession),
-        outsideScheduledShift: activeTimeBucket(attemptedAt) === "extra",
-        confirmationAccepted: extraTimeStartConfirmed,
+        confirmationAccepted: freshSessionStartConfirmed,
       })
     ) {
-      showExtraTimeStartConfirmation();
-      log.info(
-        "Fresh extra-time session requires explicit employee confirmation",
-      );
+      const outsideScheduledShift = activeTimeBucket(attemptedAt) === "extra";
+      showFreshSessionStartConfirmation(outsideScheduledShift);
+      log.info("Fresh work session requires explicit employee confirmation", {
+        outsideScheduledShift,
+      });
       return;
     }
     const started = await startSession();
-    extraTimeStartConfirmed = false;
-    extraTimeStartPromptActive = false;
+    freshSessionStartConfirmed = false;
+    freshSessionStartPromptActive = false;
     waitingForInputAfterIdleSessionClose = false;
     syncRuntimeFromSession(started.session);
     applyWorkdayState(started.workday);
@@ -3347,18 +3350,18 @@ async function startTrackingAutomatically() {
     }
     if (
       !hasTrackingSession() &&
-      requiresExplicitExtraTimeStart({
+      requiresExplicitFreshSessionStart({
         hasExistingSession: false,
-        outsideScheduledShift:
-          runtimeStatus.requestPolicy !== null &&
-          activeTimeBucket(attemptedAt) === "extra",
-        confirmationAccepted: extraTimeStartConfirmed,
+        confirmationAccepted: freshSessionStartConfirmed,
       })
     ) {
-      showExtraTimeStartConfirmation();
-      log.info(
-        "Offline extra-time start requires explicit employee confirmation",
-      );
+      const outsideScheduledShift =
+        runtimeStatus.requestPolicy !== null &&
+        activeTimeBucket(attemptedAt) === "extra";
+      showFreshSessionStartConfirmation(outsideScheduledShift);
+      log.info("Offline work start requires explicit employee confirmation", {
+        outsideScheduledShift,
+      });
       return;
     }
     if (!localTrackingSessionId) {
@@ -3423,8 +3426,8 @@ async function stopTrackingSession(reason = "Stopped by employee") {
   recalculateWorkedTime();
   trackingPausedByUser = true;
   waitingForInputAfterIdleSessionClose = false;
-  extraTimeStartConfirmed = false;
-  extraTimeStartPromptActive = false;
+  freshSessionStartConfirmed = false;
+  freshSessionStartPromptActive = false;
   runtimeStatus.trackingPaused = true;
   saveTrackingPreferences();
   closeActiveLocalTrackingSession(new Date().toISOString(), "paused");
@@ -3582,11 +3585,11 @@ async function resumeTracking() {
 
   trackingPausedByUser = false;
   waitingForInputAfterIdleSessionClose = false;
-  extraTimeStartPromptActive = false;
-  if (!hasTrackingSession() && activeTimeBucket(new Date()) === "extra") {
-    // Pressing Resume is also an explicit employee confirmation to start a
-    // brand-new session outside the scheduled shift.
-    extraTimeStartConfirmed = true;
+  freshSessionStartPromptActive = false;
+  if (!hasTrackingSession()) {
+    // Pressing Resume is an explicit employee confirmation to start a new
+    // work session, whether it is inside or outside the scheduled shift.
+    freshSessionStartConfirmed = true;
   }
   runtimeStatus.lastIdleAlert = null;
   runtimeStatus.trackingPaused = false;
@@ -3628,8 +3631,8 @@ async function logoutDevice() {
   saveTrackingPreferences();
   currentSessionId = null;
   waitingForInputAfterIdleSessionClose = false;
-  extraTimeStartConfirmed = false;
-  extraTimeStartPromptActive = false;
+  freshSessionStartConfirmed = false;
+  freshSessionStartPromptActive = false;
   workedTodayBaseSeconds = 0;
   activeCounterDate = null;
   idleSecondsBeforeCurrentIdle = 0;
@@ -4549,9 +4552,13 @@ ipcMain.handle("agent:resume-tracking", () => resumeTracking());
 
 ipcMain.handle("agent:resume-automatic-idle", () => resumeAutomaticIdle());
 
-ipcMain.handle("agent:confirm-extra-time-start", () => confirmExtraTimeStart());
+ipcMain.handle("agent:confirm-tracking-start", () =>
+  confirmFreshSessionStart(),
+);
 
-ipcMain.handle("agent:decline-extra-time-start", () => declineExtraTimeStart());
+ipcMain.handle("agent:decline-tracking-start", () =>
+  declineFreshSessionStart(),
+);
 
 ipcMain.handle("agent:logout", () => logoutDevice());
 
