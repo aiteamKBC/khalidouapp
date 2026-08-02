@@ -1,7 +1,7 @@
 import { Activity, CalendarDays, CircleCheck, Coffee, LockKeyhole, Moon } from "lucide-react";
 
 import type { WorkdayIntervalType, WorkdayTimeline as WorkdayTimelineData } from "@/types";
-import { formatAttendanceStart, formatClock } from "@/lib/format";
+import { formatAttendanceStart, formatClock, formatDurationSeconds } from "@/lib/format";
 
 type DisplayIntervalType = WorkdayIntervalType | "break_work" | "extra" | "leave";
 
@@ -82,13 +82,6 @@ function resolveDisplayType(
   return intervalType;
 }
 
-function formatDuration(totalSeconds: number) {
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  if (hours === 0) return `${minutes}m`;
-  return `${hours}h ${minutes}m`;
-}
-
 export function WorkdayTimeline({ timeline }: { timeline?: WorkdayTimelineData }) {
   if (!timeline || timeline.intervals.length === 0) {
     if (timeline?.approvedLeave) {
@@ -134,10 +127,10 @@ export function WorkdayTimeline({ timeline }: { timeline?: WorkdayTimelineData }
               : formatClock(timeline.lastEndedAt, timeline.timezone)
           }
         />
-        <Metric label="Worked" value={formatDuration(timeline.workedSeconds)} />
+        <Metric label="Worked" value={formatDurationSeconds(timeline.workedSeconds)} />
         <Metric
           label={timeline.approvedLeave ? "Leave" : "Timeline idle"}
-          value={formatDuration(
+          value={formatDurationSeconds(
             timeline.approvedLeave ? timeline.leaveSeconds : timeline.idleSeconds,
           )}
         />
@@ -158,11 +151,17 @@ export function WorkdayTimeline({ timeline }: { timeline?: WorkdayTimelineData }
               key={`${interval.sessionId}-${interval.startedAt}-${index}`}
               className={intervalStyles[displayType].bar}
               style={{ width: `${(interval.durationSeconds / visibleSeconds) * 100}%` }}
-              title={`${intervalStyles[displayType].label}: ${formatDuration(interval.durationSeconds)}`}
+              title={`${intervalStyles[displayType].label}: ${formatDurationSeconds(interval.durationSeconds)}`}
             />
           );
         })}
       </div>
+
+      <p className="text-xs text-muted-foreground">
+        Timeline idle shows recorded device inactivity. Requestable or deductible idle can be lower
+        because paid grace, breaks, off-shift time, and periods shorter than one minute are
+        excluded.
+      </p>
 
       <div className="divide-y rounded-md border">
         {timeline.intervals.map((interval, index) => {
@@ -194,7 +193,7 @@ export function WorkdayTimeline({ timeline }: { timeline?: WorkdayTimelineData }
                   : "-"}
               </span>
               <strong className="text-right text-xs">
-                {formatDuration(interval.durationSeconds)}
+                {formatDurationSeconds(interval.durationSeconds)}
               </strong>
             </div>
           );

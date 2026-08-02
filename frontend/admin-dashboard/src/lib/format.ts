@@ -5,6 +5,14 @@ export function formatMinutes(mins: number): string {
   return `${h}h ${m}m`;
 }
 
+export function formatDurationSeconds(totalSeconds: number): string {
+  const safeSeconds = Number.isFinite(totalSeconds) ? Math.max(0, Math.floor(totalSeconds)) : 0;
+  if (safeSeconds > 0 && safeSeconds < 60) return `${safeSeconds}s`;
+  const hours = Math.floor(safeSeconds / 3600);
+  const minutes = Math.floor((safeSeconds % 3600) / 60);
+  return hours ? `${hours}h ${minutes}m` : `${minutes}m`;
+}
+
 export function formatRelative(iso?: string): string {
   if (!iso) return "—";
   const diff = Date.now() - new Date(iso).getTime();

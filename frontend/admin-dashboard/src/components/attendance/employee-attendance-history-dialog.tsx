@@ -26,7 +26,11 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { formatAttendanceStart, formatClock } from "@/lib/format";
+import {
+  formatAttendanceStart,
+  formatClock,
+  formatDurationSeconds as formatDuration,
+} from "@/lib/format";
 
 type EmployeeAttendanceHistoryDialogProps = {
   employeeId: string | null;
@@ -54,8 +58,7 @@ export function EmployeeAttendanceHistoryDialog({
   const currentDay = localDateKey();
   const history = useQuery({
     queryKey: ["attendance-employee-history", employeeId, startDate, endDate],
-    queryFn: ({ signal }) =>
-      getEmployeeAttendanceRange(employeeId!, startDate, endDate, signal),
+    queryFn: ({ signal }) => getEmployeeAttendanceRange(employeeId!, startDate, endDate, signal),
     enabled: open && Boolean(employeeId),
     staleTime: 5 * 60_000,
     placeholderData: (previous) => previous,
@@ -380,10 +383,4 @@ function MiniMetric({ label, value }: { label: string; value: string }) {
       <p className="mt-1 font-mono-numeric text-lg font-extrabold">{value}</p>
     </div>
   );
-}
-
-function formatDuration(seconds: number) {
-  const hours = Math.floor(seconds / 3600);
-  const minutes = Math.floor((seconds % 3600) / 60);
-  return hours ? `${hours}h ${minutes}m` : `${minutes}m`;
 }

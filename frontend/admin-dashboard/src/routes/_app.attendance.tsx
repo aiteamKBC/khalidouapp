@@ -40,7 +40,7 @@ import {
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAuth } from "@/lib/auth";
-import { formatAttendanceStart, formatClock } from "@/lib/format";
+import { formatAttendanceStart, formatClock, formatDurationSeconds } from "@/lib/format";
 import { attendanceRefetchInterval, attendanceTabIsActive } from "@/lib/attendance-query-policy";
 
 export const Route = createFileRoute("/_app/attendance")({ component: AttendancePage });
@@ -51,11 +51,7 @@ const thirtyDaysAgo = () => {
   value.setDate(value.getDate() - 29);
   return value.toLocaleDateString("en-CA");
 };
-const duration = (seconds: number) => {
-  const hours = Math.floor(seconds / 3600);
-  const minutes = Math.floor((seconds % 3600) / 60);
-  return hours ? `${hours}h ${minutes}m` : `${minutes}m`;
-};
+const duration = formatDurationSeconds;
 
 function useDebouncedValue<T>(value: T, delay = 300) {
   const [debouncedValue, setDebouncedValue] = useState(value);
