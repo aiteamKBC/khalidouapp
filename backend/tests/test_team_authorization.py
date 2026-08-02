@@ -2660,6 +2660,7 @@ def test_desktop_today_excludes_idle_on_an_off_day(team_client):
         device = db.get(Device, session.device_id)
         session.started_at = now - timedelta(minutes=30)
         session.status = "idle"
+        session.idle_seconds = 20 * 60
         device.last_seen_at = now
         profile = get_or_create_work_profile(db, employee)
         profile.shift_start = datetime.min.time().replace(hour=9)
@@ -2743,6 +2744,14 @@ def test_desktop_today_excludes_idle_on_an_off_day(team_client):
         row for row in timesheet.json()["data"] if row["employee_id"] == str(data["employee_a"].id)
     )
     assert timesheet_row["idle_seconds"] == 0
+    assert timesheet_row["observed_idle_seconds"] == 20 * 60
+    assert timesheet_row["observed_tracked_seconds"] == (
+        timesheet_row["active_seconds"] + 20 * 60
+    )
+    assert timesheet_row["observed_span_seconds"] == (
+        timesheet_row["observed_tracked_seconds"]
+        + timesheet_row["untracked_seconds"]
+    )
     assert timeline_response.json()["data"]["idle_seconds"] == 0
     overview_row = employee_overview.json()["data"][0]
     assert overview_row["idle_seconds"] == 0

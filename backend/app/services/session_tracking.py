@@ -28,7 +28,6 @@ from app.schemas.session import (
 )
 from app.services.activity_timeline import (
     build_workday_timeline,
-    company_idle_threshold_seconds,
 )
 from app.services.projects import get_employee_task_context, list_employee_tasks
 from app.services.schedules import effective_schedule, overlap_seconds
@@ -1088,28 +1087,6 @@ def record_heartbeat(
             "restarted": True,
         }
 
-    if payload.status in NON_WORKING_SESSION_STATUSES:
-        # The employee has been away longer than the idle threshold, so the
-        # session ends where they stopped working. Coming back starts a new one.
-        stopped_at = max(last_worked_activity_at(db, session), utc(session.started_at))
-        away_seconds = int((heartbeat_at - stopped_at).total_seconds())
-        if away_seconds >= company_idle_threshold_seconds(db, device.company_id):
-            close_open_session(
-                db,
-                device=device,
-                session=session,
-                ended_at=stopped_at,
-                reason="Employee left the device longer than the idle threshold",
-            )
-            device.last_seen_at = heartbeat_at
-            db.commit()
-            return {
-                "event_id": None,
-                "duplicate": False,
-                **session_response(db, session),
-                "restarted": False,
-            }
-
     elapsed_seconds = max(0, int((heartbeat_at - utc(session.started_at)).total_seconds()))
 
     event, duplicate = create_activity_event(
@@ -1261,18 +1238,30 @@ def restart_session_after_long_idle(
     idle_started_at = utc(idle_started_at)
     returned_at = utc(payload.event_timestamp)
     gap_seconds = max(0, int((returned_at - idle_started_at).total_seconds()))
-    if isinstance(idle_baseline, int) and idle_baseline >= 0:
-        session.idle_seconds = min(session.idle_seconds, idle_baseline)
-
     previous_task_id = session.task_id
-    previous_session_ended_at = max(utc(session.started_at), idle_started_at)
+    previous_session_ended_at = max(utc(session.started_at), returned_at)
+    previous_idle_seconds = (
+        idle_baseline if isinstance(idle_baseline, int) and idle_baseline >= 0 else 0
+    )
+    elapsed_seconds = max(
+        0,
+        int((previous_session_ended_at - utc(session.started_at)).total_seconds()),
+    )
+    max_recordable_idle = max(0, elapsed_seconds - int(session.active_seconds))
+    session.idle_seconds = min(
+        max_recordable_idle,
+        max(int(session.idle_seconds), previous_idle_seconds + gap_seconds),
+    )
     close_open_session(
         db,
         device=device,
         session=session,
         ended_at=previous_session_ended_at,
-        reason="Employee returned after more than four hours away",
+        reason="Employee returned after more than four hours idle",
     )
+    # Sessions use autoflush=False. Persist the close before looking up the
+    # current session or start_or_get_session can return this ended row again.
+    db.flush()
     sync_session_time_buckets(db, session, at=previous_session_ended_at)
     restarted = start_or_get_session(
         db,

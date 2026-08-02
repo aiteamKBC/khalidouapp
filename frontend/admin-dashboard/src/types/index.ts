@@ -253,8 +253,11 @@ export interface Timesheet {
   lastSignalAt?: string;
   sessionCount: number;
   totalMinutes: number;
+  observedSpanMinutes: number;
+  untrackedMinutes: number;
   activeMinutes: number;
   idleMinutes: number;
+  accountableIdleMinutes: number;
   adjustmentMinutes: number;
   deductedMinutes: number;
   points: number;

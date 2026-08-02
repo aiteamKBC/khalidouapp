@@ -88,11 +88,13 @@ function TimesheetsPage() {
       filtered.reduce(
         (sum, row) => ({
           total: sum.total + row.totalMinutes,
+          span: sum.span + row.observedSpanMinutes,
+          untracked: sum.untracked + row.untrackedMinutes,
           active: sum.active + row.activeMinutes,
           idle: sum.idle + row.idleMinutes,
           screenshots: sum.screenshots + row.screenshotCount,
         }),
-        { total: 0, active: 0, idle: 0, screenshots: 0 },
+        { total: 0, span: 0, untracked: 0, active: 0, idle: 0, screenshots: 0 },
       ),
     [filtered],
   );
@@ -115,8 +117,11 @@ function TimesheetsPage() {
                   employee: empName(t.employeeId, t.employeeName),
                   team: teamName(t.teamId),
                   total_minutes: t.totalMinutes,
+                  observed_span_minutes: t.observedSpanMinutes,
+                  untracked_minutes: t.untrackedMinutes,
                   active_minutes: t.activeMinutes,
-                  idle_minutes: t.idleMinutes,
+                  recorded_idle_minutes: t.idleMinutes,
+                  shift_idle_minutes: t.accountableIdleMinutes,
                   manual_adjustment_minutes: t.adjustmentMinutes,
                   deleted_screenshot_minutes: t.deductedMinutes,
                   points: t.points,
@@ -233,7 +238,7 @@ function TimesheetsPage() {
         )}
       </Card>
 
-      <div className="mb-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="mb-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
         <TimesheetMetric icon={Clock3} label="Tracked time" value={formatMinutes(totals.total)} />
         <TimesheetMetric
           icon={Activity}
@@ -243,9 +248,14 @@ function TimesheetsPage() {
         />
         <TimesheetMetric
           icon={Coffee}
-          label="Idle"
+          label="Recorded idle"
           value={formatMinutes(totals.idle)}
           tone="amber"
+        />
+        <TimesheetMetric
+          icon={AlertTriangle}
+          label="Untracked gaps"
+          value={formatMinutes(totals.untracked)}
         />
         <TimesheetMetric icon={Camera} label="Screenshots" value={totals.screenshots} />
       </div>
@@ -292,12 +302,13 @@ function TimesheetsPage() {
             </div>
           ) : (
             pagination.rows.map((t) => {
-              const activePct = t.totalMinutes
-                ? Math.round((t.activeMinutes / t.totalMinutes) * 100)
+              const activePct = t.observedSpanMinutes
+                ? Math.round((t.activeMinutes / t.observedSpanMinutes) * 100)
                 : 0;
-              const idlePct = t.totalMinutes
-                ? Math.round((t.idleMinutes / t.totalMinutes) * 100)
+              const idlePct = t.observedSpanMinutes
+                ? Math.round((t.idleMinutes / t.observedSpanMinutes) * 100)
                 : 0;
+              const untrackedPct = Math.max(0, 100 - activePct - idlePct);
               return (
                 <div
                   key={t.id}
@@ -330,9 +341,9 @@ function TimesheetsPage() {
 
                   <div>
                     <div className="mb-2 flex items-center justify-between text-xs">
-                      <span className="font-bold text-muted-foreground">Tracked time mix</span>
+                      <span className="font-bold text-muted-foreground">Observed time span</span>
                       <span className="font-mono-numeric font-extrabold">
-                        {formatMinutes(t.totalMinutes)}
+                        {formatMinutes(t.observedSpanMinutes)}
                       </span>
                     </div>
                     <div className="flex h-3 overflow-hidden rounded-full bg-muted">
@@ -341,10 +352,13 @@ function TimesheetsPage() {
                         style={{ width: `${Math.max(0, activePct)}%` }}
                       />
                       <span className="bg-warning" style={{ width: `${Math.max(0, idlePct)}%` }} />
+                      <span className="bg-destructive/35" style={{ width: `${untrackedPct}%` }} />
                     </div>
-                    <div className="mt-2 grid grid-cols-3 gap-2 text-[11px] text-muted-foreground">
+                    <div className="mt-2 grid grid-cols-2 gap-2 text-[11px] text-muted-foreground sm:grid-cols-5">
                       <span>Active {formatMinutes(t.activeMinutes)}</span>
-                      <span>Idle {formatMinutes(t.idleMinutes)}</span>
+                      <span>Recorded idle {formatMinutes(t.idleMinutes)}</span>
+                      <span>Untracked {formatMinutes(t.untrackedMinutes)}</span>
+                      <span>Shift idle {formatMinutes(t.accountableIdleMinutes)}</span>
                       <span>Manual {formatMinutes(t.adjustmentMinutes)}</span>
                     </div>
                   </div>

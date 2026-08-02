@@ -110,16 +110,21 @@ def timesheet_rows(
                 "_latest_end_at": None,
                 "_last_signal_at": None,
                 "_has_open_session": False,
+                "_has_cross_day_session": False,
                 "_open_sessions": [],
                 "_session_count": 0,
                 "active_seconds": 0,
                 "idle_seconds": 0,
+                "_observed_idle_seconds": 0,
                 "deducted_seconds": 0,
                 "adjustment_seconds": 0,
             },
         )
         started_at = _utc(session.started_at)
         ended_at = _utc(session.ended_at) if session.ended_at else None
+        observed_until = ended_at or datetime.now(UTC)
+        if _employee_local_date(observed_until, timezone_name) != work_date:
+            item["_has_cross_day_session"] = True
         item["_session_count"] += 1
         item["_start_at"] = min(
             value for value in (item["_start_at"], started_at) if value is not None
@@ -143,6 +148,7 @@ def timesheet_rows(
             int(session.active_seconds) - int(session.deducted_seconds),
         )
         item["idle_seconds"] += int(session.idle_seconds)
+        item["_observed_idle_seconds"] += int(session.idle_seconds)
         item["deducted_seconds"] += int(session.deducted_seconds)
 
     if include_empty_roster:
@@ -179,10 +185,12 @@ def timesheet_rows(
                     "_latest_end_at": None,
                     "_last_signal_at": None,
                     "_has_open_session": False,
+                    "_has_cross_day_session": False,
                     "_open_sessions": [],
                     "_session_count": 0,
                     "active_seconds": 0,
                     "idle_seconds": 0,
+                    "_observed_idle_seconds": 0,
                     "deducted_seconds": 0,
                     "adjustment_seconds": 0,
                 },
@@ -302,7 +310,25 @@ def timesheet_rows(
             stored_attendance_by_key[(row_employee_id, work_date)] = attendance
 
         if attendance is not None:
+            calculation_sources = attendance.calculation_sources or {}
             item["idle_seconds"] = accountable_idle_seconds(attendance)
+            materialized_observed_idle = max(
+                0,
+                int(
+                    calculation_sources.get(
+                        "observed_idle_seconds",
+                        item["_observed_idle_seconds"],
+                    )
+                ),
+            )
+            item["_observed_idle_seconds"] = (
+                materialized_observed_idle
+                if item["_has_cross_day_session"]
+                else max(
+                    int(item["_observed_idle_seconds"]),
+                    materialized_observed_idle,
+                )
+            )
             item["start_time"] = (
                 _utc(attendance.actual_first_activity_at).isoformat()
                 if attendance.actual_first_activity_at
@@ -391,8 +417,10 @@ def timesheet_rows(
                 "end_time": None,
                 "_last_signal_at": None,
                 "_session_count": 0,
+                "_has_cross_day_session": False,
                 "active_seconds": 0,
                 "idle_seconds": 0,
+                "_observed_idle_seconds": 0,
                 "adjustment_seconds": 0,
                 "deducted_seconds": 0,
             }
@@ -451,6 +479,28 @@ def timesheet_rows(
         screenshot_count = screenshot_counts.get((row_employee_id, work_date), 0)
         active_seconds = int(item["active_seconds"])
         idle_seconds = int(item["idle_seconds"])
+        observed_idle_seconds = int(
+            item.get("_observed_idle_seconds", idle_seconds)
+        )
+        first_observed_at = item.get("_start_at")
+        last_observed_at = max(
+            (
+                value
+                for value in (
+                    item.get("_latest_end_at"),
+                    item.get("_last_signal_at"),
+                )
+                if value is not None
+            ),
+            default=None,
+        )
+        observed_span_seconds = (
+            max(0, int((last_observed_at - first_observed_at).total_seconds()))
+            if first_observed_at is not None and last_observed_at is not None
+            else active_seconds + observed_idle_seconds
+        )
+        observed_tracked_seconds = active_seconds + observed_idle_seconds
+        untracked_seconds = max(0, observed_span_seconds - observed_tracked_seconds)
         result.append(
             {
                 "employee_id": item["employee_id"],
@@ -466,8 +516,15 @@ def timesheet_rows(
                 ),
                 "session_count": int(item.get("_session_count", 0)),
                 "total_tracked_seconds": active_seconds + idle_seconds,
+                "observed_tracked_seconds": observed_tracked_seconds,
+                "observed_span_seconds": max(
+                    observed_span_seconds,
+                    observed_tracked_seconds,
+                ),
+                "untracked_seconds": untracked_seconds,
                 "active_seconds": active_seconds,
                 "idle_seconds": idle_seconds,
+                "observed_idle_seconds": observed_idle_seconds,
                 "adjustment_seconds": int(item["adjustment_seconds"]),
                 "deducted_seconds": int(item["deducted_seconds"]),
                 "points": round(active_seconds / 3600, 2),

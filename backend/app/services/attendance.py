@@ -552,6 +552,10 @@ def calculate_daily_attendance(
             "attendance_adjustment_seconds": attendance_adjustment_seconds,
             "attendance_correction_reason": correction.reason if correction else None,
             "raw_idle_seconds": raw_eligible_idle,
+            # Preserve every idle second observed by the connected agent for
+            # operational timesheets. Payroll continues to use the clipped
+            # in-shift idle values above.
+            "observed_idle_seconds": int(timeline.get("idle_seconds", 0)),
             "approved_idle_seconds_removed": int(timeline.get("manual_seconds", 0)),
             "manual_pause_seconds": manual_pause_idle,
             "paid_idle_grace_seconds": paid_idle_grace,

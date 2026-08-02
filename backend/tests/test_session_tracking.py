@@ -490,6 +490,19 @@ def test_idle_gap_over_four_hours_starts_a_new_sign_in(tracking_context):
         SessionStartRequest(started_at=session_started_at),
     )
     previous_session_id = UUID(started["session"]["id"])
+    record_heartbeat(
+        db,
+        device=device,
+        session_id=previous_session_id,
+        payload=HeartbeatRequest(
+            event_id=uuid4(),
+            timestamp=idle_started_at,
+            status="active",
+            active_seconds=60 * 60,
+            idle_seconds=0,
+            agent_version="1.1.85",
+        ),
+    )
     record_agent_event(
         db,
         device=device,
@@ -498,12 +511,10 @@ def test_idle_gap_over_four_hours_starts_a_new_sign_in(tracking_context):
             event_id=uuid4(),
             event_type="idle_started",
             event_timestamp=idle_started_at,
-            payload={"idle_seconds": 120},
+            payload={"idle_seconds": 0},
         ),
     )
     previous_session = db.get(WorkSession, previous_session_id)
-    previous_session.idle_seconds = 4 * 60 * 60
-    db.commit()
 
     return_event_id = uuid4()
     return_payload = ActivityEventRequest(
@@ -527,8 +538,9 @@ def test_idle_gap_over_four_hours_starts_a_new_sign_in(tracking_context):
     assert resumed["session"]["active_seconds"] == 0
     assert resumed["session"]["idle_seconds"] == 0
     assert previous_session.status == "ended"
-    assert previous_session.ended_at.replace(tzinfo=UTC) == idle_started_at
-    assert previous_session.idle_seconds == 120
+    assert previous_session.ended_at.replace(tzinfo=UTC) == returned_at
+    assert previous_session.active_seconds == 60 * 60
+    assert previous_session.idle_seconds == 4 * 60 * 60 + 1
     assert get_current_session(db, device).id == UUID(resumed["session"]["id"])
 
     retried = record_agent_event(
@@ -581,7 +593,9 @@ def test_idle_gap_of_exactly_four_hours_keeps_the_same_session(tracking_context)
     assert resumed["session"]["ended_at"] is None
 
 
-def test_long_idle_across_midnight_signs_out_at_idle_start(tracking_context):
+def test_long_idle_across_midnight_remains_recorded_before_new_session(
+    tracking_context,
+):
     db, device = tracking_context
     session_started_at = datetime(2026, 7, 20, 22, 0, tzinfo=UTC)
     idle_started_at = datetime(2026, 7, 20, 23, 0, tzinfo=UTC)
@@ -639,8 +653,9 @@ def test_long_idle_across_midnight_signs_out_at_idle_start(tracking_context):
 
     previous_session = db.get(WorkSession, session_id)
     assert previous_session.status == "ended"
-    assert previous_session.ended_at.replace(tzinfo=UTC) == idle_started_at
-    assert previous_session.idle_seconds == 60
+    assert previous_session.ended_at.replace(tzinfo=UTC) == returned_at
+    assert previous_session.active_seconds == 3600
+    assert previous_session.idle_seconds == 4 * 60 * 60 + 1
     assert resumed["restarted"] is True
     assert resumed["session"]["started_at"] == returned_at.isoformat()
 
@@ -693,7 +708,9 @@ def test_overnight_session_ends_at_the_last_active_heartbeat(tracking_context):
     assert session.ended_at.replace(tzinfo=UTC) == last_worked_at
 
 
-def test_idle_beyond_the_threshold_ends_the_session_where_work_stopped(tracking_context):
+def test_idle_beyond_the_threshold_remains_recorded_while_agent_is_connected(
+    tracking_context,
+):
     db, device = tracking_context
     started_at = datetime(2026, 7, 16, 9, 0, tzinfo=UTC)
     session = WorkSession(
@@ -723,9 +740,11 @@ def test_idle_beyond_the_threshold_ends_the_session_where_work_stopped(tracking_
     )
     db.refresh(session)
 
-    assert session.status == "ended"
-    assert session.ended_at.replace(tzinfo=UTC) == started_at
-    assert result["restarted"] is False
+    assert session.status == "idle"
+    assert session.ended_at is None
+    assert session.active_seconds == 600
+    assert session.idle_seconds == 35 * 60
+    assert "restarted" not in result
 
 
 def test_heartbeat_accumulates_multiple_idle_episodes(tracking_context):

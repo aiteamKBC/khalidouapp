@@ -798,6 +798,7 @@ def test_paid_break_is_not_idle_or_double_counted(attendance_context):
     assert row.normal_worked_seconds == 7 * 3600 + 10 * 60
     assert row.total_payable_seconds == 7 * 3600 + 55 * 60
     assert row.calculation_sources["raw_idle_seconds"] == 20 * 60
+    assert row.calculation_sources["observed_idle_seconds"] == 20 * 60
     assert row.calculation_sources["paid_idle_grace_seconds"] == 15 * 60
     serialized = serialize_daily_attendance(row, timeline=timeline)
     assert serialized["recorded_idle_seconds"] == 20 * 60

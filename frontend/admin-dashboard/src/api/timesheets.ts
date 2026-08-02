@@ -11,8 +11,12 @@ type BackendTimesheet = {
   last_signal_at?: string | null;
   session_count?: number;
   total_tracked_seconds: number;
+  observed_tracked_seconds?: number;
+  observed_span_seconds?: number;
+  untracked_seconds?: number;
   active_seconds: number;
   idle_seconds: number;
+  observed_idle_seconds?: number;
   adjustment_seconds?: number;
   deducted_seconds?: number;
   points?: number;
@@ -30,9 +34,14 @@ function mapTimesheet(row: BackendTimesheet, teamId: string): Timesheet {
     endTime: row.end_time ?? undefined,
     lastSignalAt: row.last_signal_at ?? undefined,
     sessionCount: row.session_count ?? 0,
-    totalMinutes: toMinutes(row.total_tracked_seconds),
+    totalMinutes: toMinutes(row.observed_tracked_seconds ?? row.total_tracked_seconds),
+    observedSpanMinutes: toMinutes(
+      row.observed_span_seconds ?? row.observed_tracked_seconds ?? row.total_tracked_seconds,
+    ),
+    untrackedMinutes: toMinutes(row.untracked_seconds ?? 0),
     activeMinutes: toMinutes(row.active_seconds),
-    idleMinutes: toMinutes(row.idle_seconds),
+    idleMinutes: toMinutes(row.observed_idle_seconds ?? row.idle_seconds),
+    accountableIdleMinutes: toMinutes(row.idle_seconds),
     adjustmentMinutes: toMinutes(row.adjustment_seconds ?? 0),
     deductedMinutes: toMinutes(row.deducted_seconds ?? 0),
     points: row.points ?? Math.round((row.active_seconds / 3600) * 100) / 100,
