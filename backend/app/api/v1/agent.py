@@ -1066,14 +1066,14 @@ def own_screenshot_file(
 
 
 @router.post("/screenshots/{screenshot_id}/upload")
-async def screenshot_upload(
+def screenshot_upload(
     screenshot_id: UUID,
     file: UploadFile,
     context: Annotated[DeviceAuthContext, Depends(get_current_device)],
     db: Annotated[Session, Depends(get_db)],
 ):
     max_bytes = settings.screenshot_max_file_size_mb * 1024 * 1024
-    content = await file.read(max_bytes + 1)
+    content = file.file.read(max_bytes + 1)
     return success_response(
         data=upload_screenshot_content(
             db,

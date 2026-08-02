@@ -1,4 +1,4 @@
-import asyncio
+import io
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -43,22 +43,23 @@ def test_agent_screenshot_upload_reads_at_most_configured_limit_plus_one(
     class BoundedUpload:
         content_type = "image/jpeg"
 
-        async def read(self, size: int = -1) -> bytes:
-            observed["read_size"] = size
-            return b"x" * size
+        class BoundedFile(io.BytesIO):
+            def read(self, size: int = -1) -> bytes:
+                observed["read_size"] = size
+                return b"x" * size
+
+        file = BoundedFile()
 
     def fake_upload(*_args, **kwargs):
         observed["content_size"] = len(kwargs["content"])
         return {"accepted": True}
 
     monkeypatch.setattr(agent, "upload_screenshot_content", fake_upload)
-    result = asyncio.run(
-        agent.screenshot_upload(
-            uuid4(),
-            BoundedUpload(),
-            SimpleNamespace(device=SimpleNamespace()),
-            SimpleNamespace(),
-        )
+    result = agent.screenshot_upload(
+        uuid4(),
+        BoundedUpload(),
+        SimpleNamespace(device=SimpleNamespace()),
+        SimpleNamespace(),
     )
 
     expected_size = 1024 * 1024 + 1

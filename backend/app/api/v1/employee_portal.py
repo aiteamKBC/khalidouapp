@@ -737,14 +737,14 @@ def create_own_task_comment(
 
 
 @router.post("/tasks/{task_id}/attachments")
-async def upload_own_task_attachment(
+def upload_own_task_attachment(
     task_id: UUID,
     current_employee: Annotated[Employee, Depends(get_current_employee)],
     db: Annotated[Session, Depends(get_db)],
     file: UploadFile = File(...),
 ):
     task, project, _team = participant_task(db, current_employee, task_id)
-    content = await file.read(20 * 1024 * 1024 + 1)
+    content = file.file.read(20 * 1024 * 1024 + 1)
     if not content:
         raise ApiError("EMPTY_ATTACHMENT", "The selected file is empty.", 400)
     if len(content) > 20 * 1024 * 1024:

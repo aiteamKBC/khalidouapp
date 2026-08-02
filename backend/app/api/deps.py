@@ -55,6 +55,10 @@ def get_current_admin(
     )
     if admin is None:
         raise ApiError("UNAUTHORIZED", "Admin user is not active.", 401)
+    # Authentication is a complete read boundary. Do not pin a database or
+    # transaction-pooler connection while the endpoint performs unrelated
+    # work, streams a response, or waits for file I/O.
+    db.commit()
     return admin
 
 
@@ -230,6 +234,7 @@ def get_current_device(
     if employee is None:
         raise ApiError("DEVICE_REENROLLMENT_REQUIRED", DEVICE_REENROLLMENT_REQUIRED, 401)
 
+    db.commit()
     return DeviceAuthContext(device=device, token_record=token_record)
 
 
@@ -260,4 +265,5 @@ def get_current_employee(
     )
     if employee is None:
         raise ApiError("UNAUTHORIZED", "Employee account is not active.", 401)
+    db.commit()
     return employee

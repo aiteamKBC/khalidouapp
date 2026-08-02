@@ -1133,14 +1133,14 @@ def delete_task_dependency(
 
 
 @router.post("/tasks/{task_id}/attachments")
-async def upload_task_attachment(
+def upload_task_attachment(
     task_id: UUID,
     current_admin: Annotated[AdminUser, Depends(get_current_admin)],
     db: Annotated[Session, Depends(get_db)],
     file: UploadFile = File(...),
 ):
     task, _project = get_task_or_404(db, current_admin, task_id)
-    content = await file.read(20 * 1024 * 1024 + 1)
+    content = file.file.read(20 * 1024 * 1024 + 1)
     if not content:
         raise ApiError("EMPTY_ATTACHMENT", "The selected file is empty.", 400)
     if len(content) > 20 * 1024 * 1024:

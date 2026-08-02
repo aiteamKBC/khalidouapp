@@ -1,11 +1,25 @@
 from collections.abc import Generator
 from functools import lru_cache
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.config import settings
+
+MAX_POOL_CHECKOUT_TIMEOUT_SECONDS = 5
+POSTGRES_IDLE_TRANSACTION_TIMEOUT_MILLISECONDS = 60_000
+
+
+def _bound_pool_timeout(configured_seconds: int) -> int:
+    return max(1, min(MAX_POOL_CHECKOUT_TIMEOUT_SECONDS, configured_seconds))
+
+
+def _set_postgres_transaction_timeout(connection) -> None:
+    connection.exec_driver_sql(
+        "set local idle_in_transaction_session_timeout = "
+        f"'{POSTGRES_IDLE_TRANSACTION_TIMEOUT_MILLISECONDS}ms'"
+    )
 
 
 def normalize_database_url(database_url: str) -> str:
@@ -26,28 +40,33 @@ def get_engine() -> Engine:
         pool_options = {
             "pool_size": max(1, settings.database_pool_size),
             "max_overflow": max(0, settings.database_max_overflow),
-            "pool_timeout": max(1, settings.database_pool_timeout_seconds),
+            "pool_timeout": _bound_pool_timeout(settings.database_pool_timeout_seconds),
             "pool_recycle": 1800,
         }
     if database_url.startswith("postgresql"):
         connect_args = {
-            "connect_timeout": max(
-                1,
-                min(5, settings.database_pool_timeout_seconds),
-            )
+            "connect_timeout": _bound_pool_timeout(settings.database_pool_timeout_seconds)
         }
-    return create_engine(
+    engine = create_engine(
         database_url,
         pool_pre_ping=True,
         future=True,
         connect_args=connect_args,
         **pool_options,
     )
+    if database_url.startswith("postgresql"):
+        event.listen(engine, "begin", _set_postgres_transaction_timeout)
+    return engine
 
 
 @lru_cache
 def get_sessionmaker() -> sessionmaker[Session]:
-    return sessionmaker(autocommit=False, autoflush=False, bind=get_engine())
+    return sessionmaker(
+        autocommit=False,
+        autoflush=False,
+        expire_on_commit=False,
+        bind=get_engine(),
+    )
 
 
 def get_db() -> Generator[Session, None, None]:

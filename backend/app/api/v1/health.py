@@ -20,7 +20,7 @@ CRITICAL_DATABASE_TABLES = (
 
 
 @router.get("/health")
-def health_check():
+async def health_check():
     return success_response(
         data={
             "status": "ok",
