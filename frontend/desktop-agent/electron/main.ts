@@ -91,6 +91,7 @@ import {
   shouldWaitForInputBeforeRestart,
 } from "./services/idlePolicy.js";
 import { createCoalescedRefresh } from "./services/coalescedRefresh.js";
+import { getUserFacingError } from "./services/userFacingError.js";
 import {
   mergeRecoveredCounters,
   offsetRecoveredEventPayload,
@@ -511,16 +512,6 @@ function selectRuntimeTask(taskId?: string | null) {
   runtimeStatus.selectedTask = taskId
     ? (runtimeStatus.tasks.find((task) => task.id === taskId) ?? null)
     : null;
-}
-
-function getUserFacingError(error: unknown, fallback: string) {
-  if (axios.isAxiosError(error)) {
-    const data = error.response?.data as
-      { error?: { message?: string }; detail?: string } | undefined;
-    return data?.error?.message ?? data?.detail ?? error.message ?? fallback;
-  }
-
-  return error instanceof Error ? error.message : fallback;
 }
 
 type ApiErrorPayload = {
