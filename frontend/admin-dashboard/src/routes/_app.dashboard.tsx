@@ -154,8 +154,10 @@ function DashboardPage() {
   const activitySectionRef = useRef<HTMLDivElement>(null);
   const [loadMedia, setLoadMedia] = useState(false);
   const [activityRotationSeed, setActivityRotationSeed] = useState(randomSeed);
-  const { scopedTeamIds } = useAuth();
+  const { can, scopedTeamIds } = useAuth();
   const scope = scopedTeamIds();
+  const canViewTimeRequests = can("time_requests.view");
+  const canViewAttendance = can("timesheets.view");
   const scopeKey = scope?.join(",") ?? "all";
   const dashboardDay = isoDate(new Date());
   const now = new Date();
@@ -264,6 +266,7 @@ function DashboardPage() {
     queryKey: ["time-adjustments", scope, "pending"],
     queryFn: ({ signal }) =>
       listTimeAdjustmentRequests({ scopedTeamIds: scope, status: "pending" }, signal),
+    enabled: canViewTimeRequests,
     staleTime: ACTION_REFRESH_MS,
     refetchInterval: ACTION_REFRESH_MS,
     refetchIntervalInBackground: false,
@@ -280,6 +283,7 @@ function DashboardPage() {
         },
         signal,
       ),
+    enabled: canViewAttendance,
     staleTime: ACTION_REFRESH_MS,
     refetchInterval: ACTION_REFRESH_MS,
     refetchIntervalInBackground: false,
@@ -379,9 +383,9 @@ function DashboardPage() {
   const dateRange = `${fmtDay(thisMonday)} - ${fmtDay(sunday)}`;
   const loading = trend.isPending && !trend.data;
   const attentionLoading =
-    (!requests.data && requests.isPending) ||
+    (canViewTimeRequests && !requests.data && requests.isPending) ||
     (!emps.data && emps.isPending) ||
-    (!todayAttendance.data && todayAttendance.isPending);
+    (canViewAttendance && !todayAttendance.data && todayAttendance.isPending);
   const activityMediaLoading =
     visibleActivityEmployeeIds.length > 0 && (!loadMedia || (shots.isPending && !shots.data));
   const offlineDevices = (devices.data ?? []).filter((device) => device.status === "offline");
@@ -402,14 +406,18 @@ function DashboardPage() {
     (team) => team.status === "active" && team.ownerIds.length === 0,
   );
   const actionItems = [
-    {
-      to: "/time-adjustments" as const,
-      label: "Review time requests",
-      description: "Pending approvals from employees",
-      count: requests.data?.length ?? 0,
-      icon: TimerReset,
-      tone: "text-info bg-info/10",
-    },
+    ...(canViewTimeRequests
+      ? [
+          {
+            to: "/time-adjustments" as const,
+            label: "Review time requests",
+            description: "Pending approvals from employees",
+            count: requests.data?.length ?? 0,
+            icon: TimerReset,
+            tone: "text-info bg-info/10",
+          },
+        ]
+      : []),
     {
       to: "/live-activity" as const,
       label: "Check idle employees",
@@ -418,23 +426,32 @@ function DashboardPage() {
       icon: Clock,
       tone: "text-warning-foreground bg-warning/20",
     },
-    {
-      to: "/attendance" as const,
-      label: "Follow up late starts",
-      description: "Scheduled employees still missing after their grace time",
-      count: lateStarts.length,
-      icon: AlertTriangle,
-      tone: "text-warning-foreground bg-warning/20",
-    },
+    ...(canViewAttendance
+      ? [
+          {
+            to: "/attendance" as const,
+            label: "Follow up late starts",
+            description: "Scheduled employees still missing after their grace time",
+            count: lateStarts.length,
+            icon: AlertTriangle,
+            tone: "text-warning-foreground bg-warning/20",
+          },
+        ]
+      : []),
   ].filter((item) => item.count > 0);
   const attentionCount = actionItems.reduce((total, item) => total + item.count, 0);
-  const hasDataError =
-    emps.isError ||
-    trend.isError ||
-    teams.isError ||
-    devices.isError ||
-    requests.isError ||
-    todayAttendance.isError;
+  const failedDataSources = [
+    { label: "live employee status", failed: emps.isError },
+    { label: "weekly work totals", failed: trend.isError },
+    { label: "teams", failed: teams.isError },
+    { label: "devices", failed: devices.isError },
+    { label: "time requests", failed: canViewTimeRequests && requests.isError },
+    {
+      label: "today's attendance",
+      failed: canViewAttendance && todayAttendance.isError,
+    },
+  ].filter((source) => source.failed);
+  const hasDataError = failedDataSources.length > 0;
 
   return (
     <div className="studio-page">
@@ -456,36 +473,50 @@ function DashboardPage() {
       <div className="mb-4 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
         <MetricTile
           onClick={() => setAttentionOpen(true)}
-          value={attentionLoading ? "—" : attentionCount}
+          value={attentionLoading || hasDataError ? "—" : attentionCount}
           label={
-            attentionLoading ? "Checking health" : attentionCount ? "Need attention" : "All healthy"
+            attentionLoading
+              ? "Checking health"
+              : hasDataError
+                ? "Data unavailable"
+                : attentionCount
+                  ? "Need attention"
+                  : "All healthy"
           }
           hint={
             attentionLoading
               ? "Loading live checks"
-              : attentionCount
-                ? "Open issue list"
-                : "Live summary"
+              : hasDataError
+                ? "Retry failed checks"
+                : attentionCount
+                  ? "Open issue list"
+                  : "Live summary"
           }
-          icon={attentionCount ? AlertTriangle : CheckCircle2}
-          tone={attentionCount ? "amber" : "green"}
+          icon={hasDataError || attentionCount ? AlertTriangle : CheckCircle2}
+          tone={hasDataError ? "danger" : attentionCount ? "amber" : "green"}
         />
-        <MetricTile
-          to="/time-adjustments"
-          value={!requests.data && requests.isPending ? "—" : (requests.data?.length ?? 0)}
-          label="Time requests"
-          hint={!requests.data && requests.isPending ? "Loading…" : "Pending review"}
-          icon={TimerReset}
-          tone="blue"
-        />
-        <MetricTile
-          to="/attendance"
-          value={!todayAttendance.data && todayAttendance.isPending ? "—" : lateStarts.length}
-          label="Late starts"
-          hint={!todayAttendance.data && todayAttendance.isPending ? "Loading…" : "Past grace time"}
-          icon={Users}
-          tone="muted"
-        />
+        {canViewTimeRequests && (
+          <MetricTile
+            to="/time-adjustments"
+            value={!requests.data && requests.isPending ? "—" : (requests.data?.length ?? 0)}
+            label="Time requests"
+            hint={!requests.data && requests.isPending ? "Loading…" : "Pending review"}
+            icon={TimerReset}
+            tone="blue"
+          />
+        )}
+        {canViewAttendance && (
+          <MetricTile
+            to="/attendance"
+            value={!todayAttendance.data && todayAttendance.isPending ? "—" : lateStarts.length}
+            label="Late starts"
+            hint={
+              !todayAttendance.data && todayAttendance.isPending ? "Loading…" : "Past grace time"
+            }
+            icon={Users}
+            tone="muted"
+          />
+        )}
         <MetricTile
           to="/devices"
           value={!devices.data && devices.isPending ? "—" : offlineDevices.length}
@@ -511,15 +542,24 @@ function DashboardPage() {
       <Dialog open={attentionOpen} onOpenChange={setAttentionOpen}>
         <DialogContent className="max-w-xl">
           <DialogHeader>
-            <DialogTitle>Need attention</DialogTitle>
+            <DialogTitle>
+              {hasDataError ? "Dashboard data unavailable" : "Need attention"}
+            </DialogTitle>
             <DialogDescription>
-              {attentionCount
-                ? `${attentionCount} open items need admin follow-up.`
-                : "Everything looks healthy right now."}
+              {hasDataError
+                ? `Couldn't load: ${failedDataSources.map((source) => source.label).join(", ")}.`
+                : attentionCount
+                  ? `${attentionCount} open items need admin follow-up.`
+                  : "Everything looks healthy right now."}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-2">
-            {actionItems.length === 0 ? (
+            {hasDataError && (
+              <div className="rounded-2xl border border-destructive/30 bg-destructive/5 p-4 text-sm text-muted-foreground">
+                Retry the failed checks before relying on the dashboard summary.
+              </div>
+            )}
+            {actionItems.length === 0 && !hasDataError ? (
               <div className="rounded-2xl border border-dashed bg-muted/30 p-5">
                 <div className="flex items-center gap-3">
                   <span className="grid h-11 w-11 place-items-center rounded-full bg-success/10 text-success">
@@ -573,7 +613,7 @@ function DashboardPage() {
             <div>
               <p className="text-sm font-medium">Some dashboard data couldn't be loaded</p>
               <p className="text-xs text-muted-foreground">
-                Visible figures may be incomplete until the connection recovers.
+                Unavailable: {failedDataSources.map((source) => source.label).join(", ")}.
               </p>
             </div>
           </div>
@@ -585,8 +625,8 @@ function DashboardPage() {
               trend.refetch();
               teams.refetch();
               devices.refetch();
-              requests.refetch();
-              todayAttendance.refetch();
+              if (canViewTimeRequests) requests.refetch();
+              if (canViewAttendance) todayAttendance.refetch();
             }}
           >
             Retry all
