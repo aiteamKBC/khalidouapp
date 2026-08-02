@@ -142,6 +142,12 @@ DASHBOARD="$APP_ROOT/frontend/admin-dashboard"
 NEXT_OUTPUT="$DASHBOARD/.output.next-$DEPLOY_ID"
 ROLLBACK_OUTPUT="$DASHBOARD/.output.rollback-$DEPLOY_ID"
 
+restore_health_timer() {
+  systemctl start khaliduo-healthcheck.timer >/dev/null 2>&1 || true
+}
+trap restore_health_timer EXIT
+systemctl stop khaliduo-healthcheck.timer khaliduo-healthcheck.service 2>/dev/null || true
+
 cd "$APP_ROOT"
 git fetch origin main
 git merge --ff-only origin/main
@@ -209,7 +215,7 @@ install -m 0644 \
   "$APP_ROOT/backend/deployment/systemd/reliability.conf" \
   /etc/systemd/system/khaliduo-dashboard.service.d/reliability.conf
 systemctl daemon-reload
-systemctl enable --now khaliduo-healthcheck.timer
+systemctl enable khaliduo-healthcheck.timer
 
 healthy=0
 for attempt in $(seq 1 30); do
@@ -226,6 +232,8 @@ if [ "$healthy" -ne 1 ]; then
   systemctl status khaliduo-api khaliduo-dashboard --no-pager
   exit 1
 fi
+systemctl start khaliduo-healthcheck.timer
+trap - EXIT
 
 AUDIT_PATH="$BACKUP_ROOT/audits/production-$DEPLOY_ID.json"
 cd "$APP_ROOT/backend"
