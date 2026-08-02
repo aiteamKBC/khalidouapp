@@ -162,6 +162,7 @@ def test_multiple_sessions_keep_raw_lateness_and_unapproved_overtime_separate(
     assert row.recorded_overtime_seconds == 3600
     assert row.approved_overtime_seconds == 0
     assert row.unapproved_overtime_seconds == 3600
+    assert {issue["code"] for issue in row.issues} >= {"overtime_pending"}
     assert row.total_payable_seconds == 7 * 3600 + 40 * 60
     assert row.actual_sign_out_at.replace(tzinfo=UTC) == datetime(
         2026, 7, 21, 18, 0, tzinfo=UTC
@@ -177,7 +178,73 @@ def test_multiple_sessions_keep_raw_lateness_and_unapproved_overtime_separate(
         now=datetime(2026, 7, 22, tzinfo=UTC),
     )
     assert approved.approved_overtime_seconds == 3600
+    assert not any(issue["code"].startswith("overtime_") for issue in approved.issues)
     assert approved.total_payable_seconds == 8 * 3600 + 40 * 60
+
+
+def test_rejected_overtime_is_not_reported_as_pending(attendance_context):
+    db, employee, device, _ = attendance_context
+    work_date = date(2026, 7, 21)
+    session = _session(
+        db,
+        employee,
+        device,
+        datetime(2026, 7, 21, 9, 0, tzinfo=UTC),
+        datetime(2026, 7, 21, 18, 0, tzinfo=UTC),
+    )
+    db.add(
+        OvertimeRecord(
+            company_id=employee.company_id,
+            employee_id=employee.id,
+            work_session_id=session.id,
+            work_date=work_date,
+            overtime_enabled_snapshot=True,
+            recorded_extra_seconds=3600,
+            approved_seconds=0,
+            status="rejected",
+        )
+    )
+    db.commit()
+
+    row, _ = calculate_daily_attendance(
+        db,
+        employee=employee,
+        work_date=work_date,
+        now=datetime(2026, 7, 22, tzinfo=UTC),
+    )
+
+    assert row.unapproved_overtime_seconds == 3600
+    assert {issue["code"] for issue in row.issues} >= {"overtime_rejected"}
+    assert not any(issue["code"] == "overtime_pending" for issue in row.issues)
+
+
+def test_unscheduled_work_is_pending_review_and_not_reported_as_rejected(
+    attendance_context,
+):
+    db, employee, device, _ = attendance_context
+    work_date = date(2026, 7, 25)  # Saturday is an off day in the fixture.
+    _session(
+        db,
+        employee,
+        device,
+        datetime(2026, 7, 25, 11, 45, tzinfo=UTC),
+        datetime(2026, 7, 25, 16, 35, tzinfo=UTC),
+    )
+    db.commit()
+
+    row, _ = calculate_daily_attendance(
+        db,
+        employee=employee,
+        work_date=work_date,
+        now=datetime(2026, 7, 26, tzinfo=UTC),
+    )
+
+    assert row.status == "worked_off_day"
+    assert row.recorded_overtime_seconds == 4 * 3600 + 50 * 60
+    assert row.approved_overtime_seconds == 0
+    assert row.unapproved_overtime_seconds == 4 * 3600 + 50 * 60
+    assert {issue["code"] for issue in row.issues} >= {"overtime_pending"}
+    assert not any(issue["code"] == "overtime_rejected" for issue in row.issues)
 
 
 def test_attendance_starts_at_work_resumed_after_a_false_start(attendance_context):
@@ -515,8 +582,36 @@ def test_active_reconnected_session_clears_an_earlier_sign_out(
 
     assert timeline["is_running"] is True
     assert row.actual_sign_out_at is None
+    assert row.early_leave_seconds == 0
+    assert row.status == "present"
     assert serialize_daily_attendance(row, timeline=timeline)["is_running"] is True
     assert serialize_daily_attendance(row)["is_running"] is True
+
+
+def test_closed_session_does_not_show_early_leave_before_shift_ends(
+    attendance_context,
+):
+    db, employee, device, _ = attendance_context
+    work_date = date(2026, 7, 21)
+    _session(
+        db,
+        employee,
+        device,
+        datetime(2026, 7, 21, 9, 0, tzinfo=UTC),
+        datetime(2026, 7, 21, 14, 0, tzinfo=UTC),
+    )
+    db.commit()
+
+    row, timeline = calculate_daily_attendance(
+        db,
+        employee=employee,
+        work_date=work_date,
+        now=datetime(2026, 7, 21, 14, 30, tzinfo=UTC),
+    )
+
+    assert timeline["is_running"] is False
+    assert row.early_leave_seconds == 0
+    assert row.status == "present"
 
 
 def test_session_continued_from_previous_day_keeps_daily_boundary_and_real_start(
@@ -656,6 +751,8 @@ def test_shift_end_stops_normal_pay_even_when_late_employee_has_not_completed_ta
     assert recorded.paid_break_seconds == 30 * 60
     assert recorded.recorded_overtime_seconds == 3600
     assert recorded.approved_overtime_seconds == 0
+    assert {issue["code"] for issue in recorded.issues} >= {"overtime_recorded_only"}
+    assert not any(issue["code"] == "overtime_pending" for issue in recorded.issues)
     assert recorded.total_payable_seconds == 7 * 3600
 
     overtime.status = "approved"

@@ -45,6 +45,11 @@ import {
 import { StatusBadge } from "@/components/ui/status-badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAuth } from "@/lib/auth";
+import {
+  buildAttendanceNotices,
+  overtimeReviewExplanation,
+  type AttendanceNotice,
+} from "@/lib/attendance-presentation";
 import { formatAttendanceStart, formatClock } from "@/lib/format";
 import { permissions } from "@/lib/permissions";
 import {
@@ -108,6 +113,7 @@ function EmployeeMonitoringPage() {
   const scope = scopedTeamIds();
   const queryScopeKey = useMemo(() => monitoringScopeKey(user?.id, scope), [scope, user?.id]);
   const canViewScreenshots = can(permissions.screenshotsView);
+  const canViewPayroll = can(permissions.payrollView);
   const employees = useQuery({
     queryKey: monitoringRosterQueryKey("employees", queryScopeKey),
     queryFn: ({ signal }) => listMonitoringEmployees(scope, signal),
@@ -493,6 +499,7 @@ function EmployeeMonitoringPage() {
               day={day}
               queryScopeKey={queryScopeKey}
               enabled={tab === "attendance"}
+              canViewPayroll={canViewPayroll}
             />
           </TabsContent>
           {canViewScreenshots && (
@@ -778,11 +785,13 @@ function DailyAttendanceTab({
   day,
   queryScopeKey,
   enabled,
+  canViewPayroll,
 }: {
   employeeId: string;
   day: string;
   queryScopeKey: string;
   enabled: boolean;
+  canViewPayroll: boolean;
 }) {
   const policy = monitoringDetailPolicy(day);
   const attendance = useQuery({
@@ -891,7 +900,17 @@ function DailyAttendanceTab({
           value={row.isRunning ? "Open until now" : formatClock(row.actualSignOutAt, row.timezone)}
         />
         <AttendanceMetric label="Normal worked" value={duration(row.normalWorkedSeconds)} />
-        <AttendanceMetric label="Idle" value={duration(row.idleSeconds)} tone="warning" />
+        <AttendanceMetric
+          label="Recorded idle"
+          value={duration(row.recordedIdleSeconds)}
+          tone="warning"
+        />
+        <AttendanceMetric label="Paid idle grace" value={duration(row.paidIdleGraceSeconds)} />
+        <AttendanceMetric
+          label="Deductible idle"
+          value={duration(row.idleSeconds)}
+          tone="warning"
+        />
         <AttendanceMetric
           label="Payable"
           value={duration(row.totalPayableSeconds)}
@@ -903,7 +922,9 @@ function DailyAttendanceTab({
 
       {(row.issues.length > 0 ||
         row.pendingManualSeconds > 0 ||
-        row.unapprovedOvertimeSeconds > 0) && <AttendanceNotices attendance={row} />}
+        row.unapprovedOvertimeSeconds > 0) && (
+        <AttendanceNotices attendance={row} canViewPayroll={canViewPayroll} />
+      )}
 
       <Card>
         <CardHeader>
@@ -920,28 +941,67 @@ function DailyAttendanceTab({
   );
 }
 
-function AttendanceNotices({ attendance }: { attendance: DailyAttendance }) {
+const attendanceNoticeClass: Record<AttendanceNotice["tone"], string> = {
+  warning: "bg-amber-200/60 text-amber-900 dark:bg-amber-900/40 dark:text-amber-100",
+  info: "bg-blue-100 text-blue-800 dark:bg-blue-950/50 dark:text-blue-200",
+  extra: "bg-orange-100 text-orange-800 dark:bg-orange-950/50 dark:text-orange-200",
+};
+
+function AttendanceNotices({
+  attendance,
+  canViewPayroll,
+}: {
+  attendance: DailyAttendance;
+  canViewPayroll: boolean;
+}) {
+  const notices = buildAttendanceNotices({
+    issues: attendance.issues,
+    pendingManualSeconds: attendance.pendingManualSeconds,
+    pendingOvertimeSeconds: attendance.unapprovedOvertimeSeconds,
+  });
+  const overtimeExplanation = overtimeReviewExplanation({
+    issues: attendance.issues,
+    unapprovedOvertimeSeconds: attendance.unapprovedOvertimeSeconds,
+    scheduledStartAt: attendance.scheduledStartAt,
+    scheduledEndAt: attendance.scheduledEndAt,
+  });
+
   return (
     <Card className="border-amber-300/60 bg-amber-50/55 dark:bg-amber-950/15">
-      <CardContent className="flex flex-wrap gap-2 p-4">
-        {attendance.issues.map((issue) => (
-          <span
-            key={`${issue.code}-${issue.seconds ?? 0}`}
-            className="rounded-full bg-amber-200/60 px-2.5 py-1 text-xs font-bold text-amber-900 dark:bg-amber-900/40 dark:text-amber-100"
-          >
-            {issue.code.replaceAll("_", " ")}
-            {issue.seconds ? ` · ${duration(issue.seconds)}` : ""}
-          </span>
-        ))}
-        {attendance.pendingManualSeconds > 0 && (
-          <span className="rounded-full bg-blue-100 px-2.5 py-1 text-xs font-bold text-blue-800 dark:bg-blue-950/50 dark:text-blue-200">
-            Pending manual time · {duration(attendance.pendingManualSeconds)}
-          </span>
-        )}
-        {attendance.unapprovedOvertimeSeconds > 0 && (
-          <span className="rounded-full bg-orange-100 px-2.5 py-1 text-xs font-bold text-orange-800 dark:bg-orange-950/50 dark:text-orange-200">
-            Unapproved overtime · {duration(attendance.unapprovedOvertimeSeconds)}
-          </span>
+      <CardContent className="space-y-3 p-4">
+        <div className="flex flex-wrap gap-2">
+          {notices.map((notice) => (
+            <span
+              key={notice.key}
+              className={cn(
+                "rounded-full px-2.5 py-1 text-xs font-bold",
+                attendanceNoticeClass[notice.tone],
+              )}
+            >
+              {notice.label}
+              {notice.seconds > 0 ? ` · ${duration(notice.seconds)}` : ""}
+            </span>
+          ))}
+        </div>
+        {overtimeExplanation && (
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-orange-300/60 bg-background/70 px-3 py-2.5">
+            <p className="max-w-3xl text-xs font-medium text-muted-foreground">
+              {overtimeExplanation}
+            </p>
+            {canViewPayroll && (
+              <Button size="sm" variant="outline" asChild>
+                <Link
+                  to="/payroll"
+                  search={{
+                    employeeId: attendance.employeeId,
+                    month: attendance.date.slice(0, 7),
+                  }}
+                >
+                  Review in payroll
+                </Link>
+              </Button>
+            )}
+          </div>
         )}
       </CardContent>
     </Card>

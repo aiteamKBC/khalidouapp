@@ -260,7 +260,7 @@ function AttendancePage() {
                   <SelectItem value="late">Late employees</SelectItem>
                   <SelectItem value="missing_check_in">Missing check-in</SelectItem>
                   <SelectItem value="overtime">Recorded overtime</SelectItem>
-                  <SelectItem value="idle">Unexplained idle</SelectItem>
+                  <SelectItem value="idle">Deductible idle</SelectItem>
                   <SelectItem value="leave">On leave</SelectItem>
                 </SelectContent>
               </Select>

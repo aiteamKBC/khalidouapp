@@ -3,9 +3,16 @@ import test from "node:test";
 
 import {
   TIMELINE_LABELS,
+  timelineIntervalsForDisplay,
   timelineIntervalPresentation,
   timelineDisplayType,
 } from "../src/timelinePresentation.ts";
+
+test("the employee timeline keeps intervals from the start of the day", () => {
+  const intervals = Array.from({ length: 9 }, (_, index) => `interval-${index + 1}`);
+
+  assert.deepEqual(timelineIntervalsForDisplay(intervals), intervals);
+});
 
 test("scheduled break intervals have a visible timeline label", () => {
   assert.equal(timelineDisplayType("break", false), "break");

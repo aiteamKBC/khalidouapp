@@ -178,6 +178,19 @@ Validate all inputs without changing Production:
 .\frontend\scripts\deploy-production.ps1 -ValidateOnly
 ```
 
+If the installer, blockmap, and `latest.yml` finished uploading but the final
+SSH publication step disconnected, resume only that atomic publication:
+
+```powershell
+.\frontend\scripts\deploy-production.ps1 -ResumeDesktopPublish
+```
+
+Recovery mode revalidates the local signed installer, uses the existing
+versioned staging directory on the server, verifies its size and SHA-512, and
+publishes it without redeploying the API/dashboard or uploading the installer
+again. Its remote script is passed without redirecting SSH stdin, so password
+authentication receives a clean console prompt.
+
 Run the production audit again without changing data:
 
 ```bash

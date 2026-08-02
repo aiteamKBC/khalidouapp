@@ -19,6 +19,7 @@ import type {
 } from "./types/electron";
 import {
   TIMELINE_LABELS,
+  timelineIntervalsForDisplay,
   timelineIntervalPresentation,
   timelineDisplayType,
 } from "./timelinePresentation";
@@ -2346,7 +2347,7 @@ function Timeline({
             <small>Approved</small>
           </div>
         ) : null}
-        {timeline.intervals.slice(-6).map((interval, index) => {
+        {timelineIntervalsForDisplay(timeline.intervals).map((interval, index) => {
           const presentation = timelineIntervalPresentation(
             interval,
             locallyEndedIdleAt,

@@ -158,6 +158,7 @@ def calculate_daily_attendance(
     existing_attendance: DailyAttendance | None | object = _ATTENDANCE_NOT_LOADED,
     profile: EmployeeWorkProfile | None = None,
 ) -> tuple[DailyAttendance, dict]:
+    calculation_now = _utc(now or datetime.now(UTC))
     effective_timezone = attendance_timezone(
         db,
         employee=employee,
@@ -404,7 +405,11 @@ def calculate_daily_attendance(
                     manual_pause_idle += idle_in_shift
     early_leave = (
         max(0, int((effective_expected_end - last_at).total_seconds()))
-        if last_at and effective_expected_end and not leave
+        if last_at
+        and effective_expected_end
+        and calculation_now >= effective_expected_end
+        and not timeline["is_running"]
+        and not leave
         else 0
     )
     raw_eligible_idle = eligible_idle
@@ -428,6 +433,38 @@ def calculate_daily_attendance(
         sum(int(row.approved_seconds) for row in overtime_rows if row.status == "approved"),
     )
     unapproved_overtime = max(0, recorded_overtime - approved_overtime)
+    pending_overtime = 0
+    rejected_overtime = 0
+    recorded_only_overtime = 0
+    overtime_rows_total = 0
+    for overtime_row in overtime_rows:
+        row_recorded = max(0, int(overtime_row.recorded_extra_seconds))
+        row_approved = (
+            min(row_recorded, max(0, int(overtime_row.approved_seconds)))
+            if overtime_row.status == "approved"
+            else 0
+        )
+        row_unapproved = max(0, row_recorded - row_approved)
+        overtime_rows_total += row_recorded
+        if overtime_row.status == "rejected":
+            rejected_overtime += row_unapproved
+        elif (
+            overtime_row.status == "recorded_not_counted"
+            or not overtime_row.overtime_enabled_snapshot
+        ):
+            recorded_only_overtime += row_unapproved
+        else:
+            pending_overtime += row_unapproved
+
+    # A freshly synchronized timeline can contain extra seconds before its
+    # per-session overtime record is materialized. Classify that bounded gap
+    # according to the employee's policy instead of losing it or calling a
+    # rejected decision "pending".
+    unclassified_overtime = max(0, recorded_overtime - overtime_rows_total)
+    if profile.overtime_enabled:
+        pending_overtime += unclassified_overtime
+    else:
+        recorded_only_overtime += unclassified_overtime
     expected_seconds = int((end_at - start_at).total_seconds()) if start_at and end_at else 0
     if leave and leave.leave_type != "unpaid":
         normal_payable = expected_seconds
@@ -454,8 +491,14 @@ def calculate_daily_attendance(
         issues.append({"code": "late", "seconds": deductible_late})
     if deductible_idle:
         issues.append({"code": "unexplained_idle", "seconds": deductible_idle})
-    if unapproved_overtime:
-        issues.append({"code": "overtime_pending", "seconds": unapproved_overtime})
+    if pending_overtime:
+        issues.append({"code": "overtime_pending", "seconds": pending_overtime})
+    if rejected_overtime:
+        issues.append({"code": "overtime_rejected", "seconds": rejected_overtime})
+    if recorded_only_overtime:
+        issues.append(
+            {"code": "overtime_recorded_only", "seconds": recorded_only_overtime}
+        )
     if correction:
         issues.append(
             {

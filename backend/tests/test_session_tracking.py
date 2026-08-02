@@ -479,6 +479,56 @@ def test_heartbeat_after_local_day_changes_restarts_session(tracking_context):
     assert timeline["continued_session_started_at"] is None
 
 
+def test_stale_open_session_does_not_continue_into_a_day_without_signals(
+    tracking_context,
+):
+    db, device = tracking_context
+    session_started_at = datetime(2026, 7, 16, 9, 30, tzinfo=UTC)
+    last_heartbeat_at = datetime(2026, 7, 16, 20, 30, tzinfo=UTC)
+    today = datetime(2026, 7, 17, 2, 0, tzinfo=UTC)
+    session = WorkSession(
+        company_id=device.company_id,
+        employee_id=device.employee_id,
+        device_id=device.id,
+        started_at=session_started_at,
+        status="active",
+        active_seconds=6 * 60 * 60,
+        idle_seconds=0,
+    )
+    db.add(session)
+    db.flush()
+    db.add(
+        ActivityEvent(
+            company_id=device.company_id,
+            employee_id=device.employee_id,
+            device_id=device.id,
+            session_id=session.id,
+            event_type="heartbeat",
+            event_timestamp=last_heartbeat_at,
+            payload={"status": "active"},
+            idempotency_key="stale-before-midnight-heartbeat",
+        )
+    )
+    db.commit()
+
+    timeline = build_workday_timeline(
+        db,
+        company_id=device.company_id,
+        employee_id=device.employee_id,
+        timezone_name="UTC",
+        target_date=today.date(),
+        now=today,
+        device_id=device.id,
+    )
+
+    assert timeline["intervals"] == []
+    assert timeline["worked_seconds"] == 0
+    assert timeline["idle_seconds"] == 0
+    assert timeline["is_running"] is False
+    assert timeline["continued_from_previous_day"] is False
+    assert timeline["continued_session_started_at"] is None
+
+
 def test_idle_gap_over_four_hours_starts_a_new_sign_in(tracking_context):
     db, device = tracking_context
     session_started_at = datetime(2026, 7, 21, 9, 0, tzinfo=UTC)

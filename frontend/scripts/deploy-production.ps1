@@ -5,7 +5,8 @@ param(
     [string]$ApiBaseUrl = "https://api.khaliduoapp.kentbusinesscollege.net/api/v1",
     [string]$DashboardUrl = "https://khaliduoapp.kentbusinesscollege.net/dashboard",
     [switch]$SkipDesktop,
-    [switch]$ValidateOnly
+    [switch]$ValidateOnly,
+    [switch]$ResumeDesktopPublish
 )
 
 $ErrorActionPreference = "Stop"
@@ -49,22 +50,32 @@ function Get-YamlValue {
     return $match.Matches[0].Groups[1].Value.Trim("'`"")
 }
 
-$trackedChanges = & git -C $repoRoot status --porcelain --untracked-files=no
-if ($LASTEXITCODE -ne 0) {
-    throw "Unable to read the Git worktree."
-}
-if ($trackedChanges) {
-    throw "Tracked worktree changes exist. Commit and test them before production deployment."
+if ($ResumeDesktopPublish -and $SkipDesktop) {
+    throw "ResumeDesktopPublish cannot be combined with SkipDesktop."
 }
 
 $commit = (& git -C $repoRoot rev-parse HEAD).Trim()
-$remoteMainLine = & git -C $repoRoot ls-remote origin refs/heads/main
-if ($LASTEXITCODE -ne 0 -or -not $remoteMainLine) {
-    throw "Unable to resolve origin/main."
+if ($LASTEXITCODE -ne 0 -or -not $commit) {
+    throw "Unable to resolve the local Git commit."
 }
-$remoteMain = ($remoteMainLine -split "\s+")[0]
-if ($remoteMain -ne $commit) {
-    throw "HEAD $commit is not the pushed origin/main commit $remoteMain."
+
+if (-not $ResumeDesktopPublish) {
+    $trackedChanges = & git -C $repoRoot status --porcelain --untracked-files=no
+    if ($LASTEXITCODE -ne 0) {
+        throw "Unable to read the Git worktree."
+    }
+    if ($trackedChanges) {
+        throw "Tracked worktree changes exist. Commit and test them before production deployment."
+    }
+
+    $remoteMainLine = & git -C $repoRoot ls-remote origin refs/heads/main
+    if ($LASTEXITCODE -ne 0 -or -not $remoteMainLine) {
+        throw "Unable to resolve origin/main."
+    }
+    $remoteMain = ($remoteMainLine -split "\s+")[0]
+    if ($remoteMain -ne $commit) {
+        throw "HEAD $commit is not the pushed origin/main commit $remoteMain."
+    }
 }
 
 if (-not $SkipDesktop) {
@@ -106,7 +117,11 @@ if (-not $SkipDesktop) {
 }
 
 if ($ValidateOnly) {
-    Write-Host "Production deployment inputs are valid."
+    if ($ResumeDesktopPublish) {
+        Write-Host "Desktop publication recovery inputs are valid."
+    } else {
+        Write-Host "Production deployment inputs are valid."
+    }
     Write-Host "Commit: $commit"
     if (-not $SkipDesktop) {
         Write-Host "Desktop: $version"
@@ -226,19 +241,35 @@ $appDeployScript = $appDeployScript.
     Replace("__APP_ROOT__", $AppRoot).
     Replace("__EXPECTED_COMMIT__", $commit)
 
-Write-Host "Deploying backend, dashboard, health recovery, and production audit..."
-$appDeployScript | & ssh $Server "bash -s"
-if ($LASTEXITCODE -ne 0) {
-    throw "Application deployment failed."
+if ($ResumeDesktopPublish) {
+    Write-Host "Resuming the uploaded Desktop publication; application deployment is skipped."
+} else {
+    Write-Host "Deploying backend, dashboard, health recovery, and production audit..."
+    # Keep SSH stdin attached to the console so password authentication cannot
+    # consume bytes from the remote Bash script. This also gives the user one
+    # clean password prompt instead of mixing the prompt with pipeline input.
+    $appDeployPayload = [Convert]::ToBase64String(
+        [Text.Encoding]::UTF8.GetBytes($appDeployScript)
+    )
+    & ssh -o ServerAliveInterval=15 -o ServerAliveCountMax=3 $Server (
+        "printf '%s' '$appDeployPayload' | base64 -d | bash"
+    )
+    if ($LASTEXITCODE -ne 0) {
+        throw "Application deployment failed."
+    }
 }
 
 if (-not $SkipDesktop) {
     $remoteStage = "/tmp/khaliduo-update-$version"
-    Invoke-CheckedNative -FailureMessage "Unable to create the desktop staging directory" -Command {
-        & ssh $Server "mkdir -p -- '$remoteStage' && chmod 700 -- '$remoteStage'"
-    }
-    Invoke-CheckedNative -FailureMessage "Desktop upload failed" -Command {
-        & scp -- $installer $blockmap $latestYml "${Server}:$remoteStage/"
+    if ($ResumeDesktopPublish) {
+        Write-Host "Using the existing uploaded Desktop staging directory: $remoteStage"
+    } else {
+        Invoke-CheckedNative -FailureMessage "Unable to create the desktop staging directory" -Command {
+            & ssh $Server "mkdir -p -- '$remoteStage' && chmod 700 -- '$remoteStage'"
+        }
+        Invoke-CheckedNative -FailureMessage "Desktop upload failed" -Command {
+            & scp -- $installer $blockmap $latestYml "${Server}:$remoteStage/"
+        }
     }
 
     $desktopPublishScript = @'
@@ -307,9 +338,14 @@ echo "DESKTOP_BACKUP=$BACKUP"
         Replace("__API_BASE_URL__", $ApiBaseUrl)
 
     Write-Host "Publishing signed Desktop $version..."
-    $desktopPublishScript | & ssh $Server "bash -s"
+    $desktopPublishPayload = [Convert]::ToBase64String(
+        [Text.Encoding]::UTF8.GetBytes($desktopPublishScript)
+    )
+    & ssh -o ServerAliveInterval=15 -o ServerAliveCountMax=3 $Server (
+        "printf '%s' '$desktopPublishPayload' | base64 -d | bash"
+    )
     if ($LASTEXITCODE -ne 0) {
-        throw "Desktop publication failed."
+        throw "Desktop publication failed. The staged files were kept; rerun with -ResumeDesktopPublish."
     }
 }
 

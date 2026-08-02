@@ -26,6 +26,12 @@ export const TIMELINE_LABELS: Record<TimelineDisplayType, string> = {
   leave: "Leave",
 };
 
+export function timelineIntervalsForDisplay<T>(intervals: readonly T[]): T[] {
+  // The employee must be able to audit the day from its first recorded interval.
+  // The container scrolls, so silently dropping older intervals is never needed.
+  return [...intervals];
+}
+
 export function timelineDisplayType(
   intervalType: TimelineIntervalType,
   approvedLeave: boolean,

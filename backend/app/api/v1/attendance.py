@@ -230,6 +230,48 @@ def _team_names(db: Session, employee_ids: list[UUID]) -> dict[UUID, list[str]]:
     return result
 
 
+def _screenshot_counts_for_day(
+    db: Session,
+    *,
+    company_id: UUID,
+    employees: list[Employee],
+    work_date: date,
+) -> dict[UUID, int]:
+    """Count visible screenshots on each employee's local calendar day."""
+    if not employees:
+        return {}
+
+    employee_timezones: dict[UUID, ZoneInfo] = {}
+    for employee in employees:
+        try:
+            employee_timezones[employee.id] = ZoneInfo(employee.timezone or "UTC")
+        except ZoneInfoNotFoundError:
+            employee_timezones[employee.id] = ZoneInfo("UTC")
+
+    # One UTC envelope safely covers the requested local date for every timezone.
+    range_start = datetime.combine(work_date - timedelta(days=1), time.min, tzinfo=UTC)
+    range_end = datetime.combine(work_date + timedelta(days=2), time.min, tzinfo=UTC)
+    counts = {employee.id: 0 for employee in employees}
+    captures = db.execute(
+        select(Screenshot.employee_id, Screenshot.captured_at).where(
+            Screenshot.company_id == company_id,
+            Screenshot.employee_id.in_(counts),
+            Screenshot.captured_at >= range_start,
+            Screenshot.captured_at < range_end,
+            Screenshot.deleted_at.is_(None),
+        )
+    ).all()
+    for captured_employee_id, captured_at in captures:
+        captured_utc = (
+            captured_at.replace(tzinfo=UTC)
+            if captured_at.tzinfo is None
+            else captured_at.astimezone(UTC)
+        )
+        if captured_utc.astimezone(employee_timezones[captured_employee_id]).date() == work_date:
+            counts[captured_employee_id] += 1
+    return counts
+
+
 def _refresh_missing_daily_attendance(
     engine: Engine,
     company_id: UUID,
@@ -352,6 +394,12 @@ def daily_attendance(
         ).limit(limit)
     ).all()
     team_names = _team_names(db, [employee.id for employee in employees])
+    screenshot_counts = _screenshot_counts_for_day(
+        db,
+        company_id=current_admin.company_id,
+        employees=employees,
+        work_date=selected_day,
+    )
     attendance_by_employee = {
         attendance.employee_id: attendance
         for attendance in db.scalars(
@@ -536,6 +584,7 @@ def daily_attendance(
                 "employee_email": employee.email,
                 "job_title": employee.job_title,
                 "team_names": team_names.get(employee.id, []),
+                "screenshot_count": screenshot_counts.get(employee.id, 0),
                 "late_grace_minutes": int(
                     employee.work_profile.late_grace_minutes
                     if employee.work_profile
@@ -580,6 +629,12 @@ def employee_day_detail(
     )
     db.commit()
     data = serialize_daily_attendance(attendance, timeline=timeline)
+    data["screenshot_count"] = _screenshot_counts_for_day(
+        db,
+        company_id=current_admin.company_id,
+        employees=[employee],
+        work_date=work_date,
+    ).get(employee.id, 0)
     data.update(
         {
             "employee_name": employee.name,
@@ -681,6 +736,12 @@ def update_employee_day_correction(
     )
     db.commit()
     data = serialize_daily_attendance(attendance, timeline=timeline)
+    data["screenshot_count"] = _screenshot_counts_for_day(
+        db,
+        company_id=current_admin.company_id,
+        employees=[employee],
+        work_date=work_date,
+    ).get(employee.id, 0)
     data.update(
         {
             "employee_name": employee.name,
@@ -748,6 +809,12 @@ def delete_employee_day_correction(
     )
     db.commit()
     data = serialize_daily_attendance(attendance, timeline=timeline)
+    data["screenshot_count"] = _screenshot_counts_for_day(
+        db,
+        company_id=current_admin.company_id,
+        employees=[employee],
+        work_date=work_date,
+    ).get(employee.id, 0)
     data.update(
         {
             "employee_name": employee.name,
@@ -793,6 +860,7 @@ def employee_attendance_range(
             Screenshot.employee_id == employee.id,
             Screenshot.captured_at >= range_start,
             Screenshot.captured_at < range_end,
+            Screenshot.deleted_at.is_(None),
         )
     ).all()
     for captured_at in captured_values:

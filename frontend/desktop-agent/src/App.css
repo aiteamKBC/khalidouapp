@@ -1179,6 +1179,10 @@ textarea:focus {
 .k-timeline {
   display: grid;
   gap: 8px;
+  max-height: 420px;
+  padding-right: 4px;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 
 .k-timeline div {

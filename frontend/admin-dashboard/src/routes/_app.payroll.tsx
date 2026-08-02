@@ -95,7 +95,17 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 
-export const Route = createFileRoute("/_app/payroll")({ component: PayrollPage });
+export const Route = createFileRoute("/_app/payroll")({
+  validateSearch: (search: Record<string, unknown>): { employeeId?: string; month?: string } => ({
+    employeeId:
+      typeof search.employeeId === "string" && search.employeeId ? search.employeeId : undefined,
+    month:
+      typeof search.month === "string" && /^\d{4}-(0[1-9]|1[0-2])$/.test(search.month)
+        ? search.month
+        : undefined,
+  }),
+  component: PayrollPage,
+});
 
 const currentMonth = new Date().toISOString().slice(0, 7);
 
@@ -105,14 +115,15 @@ function lastDayOfMonth(month: string) {
 }
 
 function PayrollPage() {
+  const search = Route.useSearch();
   const { scopedTeamIds, can } = useAuth();
   const queryClient = useQueryClient();
-  const [month, setMonth] = useState(currentMonth);
+  const [month, setMonth] = useState(search.month ?? currentMonth);
   const [tab, setTab] = useState<"sheet" | "exceptions">("sheet");
   const [team, setTeam] = useState("all");
   const [status, setStatus] = useState("all");
   const [signal, setSignal] = useState("all");
-  const [employeeId, setEmployeeId] = useState("all");
+  const [employeeId, setEmployeeId] = useState(search.employeeId ?? "all");
   const [selectedEntryId, setSelectedEntryId] = useState<string | null>(null);
   const [attendanceEmployeeId, setAttendanceEmployeeId] = useState<string | null>(null);
   const [overrideOpen, setOverrideOpen] = useState(false);
@@ -167,10 +178,14 @@ function PayrollPage() {
   const exceptions = useQuery({
     queryKey: ["payroll-exceptions", month, filters.start_date, filters.end_date],
     queryFn: ({ signal }) =>
-      getPayrollExceptions(month, {
-        start_date: filters.start_date,
-        end_date: filters.end_date,
-      }, signal),
+      getPayrollExceptions(
+        month,
+        {
+          start_date: filters.start_date,
+          end_date: filters.end_date,
+        },
+        signal,
+      ),
     enabled: tab === "exceptions",
   });
 
@@ -186,6 +201,9 @@ function PayrollPage() {
   const canManage = can("payroll.manage");
   const locked = ["locked", "paid"].includes(sheet.data?.run.status ?? "");
   const currencyTotals = Object.entries(sheet.data?.summary.currencies ?? {});
+  const sheetUnavailable = sheet.isError && !sheet.data;
+  const hasActiveEntryFilters =
+    employeeId !== "all" || team !== "all" || status !== "all" || signal !== "all";
   const periodStart = sheet.data?.run.period_start ?? filters.start_date ?? `${month}-01`;
   const periodEnd = sheet.data?.run.period_end ?? filters.end_date ?? lastDayOfMonth(month);
   const attendanceEntry = (sheet.data?.entries ?? []).find(
@@ -224,27 +242,27 @@ function PayrollPage() {
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
         <StatCard
           label="Employees"
-          value={sheet.data?.summary.employees ?? 0}
+          value={sheetUnavailable ? "—" : (sheet.data?.summary.employees ?? 0)}
           icon={Users}
           hint="In this payroll"
         />
         <StatCard
           label="Needs review"
-          value={sheet.data?.summary.needs_review ?? 0}
+          value={sheetUnavailable ? "—" : (sheet.data?.summary.needs_review ?? 0)}
           icon={AlertTriangle}
           tone="warning"
           hint="Open decisions"
         />
         <StatCard
           label="Late"
-          value={sheet.data?.summary.late_employees ?? 0}
+          value={sheetUnavailable ? "—" : (sheet.data?.summary.late_employees ?? 0)}
           icon={Clock3}
           tone="destructive"
           hint="After grace period"
         />
         <StatCard
           label="Overtime"
-          value={sheet.data?.summary.overtime_employees ?? 0}
+          value={sheetUnavailable ? "—" : (sheet.data?.summary.overtime_employees ?? 0)}
           icon={CalendarClock}
           tone="info"
           hint="Recorded, not auto-paid"
@@ -393,6 +411,35 @@ function PayrollPage() {
         </CardContent>
       </Card>
 
+      {sheet.isError && (
+        <Card className="border-destructive/40 bg-destructive/5">
+          <CardContent className="flex flex-wrap items-center justify-between gap-3 p-4">
+            <div className="flex min-w-0 items-start gap-3">
+              <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-destructive" />
+              <div>
+                <p className="font-semibold text-destructive">
+                  {sheet.data ? "Payroll refresh failed" : "Payroll sheet could not be loaded"}
+                </p>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  {sheet.error instanceof Error
+                    ? sheet.error.message
+                    : "The server did not return payroll data."}
+                  {sheet.data ? " Previously loaded rows are still shown." : ""}
+                </p>
+              </div>
+            </div>
+            <Button
+              variant="outline"
+              onClick={() => void sheet.refetch()}
+              disabled={sheet.isFetching}
+            >
+              <RefreshCw className={`mr-2 h-4 w-4 ${sheet.isFetching ? "animate-spin" : ""}`} />
+              Retry payroll
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="inline-flex rounded-xl border bg-card p-1 shadow-sm">
           <Button
@@ -429,6 +476,8 @@ function PayrollPage() {
         <PayrollTable
           entries={sheet.data?.entries ?? []}
           loading={sheet.isLoading}
+          error={sheetUnavailable}
+          hasActiveFilters={hasActiveEntryFilters}
           onOpen={setSelectedEntryId}
           onOpenAttendance={setAttendanceEmployeeId}
           periodStart={periodStart}
@@ -479,6 +528,8 @@ function PayrollPage() {
 function PayrollTable({
   entries,
   loading,
+  error,
+  hasActiveFilters,
   onOpen,
   onOpenAttendance,
   periodStart,
@@ -487,6 +538,8 @@ function PayrollTable({
 }: {
   entries: PayrollEntry[];
   loading: boolean;
+  error: boolean;
+  hasActiveFilters: boolean;
   onOpen: (id: string) => void;
   onOpenAttendance: (employeeId: string) => void;
   periodStart: string;
@@ -529,10 +582,18 @@ function PayrollTable({
                   Calculating payroll…
                 </TableCell>
               </TableRow>
+            ) : error ? (
+              <TableRow>
+                <TableCell colSpan={18} className="h-40 text-center text-destructive">
+                  Payroll data is unavailable. Review the error above and retry.
+                </TableCell>
+              </TableRow>
             ) : entries.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={18} className="h-40 text-center text-muted-foreground">
-                  No employees match these filters.
+                  {hasActiveFilters
+                    ? "No employees match the current employee, team, status, or signal filters."
+                    : "No payroll employees are available for this period. Verify employee start dates and your access scope."}
                 </TableCell>
               </TableRow>
             ) : (
@@ -685,8 +746,7 @@ function MonthlyAttendanceDialog({
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
   const history = useQuery({
     queryKey: ["employee-attendance-range", employeeId, startDate, endDate],
-    queryFn: ({ signal }) =>
-      getEmployeeAttendanceRange(employeeId!, startDate, endDate, signal),
+    queryFn: ({ signal }) => getEmployeeAttendanceRange(employeeId!, startDate, endDate, signal),
     enabled: open && Boolean(employeeId),
     staleTime: 5 * 60_000,
     placeholderData: (previous) => previous,

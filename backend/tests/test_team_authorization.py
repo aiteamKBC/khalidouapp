@@ -369,6 +369,7 @@ def test_attendance_detail_enforces_team_and_company_isolation(team_client):
         headers=data["owner_headers"],
     )
     assert own_team.status_code == 200
+    assert own_team.json()["data"]["screenshot_count"] == 1
 
     other_team = client.get(
         f"/api/v1/attendance/employee/{data['employee_b'].id}/{today}",
@@ -398,6 +399,39 @@ def test_daily_attendance_includes_start_grace_for_dashboard_alerts(team_client)
         if row["employee_id"] == str(data["employee_a"].id)
     )
     assert employee_row["late_grace_minutes"] == 15
+    assert employee_row["screenshot_count"] == 1
+
+
+def test_attendance_screenshot_counts_exclude_soft_deleted_captures(team_client):
+    client, data = team_client
+    today = local_today("UTC")
+    with data["session_factory"]() as db:
+        screenshot = db.get(Screenshot, data["screenshot_a"].id)
+        screenshot.deleted_at = datetime.now(UTC)
+        db.add(screenshot)
+        db.commit()
+
+    detail = client.get(
+        f"/api/v1/attendance/employee/{data['employee_a'].id}/{today.isoformat()}",
+        headers=data["general_headers"],
+    )
+    daily = client.get(
+        "/api/v1/attendance/daily",
+        params={"day": today.isoformat(), "employee_id": str(data["employee_a"].id)},
+        headers=data["general_headers"],
+    )
+    history = client.get(
+        f"/api/v1/attendance/employee/{data['employee_a'].id}",
+        params={"start_date": today.isoformat(), "end_date": today.isoformat()},
+        headers=data["general_headers"],
+    )
+
+    assert detail.status_code == 200
+    assert detail.json()["data"]["screenshot_count"] == 0
+    assert daily.status_code == 200
+    assert daily.json()["data"]["rows"][0]["screenshot_count"] == 0
+    assert history.status_code == 200
+    assert history.json()["data"]["rows"][0]["screenshot_count"] == 0
 
 
 def test_dashboard_work_trend_is_lightweight_and_team_scoped(
@@ -1330,6 +1364,29 @@ def test_payroll_overtime_decision_updates_daily_source_records(team_client):
         assert attendance.approved_overtime_seconds == 3600
     finally:
         db.close()
+
+
+def test_payroll_sheet_includes_employees_without_attendance_records(team_client):
+    client, data = team_client
+    work_date = local_today("UTC")
+    payroll_month = (
+        (work_date.replace(day=28) + timedelta(days=4)).replace(day=1)
+        if work_date.day >= 26
+        else work_date.replace(day=1)
+    )
+
+    response = client.get(
+        f"/api/v1/payroll/sheet?month={payroll_month.strftime('%Y-%m')}",
+        headers=data["general_headers"],
+    )
+
+    assert response.status_code == 200
+    employee_ids = {entry["employee_id"] for entry in response.json()["data"]["entries"]}
+    assert employee_ids >= {
+        str(data["employee_a"].id),
+        str(data["employee_b"].id),
+        str(data["shared_employee"].id),
+    }
 
 
 def add_fixture_task(
@@ -2604,6 +2661,71 @@ def test_daily_timesheet_uses_employee_local_date_for_sessions_and_screenshots(
         and row["screenshot_count"] == 1
         for row in monthly.json()["data"]
     )
+
+
+def test_timesheet_records_five_idle_hours_inside_an_eleven_hour_span(team_client):
+    client, data = team_client
+    work_day = datetime(2026, 7, 21, tzinfo=UTC).date()
+    started_at = datetime(2026, 7, 21, 9, 30, tzinfo=UTC)
+    idle_started_at = datetime(2026, 7, 21, 15, 30, tzinfo=UTC)
+    ended_at = datetime(2026, 7, 21, 20, 30, tzinfo=UTC)
+
+    with data["session_factory"]() as db:
+        employee = db.get(Employee, data["employee_a"].id)
+        session = db.get(WorkSession, data["session_a"].id)
+        device = db.get(Device, session.device_id)
+        employee.timezone = "UTC"
+        device.timezone = "UTC"
+        session.timezone = "UTC"
+        session.started_at = started_at
+        session.ended_at = ended_at
+        session.status = "ended"
+        session.active_seconds = 6 * 60 * 60
+        session.idle_seconds = 5 * 60 * 60
+        db.add_all(
+            [
+                ActivityEvent(
+                    company_id=session.company_id,
+                    employee_id=session.employee_id,
+                    device_id=session.device_id,
+                    session_id=session.id,
+                    event_type="idle_started",
+                    event_timestamp=idle_started_at,
+                    payload={"idle_seconds": 0},
+                    idempotency_key="five-hour-idle-started",
+                ),
+                ActivityEvent(
+                    company_id=session.company_id,
+                    employee_id=session.employee_id,
+                    device_id=session.device_id,
+                    session_id=session.id,
+                    event_type="session_ended",
+                    event_timestamp=ended_at,
+                    payload=None,
+                    idempotency_key="five-hour-idle-session-ended",
+                ),
+            ]
+        )
+        db.commit()
+
+    response = client.get(
+        f"/api/v1/timesheets/daily?day={work_day.isoformat()}",
+        headers=data["general_headers"],
+    )
+
+    assert response.status_code == 200
+    row = next(
+        item
+        for item in response.json()["data"]
+        if item["employee_id"] == str(data["employee_a"].id)
+    )
+    assert row["active_seconds"] == 6 * 60 * 60
+    assert row["observed_idle_seconds"] == 5 * 60 * 60
+    assert row["observed_tracked_seconds"] == 11 * 60 * 60
+    assert row["observed_span_seconds"] == 11 * 60 * 60
+    assert row["untracked_seconds"] == 0
+    assert row["start_time"] == started_at.isoformat()
+    assert row["end_time"] == ended_at.isoformat()
 
 
 def test_desktop_summary_recovers_elapsed_work_when_an_update_started_a_new_session(
