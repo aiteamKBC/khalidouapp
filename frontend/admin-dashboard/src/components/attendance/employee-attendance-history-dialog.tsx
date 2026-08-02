@@ -237,7 +237,18 @@ export function EmployeeAttendanceHistoryDialog({
                   label="Normal"
                   value={formatDuration(dayDetail.data.normalWorkedSeconds)}
                 />
-                <MiniMetric label="Idle" value={formatDuration(dayDetail.data.idleSeconds)} />
+                <MiniMetric
+                  label="Recorded idle"
+                  value={formatDuration(dayDetail.data.recordedIdleSeconds)}
+                />
+                <MiniMetric
+                  label="Paid idle grace"
+                  value={formatDuration(dayDetail.data.paidIdleGraceSeconds)}
+                />
+                <MiniMetric
+                  label="Deductible idle"
+                  value={formatDuration(dayDetail.data.idleSeconds)}
+                />
                 <MiniMetric
                   label="Paid breaks"
                   value={formatDuration(dayDetail.data.paidBreakSeconds)}
@@ -322,7 +333,12 @@ function AttendanceDayRow({
         </span>
       </TableCell>
       <TableCell>{formatDuration(row.normalWorkedSeconds)}</TableCell>
-      <TableCell>{formatDuration(row.idleSeconds)}</TableCell>
+      <TableCell>
+        {formatDuration(row.recordedIdleSeconds)}
+        <span className="block text-[10px] text-muted-foreground">
+          {formatDuration(row.idleSeconds)} deductible
+        </span>
+      </TableCell>
       <TableCell>
         {formatDuration(row.deductibleLateSeconds)}
         <span className="block text-[10px] text-muted-foreground">

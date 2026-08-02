@@ -136,7 +136,7 @@ export function WorkdayTimeline({ timeline }: { timeline?: WorkdayTimelineData }
         />
         <Metric label="Worked" value={formatDuration(timeline.workedSeconds)} />
         <Metric
-          label={timeline.approvedLeave ? "Leave" : "Idle"}
+          label={timeline.approvedLeave ? "Leave" : "Timeline idle"}
           value={formatDuration(
             timeline.approvedLeave ? timeline.leaveSeconds : timeline.idleSeconds,
           )}

@@ -24,6 +24,8 @@ export type DailyAttendance = {
   normalWorkedSeconds: number;
   paidBreakSeconds: number;
   unpaidBreakSeconds: number;
+  recordedIdleSeconds: number;
+  paidIdleGraceSeconds: number;
   idleSeconds: number;
   approvedManualSeconds: number;
   approvedEarlyLeaveSeconds: number;
@@ -74,6 +76,8 @@ type BackendAttendance = {
   normal_worked_seconds: number;
   paid_break_seconds: number;
   unpaid_break_seconds: number;
+  recorded_idle_seconds?: number;
+  paid_idle_grace_seconds?: number;
   idle_seconds: number;
   approved_manual_seconds: number;
   approved_early_leave_seconds?: number;
@@ -125,6 +129,8 @@ function mapAttendance(row: BackendAttendance): DailyAttendance {
     normalWorkedSeconds: row.normal_worked_seconds,
     paidBreakSeconds: row.paid_break_seconds,
     unpaidBreakSeconds: row.unpaid_break_seconds,
+    recordedIdleSeconds: row.recorded_idle_seconds ?? row.idle_seconds,
+    paidIdleGraceSeconds: row.paid_idle_grace_seconds ?? 0,
     idleSeconds: row.idle_seconds,
     approvedManualSeconds: row.approved_manual_seconds,
     approvedEarlyLeaveSeconds: row.approved_early_leave_seconds ?? 0,

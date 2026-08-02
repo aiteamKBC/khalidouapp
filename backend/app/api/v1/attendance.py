@@ -157,6 +157,8 @@ def _empty_attendance_item(
         "normal_worked_seconds": 0,
         "paid_break_seconds": 0,
         "unpaid_break_seconds": 0,
+        "recorded_idle_seconds": 0,
+        "paid_idle_grace_seconds": 0,
         "idle_seconds": 0,
         "approved_manual_seconds": 0,
         "pending_manual_seconds": 0,

@@ -370,7 +370,12 @@ function AttendancePage() {
                       </TableCell>
                       <TableCell>{duration(row.normalWorkedSeconds)}</TableCell>
                       <TableCell>{duration(row.paidBreakSeconds)}</TableCell>
-                      <TableCell>{duration(row.idleSeconds)}</TableCell>
+                      <TableCell>
+                        {duration(row.recordedIdleSeconds)}
+                        <span className="block text-[10px] text-muted-foreground">
+                          {duration(row.idleSeconds)} deductible
+                        </span>
+                      </TableCell>
                       <TableCell>
                         {duration(row.deductibleLateSeconds)}
                         <span className="block text-[10px] text-muted-foreground">

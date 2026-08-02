@@ -606,6 +606,14 @@ def serialize_daily_attendance(row: DailyAttendance, *, timeline: dict | None = 
         "normal_worked_seconds": row.normal_worked_seconds,
         "paid_break_seconds": row.paid_break_seconds,
         "unpaid_break_seconds": row.unpaid_break_seconds,
+        "recorded_idle_seconds": max(
+            0,
+            int(calculation_sources.get("raw_idle_seconds", row.idle_seconds)),
+        ),
+        "paid_idle_grace_seconds": max(
+            0,
+            int(calculation_sources.get("paid_idle_grace_seconds", 0)),
+        ),
         "idle_seconds": row.idle_seconds,
         "approved_manual_seconds": row.approved_manual_seconds,
         "pending_manual_seconds": row.pending_manual_seconds,
