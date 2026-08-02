@@ -4,7 +4,7 @@ import log from "electron-log/main";
 import electronUpdater from "electron-updater";
 import dotenv from "dotenv";
 import axios from "axios";
-import { execFile } from "node:child_process";
+import { execFile, fork, type ChildProcess } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -105,6 +105,11 @@ import {
   isPermanentScreenshotSyncFailure,
 } from "./services/runtimePolicies.js";
 import { requiresExplicitFreshSessionStart } from "./services/trackingStartPolicy.js";
+import {
+  CRASH_RECOVERY_STABLE_MS,
+  crashRecoveryAttempt,
+  isCrashRecoveryLaunch,
+} from "./services/crashRecovery.js";
 
 const { nativeImage, shell } = electronCommon;
 const {
@@ -261,6 +266,9 @@ const LONG_IDLE_SESSION_SPLIT_SECONDS = 4 * 60 * 60;
 let mainWindow: Electron.BrowserWindow | null = null;
 let tray: Electron.Tray | null = null;
 let isQuitting = false;
+let crashRecoveryWatchdog: ChildProcess | null = null;
+let crashRecoveryStableTimer: ReturnType<typeof setTimeout> | null = null;
+let crashRecoveryRestartTimer: ReturnType<typeof setTimeout> | null = null;
 let quitNotificationSent = false;
 let currentSessionId: string | null = null;
 let localTrackingSessionId: string | null = null;
@@ -3947,6 +3955,73 @@ function configureAutoStart(enabled = runtimeStatus.enrolled) {
   );
 }
 
+function startCrashRecoveryWatchdog(attempt: number) {
+  if (process.platform !== "win32" || !app.isPackaged || isQuitting) {
+    return;
+  }
+  if (crashRecoveryWatchdog && !crashRecoveryWatchdog.killed) {
+    return;
+  }
+
+  const watchdogPath = path.join(__dirname, "watchdog.js");
+  const child = fork(
+    watchdogPath,
+    [process.execPath, String(process.pid), String(attempt)],
+    {
+      execPath: process.execPath,
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
+      stdio: ["ignore", "ignore", "ignore", "ipc"],
+    },
+  );
+  crashRecoveryWatchdog = child;
+  child.unref();
+  child.on("error", (error) => {
+    log.warn("Crash recovery watchdog failed", safeErrorForLog(error));
+  });
+  child.once("exit", (code) => {
+    if (crashRecoveryWatchdog !== child) return;
+    crashRecoveryWatchdog = null;
+    if (crashRecoveryStableTimer) {
+      clearTimeout(crashRecoveryStableTimer);
+      crashRecoveryStableTimer = null;
+    }
+    if (!isQuitting) {
+      log.warn("Crash recovery watchdog exited unexpectedly", { code });
+      crashRecoveryRestartTimer = setTimeout(() => {
+        crashRecoveryRestartTimer = null;
+        startCrashRecoveryWatchdog(attempt);
+      }, 60_000);
+    }
+  });
+  crashRecoveryStableTimer = setTimeout(() => {
+    crashRecoveryStableTimer = null;
+    if (crashRecoveryWatchdog === child && child.connected) {
+      child.send({ type: "stable" });
+    }
+  }, CRASH_RECOVERY_STABLE_MS);
+  crashRecoveryStableTimer.unref?.();
+  log.info("Crash recovery watchdog started", { attempt });
+}
+
+function stopCrashRecoveryWatchdog() {
+  if (crashRecoveryStableTimer) {
+    clearTimeout(crashRecoveryStableTimer);
+    crashRecoveryStableTimer = null;
+  }
+  if (crashRecoveryRestartTimer) {
+    clearTimeout(crashRecoveryRestartTimer);
+    crashRecoveryRestartTimer = null;
+  }
+  const child = crashRecoveryWatchdog;
+  crashRecoveryWatchdog = null;
+  if (!child || child.killed) return;
+  if (child.connected) {
+    child.send({ type: "stop" });
+  } else {
+    child.kill();
+  }
+}
+
 function setUpdateStatus(
   status: AgentRuntimeStatus["updateStatus"],
   options: { version?: string | null; percent?: number | null } = {},
@@ -4353,10 +4428,15 @@ if (!gotSingleInstanceLock) {
   app.quit();
 }
 
-app.on("second-instance", () => showMainWindow());
+app.on("second-instance", (_event, commandLine) => {
+  if (!isCrashRecoveryLaunch(commandLine)) {
+    showMainWindow();
+  }
+});
 
 app.on("before-quit", (event) => {
   isQuitting = true;
+  stopCrashRecoveryWatchdog();
   updateDisplaySleepBlocker();
   clearUpdateInstallRecoveryTimer();
   if (updateCheckTimer) clearInterval(updateCheckTimer);
@@ -4426,15 +4506,29 @@ app.whenReady().then(async () => {
   }
   log.initialize();
   log.info("Khaliduo agent starting");
+  const recoveryAttempt = crashRecoveryAttempt(process.argv);
+  const launchedForCrashRecovery = isCrashRecoveryLaunch(process.argv);
+  startCrashRecoveryWatchdog(recoveryAttempt);
   await initializeLocalDatabase();
   hydrateIdentityStatus();
+  if (
+    launchedForCrashRecovery &&
+    (!runtimeStatus.enrolled ||
+      !runtimeStatus.deviceId ||
+      !getOpenLocalTrackingSession(runtimeStatus.deviceId))
+  ) {
+    log.info("Crash recovery skipped because no interrupted tracking session exists");
+    stopCrashRecoveryWatchdog();
+    app.exit(0);
+    return;
+  }
   const launchedByWindowsStartup =
     process.argv.includes("--autostart") || process.argv.includes("--hidden");
   const launchedAfterSilentUpdate =
     process.argv.includes("--updated") || process.argv.includes("--force-run");
   const launchedInBackground =
-    launchedByWindowsStartup || launchedAfterSilentUpdate;
-  loadTrackingPreferences(launchedByWindowsStartup);
+    launchedByWindowsStartup || launchedAfterSilentUpdate || launchedForCrashRecovery;
+  loadTrackingPreferences(launchedByWindowsStartup || launchedForCrashRecovery);
   configureAutoStart();
   wireSystemEvents();
 

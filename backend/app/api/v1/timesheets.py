@@ -308,23 +308,30 @@ def timesheet_rows(
                 if attendance.actual_first_activity_at
                 else item["start_time"]
             )
-            calculation_sources = attendance.calculation_sources or {}
             is_running = (
                 work_date == local_today(timezone_name, attendance_now)
-                and bool(
-                    timeline["is_running"]
-                    if timeline is not None
-                    else calculation_sources.get("is_running", False)
-                )
+                and bool(item["_has_open_session"])
             )
             attendance_end = (
                 attendance.actual_sign_out_at or attendance.actual_last_activity_at
             )
+            resolved_end = (
+                max(
+                    value
+                    for value in (
+                        _utc(attendance_end) if attendance_end else None,
+                        item["_latest_end_at"],
+                    )
+                    if value is not None
+                )
+                if attendance_end or item["_latest_end_at"]
+                else None
+            )
             item["end_time"] = (
                 None
                 if is_running
-                else _utc(attendance_end).isoformat()
-                if attendance_end
+                else resolved_end.isoformat()
+                if resolved_end
                 else item["end_time"]
             )
 

@@ -3079,6 +3079,19 @@ def test_daily_attendance_stops_stale_materialized_session_at_last_heartbeat(
     assert row["actual_sign_out_at"] == heartbeat_at.isoformat()
     assert row["normal_worked_seconds"] == 3600
 
+    timesheet_response = client.get(
+        f"/api/v1/timesheets/daily?day={work_day.isoformat()}",
+        headers=data["general_headers"],
+    )
+    timesheet_row = next(
+        item
+        for item in timesheet_response.json()["data"]
+        if item["employee_id"] == str(data["employee_a"].id)
+    )
+    assert timesheet_response.status_code == 200
+    assert timesheet_row["end_time"] == heartbeat_at.isoformat()
+    assert timesheet_row["last_signal_at"] == heartbeat_at.isoformat()
+
 
 def test_open_session_liveness_uses_two_queries_for_many_sessions(team_client):
     _, data = team_client
