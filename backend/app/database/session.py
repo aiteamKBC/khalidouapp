@@ -21,6 +21,7 @@ def get_engine() -> Engine:
 
     database_url = normalize_database_url(settings.database_url)
     pool_options = {}
+    connect_args = {}
     if not database_url.startswith("sqlite"):
         pool_options = {
             "pool_size": max(1, settings.database_pool_size),
@@ -28,10 +29,18 @@ def get_engine() -> Engine:
             "pool_timeout": max(1, settings.database_pool_timeout_seconds),
             "pool_recycle": 1800,
         }
+    if database_url.startswith("postgresql"):
+        connect_args = {
+            "connect_timeout": max(
+                1,
+                min(10, settings.database_pool_timeout_seconds),
+            )
+        }
     return create_engine(
         database_url,
         pool_pre_ping=True,
         future=True,
+        connect_args=connect_args,
         **pool_options,
     )
 

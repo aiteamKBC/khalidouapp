@@ -9,10 +9,7 @@ check_and_recover() {
     --silent \
     --show-error \
     --fail \
-    --max-time 10 \
-    --retry 2 \
-    --retry-connrefused \
-    --retry-delay 2 \
+    --max-time 8 \
     "$health_url" >/dev/null; then
     return 0
   fi
@@ -23,12 +20,9 @@ check_and_recover() {
 
   if ! curl \
     --silent \
-    --show-error \
-    --fail \
-    --max-time 10 \
-    --retry 2 \
-    --retry-connrefused \
-    --retry-delay 2 \
+      --show-error \
+      --fail \
+      --max-time 8 \
     "$health_url" >/dev/null; then
     logger -p user.err -t khaliduo-healthcheck \
       "$service_name is still unhealthy after restart"

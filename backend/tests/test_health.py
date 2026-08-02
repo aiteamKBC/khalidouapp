@@ -1,5 +1,6 @@
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy.exc import OperationalError
 
 from app.api.v1 import health as health_api
 from app.core.exceptions import ApiError
@@ -23,6 +24,11 @@ def test_health_check() -> None:
 
 def test_database_health_rejects_an_incomplete_critical_schema(monkeypatch) -> None:
     class FakeConnection:
+        class Dialect:
+            name = "sqlite"
+
+        dialect = Dialect()
+
         def __enter__(self):
             return self
 
@@ -37,8 +43,12 @@ def test_database_health_rejects_an_incomplete_critical_schema(monkeypatch) -> N
             return FakeConnection()
 
     class FakeInspector:
-        def has_table(self, table_name):
-            return table_name != "device_tokens"
+        def get_table_names(self):
+            return [
+                table_name
+                for table_name in health_api.CRITICAL_DATABASE_TABLES
+                if table_name != "device_tokens"
+            ]
 
     monkeypatch.setattr(health_api, "get_engine", lambda: FakeEngine())
     monkeypatch.setattr(health_api, "inspect", lambda _connection: FakeInspector())
@@ -48,3 +58,19 @@ def test_database_health_rejects_an_incomplete_critical_schema(monkeypatch) -> N
 
     assert exc_info.value.status_code == 503
     assert exc_info.value.details == {"missing_tables": ["device_tokens"]}
+
+
+def test_database_health_converts_driver_failures_to_a_bounded_service_error(
+    monkeypatch,
+) -> None:
+    class BrokenEngine:
+        def connect(self):
+            raise OperationalError("select 1", {}, RuntimeError("database timeout"))
+
+    monkeypatch.setattr(health_api, "get_engine", lambda: BrokenEngine())
+
+    with pytest.raises(ApiError) as exc_info:
+        health_api.database_health_check()
+
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.code == "DATABASE_UNREACHABLE"
