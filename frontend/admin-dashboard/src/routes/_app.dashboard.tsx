@@ -30,6 +30,11 @@ import { StatusBadge } from "@/components/ui/status-badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { ProtectedImage } from "@/components/ProtectedImage";
 import { SCREENSHOT_REFRESH_INTERVAL_MS } from "@/lib/screenshot-display";
+import {
+  matchesMemberActivityFilter,
+  MEMBER_ACTIVITY_FILTERS,
+  type MemberActivityFilter,
+} from "@/lib/member-activity-status";
 import { useAuth } from "@/lib/auth";
 import { listDailyAttendance } from "@/api/attendance";
 import { listDashboardWorkTrend } from "@/api/dashboard";
@@ -149,7 +154,7 @@ function periodTotals(byDate: Map<string, DayAgg>, dates: string[]) {
 }
 
 function DashboardPage() {
-  const [activityFilter, setActivityFilter] = useState<"all" | Employee["status"]>("active");
+  const [activityFilter, setActivityFilter] = useState<MemberActivityFilter>("active");
   const [attentionOpen, setAttentionOpen] = useState(false);
   const activitySectionRef = useRef<HTMLDivElement>(null);
   const [loadMedia, setLoadMedia] = useState(false);
@@ -177,6 +182,8 @@ function DashboardPage() {
     staleTime: 20_000,
     refetchInterval: LIVE_REFRESH_MS,
     refetchIntervalInBackground: false,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: "always",
     placeholderData: (previous) => previous,
     meta: { suppressGlobalLoading: true },
   });
@@ -217,7 +224,7 @@ function DashboardPage() {
   // whole result page and made other rows look empty.
   const matchingActivityEmployees = (emps.data ?? [])
     .filter((employee) => employee.currentDeviceId)
-    .filter((employee) => activityFilter === "all" || employee.status === activityFilter)
+    .filter((employee) => matchesMemberActivityFilter(employee.status, activityFilter))
     .sort(compareEmployeesByName);
   const visibleActivityEmployees = [...matchingActivityEmployees]
     .sort(
@@ -371,10 +378,7 @@ function DashboardPage() {
       };
     })
     .sort((a, b) => b.latest - a.latest);
-  const matchingActivity = memberActivity.filter(
-    ({ employee }) => activityFilter === "all" || employee?.status === activityFilter,
-  );
-  const filteredActivity = matchingActivity;
+  const filteredActivity = memberActivity;
 
   const online = (emps.data ?? []).filter(employeeIsOnline).sort(compareEmployeesByName);
   const onlinePreview = online.slice(0, 4);
@@ -834,7 +838,7 @@ function DashboardPage() {
                   {activityFilter === "all" ? "members" : `${activityFilter} members`}
                 </span>
                 <span className="rounded-full border bg-muted/40 px-2.5 py-1 text-[10px] font-bold text-muted-foreground">
-                  Random 6 · updates every 15 min
+                  Live status every 30 sec - previews rotate every 15 min
                 </span>
                 {shots.isFetching && shots.data && (
                   <span className="text-[10px] font-bold text-muted-foreground">
@@ -843,18 +847,16 @@ function DashboardPage() {
                 )}
               </div>
               <div className="flex flex-wrap gap-1.5">
-                {(["all", "active", "idle", "on_break", "off_shift", "offline"] as const).map(
-                  (filter) => (
-                    <button
-                      key={filter}
-                      type="button"
-                      onClick={() => setActivityFilter(filter)}
-                      className={`rounded-full border px-3 py-1.5 text-[11px] font-bold capitalize transition ${activityFilter === filter ? "border-[#e5185d] bg-[#fce3ec] text-[#e5185d] dark:bg-[#38142b] dark:text-[#f0538b]" : "bg-card text-muted-foreground hover:border-[#e5185d]/40"}`}
-                    >
-                      {filter}
-                    </button>
-                  ),
-                )}
+                {MEMBER_ACTIVITY_FILTERS.map((filter) => (
+                  <button
+                    key={filter}
+                    type="button"
+                    onClick={() => setActivityFilter(filter)}
+                    className={`rounded-full border px-3 py-1.5 text-[11px] font-bold capitalize transition ${activityFilter === filter ? "border-[#e5185d] bg-[#fce3ec] text-[#e5185d] dark:bg-[#38142b] dark:text-[#f0538b]" : "bg-card text-muted-foreground hover:border-[#e5185d]/40"}`}
+                  >
+                    {filter}
+                  </button>
+                ))}
               </div>
             </CardHeader>
             <CardContent className="grid gap-3 p-[18px] md:grid-cols-2">
@@ -877,11 +879,22 @@ function DashboardPage() {
                 </div>
               )}
               {!emps.isPending && !emps.isError && filteredActivity.length === 0 && (
-                <p className="rounded-[18px] border border-dashed bg-muted/20 p-6 text-sm text-muted-foreground md:col-span-2">
-                  {activityFilter === "all"
-                    ? "No members with registered devices."
-                    : `No ${activityFilter} members right now.`}
-                </p>
+                <div className="rounded-[18px] border border-dashed bg-muted/20 p-6 text-sm text-muted-foreground md:col-span-2">
+                  <p>
+                    {activityFilter === "all"
+                      ? "No members with registered devices."
+                      : `No ${activityFilter} members right now.`}
+                  </p>
+                  <Button
+                    className="mt-3"
+                    variant="outline"
+                    size="sm"
+                    disabled={emps.isFetching}
+                    onClick={() => emps.refetch()}
+                  >
+                    {emps.isFetching ? "Refreshing status..." : "Refresh status"}
+                  </Button>
+                </div>
               )}
               {filteredActivity.map(({ employee, shots: images }) => (
                 <div
