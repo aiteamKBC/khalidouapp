@@ -41,8 +41,7 @@ const styles: Record<string, string> = {
   locked: "bg-muted text-muted-foreground ring-border",
   sleeping: "bg-muted text-muted-foreground ring-border",
   on_break: "bg-violet-500/15 text-violet-700 ring-violet-500/30 dark:text-violet-300",
-  break_work:
-    "bg-fuchsia-500/15 text-fuchsia-700 ring-fuchsia-500/30 dark:text-fuchsia-300",
+  break_work: "bg-fuchsia-500/15 text-fuchsia-700 ring-fuchsia-500/30 dark:text-fuchsia-300",
   off_shift: "bg-info/15 text-info ring-info/30",
   inactive: "bg-muted text-muted-foreground ring-border",
   archived: "bg-muted text-muted-foreground ring-border",
@@ -69,7 +68,15 @@ const styles: Record<string, string> = {
   revoked: "bg-destructive/25 text-destructive ring-destructive/40",
 };
 
-export function StatusBadge({ status, className }: { status: AnyStatus; className?: string }) {
+export function StatusBadge({
+  status,
+  className,
+  label,
+}: {
+  status: AnyStatus;
+  className?: string;
+  label?: string;
+}) {
   return (
     <span
       className={cn(
@@ -115,7 +122,7 @@ export function StatusBadge({ status, className }: { status: AnyStatus; classNam
           "bg-destructive": ["offline", "revoked", "rejected", "absent"].includes(status),
         })}
       />
-      {status === "break_work" ? "Working during break" : status.replaceAll("_", " ")}
+      {label ?? (status === "break_work" ? "Working during break" : status.replaceAll("_", " "))}
     </span>
   );
 }

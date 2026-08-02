@@ -2650,6 +2650,20 @@ def test_desktop_summary_recovers_elapsed_work_when_an_update_started_a_new_sess
     assert timeline["first_started_at"] is not None
     assert timeline["last_activity_at"] is not None
 
+    timesheet_response = client.get(
+        "/api/v1/timesheets/daily",
+        params={"day": local_today(safe_timezone, now).isoformat()},
+        headers=data["general_headers"],
+    )
+    assert timesheet_response.status_code == 200
+    timesheet_row = next(
+        row
+        for row in timesheet_response.json()["data"]
+        if row["employee_id"] == str(data["employee_a"].id)
+    )
+    assert timesheet_row["session_count"] == 2
+    assert timesheet_row["observed_span_seconds"] >= 30 * 60
+
 
 def test_desktop_today_excludes_idle_on_an_off_day(team_client):
     client, data = team_client

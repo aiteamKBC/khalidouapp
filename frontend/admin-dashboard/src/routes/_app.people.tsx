@@ -1001,11 +1001,11 @@ function PeopleDirectory({
               onValueChange={(value) => setStatusFilter(value as StatusFilter)}
             >
               <SelectTrigger>
-                <SelectValue placeholder="Status" />
+                <SelectValue placeholder="Account status" />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All onboarding/active</SelectItem>
-                <SelectItem value="active">Active only</SelectItem>
+                <SelectItem value="active">Active accounts</SelectItem>
                 <SelectItem value="app_pending">App pending</SelectItem>
                 <SelectItem value="invited">Invited / expired</SelectItem>
               </SelectContent>
@@ -1048,7 +1048,7 @@ function PeopleDirectory({
               <TableHead>Type / role</TableHead>
               <TableHead>Teams / job title</TableHead>
               <TableHead>Sign-in</TableHead>
-              <TableHead>Status</TableHead>
+              <TableHead>Account status</TableHead>
               <TableHead className="text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
@@ -1117,7 +1117,10 @@ function PeopleDirectory({
                           : "Password"}
                     </TableCell>
                     <TableCell>
-                      <StatusBadge status={row.status} />
+                      <StatusBadge
+                        status={row.status}
+                        label={row.status === "active" ? "Account active" : undefined}
+                      />
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-2">
