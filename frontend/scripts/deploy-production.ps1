@@ -170,7 +170,20 @@ else
 fi
 
 cd "$APP_ROOT/backend"
-"$APP_ROOT/venv/bin/python" -m alembic upgrade head
+if "$APP_ROOT/venv/bin/python" -m alembic current --check-heads >/dev/null; then
+  echo "Database schema is already at the Alembic head."
+else
+  migrated=0
+  for attempt in 1 2 3; do
+    if "$APP_ROOT/venv/bin/python" -m alembic upgrade head; then
+      migrated=1
+      break
+    fi
+    echo "Alembic upgrade attempt $attempt failed; retrying." >&2
+    sleep $((attempt * 2))
+  done
+  test "$migrated" -eq 1
+fi
 "$APP_ROOT/venv/bin/python" -m compileall -q app scripts
 systemctl restart khaliduo-api
 systemctl is-active --quiet khaliduo-api
