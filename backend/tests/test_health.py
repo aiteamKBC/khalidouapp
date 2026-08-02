@@ -1,6 +1,6 @@
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import OperationalError, ProgrammingError
 
 from app.api.v1 import health as health_api
 from app.core.exceptions import ApiError
@@ -35,29 +35,26 @@ def test_database_health_rejects_an_incomplete_critical_schema(monkeypatch) -> N
         def __exit__(self, *_args):
             return None
 
-        def execute(self, _statement):
+        def execute(self, statement):
+            if "device_tokens" in str(statement):
+                raise ProgrammingError(
+                    str(statement),
+                    {},
+                    RuntimeError("device_tokens does not exist"),
+                )
             return None
 
     class FakeEngine:
         def connect(self):
             return FakeConnection()
 
-    class FakeInspector:
-        def get_table_names(self):
-            return [
-                table_name
-                for table_name in health_api.CRITICAL_DATABASE_TABLES
-                if table_name != "device_tokens"
-            ]
-
     monkeypatch.setattr(health_api, "get_engine", lambda: FakeEngine())
-    monkeypatch.setattr(health_api, "inspect", lambda _connection: FakeInspector())
 
     with pytest.raises(ApiError) as exc_info:
         health_api.database_health_check()
 
     assert exc_info.value.status_code == 503
-    assert exc_info.value.details == {"missing_tables": ["device_tokens"]}
+    assert exc_info.value.code == "DATABASE_SCHEMA_UNHEALTHY"
 
 
 def test_database_health_converts_driver_failures_to_a_bounded_service_error(

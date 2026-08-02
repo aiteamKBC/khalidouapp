@@ -33,7 +33,7 @@ def get_engine() -> Engine:
         connect_args = {
             "connect_timeout": max(
                 1,
-                min(10, settings.database_pool_timeout_seconds),
+                min(5, settings.database_pool_timeout_seconds),
             )
         }
     return create_engine(
