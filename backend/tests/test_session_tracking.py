@@ -34,6 +34,7 @@ from app.services.session_tracking import (
     resume_paid_pause,
     start_paid_pause,
     start_or_get_session,
+    sync_session_time_buckets,
 )
 from app.services.activity_timeline import build_workday_timeline
 
@@ -1105,6 +1106,60 @@ def test_time_before_and_after_shift_never_counts_as_normal_work(tracking_contex
     assert heartbeat["workday"]["normal_seconds"] == 8 * 60 * 60
     assert heartbeat["workday"]["extra_seconds"] == 2 * 60 * 60
     assert heartbeat["workday"]["extra_time_status"] == "recorded_not_counted"
+
+
+def test_stale_active_counter_is_not_reclassified_as_overtime(tracking_context):
+    db, device = tracking_context
+    db.add(
+        EmployeeWorkProfile(
+            company_id=device.company_id,
+            employee_id=device.employee_id,
+            shift_start=datetime.strptime("10:00", "%H:%M").time(),
+            shift_end=datetime.strptime("18:00", "%H:%M").time(),
+            required_daily_minutes=8 * 60,
+            overtime_enabled=False,
+        )
+    )
+    started_at = datetime(2026, 7, 21, 12, 53, tzinfo=UTC)
+    heartbeat_at = datetime(2026, 7, 21, 18, 20, tzinfo=UTC)
+    started = start_or_get_session(
+        db,
+        device,
+        SessionStartRequest(started_at=started_at),
+    )
+    session_id = UUID(started["session"]["id"])
+    record_heartbeat(
+        db,
+        device=device,
+        session_id=session_id,
+        payload=HeartbeatRequest(
+            event_id=uuid4(),
+            timestamp=heartbeat_at,
+            status="active",
+            active_seconds=5 * 60 * 60 + 27 * 60,
+            idle_seconds=0,
+            agent_version="1.0.0",
+        ),
+    )
+
+    # Simulate a legacy client carrying nearly five hours from an earlier run.
+    session = db.get(WorkSession, session_id)
+    session.active_seconds = 10 * 60 * 60
+    session.extra_seconds = 4 * 60 * 60 + 53 * 60
+    db.add(session)
+    db.commit()
+
+    sync_session_time_buckets(db, session, at=heartbeat_at)
+    db.commit()
+    db.refresh(session)
+    overtime = db.scalar(
+        select(OvertimeRecord).where(OvertimeRecord.work_session_id == session_id)
+    )
+
+    assert session.normal_seconds == 5 * 60 * 60 + 7 * 60
+    assert session.extra_seconds == 20 * 60
+    assert overtime is not None
+    assert overtime.recorded_extra_seconds == 20 * 60
 
 
 def test_device_timezone_controls_shift_even_when_employee_profile_differs(

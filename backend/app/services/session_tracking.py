@@ -362,26 +362,18 @@ def sync_session_time_buckets(
         row["extra"] += max(0, interval_seconds - normal_seconds)
 
     for day_session in _sessions_for_workday(db, session):
-        stored_worked_seconds = max(0, day_session.active_seconds - day_session.deducted_seconds)
         classified = buckets.get(day_session.id, {"normal": 0, "extra": 0})
-        classified_total = classified["normal"] + classified["extra"]
 
-        # The activity timeline is the authoritative record of what happened.
-        # A client can reconnect after a restart with a stale active_seconds
-        # counter, so never throw away timeline time just because the counter is
-        # smaller. Keep the larger value and use it for the bucket split.
-        worked_seconds = max(stored_worked_seconds, classified_total)
+        # The disjoint activity timeline is the authoritative classification.
+        # A legacy/recovered client counter can be larger than the work that is
+        # actually visible today (for example, after carrying a previous-day
+        # counter through a restart). Treating that difference as unclassified
+        # work made the entire stale amount become overtime as soon as the shift
+        # ended. Timeline construction already preserves locally observed work
+        # across API outages while removing genuine offline gaps, so never turn
+        # an unmatched counter remainder into normal time or overtime.
         day_session.normal_seconds = classified["normal"]
         day_session.extra_seconds = classified["extra"]
-        unclassified = max(0, worked_seconds - classified_total)
-        session_end = utc(day_session.ended_at) if day_session.ended_at else calculated_at
-        if shift_start and shift_end and shift_start <= session_end <= shift_end:
-            day_session.normal_seconds += unclassified
-        else:
-            # Missing timeline seconds must never become paid shift time merely
-            # because the session happened before the configured shift ended.
-            # They remain extra/recorded time until classified by a later sync.
-            day_session.extra_seconds += unclassified
         db.add(day_session)
         record = db.scalar(
             select(OvertimeRecord).where(OvertimeRecord.work_session_id == day_session.id)
