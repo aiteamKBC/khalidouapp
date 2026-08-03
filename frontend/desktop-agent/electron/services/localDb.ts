@@ -87,9 +87,6 @@ function nextAttemptAt(attempts: number) {
   return new Date(Date.now() + backoffMs).toISOString();
 }
 
-/** Non-media events stop retrying eventually so one invalid request cannot block the queue. */
-const MAX_SYNC_ATTEMPTS = 10;
-
 function ensureColumn(table: string, column: string, definition: string) {
   if (
     rows<{ name: string }>(`pragma table_info(${table})`).some(
@@ -173,6 +170,27 @@ export async function initializeLocalDatabase() {
     `create index if not exists ix_local_session_events_session_time
      on local_session_events(local_session_id, event_timestamp, created_at)`,
   );
+  const legacyEventRecoveryKey = "pending_event_transient_recovery_v1";
+  const legacyEventRecovery = rows<{ value: string }>(
+    `select value from sync_state where key = ? limit 1`,
+    [legacyEventRecoveryKey],
+  )[0];
+  if (!legacyEventRecovery) {
+    const recoveredAt = new Date().toISOString();
+    // Older agents retired every event after ten failures, even when the API
+    // was simply offline. Revive those rows once; definitive 4xx rejections
+    // will be quarantined again by the current sync policy.
+    database.run(
+      `update pending_events
+       set status = 'failed', attempts = 0, next_attempt_at = ?, updated_at = ?
+       where status = 'dead'`,
+      [recoveredAt, recoveredAt],
+    );
+    database.run(
+      `insert into sync_state (key, value, updated_at) values (?, ?, ?)`,
+      [legacyEventRecoveryKey, recoveredAt, recoveredAt],
+    );
+  }
   // Permanently rejected screenshots stay quarantined. Reviving them on every
   // launch created an infinite retry loop and could make an otherwise-online
   // device appear offline because of one historical payload.
@@ -391,12 +409,21 @@ export function markPendingEventUploaded(id: string) {
 
 export function markPendingEventFailed(id: string, attempts: number) {
   const nextAttempts = attempts + 1;
-  const status = nextAttempts >= MAX_SYNC_ATTEMPTS ? 'dead' : 'failed';
   database?.run(
     `update pending_events
-     set status = ?, attempts = ?, next_attempt_at = ?, updated_at = ?
+     set status = 'failed', attempts = ?, next_attempt_at = ?, updated_at = ?
      where id = ?`,
-    [status, nextAttempts, nextAttemptAt(nextAttempts), new Date().toISOString(), id],
+    [nextAttempts, nextAttemptAt(nextAttempts), new Date().toISOString(), id],
+  );
+  persist();
+}
+
+export function markPendingEventPermanentlyRejected(id: string, attempts: number) {
+  database?.run(
+    `update pending_events
+     set status = 'dead', attempts = ?, updated_at = ?
+     where id = ?`,
+    [attempts + 1, new Date().toISOString(), id],
   );
   persist();
 }

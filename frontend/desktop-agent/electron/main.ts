@@ -75,6 +75,7 @@ import {
   initializeLocalDatabase,
   markLocalTrackingSessionSynced,
   markPendingEventFailed,
+  markPendingEventPermanentlyRejected,
   markPendingEventUploaded,
   markPendingScreenshotFailed,
   markPendingScreenshotUploaded,
@@ -119,6 +120,7 @@ import {
   isWhatsAppScreenshotActivity,
   privacyBlurSampleSize,
 } from "./services/screenshotPrivacy.js";
+import { isPermanentPendingEventSyncFailure } from "./services/pendingSyncPolicy.js";
 
 const { nativeImage, shell } = electronCommon;
 const {
@@ -303,6 +305,7 @@ let screenshotTimer: ReturnType<typeof setTimeout> | null = null;
 let screenshotQueue: number[] = [];
 let screenshotWindowEndsAt: number | null = null;
 let syncTimer: ReturnType<typeof setInterval> | null = null;
+let pendingQueueSyncPromise: Promise<void> | null = null;
 let automaticTrackingRetryTimer: ReturnType<typeof setTimeout> | null = null;
 let trackingWatchdogTimer: ReturnType<typeof setInterval> | null = null;
 let isStartingTrackingAutomatically = false;
@@ -3142,11 +3145,7 @@ function showScreenshotCapturedNotification(uploaded: number, queued: number) {
   }
 }
 
-async function syncPendingQueues(forcePendingQueues = false) {
-  if (!runtimeStatus.enrolled) {
-    return;
-  }
-
+async function syncPendingQueuesOnce(forcePendingQueues: boolean) {
   for (const event of getDuePendingEvents(25, { force: forcePendingQueues })) {
     try {
       await sendQueuedRequest(
@@ -3159,12 +3158,24 @@ async function syncPendingQueues(forcePendingQueues = false) {
       runtimeStatus.lastSuccessfulSyncAt = new Date().toISOString();
     } catch (error) {
       const responseStatus = apiResponseStatus(error);
-      markPendingEventFailed(event.id, event.attempts);
+      const permanentlyRejected =
+        isPermanentPendingEventSyncFailure(responseStatus);
+      if (permanentlyRejected) {
+        markPendingEventPermanentlyRejected(event.id, event.attempts);
+      } else {
+        // Connection and server failures must never erase recorded work.
+        markPendingEventFailed(event.id, event.attempts);
+      }
       // Any HTTP response proves that the API is reachable. Keep the agent
       // online while the rejected item remains pending for a later decision.
       runtimeStatus.connectionStatus =
         connectionStatusAfterApiFailure(responseStatus);
       log.warn("Pending event sync failed", safeErrorForLog(error));
+      if (!permanentlyRejected) {
+        // Avoid multiplying requests while the API is unavailable. A later
+        // single-flight pass resumes from the durable local queue.
+        break;
+      }
       continue;
     }
   }
@@ -3206,10 +3217,33 @@ async function syncPendingQueues(forcePendingQueues = false) {
       runtimeStatus.connectionStatus =
         connectionStatusAfterApiFailure(responseStatus);
       log.warn("Pending screenshot sync failed", safeErrorForLog(error));
+      if (!permanentlyRejected) {
+        break;
+      }
       continue;
     }
   }
   rebuildTrayMenu();
+}
+
+async function syncPendingQueues(forcePendingQueues = false) {
+  if (!runtimeStatus.enrolled) {
+    return;
+  }
+  if (pendingQueueSyncPromise) {
+    await pendingQueueSyncPromise;
+    return;
+  }
+
+  const syncPromise = syncPendingQueuesOnce(forcePendingQueues);
+  pendingQueueSyncPromise = syncPromise;
+  try {
+    await syncPromise;
+  } finally {
+    if (pendingQueueSyncPromise === syncPromise) {
+      pendingQueueSyncPromise = null;
+    }
+  }
 }
 
 function scheduleNextScreenshot() {

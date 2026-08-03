@@ -152,7 +152,7 @@ export function ApplicationHistoryPanel({
                 <EmptyState
                   icon={History}
                   title="No application history for this day"
-                  description="New activity appears after the updated Windows desktop agent starts tracking work."
+                  description="No application activity has reached the server for this day. Keep the updated Windows desktop app open while tracking; saved activity syncs automatically after the connection recovers."
                 />
               ) : (
                 <div className="divide-y">
