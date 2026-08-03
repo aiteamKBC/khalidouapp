@@ -341,8 +341,8 @@ mv -f "$RELEASE/latest.yml.new" "$RELEASE/latest.yml"
 
 published=0
 for attempt in $(seq 1 30); do
-  if curl -fsS \
-      "__API_BASE_URL__/updates/windows/latest.yml?ts=$(date +%s)" |
+  if curl -fsS --connect-timeout 3 --max-time 10 \
+      "http://127.0.0.1:8100/api/v1/updates/windows/latest.yml?ts=$(date +%s)" |
       grep -Fqx "version: $VERSION"; then
     published=1
     break
@@ -373,21 +373,21 @@ echo "DESKTOP_BACKUP=$BACKUP"
     }
 }
 
-$health = Invoke-RestMethod -Uri "$ApiBaseUrl/health/db"
+$health = Invoke-RestMethod -Uri "$ApiBaseUrl/health/db" -TimeoutSec 20
 if (
     $health.data.database -ne "reachable" -or
     $health.data.schema -ne "ready"
 ) {
     throw "The public database health check did not report a ready schema."
 }
-$dashboard = Invoke-WebRequest -UseBasicParsing -Uri $DashboardUrl
+$dashboard = Invoke-WebRequest -UseBasicParsing -Uri $DashboardUrl -TimeoutSec 20
 if ($dashboard.StatusCode -ne 200) {
     throw "The dashboard returned HTTP $($dashboard.StatusCode)."
 }
 if (-not $SkipDesktop) {
     $publishedYml = (Invoke-WebRequest -UseBasicParsing -Uri (
         "$ApiBaseUrl/updates/windows/latest.yml?ts=$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())"
-    )).Content
+    ) -TimeoutSec 20).Content
     if ($publishedYml -notmatch "(?m)^version:\s+$([regex]::Escape($version))\s*$") {
         throw "The public update feed does not expose Desktop $version."
     }
