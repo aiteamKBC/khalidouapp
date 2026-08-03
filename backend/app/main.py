@@ -18,6 +18,14 @@ from app.services.screenshot_retention import cleanup_expired_screenshots
 logger = logging.getLogger(__name__)
 
 
+def _is_agent_ingestion_path(path: str) -> bool:
+    if path.startswith("/api/v1/agent/screenshots/"):
+        return True
+    if not path.startswith("/api/v1/agent/sessions/"):
+        return False
+    return path.endswith(("/heartbeat", "/events"))
+
+
 async def retention_worker() -> None:
     while True:
         try:
@@ -46,6 +54,7 @@ async def lifespan(_: FastAPI):
 
 def create_app() -> FastAPI:
     production = settings.app_env.lower() == "production"
+    agent_ingestion_slots = asyncio.Semaphore(settings.agent_ingestion_concurrency)
     app = FastAPI(
         title=settings.app_name,
         version="1.0.0",
@@ -66,7 +75,28 @@ def create_app() -> FastAPI:
     @app.middleware("http")
     async def add_security_headers(request: Request, call_next):
         started_at = perf_counter()
-        response = await call_next(request)
+        ingestion_slot_acquired = False
+        if _is_agent_ingestion_path(request.url.path):
+            if agent_ingestion_slots.locked():
+                response = error_response(
+                    code="AGENT_INGESTION_BUSY",
+                    message="The server is catching up. Please retry this tracking update shortly.",
+                    status_code=429,
+                    details={"retry_after_seconds": 2},
+                )
+                response.headers["Retry-After"] = "2"
+            else:
+                await agent_ingestion_slots.acquire()
+                ingestion_slot_acquired = True
+                response = None
+        else:
+            response = None
+        try:
+            if response is None:
+                response = await call_next(request)
+        finally:
+            if ingestion_slot_acquired:
+                agent_ingestion_slots.release()
         duration_ms = (perf_counter() - started_at) * 1000
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         response.headers.setdefault("X-Frame-Options", "DENY")

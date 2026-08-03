@@ -23,6 +23,12 @@ class Settings(BaseSettings):
     database_max_overflow: int = Field(default=2, alias="DATABASE_MAX_OVERFLOW")
     database_pool_timeout_seconds: int = Field(default=30, alias="DATABASE_POOL_TIMEOUT_SECONDS")
     api_thread_pool_size: int = Field(default=12, ge=4, le=32, alias="API_THREAD_POOL_SIZE")
+    agent_ingestion_concurrency: int = Field(
+        default=8,
+        ge=1,
+        le=24,
+        alias="AGENT_INGESTION_CONCURRENCY",
+    )
     jwt_secret_key: str = Field(default=INSECURE_DEFAULT_SECRET, alias="JWT_SECRET_KEY")
     jwt_access_token_expire_minutes: int = Field(
         default=30, alias="JWT_ACCESS_TOKEN_EXPIRE_MINUTES"

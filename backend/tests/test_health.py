@@ -4,7 +4,7 @@ from sqlalchemy.exc import OperationalError, ProgrammingError
 
 from app.api.v1 import health as health_api
 from app.core.exceptions import ApiError
-from app.main import app
+from app.main import _is_agent_ingestion_path, app
 
 
 def test_health_check() -> None:
@@ -20,6 +20,18 @@ def test_health_check() -> None:
     assert response.headers["x-frame-options"] == "DENY"
     assert response.headers["referrer-policy"] == "no-referrer"
     assert response.headers["x-request-id"]
+
+
+def test_only_high_volume_agent_ingestion_uses_reserved_capacity() -> None:
+    assert _is_agent_ingestion_path(
+        "/api/v1/agent/sessions/00000000-0000-0000-0000-000000000000/heartbeat"
+    )
+    assert _is_agent_ingestion_path(
+        "/api/v1/agent/sessions/00000000-0000-0000-0000-000000000000/events"
+    )
+    assert _is_agent_ingestion_path("/api/v1/agent/screenshots/initiate")
+    assert not _is_agent_ingestion_path("/api/v1/agent/config")
+    assert not _is_agent_ingestion_path("/api/v1/payroll/sheet")
 
 
 def test_database_health_rejects_an_incomplete_critical_schema(monkeypatch) -> None:
