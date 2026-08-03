@@ -257,9 +257,7 @@ def calculate_daily_attendance(
         if correction and correction.corrected_end_at
         else scheduled_last_at
     )
-    actual_sign_out_at = (
-        None if timeline["is_running"] else _parsed(timeline["last_ended_at"])
-    )
+    actual_sign_out_at = None if timeline["is_running"] else _parsed(timeline["last_ended_at"])
     normal_worked = 0
     pre_shift_extra = 0
     post_shift_extra = 0
@@ -496,9 +494,7 @@ def calculate_daily_attendance(
     if rejected_overtime:
         issues.append({"code": "overtime_rejected", "seconds": rejected_overtime})
     if recorded_only_overtime:
-        issues.append(
-            {"code": "overtime_recorded_only", "seconds": recorded_only_overtime}
-        )
+        issues.append({"code": "overtime_recorded_only", "seconds": recorded_only_overtime})
     if correction:
         issues.append(
             {
@@ -578,14 +574,12 @@ def calculate_daily_attendance(
         "leave_status": leave.leave_type if leave else None,
         "issues": issues,
         "calculation_sources": {
-            "session_ids": sorted({item[0]["session_id"] for item in intervals}),
+            "session_ids": sorted(
+                {item[0]["session_id"] for item in intervals if item[0].get("session_id")}
+            ),
             "is_running": bool(timeline["is_running"]),
-            "continued_from_previous_day": bool(
-                timeline.get("continued_from_previous_day", False)
-            ),
-            "continued_session_started_at": timeline.get(
-                "continued_session_started_at"
-            ),
+            "continued_from_previous_day": bool(timeline.get("continued_from_previous_day", False)),
+            "continued_session_started_at": timeline.get("continued_session_started_at"),
             "adjustment_ids": [str(item.id) for item in adjustments],
             "overtime_ids": [str(item.id) for item in overtime_rows],
             "leave_request_id": str(leave.id) if leave else None,
@@ -785,9 +779,7 @@ def current_idle_contexts(
     schedules = {}
     for work_date in set(work_date_by_employee.values()):
         day_employees = [
-            employee
-            for employee in employees
-            if work_date_by_employee[employee.id] == work_date
+            employee for employee in employees if work_date_by_employee[employee.id] == work_date
         ]
         schedules.update(
             effective_schedules_for_employees(

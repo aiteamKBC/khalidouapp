@@ -142,6 +142,7 @@ type KIconName =
   | "manual"
   | "locked"
   | "sleeping"
+  | "untracked"
   | "settings";
 
 function KIcon({
@@ -234,6 +235,15 @@ function KIcon({
       <>
         <path d="M18 15.5A7 7 0 0 1 8.5 6a7 7 0 1 0 9.5 9.5Z" />
         <path d="M15 4h4l-4 5h4" />
+      </>
+    ),
+    untracked: (
+      <>
+        <path d="M5 5 19 19" />
+        <path d="M8.5 8.5A8.5 8.5 0 0 1 20 10" />
+        <path d="M4 10a8.5 8.5 0 0 1 1.3-2.8" />
+        <path d="M7 14a5 5 0 0 1 7.4-4.4" />
+        <path d="M10 18a2.8 2.8 0 0 1 4.2-2.4" />
       </>
     ),
     settings: (

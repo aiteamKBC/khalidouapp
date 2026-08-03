@@ -98,12 +98,13 @@ export type WorkdayTimeline = {
   idle_seconds: number;
   locked_seconds: number;
   sleeping_seconds: number;
+  untracked_seconds?: number;
   break_seconds?: number;
   manual_seconds?: number;
   approved_leave?: boolean;
   leave_seconds?: number;
   intervals: Array<{
-    type: "worked" | "idle" | "locked" | "sleeping" | "break" | "manual";
+    type: "worked" | "idle" | "locked" | "sleeping" | "untracked" | "break" | "manual";
     started_at: string;
     ended_at: string | null;
     duration_seconds: number;

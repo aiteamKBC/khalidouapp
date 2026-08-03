@@ -3,6 +3,7 @@ export type TimelineIntervalType =
   | "idle"
   | "locked"
   | "sleeping"
+  | "untracked"
   | "break"
   | "manual";
 
@@ -19,6 +20,7 @@ export const TIMELINE_LABELS: Record<TimelineDisplayType, string> = {
   idle: "Idle",
   locked: "Locked",
   sleeping: "Sleeping",
+  untracked: "Untracked",
   break: "Break",
   manual: "Manual approved",
   break_work: "Worked during break",

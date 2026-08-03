@@ -1,4 +1,12 @@
-import { Activity, CalendarDays, CircleCheck, Coffee, LockKeyhole, Moon } from "lucide-react";
+import {
+  Activity,
+  CalendarDays,
+  CircleCheck,
+  Coffee,
+  LockKeyhole,
+  Moon,
+  WifiOff,
+} from "lucide-react";
 
 import type { WorkdayIntervalType, WorkdayTimeline as WorkdayTimelineData } from "@/types";
 import { formatAttendanceStart, formatClock, formatDurationSeconds } from "@/lib/format";
@@ -57,6 +65,12 @@ const intervalStyles: Record<
     badge: "bg-indigo-500/10 text-indigo-700",
     icon: Moon,
   },
+  untracked: {
+    label: "Untracked",
+    bar: "bg-rose-500",
+    badge: "bg-rose-500/10 text-rose-700 dark:text-rose-300",
+    icon: WifiOff,
+  },
   leave: {
     label: "Leave",
     bar: "bg-sky-400",
@@ -105,7 +119,7 @@ export function WorkdayTimeline({ timeline }: { timeline?: WorkdayTimelineData }
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-3 text-sm md:grid-cols-5">
+      <div className="grid grid-cols-2 gap-3 text-sm md:grid-cols-6">
         <Metric
           label="First start"
           value={formatAttendanceStart(
@@ -134,6 +148,7 @@ export function WorkdayTimeline({ timeline }: { timeline?: WorkdayTimelineData }
             timeline.approvedLeave ? timeline.leaveSeconds : timeline.idleSeconds,
           )}
         />
+        <Metric label="Untracked" value={formatDurationSeconds(timeline.untrackedSeconds)} />
       </div>
 
       <div
@@ -158,9 +173,9 @@ export function WorkdayTimeline({ timeline }: { timeline?: WorkdayTimelineData }
       </div>
 
       <p className="text-xs text-muted-foreground">
-        Timeline idle shows recorded device inactivity. Requestable or deductible idle can be lower
-        because paid grace, breaks, off-shift time, and periods shorter than one minute are
-        excluded.
+        Untracked is a gap with no device evidence, so it is not counted as worked or idle. Timeline
+        idle shows recorded device inactivity; requestable or deductible idle can be lower because
+        paid grace, breaks, off-shift time, and periods shorter than one minute are excluded.
       </p>
 
       <div className="divide-y rounded-md border">

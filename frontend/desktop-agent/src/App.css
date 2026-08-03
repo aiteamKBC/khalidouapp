@@ -1246,6 +1246,15 @@ textarea:focus {
   background: var(--amber-weak);
 }
 
+.k-line-untracked b {
+  color: #e11d48;
+}
+
+.k-line-untracked .k-timeline-icon {
+  color: #e11d48;
+  background: color-mix(in srgb, #e11d48 14%, transparent);
+}
+
 .k-line-break b {
   color: #7c3aed;
 }

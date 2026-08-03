@@ -188,7 +188,8 @@ export interface ActivityEvent {
   meta?: Record<string, string>;
 }
 
-export type WorkdayIntervalType = "worked" | "idle" | "locked" | "sleeping" | "break" | "manual";
+export type WorkdayIntervalType =
+  "worked" | "idle" | "locked" | "sleeping" | "untracked" | "break" | "manual";
 
 export interface WorkdayInterval {
   type: WorkdayIntervalType;
@@ -217,6 +218,7 @@ export interface WorkdayTimeline {
   idleSeconds: number;
   lockedSeconds: number;
   sleepingSeconds: number;
+  untrackedSeconds: number;
   breakSeconds: number;
   manualSeconds: number;
   approvedLeave: boolean;

@@ -525,16 +525,15 @@ def test_dashboard_work_trend_is_lightweight_and_team_scoped(
 
     assert general.status_code == 200
     assert owner.status_code == 200
-    assert {
-        row["employee_id"] for row in general.json()["data"]
-    } == {
+    assert {row["employee_id"] for row in general.json()["data"]} == {
         str(data["employee_a"].id),
         str(data["employee_b"].id),
         *extra_employee_ids,
     }
-    assert {
-        row["employee_id"] for row in owner.json()["data"]
-    } == {str(data["employee_a"].id), *extra_employee_ids}
+    assert {row["employee_id"] for row in owner.json()["data"]} == {
+        str(data["employee_a"].id),
+        *extra_employee_ids,
+    }
     assert all(
         "employee_name" not in row and "screenshot_count" not in row
         for row in general.json()["data"]
@@ -614,9 +613,7 @@ def test_daily_timesheet_includes_scoped_empty_employees_in_bounded_queries(
         headers=data["owner_headers"],
     )
     assert owner_response.status_code == 200
-    assert {
-        row["employee_id"] for row in owner_response.json()["data"]
-    } == {
+    assert {row["employee_id"] for row in owner_response.json()["data"]} == {
         str(data["employee_a"].id),
         shared_employee_id,
     }
@@ -626,9 +623,7 @@ def test_daily_timesheet_includes_scoped_empty_employees_in_bounded_queries(
         headers=data["owner_headers"],
     )
     assert options_response.status_code == 200
-    assert {
-        option["id"] for option in options_response.json()["data"]
-    } == {
+    assert {option["id"] for option in options_response.json()["data"]} == {
         str(data["employee_a"].id),
         shared_employee_id,
     }
@@ -821,10 +816,7 @@ def test_daily_attendance_source_roster_has_bounded_request_queries(team_client,
     )
     assert refreshed.status_code == 200
     assert refreshed.json()["meta"]["pending_refresh_count"] == 0
-    assert all(
-        row.get("refresh_pending") is not True
-        for row in refreshed.json()["data"]["rows"]
-    )
+    assert all(row.get("refresh_pending") is not True for row in refreshed.json()["data"]["rows"])
 
 
 def test_attendance_range_stops_at_employee_today(team_client):
@@ -1993,9 +1985,7 @@ def test_legacy_device_token_bootstraps_once_after_registry_repair(team_client):
     db = data["session_factory"]()
     try:
         device = db.get(Device, device_id)
-        token_rows = db.scalars(
-            select(DeviceToken).where(DeviceToken.device_id == device_id)
-        ).all()
+        token_rows = db.scalars(select(DeviceToken).where(DeviceToken.device_id == device_id)).all()
         assert device.legacy_token_bootstrap_allowed is False
         assert len(token_rows) == 1
         db.delete(token_rows[0])
@@ -2341,9 +2331,7 @@ def test_team_leader_self_created_task_activates_without_creation_approval(team_
     decided_completion_request = task_workflow_requests(data, task["id"])[0]
     assert decided_completion_request["status"] == "approved"
     assert decided_completion_request["decision_note"] == "Reviewed by the company admin"
-    assert decided_completion_request["reviewed_by_admin_user_id"] == str(
-        data["general_admin"].id
-    )
+    assert decided_completion_request["reviewed_by_admin_user_id"] == str(data["general_admin"].id)
 
 
 def test_team_member_created_task_still_requires_team_leader_approval(team_client):
@@ -2370,9 +2358,7 @@ def test_team_member_created_task_still_requires_team_leader_approval(team_clien
     assert requests[0]["request_type"] == "task_creation"
     assert requests[0]["status"] == "pending"
 
-    owner_notifications = admin_task_notifications(
-        client, data["owner_headers"], task["id"]
-    )
+    owner_notifications = admin_task_notifications(client, data["owner_headers"], task["id"])
     assert {row["type"] for row in owner_notifications} == {"task_approval_requested"}
     approved = client.post(
         f"/api/v1/tasks/{task['id']}/approve-request",
@@ -2648,17 +2634,13 @@ def test_daily_timesheet_uses_employee_local_date_for_sessions_and_screenshots(
 
     assert local_day.status_code == 200
     local_row = next(
-        row
-        for row in local_day.json()["data"]
-        if row["employee_id"] == str(data["employee_a"].id)
+        row for row in local_day.json()["data"] if row["employee_id"] == str(data["employee_a"].id)
     )
     assert local_row["date"] == "2026-07-29"
     assert local_row["active_seconds"] >= 10 * 60
     assert local_row["screenshot_count"] == 1
     utc_row = next(
-        row
-        for row in utc_day.json()["data"]
-        if row["employee_id"] == str(data["employee_a"].id)
+        row for row in utc_day.json()["data"] if row["employee_id"] == str(data["employee_a"].id)
     )
     assert utc_row["date"] == "2026-07-28"
     assert utc_row["start_time"] is None
@@ -2824,9 +2806,7 @@ def test_timesheet_never_displays_one_session_beyond_its_local_day(team_client):
 
     with data["session_factory"]() as db:
         device_id = db.scalar(
-            select(WorkSession.device_id).where(
-                WorkSession.employee_id == data["employee_b"].id
-            )
+            select(WorkSession.device_id).where(WorkSession.employee_id == data["employee_b"].id)
         )
         db.add(
             WorkSession(
@@ -3049,12 +3029,9 @@ def test_desktop_today_excludes_idle_on_an_off_day(team_client):
     )
     assert timesheet_row["idle_seconds"] == 0
     assert timesheet_row["observed_idle_seconds"] == 20 * 60
-    assert timesheet_row["observed_tracked_seconds"] == (
-        timesheet_row["active_seconds"] + 20 * 60
-    )
+    assert timesheet_row["observed_tracked_seconds"] == (timesheet_row["active_seconds"] + 20 * 60)
     assert timesheet_row["observed_span_seconds"] == (
-        timesheet_row["observed_tracked_seconds"]
-        + timesheet_row["untracked_seconds"]
+        timesheet_row["observed_tracked_seconds"] + timesheet_row["untracked_seconds"]
     )
     assert timeline_response.json()["data"]["idle_seconds"] == 0
     overview_row = employee_overview.json()["data"][0]
@@ -3329,6 +3306,57 @@ def test_workday_timeline_stops_stale_open_session_at_last_heartbeat(team_client
     assert timesheet_row["end_time"] == heartbeat_at.isoformat()
 
 
+def test_workday_timeline_shows_the_exact_gap_between_sessions(team_client):
+    client, data = team_client
+    work_day = local_today(data["employee_a"].timezone)
+    day_start = datetime.combine(work_day, datetime.min.time(), tzinfo=UTC)
+    first_start = day_start + timedelta(hours=10, minutes=37)
+    first_end = day_start + timedelta(hours=10, minutes=42)
+    second_start = day_start + timedelta(hours=10, minutes=55)
+    second_end = day_start + timedelta(hours=11, minutes=24)
+
+    db: Session = data["session_factory"]()
+    try:
+        first = db.get(WorkSession, data["session_a"].id)
+        first.started_at = first_start
+        first.ended_at = first_end
+        first.status = "ended"
+        db.add(
+            WorkSession(
+                company_id=first.company_id,
+                employee_id=first.employee_id,
+                device_id=first.device_id,
+                started_at=second_start,
+                ended_at=second_end,
+                status="ended",
+                active_seconds=29 * 60,
+                idle_seconds=0,
+                team_id=first.team_id,
+                project_id=first.project_id,
+                task_id=first.task_id,
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    response = client.get(
+        f"/api/v1/activity/timeline?employee_id={data['employee_a'].id}&day={work_day.isoformat()}",
+        headers=data["general_headers"],
+    )
+
+    assert response.status_code == 200
+    timeline = response.json()["data"]
+    assert [interval["type"] for interval in timeline["intervals"]] == [
+        "worked",
+        "untracked",
+        "worked",
+    ]
+    assert timeline["untracked_seconds"] == 13 * 60
+    assert timeline["intervals"][1]["started_at"] == first_end.isoformat()
+    assert timeline["intervals"][1]["ended_at"] == second_start.isoformat()
+
+
 def test_daily_attendance_stops_stale_materialized_session_at_last_heartbeat(
     team_client,
 ):
@@ -3487,9 +3515,7 @@ def test_production_audit_distinguishes_missing_images_from_thumbnail_backfill(
 
     assert result["database_rows_checked"] == 2
     assert result["missing_original_count"] == 1
-    assert result["missing_original_samples"][0]["screenshot_id"] == str(
-        data["screenshot_b"].id
-    )
+    assert result["missing_original_samples"][0]["screenshot_id"] == str(data["screenshot_b"].id)
     assert result["thumbnail_backfill_needed"] == 1
     assert result["storage"]["root_exists"] is True
 
@@ -3996,9 +4022,7 @@ def test_timesheets_do_not_load_encrypted_payroll_fields(team_client):
     )
 
     assert response.status_code == 200
-    assert any(
-        row["employee_id"] == str(data["employee_a"].id) for row in response.json()["data"]
-    )
+    assert any(row["employee_id"] == str(data["employee_a"].id) for row in response.json()["data"])
 
 
 def test_employee_overview_uses_materialized_attendance_totals(team_client):
@@ -4124,11 +4148,7 @@ def test_monitoring_roster_is_lightweight_scoped_and_has_bounded_queries(team_cl
     assert "worked_today_seconds" not in rows[0]
     assert "last_screenshot" not in rows[0]
     assert "managers" not in rows[0]
-    integrity_row = next(
-        row
-        for row in rows
-        if row["employee"]["id"] == str(data["employee_a"].id)
-    )
+    integrity_row = next(row for row in rows if row["employee"]["id"] == str(data["employee_a"].id))
     assert integrity_row["input_integrity"]["state"] == "suspicious"
 
 
@@ -4143,9 +4163,7 @@ def test_monitoring_roster_preserves_break_and_off_shift_statuses(team_client, m
 
     monkeypatch.setattr(
         "app.api.v1.employees.current_idle_contexts",
-        lambda *_args, employees, **_kwargs: {
-            employee.id: "on_break" for employee in employees
-        },
+        lambda *_args, employees, **_kwargs: {employee.id: "on_break" for employee in employees},
     )
     response = client.get(
         f"/api/v1/employees-monitoring?team_id={data['team_a'].id}",
@@ -4165,9 +4183,7 @@ def test_monitoring_roster_preserves_break_and_off_shift_statuses(team_client, m
         db.commit()
     monkeypatch.setattr(
         "app.api.v1.employees.current_idle_contexts",
-        lambda *_args, employees, **_kwargs: {
-            employee.id: "off_shift" for employee in employees
-        },
+        lambda *_args, employees, **_kwargs: {employee.id: "off_shift" for employee in employees},
     )
     response = client.get(
         f"/api/v1/employees-monitoring?team_id={data['team_a'].id}",
@@ -4242,9 +4258,7 @@ def test_employee_overview_distinguishes_idle_break_and_off_shift(team_client, m
 
     monkeypatch.setattr(
         "app.api.v1.employees.current_idle_contexts",
-        lambda *_args, employees, **_kwargs: {
-            employee.id: "off_shift" for employee in employees
-        },
+        lambda *_args, employees, **_kwargs: {employee.id: "off_shift" for employee in employees},
     )
     outside_shift = client.get(
         f"/api/v1/employees-overview?employee_id={data['employee_a'].id}",
@@ -4256,9 +4270,7 @@ def test_employee_overview_distinguishes_idle_break_and_off_shift(team_client, m
 
     monkeypatch.setattr(
         "app.api.v1.employees.current_idle_contexts",
-        lambda *_args, employees, **_kwargs: {
-            employee.id: "on_break" for employee in employees
-        },
+        lambda *_args, employees, **_kwargs: {employee.id: "on_break" for employee in employees},
     )
     on_break = client.get(
         f"/api/v1/employees-overview?employee_id={data['employee_a'].id}",
@@ -4294,9 +4306,7 @@ def test_employee_overview_distinguishes_idle_break_and_off_shift(team_client, m
 
     monkeypatch.setattr(
         "app.api.v1.employees.current_idle_contexts",
-        lambda *_args, employees, **_kwargs: {
-            employee.id: "accountable" for employee in employees
-        },
+        lambda *_args, employees, **_kwargs: {employee.id: "accountable" for employee in employees},
     )
     inside_shift = client.get(
         f"/api/v1/employees-overview?employee_id={data['employee_a'].id}",

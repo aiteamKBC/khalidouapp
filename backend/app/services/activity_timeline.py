@@ -115,16 +115,12 @@ def session_observation_bounds(
         else:
             last_signal_at = max(session_start, _utc(session.ended_at))
         last_signal_at = min(last_signal_at, now_utc)
-        is_fresh = (
-            session.ended_at is None
-            and now_utc - last_signal_at <= freshness_limit
-        )
+        is_fresh = session.ended_at is None and now_utc - last_signal_at <= freshness_limit
         if session.ended_at is not None:
             recorded_end = max(session_start, _utc(session.ended_at))
             effective_end_at = (
                 last_signal_at
-                if heartbeat_at is not None
-                and recorded_end - last_signal_at > freshness_limit
+                if heartbeat_at is not None and recorded_end - last_signal_at > freshness_limit
                 else recorded_end
             )
         else:
@@ -410,6 +406,38 @@ def _apply_approved_idle_allocations(
     return result
 
 
+def _insert_untracked_gaps(intervals: list[dict]) -> list[dict]:
+    """Make missing device evidence visible between recorded intervals.
+
+    These gaps are intentionally not treated as worked or idle.  They simply
+    explain where time inside the observed workday went when the agent stopped
+    sending evidence and later resumed.
+    """
+    result: list[dict] = []
+    previous: dict | None = None
+    for interval in intervals:
+        if previous is not None:
+            gap_start = previous["ended_at"]
+            gap_end = interval["started_at"]
+            if int((gap_end - gap_start).total_seconds()) > 0:
+                result.append(
+                    {
+                        "type": "untracked",
+                        "source": "missing_device_signal",
+                        "started_at": gap_start,
+                        "ended_at": gap_end,
+                        "session_id": None,
+                        "project_id": None,
+                        "task_id": None,
+                        "project_name": None,
+                        "task_name": None,
+                    }
+                )
+        result.append(interval)
+        previous = interval
+    return result
+
+
 def scope_timeline_to_schedule(
     timeline: dict,
     *,
@@ -445,15 +473,13 @@ def scope_timeline_to_schedule(
     for item in timeline.get("intervals", []):
         interval_start = _utc(datetime.fromisoformat(item["started_at"]))
         interval_end = (
-            _utc(datetime.fromisoformat(item["ended_at"]))
-            if item.get("ended_at")
-            else now_utc
+            _utc(datetime.fromisoformat(item["ended_at"])) if item.get("ended_at") else now_utc
         )
         raw_interval_end = interval_end
         if interval_end <= interval_start:
             continue
 
-        if item["type"] != "worked":
+        if item["type"] not in {"worked", "untracked"}:
             if not has_shift or approved_leave:
                 continue
             interval_start = max(interval_start, normalized_shift_start)
@@ -519,9 +545,7 @@ def scope_timeline_to_schedule(
                     "started_at": segment_start,
                     "ended_at": segment_end,
                     "duration_seconds": int((segment_end - segment_start).total_seconds()),
-                    "is_current": bool(
-                        item.get("is_current") and segment_end == raw_interval_end
-                    ),
+                    "is_current": bool(item.get("is_current") and segment_end == raw_interval_end),
                     "work_category": work_category,
                     "break_name": scheduled_break.get("name") if scheduled_break else None,
                     "break_paid": scheduled_break.get("paid") if scheduled_break else None,
@@ -561,6 +585,7 @@ def scope_timeline_to_schedule(
         "idle": 0,
         "locked": 0,
         "sleeping": 0,
+        "untracked": 0,
         "break": 0,
         "manual": 0,
     }
@@ -595,11 +620,7 @@ def scope_timeline_to_schedule(
         **timeline,
         "first_started_at": first_started_at.isoformat() if first_started_at else None,
         "last_ended_at": (
-            None
-            if is_running
-            else last_activity_at.isoformat()
-            if last_activity_at
-            else None
+            None if is_running else last_activity_at.isoformat() if last_activity_at else None
         ),
         "last_activity_at": last_activity_at.isoformat() if last_activity_at else None,
         "is_running": is_running,
@@ -612,6 +633,7 @@ def scope_timeline_to_schedule(
         "idle_seconds": 0 if approved_leave else totals["idle"],
         "locked_seconds": totals["locked"],
         "sleeping_seconds": totals["sleeping"],
+        "untracked_seconds": totals["untracked"],
         "break_seconds": totals["break"],
         "manual_seconds": totals["manual"],
         "leave_seconds": 0,
@@ -633,15 +655,18 @@ def build_workday_timeline(
     zone = _timezone(timezone_name)
     selected_date = target_date or now_utc.astimezone(zone).date()
     day_start, day_end, zone = _day_bounds(selected_date, timezone_name)
-    approved_leave = db.scalar(
-        select(LeaveRequest.id).where(
-            LeaveRequest.company_id == company_id,
-            LeaveRequest.employee_id == employee_id,
-            LeaveRequest.status == "approved",
-            LeaveRequest.start_date <= selected_date,
-            LeaveRequest.end_date >= selected_date,
+    approved_leave = (
+        db.scalar(
+            select(LeaveRequest.id).where(
+                LeaveRequest.company_id == company_id,
+                LeaveRequest.employee_id == employee_id,
+                LeaveRequest.status == "approved",
+                LeaveRequest.start_date <= selected_date,
+                LeaveRequest.end_date >= selected_date,
+            )
         )
-    ) is not None
+        is not None
+    )
 
     session_statement = (
         select(WorkSession, Project.name, Task.name)
@@ -757,9 +782,7 @@ def build_workday_timeline(
         if session.ended_at is not None:
             recorded_end = _utc(session.ended_at)
             session_end = (
-                last_signal_at
-                if recorded_end - last_signal_at > freshness_limit
-                else recorded_end
+                last_signal_at if recorded_end - last_signal_at > freshness_limit else recorded_end
             )
         else:
             session_end = now_utc if is_fresh else min(last_signal_at, now_utc)
@@ -786,9 +809,7 @@ def build_workday_timeline(
                     break
                 state = EVENT_STATES.get(event.event_type, state)
                 state_source = (
-                    "manual_pause"
-                    if event.event_type == "manual_pause_started"
-                    else "activity"
+                    "manual_pause" if event.event_type == "manual_pause_started" else "activity"
                 )
                 continue
             if event_at >= visible_end:
@@ -810,9 +831,7 @@ def build_workday_timeline(
                 break
             state = EVENT_STATES.get(event.event_type, state)
             state_source = (
-                "manual_pause"
-                if event.event_type == "manual_pause_started"
-                else "activity"
+                "manual_pause" if event.event_type == "manual_pause_started" else "activity"
             )
 
         if not terminated and cursor < visible_end:
@@ -895,7 +914,15 @@ def build_workday_timeline(
         else:
             merged.append(interval)
 
-    totals = {"worked": 0, "idle": 0, "locked": 0, "sleeping": 0}
+    merged = _insert_untracked_gaps(merged)
+
+    totals = {
+        "worked": 0,
+        "idle": 0,
+        "locked": 0,
+        "sleeping": 0,
+        "untracked": 0,
+    }
     serialized_intervals = []
     for index, interval in enumerate(merged):
         duration_seconds = max(
@@ -913,10 +940,8 @@ def build_workday_timeline(
                 "started_at": interval["started_at"].isoformat(),
                 "ended_at": None if is_current else interval["ended_at"].isoformat(),
                 "duration_seconds": duration_seconds,
-                "session_id": str(interval["session_id"]),
-                "project_id": (
-                    str(interval["project_id"]) if interval.get("project_id") else None
-                ),
+                "session_id": (str(interval["session_id"]) if interval.get("session_id") else None),
+                "project_id": (str(interval["project_id"]) if interval.get("project_id") else None),
                 "task_id": str(interval["task_id"]) if interval.get("task_id") else None,
                 "project_name": interval["project_name"],
                 "task_name": interval["task_name"],
@@ -927,9 +952,7 @@ def build_workday_timeline(
             }
         )
 
-    leave_seconds = (
-        totals["idle"] + totals["locked"] + totals["sleeping"] if approved_leave else 0
-    )
+    leave_seconds = totals["idle"] + totals["locked"] + totals["sleeping"] if approved_leave else 0
     first_signal_at = min(
         (interval["started_at"] for interval in merged),
         default=None,
@@ -939,7 +962,10 @@ def build_workday_timeline(
     # before the employee actually sat down.
     first_started_at = (
         sustained_work_start(
-            [(interval["type"], interval["started_at"], interval["ended_at"]) for interval in merged],
+            [
+                (interval["type"], interval["started_at"], interval["ended_at"])
+                for interval in merged
+            ],
             company_idle_threshold_seconds(db, company_id),
         )
         or first_signal_at
@@ -951,9 +977,7 @@ def build_workday_timeline(
         "first_started_at": max(first_started_at, day_start).isoformat()
         if first_started_at
         else None,
-        "first_signal_at": max(first_signal_at, day_start).isoformat()
-        if first_signal_at
-        else None,
+        "first_signal_at": max(first_signal_at, day_start).isoformat() if first_signal_at else None,
         "last_ended_at": None
         if has_open_session
         else last_visible_end.isoformat()
@@ -969,6 +993,7 @@ def build_workday_timeline(
         "idle_seconds": 0 if approved_leave else totals["idle"],
         "locked_seconds": totals["locked"],
         "sleeping_seconds": totals["sleeping"],
+        "untracked_seconds": totals["untracked"],
         "approved_leave": approved_leave,
         "leave_seconds": leave_seconds,
         "intervals": serialized_intervals,

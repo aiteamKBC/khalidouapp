@@ -154,7 +154,7 @@ def test_multiple_sessions_keep_raw_lateness_and_unapproved_overtime_separate(
         now=datetime(2026, 7, 22, tzinfo=UTC),
     )
 
-    assert len({item["session_id"] for item in timeline["intervals"]}) == 2
+    assert len({item["session_id"] for item in timeline["intervals"] if item["session_id"]}) == 2
     assert row.raw_late_seconds == 20 * 60
     assert row.deductible_late_seconds == 5 * 60
     assert row.normal_worked_seconds == 7 * 3600 + 10 * 60
@@ -164,9 +164,7 @@ def test_multiple_sessions_keep_raw_lateness_and_unapproved_overtime_separate(
     assert row.unapproved_overtime_seconds == 3600
     assert {issue["code"] for issue in row.issues} >= {"overtime_pending"}
     assert row.total_payable_seconds == 7 * 3600 + 40 * 60
-    assert row.actual_sign_out_at.replace(tzinfo=UTC) == datetime(
-        2026, 7, 21, 18, 0, tzinfo=UTC
-    )
+    assert row.actual_sign_out_at.replace(tzinfo=UTC) == datetime(2026, 7, 21, 18, 0, tzinfo=UTC)
 
     overtime.status = "approved"
     overtime.approved_seconds = 3600
@@ -297,12 +295,8 @@ def test_attendance_starts_at_work_resumed_after_a_false_start(attendance_contex
         now=datetime(2026, 7, 22, tzinfo=UTC),
     )
 
-    assert timeline["first_started_at"] == datetime(
-        2026, 7, 21, 11, 17, tzinfo=UTC
-    ).isoformat()
-    assert timeline["first_signal_at"] == datetime(
-        2026, 7, 21, 9, 4, tzinfo=UTC
-    ).isoformat()
+    assert timeline["first_started_at"] == datetime(2026, 7, 21, 11, 17, tzinfo=UTC).isoformat()
+    assert timeline["first_signal_at"] == datetime(2026, 7, 21, 9, 4, tzinfo=UTC).isoformat()
     assert row.actual_first_activity_at.replace(tzinfo=UTC) == datetime(
         2026, 7, 21, 11, 17, tzinfo=UTC
     )
@@ -374,9 +368,7 @@ def test_stale_session_closed_days_later_does_not_fill_the_offline_gap(
         now=datetime(2026, 7, 25, 12, 0, tzinfo=UTC),
     )
 
-    assert timeline["first_started_at"] == datetime(
-        2026, 7, 25, 10, 6, tzinfo=UTC
-    ).isoformat()
+    assert timeline["first_started_at"] == datetime(2026, 7, 25, 10, 6, tzinfo=UTC).isoformat()
     assert timeline["worked_seconds"] == 98 * 60
     assert len(timeline["intervals"]) == 1
     assert timeline["intervals"][0]["started_at"] == timeline["first_started_at"]
@@ -388,12 +380,10 @@ def test_stale_session_closed_days_later_does_not_fill_the_offline_gap(
         now=datetime(2026, 7, 25, 12, 0, tzinfo=UTC),
     )
 
-    assert historical_timeline["last_ended_at"] == datetime(
-        2026, 7, 23, 13, 2, tzinfo=UTC
-    ).isoformat()
-    assert historical_attendance.actual_sign_out_at == datetime(
-        2026, 7, 23, 13, 2, tzinfo=UTC
+    assert (
+        historical_timeline["last_ended_at"] == datetime(2026, 7, 23, 13, 2, tzinfo=UTC).isoformat()
     )
+    assert historical_attendance.actual_sign_out_at == datetime(2026, 7, 23, 13, 2, tzinfo=UTC)
 
 
 def test_agent_restart_gap_inside_one_session_is_not_counted_as_work(
@@ -457,13 +447,28 @@ def test_agent_restart_gap_inside_one_session_is_not_counted_as_work(
     )
 
     assert timeline["worked_seconds"] == 8_463
-    assert len(timeline["intervals"]) == 2
-    assert timeline["intervals"][0]["ended_at"] == datetime(
-        2026, 7, 21, 11, 45, tzinfo=UTC
-    ).isoformat()
-    assert timeline["intervals"][1]["started_at"] == datetime(
-        2026, 7, 21, 13, 35, 57, tzinfo=UTC
-    ).isoformat()
+    assert timeline["untracked_seconds"] == 6_657
+    assert [item["type"] for item in timeline["intervals"]] == [
+        "worked",
+        "untracked",
+        "worked",
+    ]
+    assert (
+        timeline["intervals"][0]["ended_at"]
+        == datetime(2026, 7, 21, 11, 45, tzinfo=UTC).isoformat()
+    )
+    assert (
+        timeline["intervals"][1]["started_at"]
+        == datetime(2026, 7, 21, 11, 45, tzinfo=UTC).isoformat()
+    )
+    assert (
+        timeline["intervals"][1]["ended_at"]
+        == datetime(2026, 7, 21, 13, 35, 57, tzinfo=UTC).isoformat()
+    )
+    assert (
+        timeline["intervals"][2]["started_at"]
+        == datetime(2026, 7, 21, 13, 35, 57, tzinfo=UTC).isoformat()
+    )
 
 
 def test_network_only_heartbeat_gap_keeps_locally_observed_work(
@@ -798,12 +803,8 @@ def test_attendance_uses_session_timezone_instead_of_stale_employee_profile(
     )
 
     assert row.timezone == "Europe/London"
-    assert row.scheduled_start_at.replace(tzinfo=UTC) == datetime(
-        2026, 7, 21, 9, 0, tzinfo=UTC
-    )
-    assert row.scheduled_end_at.replace(tzinfo=UTC) == datetime(
-        2026, 7, 21, 17, 0, tzinfo=UTC
-    )
+    assert row.scheduled_start_at.replace(tzinfo=UTC) == datetime(2026, 7, 21, 9, 0, tzinfo=UTC)
+    assert row.scheduled_end_at.replace(tzinfo=UTC) == datetime(2026, 7, 21, 17, 0, tzinfo=UTC)
 
 
 def test_approved_leave_counts_real_work_as_overtime_and_other_time_as_leave(
@@ -848,6 +849,7 @@ def test_approved_leave_counts_real_work_as_overtime_and_other_time_as_leave(
     assert timeline["idle_seconds"] == 0
     assert timeline["leave_seconds"] == 0
     assert timeline["intervals"][0]["work_category"] == "extra"
+
 
 def test_paid_break_is_not_idle_or_double_counted(attendance_context):
     db, employee, device, _ = attendance_context
@@ -1064,14 +1066,11 @@ def test_work_during_part_of_a_scheduled_break_is_distinguished(
         now=datetime(2026, 7, 22, tzinfo=UTC),
     )
 
-    scheduled_break = next(
-        item for item in timeline["intervals"] if item["type"] == "break"
-    )
+    scheduled_break = next(item for item in timeline["intervals"] if item["type"] == "break")
     worked_during_break = next(
         item
         for item in timeline["intervals"]
-        if item["type"] == "worked"
-        and item.get("work_category") == "break_work"
+        if item["type"] == "worked" and item.get("work_category") == "break_work"
     )
 
     assert scheduled_break["duration_seconds"] == 15 * 60
@@ -1165,10 +1164,8 @@ def test_idle_crossing_break_end_is_visible_immediately_after_break(
             item["ended_at"],
         )
         for item in timeline["intervals"]
-        if item["started_at"]
-        < datetime(2026, 7, 21, 12, 36, tzinfo=UTC).isoformat()
-        and (item["ended_at"] or "")
-        > datetime(2026, 7, 21, 12, 0, tzinfo=UTC).isoformat()
+        if item["started_at"] < datetime(2026, 7, 21, 12, 36, tzinfo=UTC).isoformat()
+        and (item["ended_at"] or "") > datetime(2026, 7, 21, 12, 0, tzinfo=UTC).isoformat()
     ]
 
     assert crossing == [
@@ -1420,12 +1417,8 @@ def test_attendance_correction_preserves_raw_evidence_and_adjusts_payable_time(
         2026, 7, 21, 17, 0, tzinfo=UTC
     )
     assert row.total_payable_seconds == 8 * 3600
-    assert row.calculation_sources["raw_first_activity_at"].startswith(
-        "2026-07-21T09:30:00"
-    )
-    assert row.calculation_sources["raw_last_activity_at"].startswith(
-        "2026-07-21T16:30:00"
-    )
+    assert row.calculation_sources["raw_first_activity_at"].startswith("2026-07-21T09:30:00")
+    assert row.calculation_sources["raw_last_activity_at"].startswith("2026-07-21T16:30:00")
     assert row.calculation_sources["attendance_adjustment_seconds"] == 3600
 
 
@@ -1521,10 +1514,7 @@ def test_early_leave_is_stored_and_approved_permission_excuses_it(attendance_con
     )
     assert excused.early_leave_seconds == 0
     assert excused.total_payable_seconds == 8 * 3600
-    assert (
-        excused.calculation_sources["approved_early_leave_seconds"]
-        == 3600
-    )
+    assert excused.calculation_sources["approved_early_leave_seconds"] == 3600
 
 
 def test_locked_windows_time_is_not_worked_or_idle(attendance_context):

@@ -31,6 +31,11 @@ test("work performed during a scheduled break is distinguished", () => {
   assert.equal(TIMELINE_LABELS.break_work, "Worked during break");
 });
 
+test("missing device evidence has a visible untracked label", () => {
+  assert.equal(timelineDisplayType("untracked", false), "untracked");
+  assert.equal(TIMELINE_LABELS.untracked, "Untracked");
+});
+
 test("a locally ended idle interval stops counting before the server refresh returns", () => {
   const presentation = timelineIntervalPresentation(
     {
