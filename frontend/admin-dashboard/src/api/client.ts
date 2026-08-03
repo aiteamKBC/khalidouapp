@@ -163,6 +163,9 @@ async function fetchWithTimeout(
         0,
       );
     }
+    if (init.signal?.aborted && init.signal.reason instanceof Error) {
+      throw init.signal.reason;
+    }
     if (error instanceof TypeError) {
       throw new ApiClientError(
         "The server could not be reached. Check your connection and try again.",

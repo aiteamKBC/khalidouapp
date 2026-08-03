@@ -1,4 +1,4 @@
-import { apiFetch } from "./client";
+import { ApiClientError, apiFetch } from "./client";
 import { normalizeAiAcronym } from "@/lib/text";
 import type { DataScope, PermissionMode, User, UserStatus } from "@/types";
 
@@ -34,6 +34,8 @@ export interface AuthResponse {
   user: User;
 }
 
+const ADMIN_LOGIN_TIMEOUT_MS = 20_000;
+
 export function mapUser(user: BackendUser): User {
   return {
     id: user.id,
@@ -56,16 +58,33 @@ export function mapUser(user: BackendUser): User {
 }
 
 export async function login(email: string, password: string): Promise<AuthResponse> {
-  const tokens = await apiFetch<BackendAuthTokens>("/auth/login", {
-    method: "POST",
-    body: JSON.stringify({ email, password }),
-  });
-  const user = await apiFetch<BackendUser>("/auth/me", {}, tokens.access_token);
-  return {
-    accessToken: tokens.access_token,
-    refreshToken: tokens.refresh_token,
-    user: mapUser(user),
-  };
+  const controller = new AbortController();
+  const timeout = globalThis.setTimeout(
+    () =>
+      controller.abort(
+        new ApiClientError("Sign-in took too long. Please try again.", "LOGIN_TIMEOUT", 0),
+      ),
+    ADMIN_LOGIN_TIMEOUT_MS,
+  );
+  try {
+    const tokens = await apiFetch<BackendAuthTokens>("/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ email, password }),
+      signal: controller.signal,
+    });
+    const user = await apiFetch<BackendUser>(
+      "/auth/me",
+      { signal: controller.signal },
+      tokens.access_token,
+    );
+    return {
+      accessToken: tokens.access_token,
+      refreshToken: tokens.refresh_token,
+      user: mapUser(user),
+    };
+  } finally {
+    globalThis.clearTimeout(timeout);
+  }
 }
 
 export async function me(token?: string): Promise<User> {
