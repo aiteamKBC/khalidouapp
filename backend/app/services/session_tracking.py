@@ -518,17 +518,24 @@ def pause_state_payload(
 
 
 def workday_state_payload(db: Session, session: WorkSession) -> dict[str, Any]:
-    required_seconds = employee_required_daily_seconds(
+    work_date, zone = local_work_date(
         db,
         session.employee_id,
         session.started_at,
         session_zone(db, session).key,
+    )
+    required_seconds = employee_required_daily_seconds(
+        db,
+        session.employee_id,
+        session.started_at,
+        zone.key,
     )
     overtime_enabled = employee_overtime_enabled(db, session.employee_id)
     day_sessions = _sessions_for_workday(db, session)
     normal_seconds = sum(item.normal_seconds for item in day_sessions)
     extra_seconds = sum(item.extra_seconds for item in day_sessions)
     return {
+        "work_date": work_date.isoformat(),
         "required_normal_seconds": required_seconds,
         "normal_seconds": normal_seconds,
         "normal_remaining_seconds": max(0, required_seconds - normal_seconds),

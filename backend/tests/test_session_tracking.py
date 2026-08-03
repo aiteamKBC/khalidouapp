@@ -449,6 +449,9 @@ def test_heartbeat_after_local_day_changes_restarts_session(tracking_context):
     assert result["session"]["id"] != str(stale.id)
     assert result["session"]["started_at"] == heartbeat_at.isoformat()
     assert result["session"]["active_seconds"] == 0
+    assert result["workday"]["work_date"] == heartbeat_at.date().isoformat()
+    assert result["workday"]["normal_seconds"] == 0
+    assert result["workday"]["extra_seconds"] == 0
     assert stale.status == "ended"
     # Nothing proves the employee worked past the session start, so the day ends
     # there rather than banking every unattended hour up to midnight.

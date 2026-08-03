@@ -105,6 +105,10 @@ import {
   connectionStatusAfterApiFailure,
   isPermanentScreenshotSyncFailure,
 } from "./services/runtimePolicies.js";
+import {
+  reconcileWorkedToday,
+  shouldResetDailyCountersForSession,
+} from "./services/dailyCounters.js";
 import { requiresExplicitFreshSessionStart } from "./services/trackingStartPolicy.js";
 import {
   CRASH_RECOVERY_STABLE_MS,
@@ -1261,18 +1265,7 @@ async function promotePendingLocalTrackingSessions() {
   }
 }
 
-function ensureCurrentCounterDate(now = new Date()) {
-  const nextCounterDate = localDateKey(now);
-  if (activeCounterDate === null) {
-    activeCounterDate = nextCounterDate;
-    return;
-  }
-  if (activeCounterDate === nextCounterDate) {
-    return;
-  }
-
-  const restartLocalTracking = Boolean(localTrackingSessionId);
-  closeActiveLocalTrackingSession(now.toISOString(), "daily_rollover");
+function resetDailyRuntimeCounters(nextCounterDate: string, now = new Date()) {
   activeCounterDate = nextCounterDate;
   workedTodayBaseSeconds = 0;
   runtimeStatus.activeSeconds = 0;
@@ -1292,6 +1285,21 @@ function ensureCurrentCounterDate(now = new Date()) {
   idleSecondsBeforeCurrentIdle = 0;
   eligibleIdleSecondsBeforeCurrentIdle = 0;
   lastDurationTickAt = now.getTime();
+}
+
+function ensureCurrentCounterDate(now = new Date()) {
+  const nextCounterDate = localDateKey(now);
+  if (activeCounterDate === null) {
+    activeCounterDate = nextCounterDate;
+    return;
+  }
+  if (activeCounterDate === nextCounterDate) {
+    return;
+  }
+
+  const restartLocalTracking = Boolean(localTrackingSessionId);
+  closeActiveLocalTrackingSession(now.toISOString(), "daily_rollover");
+  resetDailyRuntimeCounters(nextCounterDate, now);
   if (restartLocalTracking && automaticTrackingIsExpected()) {
     beginLocalTrackingSession(now);
   }
@@ -1307,6 +1315,24 @@ function syncRuntimeFromSession(session: WorkSession) {
   if (trackingPausedByUser) {
     return;
   }
+  const todayCounterDate = localDateKey();
+  const sessionCounterDate = localDateKey(new Date(session.started_at));
+  const previousSessionCounterDate = runtimeStatus.sessionStartedAt
+    ? localDateKey(new Date(runtimeStatus.sessionStartedAt))
+    : null;
+  const changedSession = currentSessionId !== session.id;
+  if (
+    shouldResetDailyCountersForSession({
+      activeCounterDate,
+      todayCounterDate,
+      previousSessionCounterDate,
+      nextSessionCounterDate: sessionCounterDate,
+      changedSession,
+    })
+  ) {
+    resetDailyRuntimeCounters(todayCounterDate);
+  }
+  const sessionBelongsToToday = sessionCounterDate === todayCounterDate;
   if (
     session.ended_at ||
     session.status === "ended" ||
@@ -1317,18 +1343,16 @@ function syncRuntimeFromSession(session: WorkSession) {
     }
     runtimeStatus.sessionStartedAt = null;
     runtimeStatus.trackingStatus = "offline";
-    runtimeStatus.activeSeconds = session.active_seconds;
-    runtimeStatus.idleSeconds = session.idle_seconds;
+    runtimeStatus.activeSeconds = sessionBelongsToToday
+      ? session.active_seconds
+      : 0;
+    runtimeStatus.idleSeconds = sessionBelongsToToday ? session.idle_seconds : 0;
     runtimeStatus.workedTodaySeconds =
       workedTodayBaseSeconds + runtimeStatus.activeSeconds;
     lastDurationTickAt = null;
     return;
   }
-  const changedSession = currentSessionId !== session.id;
   const wasIdle = runtimeStatus.trackingStatus === "idle";
-  const todayCounterDate = localDateKey();
-  const sessionCounterDate = localDateKey(new Date(session.started_at));
-  const sessionBelongsToToday = sessionCounterDate === todayCounterDate;
   const localActiveSeconds = changedSession ? 0 : runtimeStatus.activeSeconds;
   const localIdleSeconds = changedSession ? 0 : runtimeStatus.idleSeconds;
   activeCounterDate = todayCounterDate;
@@ -1372,14 +1396,14 @@ function applyWorkdayState(workday?: WorkdayState | null) {
     runtimeStatus.overtimeEnabled = workday.overtime_enabled;
     runtimeStatus.extraTimeStatus = workday.extra_time_status;
     const trackedTodaySeconds = workday.normal_seconds + workday.extra_seconds;
-    runtimeStatus.workedTodaySeconds = Math.max(
-      runtimeStatus.workedTodaySeconds,
+    const reconciled = reconcileWorkedToday({
       trackedTodaySeconds,
-    );
-    workedTodayBaseSeconds = Math.max(
-      0,
-      trackedTodaySeconds - runtimeStatus.activeSeconds,
-    );
+      activeSeconds: runtimeStatus.activeSeconds,
+      previousBaseSeconds: workedTodayBaseSeconds,
+      preservePreviousBase: true,
+    });
+    workedTodayBaseSeconds = reconciled.baseSeconds;
+    runtimeStatus.workedTodaySeconds = reconciled.workedTodaySeconds;
     runtimeStatus.dailyTargetProgressPercent = Math.min(
       100,
       Math.round(
@@ -1675,18 +1699,15 @@ async function refreshWorkedTodayTotalOnce() {
       summary.today.tracked_active_seconds,
       summary.today_timeline?.worked_seconds ?? 0,
     );
-    const serverBaseSeconds = Math.max(
-      0,
-      trackedTodaySeconds - runtimeStatus.activeSeconds,
-    );
-    workedTodayBaseSeconds =
-      previousTimelineDate === summary.today_timeline?.date
-        ? Math.max(workedTodayBaseSeconds, serverBaseSeconds)
-        : serverBaseSeconds;
-    runtimeStatus.workedTodaySeconds = Math.max(
+    const reconciled = reconcileWorkedToday({
       trackedTodaySeconds,
-      workedTodayBaseSeconds + runtimeStatus.activeSeconds,
-    );
+      activeSeconds: runtimeStatus.activeSeconds,
+      previousBaseSeconds: workedTodayBaseSeconds,
+      preservePreviousBase:
+        previousTimelineDate === summary.today_timeline?.date,
+    });
+    workedTodayBaseSeconds = reconciled.baseSeconds;
+    runtimeStatus.workedTodaySeconds = reconciled.workedTodaySeconds;
   } catch (error) {
     log.warn("Failed to refresh today's worked time", safeErrorForLog(error));
   }
