@@ -30,10 +30,13 @@ def _effective_pool_limits(configured_size: int, configured_overflow: int) -> tu
 
 
 def _set_postgres_transaction_timeout(connection) -> None:
-    # One round trip matters on a remote transaction pooler. set_config(...,
-    # true) has the same transaction-local scope as three SET LOCAL commands.
+    # One round trip matters on a remote transaction pooler. PgBouncer can
+    # assign a different server connection to every transaction, so never
+    # inherit a search_path left by another pooled client. set_config(...,
+    # true) gives every value transaction-local scope like SET LOCAL.
     connection.exec_driver_sql(
         "select "
+        "set_config('search_path', 'public', true), "
         "set_config('idle_in_transaction_session_timeout', "
         f"'{POSTGRES_IDLE_TRANSACTION_TIMEOUT_MILLISECONDS}ms', true), "
         "set_config('lock_timeout', "

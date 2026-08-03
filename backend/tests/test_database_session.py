@@ -24,7 +24,8 @@ def test_postgres_transactions_receive_an_idle_timeout() -> None:
     session._set_postgres_transaction_timeout(FakeConnection())
 
     assert statements == [
-        "select set_config('idle_in_transaction_session_timeout', "
+        "select set_config('search_path', 'public', true), "
+        "set_config('idle_in_transaction_session_timeout', "
         "'60000ms', true), set_config('lock_timeout', '5000ms', true), "
         "set_config('statement_timeout', '30000ms', true)"
     ]
