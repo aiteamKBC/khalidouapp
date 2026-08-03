@@ -251,6 +251,8 @@ export interface Timesheet {
   startTime?: string;
   endTime?: string;
   lastSignalAt?: string;
+  leaveStatus?: "approved";
+  leaveType?: string;
   sessionCount: number;
   totalMinutes: number;
   observedSpanMinutes: number;
@@ -262,7 +264,7 @@ export interface Timesheet {
   deductedMinutes: number;
   points: number;
   screenshotCount: number;
-  status: "complete" | "in_progress" | "missing";
+  status: "complete" | "in_progress" | "missing" | "approved_leave";
 }
 
 export interface TrackingSettings {

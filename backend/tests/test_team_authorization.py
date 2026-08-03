@@ -1,4 +1,4 @@
-from datetime import UTC, datetime, time, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from io import BytesIO
 from time import perf_counter
 from uuid import UUID, uuid4
@@ -2753,6 +2753,147 @@ def test_timesheet_records_five_idle_hours_inside_an_eleven_hour_span(team_clien
     assert row["untracked_seconds"] == 0
     assert row["start_time"] == started_at.isoformat()
     assert row["end_time"] == ended_at.isoformat()
+
+
+def test_timesheet_ignores_a_terminal_event_days_after_the_last_heartbeat(team_client):
+    client, data = team_client
+    started_at = datetime(2026, 7, 19, 9, 0, tzinfo=UTC)
+    heartbeat_at = started_at + timedelta(minutes=13)
+    delayed_end_at = started_at + timedelta(days=5)
+
+    with data["session_factory"]() as db:
+        session = WorkSession(
+            company_id=data["employee_a"].company_id,
+            employee_id=data["employee_a"].id,
+            device_id=data["session_a"].device_id,
+            started_at=started_at,
+            ended_at=delayed_end_at,
+            status="ended",
+            active_seconds=13 * 60,
+            idle_seconds=0,
+            timezone="UTC",
+        )
+        db.add(session)
+        db.flush()
+        db.add_all(
+            [
+                ActivityEvent(
+                    company_id=session.company_id,
+                    employee_id=session.employee_id,
+                    device_id=session.device_id,
+                    session_id=session.id,
+                    event_type="heartbeat",
+                    event_timestamp=heartbeat_at,
+                    payload={"status": "active"},
+                    idempotency_key=str(uuid4()),
+                ),
+                ActivityEvent(
+                    company_id=session.company_id,
+                    employee_id=session.employee_id,
+                    device_id=session.device_id,
+                    session_id=session.id,
+                    event_type="session_ended",
+                    event_timestamp=delayed_end_at,
+                    payload=None,
+                    idempotency_key=str(uuid4()),
+                ),
+            ]
+        )
+        db.commit()
+
+    response = client.get(
+        "/api/v1/timesheets/daily?day=2026-07-19",
+        headers=data["general_headers"],
+    )
+
+    assert response.status_code == 200
+    row = next(
+        item
+        for item in response.json()["data"]
+        if item["employee_id"] == str(data["employee_a"].id)
+    )
+    assert row["end_time"] == heartbeat_at.isoformat()
+    assert row["last_signal_at"] == heartbeat_at.isoformat()
+    assert row["observed_span_seconds"] == 13 * 60
+    assert row["untracked_seconds"] == 0
+
+
+def test_timesheet_never_displays_one_session_beyond_its_local_day(team_client):
+    client, data = team_client
+    started_at = datetime(2026, 7, 18, 9, 0, tzinfo=UTC)
+
+    with data["session_factory"]() as db:
+        device_id = db.scalar(
+            select(WorkSession.device_id).where(
+                WorkSession.employee_id == data["employee_b"].id
+            )
+        )
+        db.add(
+            WorkSession(
+                company_id=data["employee_b"].company_id,
+                employee_id=data["employee_b"].id,
+                device_id=device_id,
+                started_at=started_at,
+                ended_at=started_at + timedelta(days=5),
+                status="ended",
+                active_seconds=0,
+                idle_seconds=0,
+                timezone="UTC",
+            )
+        )
+        db.commit()
+
+    response = client.get(
+        "/api/v1/timesheets/daily?day=2026-07-18",
+        headers=data["general_headers"],
+    )
+
+    assert response.status_code == 200
+    row = next(
+        item
+        for item in response.json()["data"]
+        if item["employee_id"] == str(data["employee_b"].id)
+    )
+    assert row["end_time"] == datetime(2026, 7, 19, tzinfo=UTC).isoformat()
+    assert row["observed_span_seconds"] == 15 * 60 * 60
+    assert row["observed_span_seconds"] <= 24 * 60 * 60
+
+
+def test_timesheet_includes_an_approved_leave_day_without_a_work_session(team_client):
+    client, data = team_client
+    leave_day = date(2026, 7, 17)
+
+    with data["session_factory"]() as db:
+        db.add(
+            LeaveRequest(
+                company_id=data["employee_b"].company_id,
+                employee_id=data["employee_b"].id,
+                start_date=leave_day,
+                end_date=leave_day,
+                requested_days=1,
+                leave_type="annual",
+                reason="Approved holiday",
+                status="approved",
+            )
+        )
+        db.commit()
+
+    response = client.get(
+        "/api/v1/timesheets/weekly?week_start=2026-07-13",
+        headers=data["general_headers"],
+    )
+
+    assert response.status_code == 200
+    row = next(
+        item
+        for item in response.json()["data"]
+        if item["employee_id"] == str(data["employee_b"].id)
+        and item["date"] == leave_day.isoformat()
+    )
+    assert row["leave_status"] == "approved"
+    assert row["leave_type"] == "annual"
+    assert row["session_count"] == 0
+    assert row["total_tracked_seconds"] == 0
 
 
 def test_desktop_summary_recovers_elapsed_work_when_an_update_started_a_new_session(

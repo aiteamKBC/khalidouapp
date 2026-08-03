@@ -27,6 +27,12 @@ MIGRATION_PATH = (
     / "versions"
     / "20260729_000050_repair_midnight_rollover_workdays.py"
 )
+MULTIDAY_MIGRATION_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "alembic"
+    / "versions"
+    / "20260803_000053_repair_multiday_stale_sessions.py"
+)
 CAIRO = "Africa/Cairo"
 
 
@@ -40,6 +46,18 @@ def load_migration():
 def run_migration(db: Session) -> None:
     """Run the migration's upgrade against the test session's connection."""
     module = load_migration()
+    connection = db.connection()
+    module.op = Operations(MigrationContext.configure(connection))
+    module.upgrade()
+
+
+def run_multiday_migration(db: Session) -> None:
+    spec = importlib.util.spec_from_file_location(
+        "repair_multiday_stale_sessions",
+        MULTIDAY_MIGRATION_PATH,
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
     connection = db.connection()
     module.op = Operations(MigrationContext.configure(connection))
     module.upgrade()
@@ -246,3 +264,38 @@ def test_attendance_snapshots_for_repaired_days_are_dropped(repair_context):
         select(DailyAttendance).where(DailyAttendance.employee_id == employee.id)
     ).all()
     assert remaining == []
+
+
+def test_multiday_stale_session_is_repaired_to_its_last_proven_activity(repair_context):
+    db, employee, device = repair_context
+    started_at = datetime(2026, 7, 20, 6, 0, tzinfo=UTC)
+    heartbeat_at = started_at + timedelta(minutes=13)
+    session = add_session(
+        db,
+        employee,
+        device,
+        started_at=started_at,
+        ended_at=started_at + timedelta(days=5),
+        active_seconds=13 * 60,
+    )
+    add_worked_heartbeat(db, employee, device, session, heartbeat_at, "multiday-worked")
+    for work_date in (date(2026, 7, 20), date(2026, 7, 22)):
+        db.add(
+            DailyAttendance(
+                company_id=employee.company_id,
+                employee_id=employee.id,
+                work_date=work_date,
+                timezone=CAIRO,
+                calculated_at=datetime.now(UTC),
+            )
+        )
+    db.commit()
+
+    run_multiday_migration(db)
+    db.refresh(session)
+
+    assert session.ended_at.replace(tzinfo=UTC) == heartbeat_at
+    assert session.active_seconds == 13 * 60
+    assert db.scalars(
+        select(DailyAttendance).where(DailyAttendance.employee_id == employee.id)
+    ).all() == []

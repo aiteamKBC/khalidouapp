@@ -9,6 +9,8 @@ type BackendTimesheet = {
   start_time?: string | null;
   end_time?: string | null;
   last_signal_at?: string | null;
+  leave_status?: "approved" | null;
+  leave_type?: string | null;
   session_count?: number;
   total_tracked_seconds: number;
   observed_tracked_seconds?: number;
@@ -33,6 +35,8 @@ function mapTimesheet(row: BackendTimesheet, teamId: string): Timesheet {
     startTime: row.start_time ?? undefined,
     endTime: row.end_time ?? undefined,
     lastSignalAt: row.last_signal_at ?? undefined,
+    leaveStatus: row.leave_status ?? undefined,
+    leaveType: row.leave_type ?? undefined,
     sessionCount: row.session_count ?? 0,
     totalMinutes: toMinutes(row.observed_tracked_seconds ?? row.total_tracked_seconds),
     observedSpanMinutes: toMinutes(
@@ -46,16 +50,19 @@ function mapTimesheet(row: BackendTimesheet, teamId: string): Timesheet {
     deductedMinutes: toMinutes(row.deducted_seconds ?? 0),
     points: row.points ?? Math.round((row.active_seconds / 3600) * 100) / 100,
     screenshotCount: row.screenshot_count,
-    status:
-      !row.start_time &&
-      !row.end_time &&
-      row.total_tracked_seconds === 0 &&
-      (row.adjustment_seconds ?? 0) === 0
-        ? "missing"
-        : row.end_time
-          ? "complete"
-          : "in_progress",
+    status: resolveTimesheetStatus(row),
   };
+}
+
+function resolveTimesheetStatus(row: BackendTimesheet): Timesheet["status"] {
+  const hasRecordedTime =
+    Boolean(row.start_time) ||
+    Boolean(row.end_time) ||
+    row.total_tracked_seconds > 0 ||
+    (row.adjustment_seconds ?? 0) > 0;
+  if (!hasRecordedTime && row.leave_status === "approved") return "approved_leave";
+  if (!hasRecordedTime) return "missing";
+  return row.end_time ? "complete" : "in_progress";
 }
 
 export type TimesheetEmployeeOption = {

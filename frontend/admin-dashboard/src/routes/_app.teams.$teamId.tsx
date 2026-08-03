@@ -1497,6 +1497,7 @@ function TeamTimesheetsPanel({
               <SelectItem value="all">All statuses</SelectItem>
               <SelectItem value="complete">Complete</SelectItem>
               <SelectItem value="in_progress">In progress</SelectItem>
+              <SelectItem value="approved_leave">Approved leave</SelectItem>
               <SelectItem value="missing">Missing</SelectItem>
             </SelectContent>
           </Select>

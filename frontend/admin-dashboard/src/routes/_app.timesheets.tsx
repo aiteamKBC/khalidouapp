@@ -127,6 +127,7 @@ function TimesheetsPage() {
                   points: t.points,
                   screenshots: t.screenshotCount,
                   status: t.status,
+                  leave_type: t.leaveType ?? "",
                 })),
               )
             }
@@ -322,7 +323,13 @@ function TimesheetsPage() {
                       {teamName(t.teamId)} · {t.date}
                     </p>
                     <p className="mt-1 text-xs text-muted-foreground">
-                      {t.status === "missing" ? (
+                      {t.status === "approved_leave" ? (
+                        t.leaveType ? (
+                          `Approved ${t.leaveType.replaceAll("_", " ")} leave`
+                        ) : (
+                          "Approved leave"
+                        )
+                      ) : t.status === "missing" ? (
                         "No time recorded"
                       ) : (
                         <>

@@ -32,31 +32,33 @@ class SessionLiveness(TypedDict):
     last_signal_at: datetime
 
 
+class SessionObservation(SessionLiveness):
+    effective_end_at: datetime
+
+
 def _utc(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=UTC)
     return value.astimezone(UTC)
 
 
-def open_session_liveness(
+def session_observation_bounds(
     db: Session,
     *,
     company_id: UUID,
     sessions: list[WorkSession],
     now: datetime | None = None,
-) -> dict[UUID, SessionLiveness]:
-    """Resolve open-session freshness in a fixed number of database queries.
+) -> dict[UUID, SessionObservation]:
+    """Resolve trustworthy session ends in a fixed number of database queries.
 
-    WorkSession rows can remain open when the desktop process is killed or a
-    device disappears without sending a terminal event.  A cached attendance
-    row must not turn that stale database state into "Open until now".  Use the
-    same heartbeat/event evidence and company threshold as the full timeline,
-    but do it in bulk so list endpoints do not introduce an N+1 query.
+    A terminal event can arrive long after the device's last heartbeat when an
+    old session is closed on the next launch. The terminal timestamp says when
+    the database row was closed, not that the employee worked through the gap.
+    Open sessions have the same problem when the desktop disappears without a
+    terminal event, so both cases use the last non-terminal signal as evidence.
     """
-    open_sessions = {
-        session.id: session for session in sessions if session.ended_at is None
-    }
-    if not open_sessions:
+    sessions_by_id = {session.id: session for session in sessions}
+    if not sessions_by_id:
         return {}
 
     signal_by_session: dict[UUID, dict[str, datetime]] = {}
@@ -68,7 +70,7 @@ def open_session_liveness(
         )
         .where(
             ActivityEvent.company_id == company_id,
-            ActivityEvent.session_id.in_(open_sessions),
+            ActivityEvent.session_id.in_(sessions_by_id),
             or_(
                 ActivityEvent.event_type == "heartbeat",
                 ActivityEvent.event_type.in_(EVENT_STATES),
@@ -90,8 +92,8 @@ def open_session_liveness(
     )
     freshness_limit = timedelta(minutes=max(1, int(offline_threshold_minutes)))
     now_utc = _utc(now or datetime.now(UTC))
-    result: dict[UUID, SessionLiveness] = {}
-    for session_id, session in open_sessions.items():
+    result: dict[UUID, SessionObservation] = {}
+    for session_id, session in sessions_by_id.items():
         session_start = _utc(session.started_at)
         signals = signal_by_session.get(session_id, {})
         heartbeat_at = signals.get("heartbeat")
@@ -105,17 +107,57 @@ def open_session_liveness(
                     if event_type != "heartbeat"
                 ),
             )
-        else:
+        elif session.ended_at is None:
             last_signal_at = max(
                 session_start,
                 min(_utc(session.updated_at), now_utc),
             )
+        else:
+            last_signal_at = max(session_start, _utc(session.ended_at))
         last_signal_at = min(last_signal_at, now_utc)
+        is_fresh = (
+            session.ended_at is None
+            and now_utc - last_signal_at <= freshness_limit
+        )
+        if session.ended_at is not None:
+            recorded_end = max(session_start, _utc(session.ended_at))
+            effective_end_at = (
+                last_signal_at
+                if heartbeat_at is not None
+                and recorded_end - last_signal_at > freshness_limit
+                else recorded_end
+            )
+        else:
+            effective_end_at = now_utc if is_fresh else last_signal_at
         result[session_id] = {
-            "is_fresh": now_utc - last_signal_at <= freshness_limit,
+            "is_fresh": is_fresh,
             "last_signal_at": last_signal_at,
+            "effective_end_at": effective_end_at,
         }
     return result
+
+
+def open_session_liveness(
+    db: Session,
+    *,
+    company_id: UUID,
+    sessions: list[WorkSession],
+    now: datetime | None = None,
+) -> dict[UUID, SessionLiveness]:
+    """Resolve open-session freshness without introducing an N+1 query."""
+    open_sessions = [session for session in sessions if session.ended_at is None]
+    return {
+        session_id: {
+            "is_fresh": observation["is_fresh"],
+            "last_signal_at": observation["last_signal_at"],
+        }
+        for session_id, observation in session_observation_bounds(
+            db,
+            company_id=company_id,
+            sessions=open_sessions,
+            now=now,
+        ).items()
+    }
 
 
 def _continued_session_started_at(events: list[ActivityEvent]) -> datetime | None:

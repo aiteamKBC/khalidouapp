@@ -18,12 +18,13 @@ from app.models import (
     DailyAttendance,
     Employee,
     EmployeeWorkProfile,
+    LeaveRequest,
     Screenshot,
     TeamMember,
     TimeAdjustmentRequest,
     WorkSession,
 )
-from app.services.activity_timeline import local_today, open_session_liveness
+from app.services.activity_timeline import local_today, session_observation_bounds
 from app.services.attendance import accountable_idle_seconds, cached_daily_attendance
 
 router = APIRouter(prefix="/timesheets", tags=["timesheets"])
@@ -45,6 +46,52 @@ def _zone(timezone_name: str | None) -> ZoneInfo:
 
 def _employee_local_date(value: datetime, timezone_name: str | None) -> date:
     return _utc(value).astimezone(_zone(timezone_name)).date()
+
+
+def _workday_bounds(work_date: date, timezone_name: str | None) -> tuple[datetime, datetime]:
+    zone = _zone(timezone_name)
+    day_start = datetime.combine(work_date, time.min, tzinfo=zone).astimezone(UTC)
+    day_end = datetime.combine(work_date + timedelta(days=1), time.min, tzinfo=zone).astimezone(UTC)
+    return day_start, day_end
+
+
+def _clip_to_workday(
+    value: datetime,
+    work_date: date,
+    timezone_name: str | None,
+) -> datetime:
+    day_start, day_end = _workday_bounds(work_date, timezone_name)
+    return min(max(_utc(value), day_start), day_end)
+
+
+def _empty_timesheet_item(
+    employee_id: UUID,
+    employee_name: str,
+    timezone_name: str | None,
+    work_date: date,
+) -> dict:
+    return {
+        "employee_id": str(employee_id),
+        "employee_name": employee_name,
+        "timezone": timezone_name or "UTC",
+        "date": work_date.isoformat(),
+        "start_time": None,
+        "end_time": None,
+        "leave_status": None,
+        "leave_type": None,
+        "_start_at": None,
+        "_latest_end_at": None,
+        "_last_signal_at": None,
+        "_has_open_session": False,
+        "_has_cross_day_session": False,
+        "_sessions": [],
+        "_session_count": 0,
+        "active_seconds": 0,
+        "idle_seconds": 0,
+        "_observed_idle_seconds": 0,
+        "deducted_seconds": 0,
+        "adjustment_seconds": 0,
+    }
 
 
 def timesheet_rows(
@@ -101,48 +148,19 @@ def timesheet_rows(
         key = (row_employee_id, work_date)
         item = result_by_key.setdefault(
             key,
-            {
-                "employee_id": str(row_employee_id),
-                "employee_name": employee_name,
-                "timezone": timezone_name or "UTC",
-                "date": work_date.isoformat(),
-                "_start_at": None,
-                "_latest_end_at": None,
-                "_last_signal_at": None,
-                "_has_open_session": False,
-                "_has_cross_day_session": False,
-                "_open_sessions": [],
-                "_session_count": 0,
-                "active_seconds": 0,
-                "idle_seconds": 0,
-                "_observed_idle_seconds": 0,
-                "deducted_seconds": 0,
-                "adjustment_seconds": 0,
-            },
+            _empty_timesheet_item(
+                row_employee_id,
+                employee_name,
+                timezone_name,
+                work_date,
+            ),
         )
         started_at = _utc(session.started_at)
-        ended_at = _utc(session.ended_at) if session.ended_at else None
-        observed_until = ended_at or datetime.now(UTC)
-        if _employee_local_date(observed_until, timezone_name) != work_date:
-            item["_has_cross_day_session"] = True
+        item["_sessions"].append(session)
         item["_session_count"] += 1
         item["_start_at"] = min(
             value for value in (item["_start_at"], started_at) if value is not None
         )
-        if ended_at is not None:
-            item["_latest_end_at"] = max(
-                value
-                for value in (item["_latest_end_at"], ended_at)
-                if value is not None
-            )
-            item["_last_signal_at"] = max(
-                value
-                for value in (item["_last_signal_at"], ended_at)
-                if value is not None
-            )
-        if session.ended_at is None and session.status in ACTIVE_SESSION_STATUSES:
-            item["_has_open_session"] = True
-            item["_open_sessions"].append(session)
         item["active_seconds"] += max(
             0,
             int(session.active_seconds) - int(session.deducted_seconds),
@@ -176,59 +194,102 @@ def timesheet_rows(
         ).all():
             result_by_key.setdefault(
                 (row_employee_id, start_day),
-                {
-                    "employee_id": str(row_employee_id),
-                    "employee_name": employee_name,
-                    "timezone": timezone_name or "UTC",
-                    "date": start_day.isoformat(),
-                    "_start_at": None,
-                    "_latest_end_at": None,
-                    "_last_signal_at": None,
-                    "_has_open_session": False,
-                    "_has_cross_day_session": False,
-                    "_open_sessions": [],
-                    "_session_count": 0,
-                    "active_seconds": 0,
-                    "idle_seconds": 0,
-                    "_observed_idle_seconds": 0,
-                    "deducted_seconds": 0,
-                    "adjustment_seconds": 0,
-                },
+                _empty_timesheet_item(
+                    row_employee_id,
+                    employee_name,
+                    timezone_name,
+                    start_day,
+                ),
             )
 
-    open_sessions = [
+    leave_statement = (
+        select(
+            Employee.id,
+            Employee.name,
+            Employee.timezone,
+            LeaveRequest.start_date,
+            LeaveRequest.end_date,
+            LeaveRequest.leave_type,
+        )
+        .join(Employee, Employee.id == LeaveRequest.employee_id)
+        .where(
+            LeaveRequest.company_id == company_id,
+            LeaveRequest.status == "approved",
+            LeaveRequest.start_date <= end_day,
+            LeaveRequest.end_date >= start_day,
+        )
+        .order_by(LeaveRequest.start_date, Employee.name)
+    )
+    if current_admin is not None:
+        leave_statement = apply_employee_scope(
+            leave_statement,
+            db,
+            current_admin,
+            Employee.id,
+            team_id,
+        )
+    if employee_id:
+        leave_statement = leave_statement.where(Employee.id == employee_id)
+
+    for row in db.execute(leave_statement).all():
+        leave_start = max(start_day, row[3])
+        leave_end = min(end_day, row[4])
+        leave_day = leave_start
+        while leave_day <= leave_end:
+            key = (row[0], leave_day)
+            item = result_by_key.setdefault(
+                key,
+                _empty_timesheet_item(row[0], row[1], row[2], leave_day),
+            )
+            item["leave_status"] = "approved"
+            item["leave_type"] = row[5]
+            leave_day += timedelta(days=1)
+
+    sessions = [
         session
         for item in result_by_key.values()
-        for session in item["_open_sessions"]
+        for session in item["_sessions"]
     ]
-    if open_sessions:
-        liveness_by_session = open_session_liveness(
+    if sessions:
+        observations_by_session = session_observation_bounds(
             db,
             company_id=company_id,
-            sessions=open_sessions,
+            sessions=sessions,
         )
         for item in result_by_key.values():
-            fresh_open_session = False
-            latest_end_at = item["_latest_end_at"]
-            for session in item["_open_sessions"]:
-                liveness = liveness_by_session[session.id]
-                last_signal_at = liveness["last_signal_at"]
+            work_date = date.fromisoformat(item["date"])
+            timezone_name = str(item["timezone"])
+            for session in item["_sessions"]:
+                observation = observations_by_session[session.id]
+                effective_end_at = observation["effective_end_at"]
+                if _employee_local_date(effective_end_at, timezone_name) != work_date:
+                    item["_has_cross_day_session"] = True
+                clipped_end_at = _clip_to_workday(
+                    effective_end_at,
+                    work_date,
+                    timezone_name,
+                )
+                clipped_signal_at = _clip_to_workday(
+                    observation["last_signal_at"],
+                    work_date,
+                    timezone_name,
+                )
                 item["_last_signal_at"] = max(
-                    value
-                    for value in (item["_last_signal_at"], last_signal_at)
+                    value for value in (item["_last_signal_at"], clipped_signal_at)
                     if value is not None
                 )
-                if bool(liveness["is_fresh"]):
-                    fresh_open_session = True
-                else:
-                    last_signal_at = liveness["last_signal_at"]
-                    latest_end_at = max(
+                is_fresh_open = (
+                    session.ended_at is None
+                    and session.status in ACTIVE_SESSION_STATUSES
+                    and bool(observation["is_fresh"])
+                )
+                item["_has_open_session"] = item["_has_open_session"] or is_fresh_open
+                if not is_fresh_open:
+                    item["_latest_end_at"] = max(
                         value
-                        for value in (latest_end_at, last_signal_at)
+                        for value in (item["_latest_end_at"], clipped_end_at)
                         if value is not None
                     )
-            item["_has_open_session"] = fresh_open_session
-            item["_latest_end_at"] = latest_end_at
 
     for item in result_by_key.values():
         item["start_time"] = (
@@ -330,7 +391,11 @@ def timesheet_rows(
                 )
             )
             item["start_time"] = (
-                _utc(attendance.actual_first_activity_at).isoformat()
+                _clip_to_workday(
+                    attendance.actual_first_activity_at,
+                    work_date,
+                    timezone_name,
+                ).isoformat()
                 if attendance.actual_first_activity_at
                 else item["start_time"]
             )
@@ -341,16 +406,21 @@ def timesheet_rows(
             attendance_end = (
                 attendance.actual_sign_out_at or attendance.actual_last_activity_at
             )
+            clipped_attendance_end = (
+                _clip_to_workday(attendance_end, work_date, timezone_name)
+                if attendance_end
+                else None
+            )
             resolved_end = (
                 max(
                     value
                     for value in (
-                        _utc(attendance_end) if attendance_end else None,
+                        clipped_attendance_end,
                         item["_latest_end_at"],
                     )
                     if value is not None
                 )
-                if attendance_end or item["_latest_end_at"]
+                if clipped_attendance_end or item["_latest_end_at"]
                 else None
             )
             item["end_time"] = (
@@ -408,22 +478,12 @@ def timesheet_rows(
         work_date = row[3]
         key = (row[0], work_date)
         if key not in result_by_key:
-            result_by_key[key] = {
-                "employee_id": str(row[0]),
-                "employee_name": row[1],
-                "timezone": row[2] or "UTC",
-                "date": work_date.isoformat(),
-                "start_time": None,
-                "end_time": None,
-                "_last_signal_at": None,
-                "_session_count": 0,
-                "_has_cross_day_session": False,
-                "active_seconds": 0,
-                "idle_seconds": 0,
-                "_observed_idle_seconds": 0,
-                "adjustment_seconds": 0,
-                "deducted_seconds": 0,
-            }
+            result_by_key[key] = _empty_timesheet_item(
+                row[0],
+                row[1],
+                row[2],
+                work_date,
+            )
         result_by_key[key]["adjustment_seconds"] += int(row[4])
         result_by_key[key]["active_seconds"] += int(row[4])
 
@@ -477,10 +537,19 @@ def timesheet_rows(
         reverse=True,
     ):
         screenshot_count = screenshot_counts.get((row_employee_id, work_date), 0)
-        active_seconds = int(item["active_seconds"])
-        idle_seconds = int(item["idle_seconds"])
-        observed_idle_seconds = int(
-            item.get("_observed_idle_seconds", idle_seconds)
+        day_start, day_end = _workday_bounds(work_date, str(item["timezone"]))
+        workday_capacity_seconds = max(0, int((day_end - day_start).total_seconds()))
+        active_seconds = min(
+            workday_capacity_seconds,
+            max(0, int(item["active_seconds"])),
+        )
+        idle_seconds = min(
+            max(0, workday_capacity_seconds - active_seconds),
+            max(0, int(item["idle_seconds"])),
+        )
+        observed_idle_seconds = min(
+            max(0, workday_capacity_seconds - active_seconds),
+            max(0, int(item.get("_observed_idle_seconds", idle_seconds))),
         )
         first_observed_at = item.get("_start_at")
         last_observed_at = max(
@@ -494,12 +563,16 @@ def timesheet_rows(
             ),
             default=None,
         )
-        observed_span_seconds = (
+        raw_observed_span_seconds = (
             max(0, int((last_observed_at - first_observed_at).total_seconds()))
             if first_observed_at is not None and last_observed_at is not None
             else active_seconds + observed_idle_seconds
         )
         observed_tracked_seconds = active_seconds + observed_idle_seconds
+        observed_span_seconds = min(
+            workday_capacity_seconds,
+            max(raw_observed_span_seconds, observed_tracked_seconds),
+        )
         untracked_seconds = max(0, observed_span_seconds - observed_tracked_seconds)
         result.append(
             {
@@ -514,13 +587,12 @@ def timesheet_rows(
                     if item.get("_last_signal_at")
                     else None
                 ),
+                "leave_status": item.get("leave_status"),
+                "leave_type": item.get("leave_type"),
                 "session_count": int(item.get("_session_count", 0)),
                 "total_tracked_seconds": active_seconds + idle_seconds,
                 "observed_tracked_seconds": observed_tracked_seconds,
-                "observed_span_seconds": max(
-                    observed_span_seconds,
-                    observed_tracked_seconds,
-                ),
+                "observed_span_seconds": observed_span_seconds,
                 "untracked_seconds": untracked_seconds,
                 "active_seconds": active_seconds,
                 "idle_seconds": idle_seconds,
