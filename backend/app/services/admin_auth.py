@@ -16,6 +16,10 @@ def authenticate_admin(db: Session, email: str, password: str) -> AdminUser:
     candidates = db.scalars(
         select(AdminUser).where(func.lower(AdminUser.email) == normalized_email)
     ).all()
+    # Password verification is intentionally CPU-heavy. Release the database
+    # transaction before bcrypt runs so login attempts cannot occupy every
+    # pooled connection while no database work is happening.
+    db.commit()
     matches = [
         candidate
         for candidate in candidates
@@ -28,7 +32,12 @@ def authenticate_admin(db: Session, email: str, password: str) -> AdminUser:
     return matches[0]
 
 
-def create_admin_token_pair(db: Session, admin: AdminUser) -> dict[str, object]:
+def create_admin_token_pair(
+    db: Session,
+    admin: AdminUser,
+    *,
+    commit: bool = True,
+) -> dict[str, object]:
     access_delta = timedelta(minutes=settings.jwt_access_token_expire_minutes)
     refresh_delta = timedelta(days=settings.jwt_refresh_token_expire_days)
 
@@ -54,7 +63,8 @@ def create_admin_token_pair(db: Session, admin: AdminUser) -> dict[str, object]:
             expires_at=datetime.now(UTC) + refresh_delta,
         )
     )
-    db.commit()
+    if commit:
+        db.commit()
 
     return {
         "access_token": access_token,

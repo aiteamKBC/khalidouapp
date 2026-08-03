@@ -10,7 +10,7 @@ from app.api.deps import get_current_admin
 from app.core.config import settings
 from app.core.responses import success_response
 from app.database.session import get_db
-from app.models import AdminPasswordResetToken, AdminRefreshToken, AdminUser, TeamOwner
+from app.models import AdminPasswordResetToken, AdminRefreshToken, AdminUser, Employee, TeamOwner
 from app.schemas.auth import (
     ForgotPasswordRequest,
     LoginRequest,
@@ -47,11 +47,46 @@ def validate_avatar(value: str | None) -> str | None:
     return value
 
 
+def _tracked_employee_for_profile(db: Session, admin: AdminUser) -> Employee:
+    if admin.employee_id is not None:
+        employee = db.get(Employee, admin.employee_id)
+        if employee is not None:
+            return employee
+    # Legacy admin rows may predate the required employee identity. Repair
+    # those once; normal login/profile reads must not rewrite attendance data.
+    return enforce_admin_tracking_policy(db, admin)
+
+
+def _admin_profile_data(
+    db: Session,
+    admin: AdminUser,
+    tracked_employee: Employee,
+) -> dict[str, object]:
+    assigned_team_ids = db.scalars(
+        select(TeamOwner.team_id).where(TeamOwner.admin_user_id == admin.id)
+    ).all()
+    return {
+        "id": str(admin.id),
+        "company_id": str(admin.company_id),
+        "employee_id": str(tracked_employee.id),
+        "name": admin.name,
+        "email": admin.email,
+        "job_title": tracked_employee.job_title,
+        "role": admin.role,
+        "is_super_admin": is_super_admin(admin),
+        "permissions": capabilities_for_admin(admin),
+        "status": admin.status,
+        "avatar_url": admin.avatar_url,
+        "assigned_team_ids": [str(team_id) for team_id in assigned_team_ids],
+    }
+
+
 @router.post("/login")
 def login(payload: LoginRequest, request: Request, db: Annotated[Session, Depends(get_db)]):
     enforce_rate_limit(request, action="admin-login", limit=10, window_seconds=60)
     admin = authenticate_admin(db, payload.email, payload.password)
-    tokens = create_admin_token_pair(db, admin)
+    tracked_employee = _tracked_employee_for_profile(db, admin)
+    tokens = create_admin_token_pair(db, admin, commit=False)
     record_audit_log(
         db,
         admin,
@@ -61,8 +96,9 @@ def login(payload: LoginRequest, request: Request, db: Annotated[Session, Depend
         entity_name=admin.email,
         request=request,
     )
+    user = _admin_profile_data(db, admin, tracked_employee)
     db.commit()
-    return success_response(data=tokens)
+    return success_response(data={**tokens, "user": user})
 
 
 @router.post("/refresh")
@@ -86,28 +122,10 @@ def me(
     current_admin: Annotated[AdminUser, Depends(get_current_admin)],
     db: Annotated[Session, Depends(get_db)],
 ):
-    tracked_employee = enforce_admin_tracking_policy(db, current_admin)
+    tracked_employee = _tracked_employee_for_profile(db, current_admin)
+    profile = _admin_profile_data(db, current_admin, tracked_employee)
     db.commit()
-    display_employee = tracked_employee or current_admin.employee
-    assigned_team_ids = db.scalars(
-        select(TeamOwner.team_id).where(TeamOwner.admin_user_id == current_admin.id)
-    ).all()
-    return success_response(
-        data={
-            "id": str(current_admin.id),
-            "company_id": str(current_admin.company_id),
-            "employee_id": str(tracked_employee.id) if tracked_employee else None,
-            "name": current_admin.name,
-            "email": current_admin.email,
-            "job_title": display_employee.job_title if display_employee else None,
-            "role": current_admin.role,
-            "is_super_admin": is_super_admin(current_admin),
-            "permissions": capabilities_for_admin(current_admin),
-            "status": current_admin.status,
-            "avatar_url": current_admin.avatar_url,
-            "assigned_team_ids": [str(team_id) for team_id in assigned_team_ids],
-        }
-    )
+    return success_response(data=profile)
 
 
 @router.patch("/me")

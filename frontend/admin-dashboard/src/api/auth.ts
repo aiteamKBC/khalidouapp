@@ -9,6 +9,10 @@ type BackendAuthTokens = {
   expires_in: number;
 };
 
+type BackendLoginResponse = BackendAuthTokens & {
+  user?: BackendUser;
+};
+
 type BackendUser = {
   id: string;
   employee_id?: string | null;
@@ -67,16 +71,14 @@ export async function login(email: string, password: string): Promise<AuthRespon
     ADMIN_LOGIN_TIMEOUT_MS,
   );
   try {
-    const tokens = await apiFetch<BackendAuthTokens>("/auth/login", {
+    const tokens = await apiFetch<BackendLoginResponse>("/auth/login", {
       method: "POST",
       body: JSON.stringify({ email, password }),
       signal: controller.signal,
     });
-    const user = await apiFetch<BackendUser>(
-      "/auth/me",
-      { signal: controller.signal },
-      tokens.access_token,
-    );
+    const user =
+      tokens.user ??
+      (await apiFetch<BackendUser>("/auth/me", { signal: controller.signal }, tokens.access_token));
     return {
       accessToken: tokens.access_token,
       refreshToken: tokens.refresh_token,

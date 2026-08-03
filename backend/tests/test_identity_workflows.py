@@ -226,6 +226,23 @@ def test_admin_login_is_case_insensitive_for_legacy_mixed_case_email(identity_cl
     assert lowercase_login.status_code == 200
 
 
+def test_admin_login_returns_profile_without_a_second_request(identity_client):
+    client, data = identity_client
+
+    response = client.post(
+        "/api/v1/auth/login",
+        json={"email": "general@kentconsultancy.co", "password": "OldPassword123!"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()["data"]
+    assert payload["access_token"]
+    assert payload["refresh_token"]
+    assert payload["user"]["id"] == str(data["general_admin"].id)
+    assert payload["user"]["employee_id"]
+    assert payload["user"]["email"] == "general@kentconsultancy.co"
+
+
 def test_admin_login_selects_the_unique_password_matching_tenant(identity_client):
     client, data = identity_client
     db: Session = data["session_factory"]()
