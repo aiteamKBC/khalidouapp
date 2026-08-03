@@ -4726,8 +4726,17 @@ ipcMain.handle("agent:get-recent-screenshots", async () => {
         dataUrl: `data:${image.mimeType};base64,${image.content.toString("base64")}`,
       });
     }
+    runtimeStatus.connectionStatus = "online";
+    runtimeStatus.lastSuccessfulSyncAt = new Date().toISOString();
+    notifyRendererStatus();
+    rebuildTrayMenu();
     return { success: true, screenshots: data };
   } catch (error) {
+    runtimeStatus.connectionStatus = connectionStatusAfterApiFailure(
+      apiResponseStatus(error),
+    );
+    notifyRendererStatus();
+    rebuildTrayMenu();
     log.error("Recent screenshots could not be loaded", safeErrorForLog(error));
     return {
       success: false,

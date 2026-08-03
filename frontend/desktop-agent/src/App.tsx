@@ -28,6 +28,10 @@ import {
   totalRequestableIdleMinutes,
 } from "./idleRequests";
 import { OperationTimeoutError, withOperationTimeout } from "./promiseTimeout";
+import {
+  screenshotSyncLabel,
+  shouldReloadScreenshotsAfterRecovery,
+} from "./screenshotRecovery";
 import "sweetalert2/dist/sweetalert2.min.css";
 import "./App.css";
 
@@ -462,6 +466,7 @@ function App() {
   const shownIdleAlertId = useRef<string | null>(null);
   const screenshotsLoadedForEnrollment = useRef(false);
   const lastLoadedScreenshotAt = useRef<string | null>(null);
+  const previousScreenshotConnectionStatus = useRef(status.connectionStatus);
   const isDesktopRuntime = Boolean(window.khaliduo);
   const desktopRuntimeMessage =
     "Open Khaliduo desktop app to enroll this device. The browser preview cannot access the secure desktop identity store.";
@@ -1227,6 +1232,22 @@ function App() {
     lastLoadedScreenshotAt.current = status.lastScreenshotAt;
     void handleLoadRecentScreenshots();
   }, [handleLoadRecentScreenshots, status.enrolled, status.lastScreenshotAt]);
+
+  useEffect(() => {
+    const previousConnectionStatus = previousScreenshotConnectionStatus.current;
+    previousScreenshotConnectionStatus.current = status.connectionStatus;
+    if (
+      !shouldReloadScreenshotsAfterRecovery({
+        previousConnectionStatus,
+        connectionStatus: status.connectionStatus,
+        hasLoadError: Boolean(screenshotError),
+      })
+    ) {
+      return;
+    }
+    lastLoadedScreenshotAt.current = null;
+    void handleLoadRecentScreenshots();
+  }, [handleLoadRecentScreenshots, screenshotError, status.connectionStatus]);
 
   async function handleLogout() {
     if (!window.khaliduo || isLoggingOut) return;
@@ -2230,7 +2251,13 @@ function HomeView({
               />
               <figcaption>
                 <span>{formatTimestamp(recentScreenshots[0].capturedAt)}</span>
-                <b className="k-ok">Synced</b>
+                <b
+                  className={
+                    status.connectionStatus === "online" ? "k-ok" : "k-muted"
+                  }
+                >
+                  {screenshotSyncLabel(status.connectionStatus)}
+                </b>
               </figcaption>
             </figure>
           )}

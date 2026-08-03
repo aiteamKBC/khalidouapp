@@ -9,6 +9,8 @@ from app.core.config import settings
 
 MAX_POOL_CHECKOUT_TIMEOUT_SECONDS = 5
 POSTGRES_IDLE_TRANSACTION_TIMEOUT_MILLISECONDS = 60_000
+POSTGRES_LOCK_TIMEOUT_MILLISECONDS = 5_000
+POSTGRES_STATEMENT_TIMEOUT_MILLISECONDS = 30_000
 
 
 def _bound_pool_timeout(configured_seconds: int) -> int:
@@ -19,6 +21,14 @@ def _set_postgres_transaction_timeout(connection) -> None:
     connection.exec_driver_sql(
         "set local idle_in_transaction_session_timeout = "
         f"'{POSTGRES_IDLE_TRANSACTION_TIMEOUT_MILLISECONDS}ms'"
+    )
+    # A single abandoned attendance refresh must not leave every heartbeat
+    # waiting on the same row lock until the API's worker pool is exhausted.
+    connection.exec_driver_sql(
+        f"set local lock_timeout = '{POSTGRES_LOCK_TIMEOUT_MILLISECONDS}ms'"
+    )
+    connection.exec_driver_sql(
+        f"set local statement_timeout = '{POSTGRES_STATEMENT_TIMEOUT_MILLISECONDS}ms'"
     )
 
 

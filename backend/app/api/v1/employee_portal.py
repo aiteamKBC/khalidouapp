@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Query, UploadFile
 from fastapi.responses import FileResponse
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_employee
@@ -79,6 +79,18 @@ from app.services.request_notifications import enqueue_request_review_emails
 router = APIRouter(prefix="/employee-portal", tags=["employee-portal"])
 
 
+def employee_task_participation(employee_id: UUID):
+    return or_(
+        Task.assignee_employee_id == employee_id,
+        select(1)
+        .where(
+            TaskCollaborator.task_id == Task.id,
+            TaskCollaborator.employee_id == employee_id,
+        )
+        .exists(),
+    )
+
+
 def employee_day_bounds(target_day: date, timezone_name: str | None) -> tuple[datetime, datetime]:
     try:
         tz = ZoneInfo(timezone_name or "UTC")
@@ -94,17 +106,12 @@ def participant_task(db: Session, employee: Employee, task_id: UUID) -> tuple[Ta
         select(Task, Project, Team)
         .join(Project, Project.id == Task.project_id)
         .join(Team, Team.id == Project.team_id)
-        .outerjoin(TaskCollaborator, TaskCollaborator.task_id == Task.id)
         .where(
             Task.id == task_id,
             Task.company_id == employee.company_id,
             Task.stage.not_in(["rejected", "cancelled"]),
-            (
-                (Task.assignee_employee_id == employee.id)
-                | (TaskCollaborator.employee_id == employee.id)
-            ),
+            employee_task_participation(employee.id),
         )
-        .distinct()
     ).one_or_none()
     if row is None:
         raise ApiError("TASK_NOT_FOUND", "Your assigned task was not found.", 404)
@@ -276,7 +283,6 @@ def tasks(
         .join(Project, Project.id == Task.project_id)
         .join(Team, Team.id == Project.team_id)
         .join(TeamMember, TeamMember.team_id == Team.id)
-        .outerjoin(TaskCollaborator, TaskCollaborator.task_id == Task.id)
         .where(
             Task.company_id == current_employee.company_id,
             Task.status == "active",
@@ -285,12 +291,8 @@ def tasks(
             TeamMember.employee_id == current_employee.id,
             TeamMember.status == "active",
             Task.stage.not_in(["rejected", "cancelled"]),
-            (
-                (Task.assignee_employee_id == current_employee.id)
-                | (TaskCollaborator.employee_id == current_employee.id)
-            ),
+            employee_task_participation(current_employee.id),
         )
-        .distinct()
         .order_by(Team.name, Project.name, Task.name)
     ).all()
     time_totals = employee_task_time_totals(

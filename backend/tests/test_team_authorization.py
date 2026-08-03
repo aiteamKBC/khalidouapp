@@ -37,6 +37,7 @@ from app.models import (
     Project,
     Screenshot,
     Task,
+    TaskCollaborator,
     TaskComment,
     TaskNotification,
     TaskWorkflowRequest,
@@ -2212,6 +2213,32 @@ def test_employee_can_delete_selected_items_from_own_task_checklist(team_client)
     titles = {item["title"] for item in task["checklist"]}
     assert "Delete this item" not in titles
     assert "Keep this item" in titles
+
+
+def test_employee_portal_lists_json_labeled_collaborator_task(team_client):
+    client, data = team_client
+    with data["session_factory"]() as db:
+        task = db.get(Task, data["task_a"].id)
+        task.labels = ["customer-facing"]
+        db.add(
+            TaskCollaborator(
+                task_id=task.id,
+                employee_id=data["shared_employee"].id,
+            )
+        )
+        db.commit()
+
+    employee_token = create_employee_access_token(
+        employee_id=data["shared_employee"].id,
+        company_id=data["shared_employee"].company_id,
+    )
+    response = client.get(
+        "/api/v1/employee-portal/tasks",
+        headers={"Authorization": f"Bearer {employee_token}"},
+    )
+
+    assert response.status_code == 200
+    assert str(data["task_a"].id) in {row["id"] for row in response.json()["data"]}
 
 
 def test_team_leader_self_created_task_activates_without_creation_approval(team_client):

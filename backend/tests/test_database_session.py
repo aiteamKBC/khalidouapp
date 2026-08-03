@@ -16,4 +16,8 @@ def test_postgres_transactions_receive_an_idle_timeout() -> None:
 
     session._set_postgres_transaction_timeout(FakeConnection())
 
-    assert statements == ["set local idle_in_transaction_session_timeout = '60000ms'"]
+    assert statements == [
+        "set local idle_in_transaction_session_timeout = '60000ms'",
+        "set local lock_timeout = '5000ms'",
+        "set local statement_timeout = '30000ms'",
+    ]
