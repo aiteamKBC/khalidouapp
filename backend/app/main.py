@@ -6,6 +6,7 @@ from uuid import uuid4
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from anyio.to_thread import current_default_thread_limiter
 
 from app.api.v1.router import api_router
 from app.core.config import settings
@@ -30,6 +31,10 @@ async def retention_worker() -> None:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    # Synchronous SQLAlchemy endpoints run in AnyIO's worker pool. Keep that
+    # pool aligned with the bounded database capacity so agent retry bursts do
+    # not open dozens of transactions and starve interactive admin requests.
+    current_default_thread_limiter().total_tokens = settings.api_thread_pool_size
     task = asyncio.create_task(retention_worker())
     try:
         yield

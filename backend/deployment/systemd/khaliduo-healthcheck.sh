@@ -35,7 +35,7 @@ check_and_recover() {
 result=0
 check_and_recover \
   "khaliduo-api.service" \
-  "http://127.0.0.1:8100/api/v1/health/db" || result=1
+  "http://127.0.0.1:8100/api/v1/health" || result=1
 check_and_recover \
   "khaliduo-dashboard.service" \
   "http://127.0.0.1:3100/" || result=1

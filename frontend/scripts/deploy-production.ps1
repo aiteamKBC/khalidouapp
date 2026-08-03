@@ -185,6 +185,19 @@ else
   test "$migrated" -eq 1
 fi
 "$APP_ROOT/venv/bin/python" -m compileall -q app scripts
+mkdir -p \
+  /etc/systemd/system/khaliduo-api.service.d \
+  /etc/systemd/system/khaliduo-dashboard.service.d
+install -m 0644 \
+  "$APP_ROOT/backend/deployment/systemd/capacity.conf" \
+  /etc/systemd/system/khaliduo-api.service.d/capacity.conf
+install -m 0644 \
+  "$APP_ROOT/backend/deployment/systemd/reliability.conf" \
+  /etc/systemd/system/khaliduo-api.service.d/reliability.conf
+install -m 0644 \
+  "$APP_ROOT/backend/deployment/systemd/reliability.conf" \
+  /etc/systemd/system/khaliduo-dashboard.service.d/reliability.conf
+systemctl daemon-reload
 systemctl restart khaliduo-api
 systemctl is-active --quiet khaliduo-api
 
@@ -218,16 +231,6 @@ install -m 0644 \
 install -m 0644 \
   "$APP_ROOT/backend/deployment/systemd/khaliduo-healthcheck.timer" \
   /etc/systemd/system/khaliduo-healthcheck.timer
-mkdir -p \
-  /etc/systemd/system/khaliduo-api.service.d \
-  /etc/systemd/system/khaliduo-dashboard.service.d
-install -m 0644 \
-  "$APP_ROOT/backend/deployment/systemd/reliability.conf" \
-  /etc/systemd/system/khaliduo-api.service.d/reliability.conf
-install -m 0644 \
-  "$APP_ROOT/backend/deployment/systemd/reliability.conf" \
-  /etc/systemd/system/khaliduo-dashboard.service.d/reliability.conf
-systemctl daemon-reload
 systemctl enable khaliduo-healthcheck.timer
 
 healthy=0

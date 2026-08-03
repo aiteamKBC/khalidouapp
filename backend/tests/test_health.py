@@ -48,10 +48,10 @@ def test_database_health_rejects_an_incomplete_critical_schema(monkeypatch) -> N
         def connect(self):
             return FakeConnection()
 
-    monkeypatch.setattr(health_api, "get_engine", lambda: FakeEngine())
+    monkeypatch.setattr(health_api, "get_health_engine", lambda: FakeEngine())
 
     with pytest.raises(ApiError) as exc_info:
-        health_api.database_health_check()
+        health_api._database_health_check()
 
     assert exc_info.value.status_code == 503
     assert exc_info.value.code == "DATABASE_SCHEMA_UNHEALTHY"
@@ -64,10 +64,10 @@ def test_database_health_converts_driver_failures_to_a_bounded_service_error(
         def connect(self):
             raise OperationalError("select 1", {}, RuntimeError("database timeout"))
 
-    monkeypatch.setattr(health_api, "get_engine", lambda: BrokenEngine())
+    monkeypatch.setattr(health_api, "get_health_engine", lambda: BrokenEngine())
 
     with pytest.raises(ApiError) as exc_info:
-        health_api.database_health_check()
+        health_api._database_health_check()
 
     assert exc_info.value.status_code == 503
     assert exc_info.value.code == "DATABASE_UNREACHABLE"

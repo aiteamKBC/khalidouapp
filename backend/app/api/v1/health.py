@@ -1,3 +1,4 @@
+import asyncio
 from datetime import UTC, datetime
 
 from fastapi import APIRouter
@@ -6,7 +7,7 @@ from sqlalchemy.exc import ProgrammingError, SQLAlchemyError
 
 from app.core.exceptions import ApiError
 from app.core.responses import success_response
-from app.database.session import get_engine
+from app.database.session import get_health_engine
 
 router = APIRouter()
 CRITICAL_DATABASE_TABLES = (
@@ -31,9 +32,13 @@ async def health_check():
 
 
 @router.get("/health/db")
-def database_health_check():
+async def database_health_check():
+    return await asyncio.to_thread(_database_health_check)
+
+
+def _database_health_check():
     try:
-        with get_engine().connect() as connection:
+        with get_health_engine().connect() as connection:
             if connection.dialect.name == "postgresql":
                 connection.execute(text("set local statement_timeout = '5000ms'"))
             connection.execute(text("select 1"))
