@@ -50,7 +50,7 @@ import {
   overtimeReviewExplanation,
   type AttendanceNotice,
 } from "@/lib/attendance-presentation";
-import { formatAttendanceStart, formatClock } from "@/lib/format";
+import { formatAttendanceStart, formatClock, formatSessionStatus } from "@/lib/format";
 import { permissions } from "@/lib/permissions";
 import {
   monitoringDetailEnabled,
@@ -896,8 +896,8 @@ function DailyAttendanceTab({
           value={formatClock(row.actualLastActivityAt, row.timezone)}
         />
         <AttendanceMetric
-          label="Sign-out"
-          value={row.isRunning ? "Open until now" : formatClock(row.actualSignOutAt, row.timezone)}
+          label="Session"
+          value={formatSessionStatus(row.isRunning, row.actualSignOutAt, row.timezone)}
         />
         <AttendanceMetric label="Normal worked" value={duration(row.normalWorkedSeconds)} />
         <AttendanceMetric

@@ -9,7 +9,12 @@ import {
 } from "lucide-react";
 
 import type { WorkdayIntervalType, WorkdayTimeline as WorkdayTimelineData } from "@/types";
-import { formatAttendanceStart, formatClock, formatDurationSeconds } from "@/lib/format";
+import {
+  formatAttendanceStart,
+  formatClock,
+  formatDurationSeconds,
+  formatSessionStatus,
+} from "@/lib/format";
 
 type DisplayIntervalType = WorkdayIntervalType | "break_work" | "extra" | "leave";
 
@@ -134,12 +139,8 @@ export function WorkdayTimeline({ timeline }: { timeline?: WorkdayTimelineData }
           value={formatClock(timeline.lastActivityAt, timeline.timezone)}
         />
         <Metric
-          label="Sign-out"
-          value={
-            timeline.isRunning
-              ? "Open until now"
-              : formatClock(timeline.lastEndedAt, timeline.timezone)
-          }
+          label="Session"
+          value={formatSessionStatus(timeline.isRunning, timeline.lastEndedAt, timeline.timezone)}
         />
         <Metric label="Worked" value={formatDurationSeconds(timeline.workedSeconds)} />
         <Metric

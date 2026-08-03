@@ -40,7 +40,12 @@ import {
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAuth } from "@/lib/auth";
-import { formatAttendanceStart, formatClock, formatDurationSeconds } from "@/lib/format";
+import {
+  formatAttendanceStart,
+  formatClock,
+  formatDurationSeconds,
+  formatSessionStatus,
+} from "@/lib/format";
 import { attendanceRefetchInterval, attendanceTabIsActive } from "@/lib/attendance-query-policy";
 
 export const Route = createFileRoute("/_app/attendance")({ component: AttendancePage });
@@ -344,13 +349,14 @@ function AttendancePage() {
                         {formatClock(row.scheduledEndAt, row.timezone)}
                       </TableCell>
                       <TableCell className="text-xs">
+                        Started{" "}
                         {formatAttendanceStart(
                           row.actualFirstActivityAt,
                           row.timezone,
                           row.continuedFromPreviousDay,
                           row.continuedSessionStartedAt,
                         )}{" "}
-                        – {formatClock(row.actualLastActivityAt, row.timezone)}
+                        · Last activity {formatClock(row.actualLastActivityAt, row.timezone)}
                         <span
                           className={`block text-[10px] ${
                             row.isRunning
@@ -358,10 +364,7 @@ function AttendancePage() {
                               : "text-muted-foreground"
                           }`}
                         >
-                          Sign-out{" "}
-                          {row.isRunning
-                            ? "Open until now"
-                            : formatClock(row.actualSignOutAt, row.timezone)}
+                          {formatSessionStatus(row.isRunning, row.actualSignOutAt, row.timezone)}
                         </span>
                       </TableCell>
                       <TableCell>{duration(row.normalWorkedSeconds)}</TableCell>
@@ -574,9 +577,7 @@ function AttendancePage() {
                           <StatusBadge status={row.status} />
                         </TableCell>
                         <TableCell className="whitespace-nowrap text-xs">
-                          {row.isRunning
-                            ? "Open until now"
-                            : formatClock(row.actualSignOutAt, row.timezone)}
+                          {formatSessionStatus(row.isRunning, row.actualSignOutAt, row.timezone)}
                         </TableCell>
                         <TableCell className="text-right">
                           <Button
@@ -691,12 +692,12 @@ function AttendancePage() {
                   value={formatClock(detail.data.actualLastActivityAt, detail.data.timezone)}
                 />
                 <Small
-                  label="Signed out"
-                  value={
-                    detail.data.isRunning
-                      ? "Open until now"
-                      : formatClock(detail.data.actualSignOutAt, detail.data.timezone)
-                  }
+                  label="Session"
+                  value={formatSessionStatus(
+                    detail.data.isRunning,
+                    detail.data.actualSignOutAt,
+                    detail.data.timezone,
+                  )}
                 />
                 <Small label="Paid breaks" value={duration(detail.data.paidBreakSeconds)} />
                 <Small label="Unpaid breaks" value={duration(detail.data.unpaidBreakSeconds)} />

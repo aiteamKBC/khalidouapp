@@ -115,6 +115,10 @@ import {
   crashRecoveryAttempt,
   isCrashRecoveryLaunch,
 } from "./services/crashRecovery.js";
+import {
+  isWhatsAppScreenshotActivity,
+  privacyBlurSampleSize,
+} from "./services/screenshotPrivacy.js";
 
 const { nativeImage, shell } = electronCommon;
 const {
@@ -2981,6 +2985,19 @@ async function captureAndUploadScreenshot() {
     return;
   }
 
+  const activityAtCapture = await readForegroundActivity();
+  const recentActivity =
+    foregroundActivitySegment &&
+    Date.now() - foregroundActivitySegment.lastObservedAt <= 15_000
+      ? foregroundActivitySegment
+      : null;
+  const protectWhatsApp = isWhatsAppScreenshotActivity(
+    activityAtCapture ?? recentActivity,
+  );
+  if (protectWhatsApp) {
+    log.info("Applying privacy protection to a WhatsApp screenshot");
+  }
+
   const displays = screen.getAllDisplays();
   const maxThumbnailSize = displays.reduce(
     (size, display) => ({
@@ -3009,9 +3026,22 @@ async function captureAndUploadScreenshot() {
       continue;
     }
     const screenshotId = randomUUID();
-    const jpeg = source.thumbnail.toJPEG(72);
+    const originalSize = source.thumbnail.getSize();
+    const protectedThumbnail = protectWhatsApp
+      ? source.thumbnail
+          .resize({
+            ...privacyBlurSampleSize(originalSize.width, originalSize.height),
+            quality: "best",
+          })
+          .resize({
+            width: originalSize.width,
+            height: originalSize.height,
+            quality: "best",
+          })
+      : source.thumbnail;
+    const jpeg = protectedThumbnail.toJPEG(72);
     const checksum = createHash("sha256").update(jpeg).digest("hex");
-    const size = source.thumbnail.getSize();
+    const size = protectedThumbnail.getSize();
     const metadata: ScreenshotMetadata = {
       screenshotId,
       sessionId: currentSessionId,

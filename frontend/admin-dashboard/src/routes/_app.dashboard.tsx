@@ -32,6 +32,7 @@ import { ProtectedImage } from "@/components/ProtectedImage";
 import { SCREENSHOT_REFRESH_INTERVAL_MS } from "@/lib/screenshot-display";
 import {
   matchesMemberActivityFilter,
+  memberActivitySummary,
   MEMBER_ACTIVITY_FILTERS,
   type MemberActivityFilter,
 } from "@/lib/member-activity-status";
@@ -379,6 +380,11 @@ function DashboardPage() {
     })
     .sort((a, b) => b.latest - a.latest);
   const filteredActivity = memberActivity;
+  const activitySummary = memberActivitySummary(
+    activityFilter,
+    matchingActivityEmployees.length,
+    filteredActivity.length,
+  );
 
   const online = (emps.data ?? []).filter(employeeIsOnline).sort(compareEmployeesByName);
   const onlinePreview = online.slice(0, 4);
@@ -833,12 +839,11 @@ function DashboardPage() {
             <CardHeader className="gap-3 space-y-0 border-b border-border/70 p-[18px] xl:flex-row xl:items-center xl:justify-between">
               <div className="flex flex-wrap items-center gap-2.5">
                 <CardTitle className="text-sm font-extrabold">Member activity</CardTitle>
-                <span className="text-[11px] font-bold text-muted-foreground">
-                  {filteredActivity.length} of {matchingActivityEmployees.length}{" "}
-                  {activityFilter === "all" ? "members" : `${activityFilter} members`}
+                <span className="text-[11px] font-extrabold text-foreground">
+                  {activitySummary.total}
                 </span>
                 <span className="rounded-full border bg-muted/40 px-2.5 py-1 text-[10px] font-bold text-muted-foreground">
-                  Live status every 30 sec - previews rotate every 15 min
+                  {activitySummary.preview} - live status every 30 sec - rotates every 15 min
                 </span>
                 {shots.isFetching && shots.data && (
                   <span className="text-[10px] font-bold text-muted-foreground">

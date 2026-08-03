@@ -30,6 +30,7 @@ import {
   formatAttendanceStart,
   formatClock,
   formatDurationSeconds as formatDuration,
+  formatSessionStatus,
 } from "@/lib/format";
 
 type EmployeeAttendanceHistoryDialogProps = {
@@ -229,12 +230,12 @@ export function EmployeeAttendanceHistoryDialog({
                   value={formatClock(dayDetail.data.actualLastActivityAt, dayDetail.data.timezone)}
                 />
                 <MiniMetric
-                  label="Signed out"
-                  value={
-                    dayDetail.data.isRunning
-                      ? "Open until now"
-                      : formatClock(dayDetail.data.actualSignOutAt, dayDetail.data.timezone)
-                  }
+                  label="Session"
+                  value={formatSessionStatus(
+                    dayDetail.data.isRunning,
+                    dayDetail.data.actualSignOutAt,
+                    dayDetail.data.timezone,
+                  )}
                 />
                 <MiniMetric
                   label="Normal"
@@ -319,20 +320,20 @@ function AttendanceDayRow({
         {formatClock(row.scheduledEndAt, row.timezone)}
       </TableCell>
       <TableCell className="whitespace-nowrap text-xs">
+        Started{" "}
         {formatAttendanceStart(
           row.actualFirstActivityAt,
           row.timezone,
           row.continuedFromPreviousDay,
           row.continuedSessionStartedAt,
         )}{" "}
-        – {formatClock(row.actualLastActivityAt, row.timezone)}
+        · Last activity {formatClock(row.actualLastActivityAt, row.timezone)}
         <span
           className={`block text-[10px] ${
             row.isRunning ? "font-semibold text-emerald-700" : "text-muted-foreground"
           }`}
         >
-          Sign-out{" "}
-          {row.isRunning ? "Open until now" : formatClock(row.actualSignOutAt, row.timezone)}
+          {formatSessionStatus(row.isRunning, row.actualSignOutAt, row.timezone)}
         </span>
       </TableCell>
       <TableCell>{formatDuration(row.normalWorkedSeconds)}</TableCell>

@@ -1,10 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import {
-  keepPreviousData,
-  useMutation,
-  useQuery,
-  useQueryClient,
-} from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import {
   CalendarClock,
@@ -64,7 +59,13 @@ import { WorkdayTimeline } from "@/components/workday-timeline";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { ProtectedImage } from "@/components/ProtectedImage";
 import { retryTransientRequest } from "@/api/client";
-import { formatAttendanceStart, formatClock, formatDateTime, formatTimeOfDay } from "@/lib/format";
+import {
+  formatAttendanceStart,
+  formatClock,
+  formatDateTime,
+  formatSessionStatus,
+  formatTimeOfDay,
+} from "@/lib/format";
 import { SCREENSHOT_REFRESH_INTERVAL_MS } from "@/lib/screenshot-display";
 import { jwtSubjectScopeKey } from "@/lib/private-query-scope";
 
@@ -304,8 +305,7 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
     queryKey: [...employeePortalQueryKey, "screenshots", screenshotDay],
     queryFn: ({ signal }) => employeeScreenshots(token, screenshotDay, signal),
     enabled: screenshotsVisible,
-    staleTime:
-      screenshotDay === localDateKey() ? SCREENSHOT_REFRESH_INTERVAL_MS : 5 * 60_000,
+    staleTime: screenshotDay === localDateKey() ? SCREENSHOT_REFRESH_INTERVAL_MS : 5 * 60_000,
     refetchInterval:
       screenshotsVisible && screenshotDay === localDateKey()
         ? SCREENSHOT_REFRESH_INTERVAL_MS
@@ -611,14 +611,13 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
                   </p>
                 </div>
                 <div className="rounded-lg border p-3">
-                  <p className="text-xs text-muted-foreground">Sign-out</p>
+                  <p className="text-xs text-muted-foreground">Session</p>
                   <p className="mt-1 font-semibold">
-                    {summary.data?.daily_attendance.is_running
-                      ? "Open until now"
-                      : formatClock(
-                          summary.data?.daily_attendance.actual_sign_out_at,
-                          summary.data?.daily_attendance.timezone,
-                        )}
+                    {formatSessionStatus(
+                      Boolean(summary.data?.daily_attendance.is_running),
+                      summary.data?.daily_attendance.actual_sign_out_at,
+                      summary.data?.daily_attendance.timezone,
+                    )}
                   </p>
                 </div>
                 <div className="rounded-lg border p-3">
@@ -1166,9 +1165,7 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
                 ))}
               </div>
               {screenshots.isLoading && (
-                <p className="text-sm text-muted-foreground">
-                  Loading screenshots for this day...
-                </p>
+                <p className="text-sm text-muted-foreground">Loading screenshots for this day...</p>
               )}
               {screenshots.data?.length === 0 && (
                 <p className="text-sm text-muted-foreground">No screenshots for this day.</p>

@@ -52,7 +52,12 @@ import {
   type DailyAttendance,
 } from "@/api/attendance";
 import { useAuth } from "@/lib/auth";
-import { formatAttendanceStart, formatClock as attendanceClock, formatMinutes } from "@/lib/format";
+import {
+  formatAttendanceStart,
+  formatClock as attendanceClock,
+  formatMinutes,
+  formatSessionStatus,
+} from "@/lib/format";
 import { WorkdayTimeline } from "@/components/workday-timeline";
 import { PageHeader } from "@/components/ui/page-header";
 import { StatCard } from "@/components/ui/stat-card";
@@ -901,12 +906,12 @@ function MonthlyAttendanceDialog({
                   )}
                 />
                 <MiniMetric
-                  label="Signed out"
-                  value={
-                    dayDetail.data.isRunning
-                      ? "Open until now"
-                      : attendanceClock(dayDetail.data.actualSignOutAt, dayDetail.data.timezone)
-                  }
+                  label="Session"
+                  value={formatSessionStatus(
+                    dayDetail.data.isRunning,
+                    dayDetail.data.actualSignOutAt,
+                    dayDetail.data.timezone,
+                  )}
                 />
                 <MiniMetric label="Normal" value={shortTime(dayDetail.data.normalWorkedSeconds)} />
                 <MiniMetric label="Idle" value={shortTime(dayDetail.data.idleSeconds)} />
@@ -976,8 +981,7 @@ function MonthlyAttendanceRow({
             row.isRunning ? "font-semibold text-emerald-700" : "text-muted-foreground"
           }`}
         >
-          Sign-out{" "}
-          {row.isRunning ? "Open until now" : attendanceClock(row.actualSignOutAt, row.timezone)}
+          {formatSessionStatus(row.isRunning, row.actualSignOutAt, row.timezone)}
         </span>
       </TableCell>
       <TableCell>{shortTime(row.normalWorkedSeconds)}</TableCell>

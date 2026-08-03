@@ -20,3 +20,15 @@ export function matchesMemberActivityFilter(
   if (filter === "idle") return status === "idle" || status === "locked" || status === "sleeping";
   return status === filter;
 }
+
+export function memberActivitySummary(
+  filter: MemberActivityFilter,
+  totalCount: number,
+  previewCount: number,
+) {
+  const memberLabel = filter === "all" ? "members" : `${filter.replaceAll("_", " ")} members`;
+  return {
+    total: `${totalCount} ${memberLabel}`,
+    preview: `Showing ${previewCount} random preview${previewCount === 1 ? "" : "s"}`,
+  };
+}

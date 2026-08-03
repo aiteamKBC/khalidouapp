@@ -37,6 +37,16 @@ export function formatClock(value?: string | null, timezone?: string | null): st
   }).format(date);
 }
 
+export function formatSessionStatus(
+  isRunning: boolean,
+  signedOutAt?: string | null,
+  timezone?: string | null,
+): string {
+  if (isRunning) return "Still running - no sign-out yet";
+  if (!signedOutAt) return "No sign-out recorded";
+  return `Signed out ${formatClock(signedOutAt, timezone)}`;
+}
+
 export function formatAttendanceStart(
   actualFirstActivityAt?: string | null,
   timezone?: string | null,

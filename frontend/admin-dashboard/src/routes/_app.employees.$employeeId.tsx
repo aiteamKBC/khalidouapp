@@ -91,6 +91,7 @@ import {
   formatDateTime,
   formatMinutes,
   formatRelative,
+  formatSessionStatus,
 } from "@/lib/format";
 import { useAuth } from "@/lib/auth";
 import { permissions } from "@/lib/permissions";
@@ -157,17 +158,18 @@ function EmployeeDetailPage() {
   const shots = useQuery({
     queryKey: ["emp-shots", scope, employeeId, screenshotDay],
     queryFn: ({ signal }) =>
-      listScreenshotPage({
-        page: 1,
-        pageSize: 24,
-        employeeId,
-        day: screenshotDay ?? undefined,
-      }, signal).then((page) => page.items),
+      listScreenshotPage(
+        {
+          page: 1,
+          pageSize: 24,
+          employeeId,
+          day: screenshotDay ?? undefined,
+        },
+        signal,
+      ).then((page) => page.items),
     enabled: activeTab === "screenshots",
     staleTime:
-      !screenshotDay || screenshotDay === todayKey
-        ? SCREENSHOT_REFRESH_INTERVAL_MS
-        : 5 * 60_000,
+      !screenshotDay || screenshotDay === todayKey ? SCREENSHOT_REFRESH_INTERVAL_MS : 5 * 60_000,
     placeholderData: (previous) => previous,
     refetchInterval:
       activeTab === "screenshots" && (!screenshotDay || screenshotDay === todayKey)
@@ -178,8 +180,7 @@ function EmployeeDetailPage() {
   });
   const ts = useQuery({
     queryKey: ["emp-ts", scope, employeeId, todayKey],
-    queryFn: ({ signal }) =>
-      listEmployeeTimesheets(employeeId, todayKey, todayKey, signal),
+    queryFn: ({ signal }) => listEmployeeTimesheets(employeeId, todayKey, todayKey, signal),
     enabled: activeTab === "profile" || activeTab === "timesheets",
     staleTime: 60_000,
     placeholderData: (previous) => previous,
@@ -221,12 +222,7 @@ function EmployeeDetailPage() {
   const attendance = useQuery({
     queryKey: ["employee-attendance-range", scope, employeeId, attendanceMonth],
     queryFn: ({ signal }) =>
-      getEmployeeAttendanceRange(
-        employeeId,
-        attendanceBounds.start,
-        attendanceBounds.end,
-        signal,
-      ),
+      getEmployeeAttendanceRange(employeeId, attendanceBounds.start, attendanceBounds.end, signal),
     enabled: activeTab === "attendance",
     staleTime: 30_000,
     placeholderData: (previous) => previous,
@@ -266,10 +262,13 @@ function EmployeeDetailPage() {
   const timeRequests = useQuery({
     queryKey: ["employee-time-requests", scope, employeeId],
     queryFn: ({ signal }) =>
-      listTimeAdjustmentRequests({
-        scopedTeamIds: scope,
-        employeeId,
-      }, signal),
+      listTimeAdjustmentRequests(
+        {
+          scopedTeamIds: scope,
+          employeeId,
+        },
+        signal,
+      ),
     enabled: activeTab === "requests",
     staleTime: 30_000,
     retry: retryTransientRequest,
@@ -656,10 +655,7 @@ function EmployeeDetailPage() {
                               : "text-muted-foreground"
                           }`}
                         >
-                          Sign-out{" "}
-                          {row.isRunning
-                            ? "Open until now"
-                            : formatClock(row.actualSignOutAt, row.timezone)}
+                          {formatSessionStatus(row.isRunning, row.actualSignOutAt, row.timezone)}
                         </span>
                       </TableCell>
                       <TableCell>{formatSeconds(row.normalWorkedSeconds)}</TableCell>
@@ -830,7 +826,9 @@ function EmployeeDetailPage() {
                   <div key={session.id} className="grid grid-cols-4 gap-2 px-4 py-3">
                     <div>{formatDateTime(session.startedAt)}</div>
                     <div className="text-muted-foreground">
-                      {session.endedAt ? formatDateTime(session.endedAt) : "Open until now"}
+                      {session.endedAt
+                        ? formatDateTime(session.endedAt)
+                        : "Still running - no sign-out yet"}
                     </div>
                     <div>Active {formatMinutes(session.activeMinutes)}</div>
                     <div className="text-right">{session.screenshotCount} screenshots</div>
@@ -1051,15 +1049,12 @@ function EmployeeDetailPage() {
                   )}
                 />
                 <CompactMetric
-                  label="Signed out"
-                  value={
-                    attendanceDetail.data.isRunning
-                      ? "Open until now"
-                      : formatClock(
-                          attendanceDetail.data.actualSignOutAt,
-                          attendanceDetail.data.timezone,
-                        )
-                  }
+                  label="Session"
+                  value={formatSessionStatus(
+                    attendanceDetail.data.isRunning,
+                    attendanceDetail.data.actualSignOutAt,
+                    attendanceDetail.data.timezone,
+                  )}
                 />
                 <CompactMetric
                   label="Payable"

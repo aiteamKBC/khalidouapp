@@ -2163,10 +2163,10 @@ function HomeView({
             </strong>
           </div>
           <div>
-            <span>Sign-out</span>
+            <span>{status.todayTimeline?.is_running ? "Session" : "Signed out"}</span>
             <strong>
               {status.todayTimeline?.is_running
-                ? "Open until now"
+                ? "Still running - no sign-out yet"
                 : status.todayTimeline?.last_ended_at
                   ? formatClock(
                       status.todayTimeline.last_ended_at,
