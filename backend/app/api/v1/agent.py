@@ -115,7 +115,7 @@ from app.services.work_profiles import (
     resolve_day_policy,
 )
 from app.services.rate_limit import enforce_rate_limit, request_client_ip
-from app.services.attendance import cached_daily_attendance, calculate_daily_attendance
+from app.services.attendance import calculate_daily_attendance
 from app.services.device_location import refresh_device_location
 
 router = APIRouter(prefix="/agent", tags=["desktop-agent"])
@@ -887,9 +887,15 @@ def heartbeat(
     db: Annotated[Session, Depends(get_db)],
 ):
     employee = db.get(Employee, context.device.employee_id)
+    client_ip = request_client_ip(request)
+    if client_ip:
+        context.device.last_ip_address = client_ip
     refresh_device_location(
         context.device,
-        client_ip=request_client_ip(request),
+        # Public-IP geolocation can take seconds and is already refreshed by
+        # the periodic config request. A heartbeat only needs the locally
+        # reported timezone and must stay on the fast ingestion path.
+        client_ip=None,
         reported_timezone=payload.timezone,
         employee_timezone=employee.timezone if employee else None,
     )
@@ -901,26 +907,9 @@ def heartbeat(
         session_id=session_id,
         payload=payload,
     )
-    # Attendance is a derived read model. Refresh it at most once per minute so
-    # live admin screens remain current without making every heartbeat heavy.
-    try:
-        if employee is not None:
-            cached_daily_attendance(
-                db,
-                employee=employee,
-                work_date=local_today(
-                    context.device.timezone or employee.timezone or "UTC",
-                    payload.timestamp,
-                ),
-                now=payload.timestamp,
-                max_age_seconds=60,
-                timezone_name=context.device.timezone,
-                device_id=context.device.id,
-            )
-            db.commit()
-    except Exception:
-        db.rollback()
-        logger.exception("Unable to refresh the daily attendance snapshot")
+    # DailyAttendance is a derived read model. Attendance/payroll reads refresh
+    # it when needed; doing a full-day rebuild in every agent heartbeat caused
+    # reconnect bursts to starve the interactive admin API.
     return success_response(data=response)
 
 

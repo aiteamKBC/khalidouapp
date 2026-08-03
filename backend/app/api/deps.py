@@ -5,7 +5,7 @@ from uuid import UUID
 
 import jwt
 from fastapi import Depends, Header
-from sqlalchemy import select, update
+from sqlalchemy import and_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -81,26 +81,37 @@ def get_current_device(
     except (KeyError, TypeError, ValueError):
         raise ApiError("UNAUTHORIZED", "Invalid device token claims.", 401) from None
 
-    device = db.scalar(
-        select(Device).where(
+    token_hash = hash_token(token)
+    auth_row = db.execute(
+        select(Device, DeviceToken, Employee)
+        .select_from(Device)
+        .join(
+            Employee,
+            and_(
+                Employee.id == token_employee_id,
+                Employee.company_id == company_id,
+                Employee.status == "active",
+            ),
+        )
+        .outerjoin(
+            DeviceToken,
+            and_(
+                DeviceToken.token_hash == token_hash,
+                DeviceToken.company_id == company_id,
+                DeviceToken.device_id == device_id,
+                DeviceToken.revoked_at.is_(None),
+            ),
+        )
+        .where(
             Device.id == device_id,
             Device.company_id == company_id,
             Device.status == "active",
             Device.revoked_at.is_(None),
         )
-    )
-    if device is None:
+    ).one_or_none()
+    if auth_row is None:
         raise ApiError("DEVICE_REENROLLMENT_REQUIRED", DEVICE_REENROLLMENT_REQUIRED, 401)
-
-    token_hash = hash_token(token)
-    token_record = db.scalar(
-        select(DeviceToken).where(
-            DeviceToken.token_hash == token_hash,
-            DeviceToken.company_id == company_id,
-            DeviceToken.device_id == device_id,
-            DeviceToken.revoked_at.is_(None),
-        )
-    )
+    device, token_record, _employee = auth_row
     if token_record is None:
         token_history_exists = db.scalar(
             select(DeviceToken.id).where(
@@ -210,29 +221,10 @@ def get_current_device(
         # or an old data repair does not force every employee to sign in again.
         # Reassignment flows revoke the old token before changing ownership,
         # so this branch only heals an inconsistent active record.
-        token_employee = db.scalar(
-            select(Employee).where(
-                Employee.id == token_employee_id,
-                Employee.company_id == company_id,
-                Employee.status == "active",
-            )
-        )
-        if token_employee is None:
-            raise ApiError("DEVICE_REENROLLMENT_REQUIRED", DEVICE_REENROLLMENT_REQUIRED, 401)
         device.employee_id = token_employee_id
         db.add(device)
         db.commit()
         db.refresh(device)
-
-    employee = db.scalar(
-        select(Employee).where(
-            Employee.id == device.employee_id,
-            Employee.company_id == company_id,
-            Employee.status == "active",
-        )
-    )
-    if employee is None:
-        raise ApiError("DEVICE_REENROLLMENT_REQUIRED", DEVICE_REENROLLMENT_REQUIRED, 401)
 
     db.commit()
     return DeviceAuthContext(device=device, token_record=token_record)
