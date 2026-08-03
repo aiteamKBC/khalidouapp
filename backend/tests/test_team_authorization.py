@@ -1812,6 +1812,92 @@ def test_thumbnail_endpoint_materializes_legacy_preview(team_client, tmp_path, m
         assert preview.height <= settings.screenshot_thumbnail_width
 
 
+def test_dashboard_previews_skip_stale_and_incomplete_files(
+    team_client,
+    tmp_path,
+    monkeypatch,
+):
+    client, data = team_client
+    monkeypatch.setattr(settings, "screenshot_storage_path", tmp_path)
+    (tmp_path / "a.jpg").write_bytes(b"existing-original")
+    (tmp_path / "newer.thumb.jpg").write_bytes(b"existing-thumbnail")
+
+    with data["session_factory"]() as db:
+        original = db.get(Screenshot, data["screenshot_a"].id)
+        thumbnail_only = Screenshot(
+            company_id=original.company_id,
+            employee_id=original.employee_id,
+            device_id=original.device_id,
+            session_id=original.session_id,
+            captured_at=original.captured_at + timedelta(minutes=1),
+            storage_path="newer-missing.jpg",
+            thumbnail_path="newer.thumb.jpg",
+            mime_type="image/jpeg",
+            width=100,
+            height=100,
+            file_size=10,
+            checksum="f" * 64,
+            status="completed",
+            team_id=original.team_id,
+            project_id=original.project_id,
+            task_id=original.task_id,
+        )
+        stale = Screenshot(
+            company_id=original.company_id,
+            employee_id=original.employee_id,
+            device_id=original.device_id,
+            session_id=original.session_id,
+            captured_at=original.captured_at + timedelta(minutes=2),
+            storage_path="missing.jpg",
+            mime_type="image/jpeg",
+            width=100,
+            height=100,
+            file_size=10,
+            checksum="e" * 64,
+            status="completed",
+            team_id=original.team_id,
+            project_id=original.project_id,
+            task_id=original.task_id,
+        )
+        incomplete = Screenshot(
+            company_id=original.company_id,
+            employee_id=original.employee_id,
+            device_id=original.device_id,
+            session_id=original.session_id,
+            captured_at=original.captured_at + timedelta(minutes=3),
+            storage_path="initiated.jpg",
+            mime_type="image/jpeg",
+            width=100,
+            height=100,
+            file_size=10,
+            checksum="d" * 64,
+            status="initiated",
+            team_id=original.team_id,
+            project_id=original.project_id,
+            task_id=original.task_id,
+        )
+        db.add_all([thumbnail_only, stale, incomplete])
+        db.commit()
+        thumbnail_only_id = thumbnail_only.id
+        day = original.captured_at.date().isoformat()
+
+    response = client.get(
+        "/api/v1/screenshots/previews",
+        params={
+            "day": day,
+            "employee_id": str(data["employee_a"].id),
+            "limit_per_employee": 3,
+        },
+        headers=data["general_headers"],
+    )
+
+    assert response.status_code == 200
+    assert [row["id"] for row in response.json()["data"]] == [
+        str(thumbnail_only_id),
+        str(data["screenshot_a"].id),
+    ]
+
+
 def test_screenshot_folder_smart_filters_are_applied_before_pagination(team_client):
     client, data = team_client
     day = datetime.now(UTC).date().isoformat()
@@ -1844,9 +1930,63 @@ def test_desktop_agent_can_only_load_its_own_recent_screenshots(team_client, tmp
     monkeypatch.setattr(settings, "screenshot_storage_path", tmp_path)
     (tmp_path / "a.jpg").write_bytes(b"employee-a-image")
     (tmp_path / "b.jpg").write_bytes(b"employee-b-image")
+    (tmp_path / "latest.thumb.jpg").write_bytes(b"employee-a-thumbnail")
+    db: Session = data["session_factory"]()
+    try:
+        current = db.get(Screenshot, data["screenshot_a"].id)
+        thumbnail_only = Screenshot(
+            company_id=current.company_id,
+            employee_id=current.employee_id,
+            device_id=current.device_id,
+            session_id=current.session_id,
+            captured_at=current.captured_at + timedelta(minutes=1),
+            storage_path="missing-original.jpg",
+            thumbnail_path="latest.thumb.jpg",
+            mime_type="image/jpeg",
+            width=100,
+            height=100,
+            file_size=10,
+            checksum="e" * 64,
+            status="completed",
+            team_id=current.team_id,
+            project_id=current.project_id,
+            task_id=current.task_id,
+        )
+        db.add(
+            Screenshot(
+                company_id=current.company_id,
+                employee_id=current.employee_id,
+                device_id=current.device_id,
+                session_id=current.session_id,
+                captured_at=current.captured_at + timedelta(minutes=2),
+                storage_path="missing-latest.jpg",
+                mime_type="image/jpeg",
+                width=100,
+                height=100,
+                file_size=10,
+                checksum="d" * 64,
+                status="completed",
+                team_id=current.team_id,
+                project_id=current.project_id,
+                task_id=current.task_id,
+            )
+        )
+        db.add(thumbnail_only)
+        db.commit()
+        thumbnail_only_id = thumbnail_only.id
+    finally:
+        db.close()
 
     recent = client.get(
         "/api/v1/agent/screenshots/recent",
+        headers=data["device_headers"],
+    )
+    own_preview = client.get(
+        f"/api/v1/agent/screenshots/{data['screenshot_a'].id}/preview",
+        headers=data["device_headers"],
+    )
+    legacy_thumbnail_fallback = client.get(
+        f"/api/v1/agent/screenshots/{thumbnail_only_id}/file",
         headers=data["device_headers"],
     )
     own_file = client.get(
@@ -1859,7 +1999,14 @@ def test_desktop_agent_can_only_load_its_own_recent_screenshots(team_client, tmp
     )
 
     assert recent.status_code == 200
-    assert [row["id"] for row in recent.json()["data"]] == [str(data["screenshot_a"].id)]
+    assert [row["id"] for row in recent.json()["data"]] == [
+        str(thumbnail_only_id),
+        str(data["screenshot_a"].id),
+    ]
+    assert own_preview.status_code == 200
+    assert own_preview.content == b"employee-a-image"
+    assert legacy_thumbnail_fallback.status_code == 200
+    assert legacy_thumbnail_fallback.content == b"employee-a-thumbnail"
     assert own_file.status_code == 200
     assert own_file.content == b"employee-a-image"
     assert other_file.status_code == 404

@@ -4782,13 +4782,23 @@ ipcMain.handle("agent:get-recent-screenshots", async () => {
     const screenshots = await listAgentRecentScreenshots(4);
     const data = [];
     for (const screenshot of screenshots) {
-      const image = await downloadAgentScreenshot(screenshot.id);
-      data.push({
-        id: screenshot.id,
-        capturedAt: screenshot.captured_at,
-        displayName: screenshot.display_name,
-        dataUrl: `data:${image.mimeType};base64,${image.content.toString("base64")}`,
-      });
+      try {
+        const image = await downloadAgentScreenshot(screenshot.id);
+        data.push({
+          id: screenshot.id,
+          capturedAt: screenshot.captured_at,
+          displayName: screenshot.display_name,
+          dataUrl: `data:${image.mimeType};base64,${image.content.toString("base64")}`,
+        });
+        // The home panel renders only the latest capture. Avoid downloading
+        // three full images that it never displays.
+        break;
+      } catch (error) {
+        // A legacy database row may outlive its local image. Try the next
+        // recent capture instead of failing the entire panel.
+        if (apiResponseStatus(error) === 404) continue;
+        throw error;
+      }
     }
     runtimeStatus.connectionStatus = "online";
     runtimeStatus.lastSuccessfulSyncAt = new Date().toISOString();

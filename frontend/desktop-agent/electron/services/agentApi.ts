@@ -431,7 +431,7 @@ export async function listAgentRecentScreenshots(limit = 4) {
 
 export async function downloadAgentScreenshot(screenshotId: string) {
   const response = await axios.get<ArrayBuffer>(
-    `${getApiBaseUrl()}/agent/screenshots/${screenshotId}/file`,
+    `${getApiBaseUrl()}/agent/screenshots/${screenshotId}/preview`,
     {
       headers: getAuthHeaders(),
       responseType: "arraybuffer",

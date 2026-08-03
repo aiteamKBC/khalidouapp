@@ -75,6 +75,7 @@ from app.services.session_tracking import (
     update_session_task,
 )
 from app.services.screenshots import (
+    available_screenshot_preview_path,
     complete_screenshot,
     initiate_screenshot,
     record_screenshot_skip,
@@ -990,13 +991,32 @@ def screenshot_skip(
     return success_response(data=record_screenshot_skip(db, context.device, payload))
 
 
+def _own_screenshot_or_404(
+    db: Session,
+    context: DeviceAuthContext,
+    screenshot_id: UUID,
+) -> Screenshot:
+    screenshot = db.scalar(
+        select(Screenshot).where(
+            Screenshot.id == screenshot_id,
+            Screenshot.company_id == context.device.company_id,
+            Screenshot.employee_id == context.device.employee_id,
+            Screenshot.deleted_at.is_(None),
+            Screenshot.status.in_(("uploaded", "completed")),
+        )
+    )
+    if screenshot is None:
+        raise ApiError("SCREENSHOT_NOT_FOUND", "Screenshot was not found.", 404)
+    return screenshot
+
+
 @router.get("/screenshots/recent")
 def recent_screenshots(
     context: Annotated[DeviceAuthContext, Depends(get_current_device)],
     db: Annotated[Session, Depends(get_db)],
     limit: int = Query(default=4, ge=1, le=4),
 ):
-    rows = db.scalars(
+    candidates = db.scalars(
         select(Screenshot)
         .where(
             Screenshot.company_id == context.device.company_id,
@@ -1005,8 +1025,16 @@ def recent_screenshots(
             Screenshot.status.in_(("uploaded", "completed")),
         )
         .order_by(Screenshot.captured_at.desc())
-        .limit(limit)
+        # Some legacy rows outlived their local files. Scan a bounded recent
+        # window so a stale row cannot break the employee's latest preview.
+        .limit(max(20, limit * 10))
     ).all()
+    storage = LocalScreenshotStorage()
+    rows = [
+        screenshot
+        for screenshot in candidates
+        if available_screenshot_preview_path(storage, screenshot) is not None
+    ][:limit]
     return success_response(
         data=[
             {
@@ -1020,33 +1048,50 @@ def recent_screenshots(
     )
 
 
+@router.get("/screenshots/{screenshot_id}/preview")
+def own_screenshot_preview(
+    screenshot_id: UUID,
+    context: Annotated[DeviceAuthContext, Depends(get_current_device)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    screenshot = _own_screenshot_or_404(db, context, screenshot_id)
+    path = available_screenshot_preview_path(LocalScreenshotStorage(), screenshot)
+    if path is None:
+        raise ApiError("SCREENSHOT_FILE_NOT_FOUND", "Screenshot preview was not found.", 404)
+    return FileResponse(
+        path,
+        media_type="image/jpeg" if path.name.endswith(".thumb.jpg") else screenshot.mime_type,
+        headers={
+            "Cache-Control": "private, max-age=1800",
+            "Vary": "Authorization",
+        },
+    )
+
+
 @router.get("/screenshots/{screenshot_id}/file")
 def own_screenshot_file(
     screenshot_id: UUID,
     context: Annotated[DeviceAuthContext, Depends(get_current_device)],
     db: Annotated[Session, Depends(get_db)],
 ):
-    screenshot = db.scalar(
-        select(Screenshot).where(
-            Screenshot.id == screenshot_id,
-            Screenshot.company_id == context.device.company_id,
-            Screenshot.employee_id == context.device.employee_id,
-            Screenshot.deleted_at.is_(None),
-            Screenshot.status.in_(("uploaded", "completed")),
-        )
-    )
-    if screenshot is None:
-        raise ApiError("SCREENSHOT_NOT_FOUND", "Screenshot was not found.", 404)
+    screenshot = _own_screenshot_or_404(db, context, screenshot_id)
     storage = LocalScreenshotStorage()
     try:
         file_path = storage.resolve(screenshot.storage_path)
     except ValueError as exc:
         raise ApiError("SCREENSHOT_FILE_NOT_FOUND", "Screenshot file was not found.", 404) from exc
-    if not file_path.exists():
+    if not file_path.is_file():
+        # Desktop 1.1.89 requests this legacy route for its home-page preview.
+        # Keep it working while clients update by serving an existing compact
+        # thumbnail when the legacy original has already gone missing.
+        file_path = available_screenshot_preview_path(storage, screenshot)
+    if file_path is None or not file_path.is_file():
         raise ApiError("SCREENSHOT_FILE_NOT_FOUND", "Screenshot file was not found.", 404)
     return FileResponse(
         file_path,
-        media_type=screenshot.mime_type,
+        media_type=(
+            "image/jpeg" if file_path.name.endswith(".thumb.jpg") else screenshot.mime_type
+        ),
         headers={
             "Cache-Control": "private, max-age=1800",
             "Vary": "Authorization",

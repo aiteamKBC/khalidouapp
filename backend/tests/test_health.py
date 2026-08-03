@@ -30,6 +30,11 @@ def test_only_high_volume_agent_ingestion_uses_reserved_capacity() -> None:
         "/api/v1/agent/sessions/00000000-0000-0000-0000-000000000000/events"
     )
     assert _is_agent_ingestion_path("/api/v1/agent/screenshots/initiate")
+    assert not _is_agent_ingestion_path("/api/v1/agent/screenshots/recent", "GET")
+    assert not _is_agent_ingestion_path(
+        "/api/v1/agent/screenshots/00000000-0000-0000-0000-000000000000/preview",
+        "GET",
+    )
     assert not _is_agent_ingestion_path("/api/v1/agent/config")
     assert not _is_agent_ingestion_path("/api/v1/payroll/sheet")
 

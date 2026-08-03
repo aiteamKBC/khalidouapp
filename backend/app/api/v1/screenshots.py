@@ -33,7 +33,11 @@ from app.models import AdminUser, Device, Employee, Screenshot, ScreenshotCaptur
 from app.services.audit import record_audit_log
 from app.services.permissions import require_capability
 from app.services.projects import get_project_or_404, get_task_or_404
-from app.services.screenshots import build_thumbnail, serialize_screenshot
+from app.services.screenshots import (
+    available_screenshot_preview_path,
+    build_thumbnail,
+    serialize_screenshot,
+)
 from app.storage.local import LocalScreenshotStorage
 
 router = APIRouter(prefix="/screenshots", tags=["screenshots"])
@@ -251,6 +255,9 @@ def list_screenshot_previews(
         current_admin.company_id,
         employee_ids,
     )
+    # Scan beyond the requested three rows because legacy database records can
+    # outlive their private files. The final result is still capped per member.
+    candidate_limit_per_employee = max(20, limit_per_employee * 10)
     preview_statement = select(
         Screenshot.id.label("screenshot_id"),
         func.row_number()
@@ -263,6 +270,7 @@ def list_screenshot_previews(
         Screenshot.company_id == current_admin.company_id,
         Screenshot.employee_id.in_(employee_ids),
         Screenshot.deleted_at.is_(None),
+        Screenshot.status.in_(("uploaded", "completed")),
         _local_day_condition(
             day,
             employee_rows,
@@ -288,10 +296,21 @@ def list_screenshot_previews(
     screenshots = db.scalars(
         select(Screenshot)
         .join(ranked_previews, ranked_previews.c.screenshot_id == Screenshot.id)
-        .where(ranked_previews.c.preview_rank <= limit_per_employee)
+        .where(ranked_previews.c.preview_rank <= candidate_limit_per_employee)
         .order_by(Screenshot.employee_id.asc(), Screenshot.captured_at.desc())
     ).all()
-    return success_response(data=[serialize_with_url(item) for item in screenshots])
+    storage = LocalScreenshotStorage()
+    selected: list[Screenshot] = []
+    selected_counts: dict[UUID, int] = {}
+    for screenshot in screenshots:
+        count = selected_counts.get(screenshot.employee_id, 0)
+        if count >= limit_per_employee:
+            continue
+        if available_screenshot_preview_path(storage, screenshot) is None:
+            continue
+        selected.append(screenshot)
+        selected_counts[screenshot.employee_id] = count + 1
+    return success_response(data=[serialize_with_url(item) for item in selected])
 
 
 @router.get("/folders")

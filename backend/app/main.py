@@ -18,12 +18,12 @@ from app.services.screenshot_retention import cleanup_expired_screenshots
 logger = logging.getLogger(__name__)
 
 
-def _is_agent_ingestion_path(path: str) -> bool:
+def _is_agent_ingestion_path(path: str, method: str = "POST") -> bool:
     if path.startswith("/api/v1/agent/screenshots/"):
-        return True
+        return method.upper() == "POST"
     if not path.startswith("/api/v1/agent/sessions/"):
         return False
-    return path.endswith(("/heartbeat", "/events"))
+    return method.upper() == "POST" and path.endswith(("/heartbeat", "/events"))
 
 
 async def retention_worker() -> None:
@@ -76,7 +76,7 @@ def create_app() -> FastAPI:
     async def add_security_headers(request: Request, call_next):
         started_at = perf_counter()
         ingestion_slot_acquired = False
-        if _is_agent_ingestion_path(request.url.path):
+        if _is_agent_ingestion_path(request.url.path, request.method):
             if agent_ingestion_slots.locked():
                 response = error_response(
                     code="AGENT_INGESTION_BUSY",

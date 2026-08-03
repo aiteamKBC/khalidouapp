@@ -1,6 +1,6 @@
 from hashlib import sha256
 from io import BytesIO
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from typing import Any
 from uuid import UUID
 import warnings
@@ -30,6 +30,23 @@ from app.storage.local import LocalScreenshotStorage
 
 ALLOWED_SCREENSHOT_MIME_TYPES = {"image/jpeg", "image/webp"}
 SCREENSHOT_FORMAT_MIME_TYPES = {"JPEG": "image/jpeg", "WEBP": "image/webp"}
+
+
+def available_screenshot_preview_path(
+    storage: LocalScreenshotStorage,
+    screenshot: Screenshot,
+) -> Path | None:
+    """Return the first usable private preview without trusting stale DB paths."""
+    for relative_path in (screenshot.thumbnail_path, screenshot.storage_path):
+        if not relative_path:
+            continue
+        try:
+            path = storage.resolve(relative_path)
+        except ValueError:
+            continue
+        if path.is_file():
+            return path
+    return None
 
 
 def build_thumbnail(content: bytes, storage_path: str) -> tuple[str, bytes] | None:
