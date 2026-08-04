@@ -86,7 +86,6 @@ import {
   hasReachedIdleThreshold,
   IDLE_THRESHOLD_MINUTES,
   idleDurationAfterThreshold,
-  idleReturnVerificationExpired,
   inputResumedAfterIdle,
   reclassifyVerifiedReturnCounters,
   shouldWaitForInputBeforeRestart,
@@ -2221,11 +2220,11 @@ async function resumeAutomaticIdle() {
     return { success: false, message: "The idle review is no longer active." };
   }
   if (idleReturnVerification) {
-    return {
-      success: true,
-      message:
-        "Checking for continued activity. Keep working to resume tracking.",
-    };
+    const finishPromise = finishAutomaticIdleAfterVerification(
+      idleReturnVerification,
+    );
+    if (finishPromise) await finishPromise;
+    return { success: Boolean(finishPromise) };
   }
   if (
     automaticIdleReturnAction({
@@ -2233,7 +2232,7 @@ async function resumeAutomaticIdle() {
       immediateInputDetected: false,
       confirmationAccepted: true,
       sustainedInputConfirmed: false,
-    }) !== "verify"
+    }) !== "resume"
   ) {
     return { success: false, message: "Return confirmation is required." };
   }
@@ -2247,26 +2246,15 @@ async function resumeAutomaticIdle() {
     eligibleIdleSecondsAtStart: runtimeStatus.eligibleIdleSeconds,
   };
   idleReturnVerification = verification;
-  if (!inputIntegrityMonitor.sensorAvailable(startedAt)) {
-    log.warn(
-      "Input-integrity probe unavailable during return verification; explicit confirmation accepted",
-    );
-    const finishPromise = finishAutomaticIdleAfterVerification(verification);
-    if (!finishPromise) {
-      return {
-        success: false,
-        message: "The idle review could not be completed.",
-      };
-    }
-    await finishPromise;
-    return { success: true };
+  const finishPromise = finishAutomaticIdleAfterVerification(verification);
+  if (!finishPromise) {
+    return {
+      success: false,
+      message: "The idle review could not be completed.",
+    };
   }
-  notifyRendererStatus();
-  return {
-    success: true,
-    message:
-      "Checking for continued activity. Keep working to resume tracking.",
-  };
+  await finishPromise;
+  return { success: true };
 }
 
 function showIdleStartedNotification() {
@@ -2335,32 +2323,16 @@ function startIdleMonitor() {
     const previousSystemIdleSeconds = lastObservedSystemIdleSeconds;
     lastObservedSystemIdleSeconds = idleSeconds;
     if (runtimeStatus.trackingStatus === "idle" && idleReturnVerification) {
-      const now = Date.now();
-      const sustainedInputConfirmed =
-        inputIntegrityMonitor.sustainedActivitySince(
-          idleReturnVerification.startedAt,
-          now,
-        ) === true;
       if (
         automaticIdleReturnAction({
           trackingStatus: runtimeStatus.trackingStatus,
           immediateInputDetected: false,
           confirmationAccepted: true,
-          sustainedInputConfirmed,
+          sustainedInputConfirmed: false,
         }) === "resume"
       ) {
         const verification = idleReturnVerification;
         void finishAutomaticIdleAfterVerification(verification);
-      } else if (
-        idleReturnVerificationExpired(idleReturnVerification.startedAt, now)
-      ) {
-        clearIdleReturnVerification();
-        lastHandledIdleReturnInputAt =
-          inputIntegrityMonitor.latestRealInputAt(now) ?? now;
-        log.info(
-          "Return verification expired without sustained activity; tracking remains idle",
-        );
-        notifyRendererStatus();
       }
       return;
     }

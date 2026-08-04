@@ -1314,8 +1314,8 @@ function App() {
             ? "You are outside your scheduled shift. A device being on or mouse and keyboard movement alone will not start time. Confirm only if you are actually working."
             : "Khaliduo will not count time just because this device is on. Confirm that you are present and actually starting work."
           : canRequestManualTime
-            ? `Input was detected after ${formatDuration(alert.lostSeconds)} away. Tracking stays idle until you choose Continue and keep working; ${formatDuration(alert.eligibleLostSeconds)} inside your paid shift remains available to explain.`
-            : `Input was detected after ${formatDuration(alert.lostSeconds)} away. Choose Continue and keep working so Khaliduo can verify your return.`,
+            ? `Input was detected after ${formatDuration(alert.lostSeconds)} away. Choose Continue to resume now; ${formatDuration(alert.eligibleLostSeconds)} inside your paid shift remains available to explain.`
+            : `Input was detected after ${formatDuration(alert.lostSeconds)} away. Choose Continue to resume tracking now.`,
         icon: "warning",
         showDenyButton: true,
         showCancelButton: canRequestManualTime,

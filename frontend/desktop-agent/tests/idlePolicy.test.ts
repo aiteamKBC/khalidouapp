@@ -46,7 +46,7 @@ test("returning early from a break is detected from fresh input", () => {
   assert.equal(inputResumedAfterIdle(3, 240), true);
 });
 
-test("input opens a review and confirmed work completes return verification", () => {
+test("input opens a review and explicit confirmation resumes immediately", () => {
   assert.equal(
     automaticIdleReturnAction({
       trackingStatus: "idle",
@@ -63,7 +63,7 @@ test("input opens a review and confirmed work completes return verification", ()
       confirmationAccepted: true,
       sustainedInputConfirmed: false,
     }),
-    "verify",
+    "resume",
   );
   assert.equal(
     automaticIdleReturnAction({

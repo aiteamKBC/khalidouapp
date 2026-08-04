@@ -50,11 +50,8 @@ export function automaticIdleReturnAction(options: {
   if (options.trackingStatus !== "idle") {
     return "wait";
   }
-  if (options.sustainedInputConfirmed) {
+  if (options.confirmationAccepted || options.sustainedInputConfirmed) {
     return "resume";
-  }
-  if (options.confirmationAccepted) {
-    return "verify";
   }
   return options.immediateInputDetected ? "review" : "wait";
 }
