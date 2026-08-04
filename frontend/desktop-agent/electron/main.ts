@@ -120,6 +120,10 @@ import {
   privacyBlurSampleSize,
 } from "./services/screenshotPrivacy.js";
 import { isPermanentPendingEventSyncFailure } from "./services/pendingSyncPolicy.js";
+import {
+  shouldClearInstallRecoveryOnBeforeQuit,
+  UPDATE_INSTALL_RECOVERY_MS,
+} from "./services/updateInstallPolicy.js";
 
 const { nativeImage, shell } = electronCommon;
 const {
@@ -4239,6 +4243,7 @@ function recoverFromFailedUpdateInstall(reason: string) {
     startTimers();
   }
   updateDisplaySleepBlocker();
+  startCrashRecoveryWatchdog(crashRecoveryAttempt(process.argv));
   startUpdateCheckSchedule();
   scheduleUpdateRetry(reason);
 }
@@ -4275,21 +4280,21 @@ async function installDownloadedUpdate(): Promise<UpdateActionResult> {
   await preserveTrackingBeforeUpdate();
   isQuitting = true;
   quitNotificationSent = true;
+  // Arm recovery before quitAndInstall. Electron can emit before-quit inside
+  // that call, and clearing this watchdog there left the still-visible app on
+  // "Installing update" forever when NSIS failed to take over.
+  clearUpdateInstallRecoveryTimer();
+  updateInstallRecoveryTimer = setTimeout(() => {
+    if (!isInstallingUpdate || !isQuitting) return;
+    log.error(
+      "The downloaded update did not close Khaliduo; tracking has been restored",
+    );
+    recoverFromFailedUpdateInstall(
+      "the downloaded update did not close the application",
+    );
+  }, UPDATE_INSTALL_RECOVERY_MS);
   try {
     autoUpdater.quitAndInstall(true, true);
-    // quitAndInstall is synchronous but a locked/cancelled installer can fail
-    // without throwing. If Electron is still alive, restore normal tracking
-    // instead of leaving the employee online with frozen counters.
-    clearUpdateInstallRecoveryTimer();
-    updateInstallRecoveryTimer = setTimeout(() => {
-      if (!isInstallingUpdate || !isQuitting) return;
-      log.error(
-        "The downloaded update did not close Khaliduo; tracking has been restored",
-      );
-      recoverFromFailedUpdateInstall(
-        "the downloaded update did not close the application",
-      );
-    }, 30_000);
     return { success: true };
   } catch (error) {
     recoverFromFailedUpdateInstall(
@@ -4486,7 +4491,9 @@ app.on("before-quit", (event) => {
   isQuitting = true;
   stopCrashRecoveryWatchdog();
   updateDisplaySleepBlocker();
-  clearUpdateInstallRecoveryTimer();
+  if (shouldClearInstallRecoveryOnBeforeQuit(isInstallingUpdate)) {
+    clearUpdateInstallRecoveryTimer();
+  }
   if (updateCheckTimer) clearInterval(updateCheckTimer);
   if (initialUpdateCheckTimer) clearTimeout(initialUpdateCheckTimer);
 

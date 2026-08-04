@@ -32,6 +32,10 @@ import {
   screenshotSyncLabel,
   shouldReloadScreenshotsAfterRecovery,
 } from "./screenshotRecovery";
+import {
+  mainTimerSeconds,
+  reconciledNormalTodaySeconds,
+} from "./timerDisplay";
 import "sweetalert2/dist/sweetalert2.min.css";
 import "./App.css";
 
@@ -598,6 +602,25 @@ function App() {
     [projectFilterId, status.projects, status.selectedTask?.projectId],
   );
 
+  const manualApprovedTodaySeconds =
+    status.timeSummary?.today.manual_approved_seconds ?? 0;
+  const trackedTodaySeconds = Math.max(
+    status.timeSummary?.today.active_seconds ?? 0,
+    (status.timeSummary?.today.tracked_active_seconds ?? 0) +
+      manualApprovedTodaySeconds,
+    status.normalSeconds + status.extraSeconds + manualApprovedTodaySeconds,
+    status.workedTodaySeconds + manualApprovedTodaySeconds,
+  );
+  const normalSeconds = status.enrolled
+    ? reconciledNormalTodaySeconds({
+        normalSeconds: status.normalSeconds,
+        extraSeconds: status.extraSeconds,
+        manualApprovedSeconds: manualApprovedTodaySeconds,
+        trackedTodaySeconds,
+      })
+    : status.normalSeconds;
+  const extraSeconds = status.extraSeconds;
+
   const timeBreakdown = useMemo(() => {
     const period = status.timeSummary?.today;
     const visibleIdleSeconds = Math.max(
@@ -608,7 +631,7 @@ function App() {
     const segments = [
       {
         label: "Normal shift work",
-        seconds: status.normalSeconds,
+        seconds: normalSeconds,
         className: "worked",
         counted: true,
       },
@@ -653,9 +676,9 @@ function App() {
   }, [
     status.extraSeconds,
     status.eligibleIdleSeconds,
-    status.normalSeconds,
     status.todayTimeline?.idle_seconds,
     status.timeSummary,
+    normalSeconds,
   ]);
 
   const idleRequestOptions = useMemo<IdleRequestOption[]>(() => {
@@ -720,19 +743,6 @@ function App() {
   const countedTodaySeconds = timeBreakdown.segments
     .filter((segment) => segment.counted)
     .reduce((total, segment) => total + segment.seconds, 0);
-  const manualApprovedTodaySeconds =
-    status.timeSummary?.today.manual_approved_seconds ?? 0;
-  const trackedTodaySeconds = Math.max(
-    status.timeSummary?.today.tracked_active_seconds ?? 0,
-    status.normalSeconds + status.extraSeconds + manualApprovedTodaySeconds,
-    status.workedTodaySeconds,
-  );
-  const normalSeconds = status.enrolled
-    ? status.normalSeconds
-    : Math.min(countedTodaySeconds, status.dailyTargetSeconds);
-  const extraSeconds = status.enrolled
-    ? status.extraSeconds
-    : Math.max(0, countedTodaySeconds - status.dailyTargetSeconds);
   const targetProgress = Math.max(
     0,
     Math.min(
@@ -777,12 +787,13 @@ function App() {
             ? "Shift idle"
             : "Paid shift"
         : "No timer running";
-  const displayedTimerSeconds =
-    status.trackingStatus === "idle" && !isPaused
-      ? status.currentIdleSeconds
-      : isExtraTime
-        ? extraSeconds
-        : countedTodaySeconds;
+  const displayedTimerSeconds = mainTimerSeconds({
+    isAutomaticIdle: status.trackingStatus === "idle" && !isPaused,
+    isExtraTime,
+    currentIdleSeconds: status.currentIdleSeconds,
+    extraSeconds,
+    trackedTodaySeconds,
+  });
 
   async function refreshStatusAfterEnrollment() {
     if (status.enrolled) {
@@ -1714,7 +1725,7 @@ function App() {
               ? "Sync pending - time saved locally"
               : "Offline"}
         </span>
-        <span>Normal today {formatDuration(countedTodaySeconds)}</span>
+        <span>Worked today {formatDuration(trackedTodaySeconds)}</span>
         <span>Activity {status.activityPercent}%</span>
         <span>v{status.agentVersion}</span>
       </footer>
@@ -2061,7 +2072,7 @@ function HomeView({
                 ? `Idle for ${formatDuration(displayedTimerSeconds)} after the ten-minute grace period`
                 : isExtraTime
                   ? `Recorded overtime ${formatDuration(displayedTimerSeconds)}`
-                  : `Worked ${formatDuration(countedTodaySeconds)} of ${formatDuration(status.dailyTargetSeconds)}`
+                  : `Worked today ${formatDuration(trackedTodaySeconds)}; ${formatDuration(countedTodaySeconds)} counts toward the ${formatDuration(status.dailyTargetSeconds)} target`
             }
           >
             <span className="k-gauge-mark mark-0">0h</span>
@@ -2076,7 +2087,7 @@ function HomeView({
                   ? "Idle time after 10-minute grace"
                   : isExtraTime
                     ? "Overtime recorded today"
-                    : `${targetProgress}% of ${formatDuration(status.dailyTargetSeconds)}`}
+                    : `Worked today · ${targetProgress}% of ${formatDuration(status.dailyTargetSeconds)} target`}
               </small>
             </div>
           </div>
