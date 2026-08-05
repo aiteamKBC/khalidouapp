@@ -1,4 +1,4 @@
-from datetime import UTC, date, datetime, time
+from datetime import UTC, date, datetime, time, timedelta
 
 import pytest
 from sqlalchemy import create_engine, select
@@ -1295,6 +1295,41 @@ def test_only_outside_shift_idle_does_not_create_attendance_or_timeline(
     assert timeline["worked_seconds"] == 0
     assert timeline["idle_seconds"] == 0
     assert timeline["intervals"] == []
+
+
+def test_idle_only_device_liveness_does_not_create_shift_attendance(
+    attendance_context,
+):
+    db, employee, device, _ = attendance_context
+    work_date = date(2026, 7, 21)
+    started_at = datetime(2026, 7, 21, 10, 0, tzinfo=UTC)
+    ended_at = started_at + timedelta(hours=1)
+    session = _session(db, employee, device, started_at, ended_at)
+    db.add(
+        ActivityEvent(
+            company_id=employee.company_id,
+            employee_id=employee.id,
+            device_id=device.id,
+            session_id=session.id,
+            event_type="idle_started",
+            event_timestamp=started_at,
+            idempotency_key="inside-shift-idle-only",
+        )
+    )
+    db.commit()
+
+    row, timeline = calculate_daily_attendance(
+        db,
+        employee=employee,
+        work_date=work_date,
+        now=datetime(2026, 7, 22, tzinfo=UTC),
+    )
+
+    assert row.status == "absent"
+    assert row.actual_first_activity_at is None
+    assert row.actual_last_activity_at is None
+    assert timeline["worked_seconds"] == 0
+    assert timeline["idle_seconds"] == 60 * 60
 
 
 def test_only_outside_shift_work_is_overtime_not_shift_attendance(

@@ -61,6 +61,7 @@ def session_observation_bounds(
     if not sessions_by_id:
         return {}
 
+    now_utc = _utc(now or datetime.now(UTC))
     signal_by_session: dict[UUID, dict[str, datetime]] = {}
     signal_rows = db.execute(
         select(
@@ -68,9 +69,15 @@ def session_observation_bounds(
             ActivityEvent.event_type,
             func.max(ActivityEvent.event_timestamp),
         )
+        .join(WorkSession, WorkSession.id == ActivityEvent.session_id)
         .where(
             ActivityEvent.company_id == company_id,
             ActivityEvent.session_id.in_(sessions_by_id),
+            ActivityEvent.event_timestamp >= WorkSession.started_at,
+            or_(
+                WorkSession.ended_at.is_(None),
+                ActivityEvent.event_timestamp <= WorkSession.ended_at,
+            ),
             or_(
                 ActivityEvent.event_type == "heartbeat",
                 ActivityEvent.event_type.in_(EVENT_STATES),
@@ -91,7 +98,6 @@ def session_observation_bounds(
         or 3
     )
     freshness_limit = timedelta(minutes=max(1, int(offline_threshold_minutes)))
-    now_utc = _utc(now or datetime.now(UTC))
     result: dict[UUID, SessionObservation] = {}
     for session_id, session in sessions_by_id.items():
         session_start = _utc(session.started_at)
@@ -700,11 +706,17 @@ def build_workday_timeline(
         session_ids = [session.id for session in sessions]
         events = db.scalars(
             select(ActivityEvent)
+            .join(WorkSession, WorkSession.id == ActivityEvent.session_id)
             .where(
                 ActivityEvent.company_id == company_id,
                 ActivityEvent.employee_id == employee_id,
                 ActivityEvent.session_id.in_(session_ids),
                 ActivityEvent.event_type.in_(TIMELINE_EVENTS),
+                ActivityEvent.event_timestamp >= WorkSession.started_at,
+                or_(
+                    WorkSession.ended_at.is_(None),
+                    ActivityEvent.event_timestamp <= WorkSession.ended_at,
+                ),
                 ActivityEvent.event_timestamp < day_end,
             )
             .order_by(ActivityEvent.event_timestamp, ActivityEvent.created_at)
@@ -717,11 +729,17 @@ def build_workday_timeline(
                 ActivityEvent.event_timestamp,
                 ActivityEvent.payload,
             )
+            .join(WorkSession, WorkSession.id == ActivityEvent.session_id)
             .where(
                 ActivityEvent.company_id == company_id,
                 ActivityEvent.employee_id == employee_id,
                 ActivityEvent.session_id.in_(session_ids),
                 ActivityEvent.event_type == "heartbeat",
+                ActivityEvent.event_timestamp >= WorkSession.started_at,
+                or_(
+                    WorkSession.ended_at.is_(None),
+                    ActivityEvent.event_timestamp <= WorkSession.ended_at,
+                ),
                 ActivityEvent.event_timestamp < day_end,
             )
             .order_by(
@@ -742,6 +760,12 @@ def build_workday_timeline(
         or 3
     )
     freshness_limit = timedelta(minutes=max(1, int(offline_threshold_minutes)))
+    observations = session_observation_bounds(
+        db,
+        company_id=company_id,
+        sessions=sessions,
+        now=now_utc,
+    )
 
     intervals: list[dict] = []
     offline_gaps_by_session: dict[UUID, list[tuple[datetime, datetime]]] = {}
@@ -752,40 +776,13 @@ def build_workday_timeline(
         session_events = events_by_session[session.id]
         continued_session_start = _continued_session_started_at(session_events)
         session_heartbeats = heartbeats_by_session[session.id]
-        last_heartbeat_at = session_heartbeats[-1][0] if session_heartbeats else None
         offline_gaps_by_session[session.id] = _offline_gaps(
             session_heartbeats,
             freshness_limit=freshness_limit,
         )
-        if last_heartbeat_at is not None:
-            # A terminal event can arrive hours or days after the desktop's
-            # last heartbeat when a stale session is closed on the next app
-            # launch.  It proves when the row was closed, not that the employee
-            # worked through the offline gap.
-            live_signal_times = [
-                _utc(event.event_timestamp)
-                for event in session_events
-                if event.event_type not in TERMINAL_EVENTS
-            ]
-            last_signal_at = max([session_start, last_heartbeat_at, *live_signal_times])
-        else:
-            recorded_end = _utc(session.ended_at) if session.ended_at else now_utc
-            last_signal_at = (
-                recorded_end
-                if session.ended_at is not None
-                else max(
-                    session_start,
-                    min(_utc(session.updated_at), recorded_end, now_utc),
-                )
-            )
-        is_fresh = session.ended_at is None and now_utc - last_signal_at <= freshness_limit
-        if session.ended_at is not None:
-            recorded_end = _utc(session.ended_at)
-            session_end = (
-                last_signal_at if recorded_end - last_signal_at > freshness_limit else recorded_end
-            )
-        else:
-            session_end = now_utc if is_fresh else min(last_signal_at, now_utc)
+        observation = observations[session.id]
+        is_fresh = observation["is_fresh"]
+        session_end = observation["effective_end_at"]
         session_end = min(session_end, day_end)
         visible_start = max(session_start, day_start)
         visible_end = session_end

@@ -254,7 +254,7 @@ trap - EXIT
 AUDIT_PATH="$BACKUP_ROOT/audits/production-$DEPLOY_ID.json"
 cd "$APP_ROOT/backend"
 "$APP_ROOT/venv/bin/python" -m scripts.audit_production_state \
-  --days 7 | tee "$AUDIT_PATH"
+  --days 7 --fail-on-time-invariant | tee "$AUDIT_PATH"
 chmod 600 "$AUDIT_PATH"
 
 echo "APP_COMMIT=$(git -C "$APP_ROOT" rev-parse HEAD)"

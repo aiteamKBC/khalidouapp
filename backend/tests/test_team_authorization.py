@@ -23,7 +23,10 @@ from app.main import app
 from app.services.activity_timeline import local_today, open_session_liveness
 from app.services.request_notifications import request_recipients
 from app.services.work_profiles import get_or_create_work_profile
-from scripts.audit_production_state import _audit_screenshot_storage
+from scripts.audit_production_state import (
+    _audit_screenshot_storage,
+    _audit_time_ledger_invariants,
+)
 from app.models import (
     AdminUser,
     ActivityEvent,
@@ -759,11 +762,22 @@ def test_daily_attendance_source_roster_has_bounded_request_queries(team_client,
             db.add(employee)
             db.flush()
             get_or_create_work_profile(db, employee)
+            device = Device(
+                company_id=employee.company_id,
+                employee_id=employee.id,
+                device_name=f"Source Roster Device {index:02d}",
+                installation_id=f"source-roster-device-{index:02d}-{uuid4()}",
+                operating_system="Windows 11",
+                agent_version="1.1.92",
+                status="active",
+            )
+            db.add(device)
+            db.flush()
             db.add(
                 WorkSession(
                     company_id=employee.company_id,
                     employee_id=employee.id,
-                    device_id=data["session_a"].device_id,
+                    device_id=device.id,
                     started_at=now - timedelta(minutes=10),
                     status="active",
                     active_seconds=600,
@@ -3591,10 +3605,21 @@ def test_open_session_liveness_uses_two_queries_for_many_sessions(team_client):
     try:
         sessions = []
         for index in range(25):
+            device = Device(
+                company_id=data["employee_a"].company_id,
+                employee_id=data["employee_a"].id,
+                device_name=f"Liveness Device {index}",
+                installation_id=f"liveness-installation-{index}-{uuid4()}",
+                operating_system="Windows 11",
+                agent_version="1.1.92",
+                status="active",
+            )
+            db.add(device)
+            db.flush()
             session = WorkSession(
                 company_id=data["employee_a"].company_id,
                 employee_id=data["employee_a"].id,
-                device_id=data["session_a"].device_id,
+                device_id=device.id,
                 started_at=now - timedelta(minutes=20, seconds=index),
                 status="active",
                 active_seconds=60,
@@ -3665,6 +3690,20 @@ def test_production_audit_distinguishes_missing_images_from_thumbnail_backfill(
     assert result["missing_original_samples"][0]["screenshot_id"] == str(data["screenshot_b"].id)
     assert result["thumbnail_backfill_needed"] == 1
     assert result["storage"]["root_exists"] is True
+
+
+def test_production_audit_reports_clean_time_ledger(team_client):
+    _, data = team_client
+    db: Session = data["session_factory"]()
+    try:
+        result = _audit_time_ledger_invariants(db, employee_name=None)
+    finally:
+        db.close()
+
+    assert result["structural_violation_count"] == 0
+    assert result["invalid_session_count"] == 0
+    assert result["duplicate_open_device_count"] == 0
+    assert result["historical_out_of_bounds_event_count"] == 0
 
 
 def test_employee_may_belong_to_multiple_teams(team_client):

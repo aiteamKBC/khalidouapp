@@ -397,7 +397,7 @@ def timesheet_rows(
                     timezone_name,
                 ).isoformat()
                 if attendance.actual_first_activity_at
-                else item["start_time"]
+                else None
             )
             is_running = (
                 work_date == local_today(timezone_name, attendance_now)
@@ -411,24 +411,16 @@ def timesheet_rows(
                 if attendance_end
                 else None
             )
-            resolved_end = (
-                max(
-                    value
-                    for value in (
-                        clipped_attendance_end,
-                        item["_latest_end_at"],
-                    )
-                    if value is not None
-                )
-                if clipped_attendance_end or item["_latest_end_at"]
-                else None
-            )
+            # The latest device signal may be idle liveness, not employee
+            # activity. Once attendance has been calculated, its bounded work
+            # evidence is authoritative for the displayed end.
+            resolved_end = clipped_attendance_end
             item["end_time"] = (
                 None
                 if is_running
                 else resolved_end.isoformat()
                 if resolved_end
-                else item["end_time"]
+                else None
             )
 
             # A live session can have authoritative activity events before its

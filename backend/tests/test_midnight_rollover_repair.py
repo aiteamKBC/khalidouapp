@@ -7,7 +7,8 @@ from pathlib import Path
 import pytest
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -33,6 +34,12 @@ MULTIDAY_MIGRATION_PATH = (
     / "versions"
     / "20260803_000053_repair_multiday_stale_sessions.py"
 )
+INVARIANT_MIGRATION_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "alembic"
+    / "versions"
+    / "20260805_000054_enforce_time_ledger_invariants.py"
+)
 CAIRO = "Africa/Cairo"
 
 
@@ -55,6 +62,18 @@ def run_multiday_migration(db: Session) -> None:
     spec = importlib.util.spec_from_file_location(
         "repair_multiday_stale_sessions",
         MULTIDAY_MIGRATION_PATH,
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    connection = db.connection()
+    module.op = Operations(MigrationContext.configure(connection))
+    module.upgrade()
+
+
+def run_invariant_migration(db: Session) -> None:
+    spec = importlib.util.spec_from_file_location(
+        "enforce_time_ledger_invariants",
+        INVARIANT_MIGRATION_PATH,
     )
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -299,3 +318,94 @@ def test_multiday_stale_session_is_repaired_to_its_last_proven_activity(repair_c
     assert db.scalars(
         select(DailyAttendance).where(DailyAttendance.employee_id == employee.id)
     ).all() == []
+
+
+def test_time_ledger_migration_closes_overnight_open_session_and_enforces_one_open(
+    repair_context,
+):
+    db, employee, device = repair_context
+    # Base.metadata reflects the new schema. Remove the new index to emulate
+    # revision 53 before running revision 54 against SQLite.
+    db.execute(text("DROP INDEX uq_work_sessions_device_single_open"))
+    started_at = datetime(2026, 7, 20, 6, 0, tzinfo=UTC)
+    last_worked_at = started_at + timedelta(hours=1)
+    stale = add_session(
+        db,
+        employee,
+        device,
+        started_at=started_at,
+        ended_at=None,
+        active_seconds=60 * 60,
+    )
+    add_worked_heartbeat(
+        db,
+        employee,
+        device,
+        stale,
+        last_worked_at,
+        "invariant-last-worked",
+    )
+
+    run_invariant_migration(db)
+    db.refresh(stale)
+
+    assert stale.status == "ended"
+    assert stale.ended_at.replace(tzinfo=UTC) == last_worked_at
+
+    first_open = WorkSession(
+        company_id=employee.company_id,
+        employee_id=employee.id,
+        device_id=device.id,
+        timezone=CAIRO,
+        started_at=datetime.now(UTC),
+        status="active",
+    )
+    db.add(first_open)
+    db.commit()
+    db.add(
+        WorkSession(
+            company_id=employee.company_id,
+            employee_id=employee.id,
+            device_id=device.id,
+            timezone=CAIRO,
+            started_at=datetime.now(UTC) + timedelta(seconds=1),
+            status="active",
+        )
+    )
+    with pytest.raises(IntegrityError):
+        db.commit()
+    db.rollback()
+
+
+def test_time_ledger_migration_recovers_valid_signals_after_an_impossible_old_end(
+    repair_context,
+):
+    db, employee, device = repair_context
+    db.execute(text("DROP INDEX uq_work_sessions_device_single_open"))
+    db.execute(text("PRAGMA ignore_check_constraints = ON"))
+    started_at = datetime.now(UTC) - timedelta(minutes=2)
+    recovered_end = started_at + timedelta(seconds=45)
+    session = add_session(
+        db,
+        employee,
+        device,
+        started_at=started_at,
+        ended_at=started_at - timedelta(days=2),
+        active_seconds=45,
+    )
+    add_worked_heartbeat(
+        db,
+        employee,
+        device,
+        session,
+        recovered_end,
+        "valid-signal-after-impossible-end",
+    )
+    db.execute(text("PRAGMA ignore_check_constraints = OFF"))
+
+    run_invariant_migration(db)
+    db.refresh(session)
+
+    assert session.status == "ended"
+    assert session.ended_at.replace(tzinfo=UTC) == recovered_end
+    assert session.active_seconds == 45

@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, String
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, Integer, String, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database.base import Base
@@ -22,6 +22,21 @@ class WorkSession(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             "company_id",
             "employee_id",
             "ended_at",
+        ),
+        Index(
+            "uq_work_sessions_device_single_open",
+            "device_id",
+            unique=True,
+            postgresql_where=text("ended_at IS NULL"),
+            sqlite_where=text("ended_at IS NULL"),
+        ),
+        CheckConstraint(
+            "ended_at IS NULL OR ended_at >= started_at",
+            name="ck_work_sessions_end_not_before_start",
+        ),
+        CheckConstraint(
+            "ended_at IS NULL OR status = 'ended'",
+            name="ck_work_sessions_closed_status",
         ),
     )
 

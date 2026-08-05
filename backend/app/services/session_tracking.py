@@ -132,7 +132,24 @@ WORKED_EVENT_TYPES = {
 NON_WORKING_SESSION_STATUSES = {"idle", "locked", "sleeping", "offline"}
 
 
-def last_worked_activity_at(db: Session, session: WorkSession) -> datetime:
+def mark_device_seen(device: Device, *, received_at: datetime | None = None) -> None:
+    """Record transport liveness using server time, never the device clock.
+
+    Client timestamps describe when work happened. They can be delayed, replayed,
+    or have a bad clock, so using them for device liveness allowed an old queued
+    event to move ``last_seen_at`` backwards.
+    """
+    seen_at = utc(received_at)
+    if device.last_seen_at is None or utc(device.last_seen_at) < seen_at:
+        device.last_seen_at = seen_at
+
+
+def last_worked_activity_at(
+    db: Session,
+    session: WorkSession,
+    *,
+    not_after: datetime | None = None,
+) -> datetime:
     """When the employee was last demonstrably at the keyboard in this session.
 
     A machine left switched on keeps sending heartbeats, so the session's own
@@ -141,11 +158,18 @@ def last_worked_activity_at(db: Session, session: WorkSession) -> datetime:
     of counting them up to midnight.
     """
     started_at = utc(session.started_at)
-    events = db.execute(
-        select(ActivityEvent.event_type, ActivityEvent.event_timestamp, ActivityEvent.payload)
-        .where(ActivityEvent.session_id == session.id)
-        .order_by(ActivityEvent.event_timestamp.desc())
-    ).all()
+    statement = select(
+        ActivityEvent.event_type,
+        ActivityEvent.event_timestamp,
+        ActivityEvent.payload,
+    ).where(
+        ActivityEvent.session_id == session.id,
+        ActivityEvent.event_timestamp >= started_at,
+    )
+    upper_bound = not_after or session.ended_at
+    if upper_bound is not None:
+        statement = statement.where(ActivityEvent.event_timestamp <= utc(upper_bound))
+    events = db.execute(statement.order_by(ActivityEvent.event_timestamp.desc())).all()
     for event_type, event_timestamp, payload in events:
         if event_type in WORKED_EVENT_TYPES:
             return max(started_at, utc(event_timestamp))
@@ -164,7 +188,9 @@ def close_open_session(
 ) -> None:
     if session.ended_at is not None:
         return
-    ended_at = utc(ended_at)
+    # The database must never contain an impossible interval. Delayed or
+    # mis-clocked clients used to create rows whose end preceded their start.
+    ended_at = max(utc(session.started_at), utc(ended_at))
     session.ended_at = ended_at
     session.status = "ended"
     create_activity_event(
@@ -475,6 +501,10 @@ def pause_state_payload(
     db: Session, session: WorkSession, *, at: datetime | None = None
 ) -> dict[str, Any]:
     now = utc(at)
+    if session.ended_at is not None:
+        # Reading a closed historical session must not advance its pause state
+        # with today's clock or create an event after the immutable end.
+        now = min(now, utc(session.ended_at))
     finalize_due_pause(db, session, at=now)
     balance = get_or_create_pause_balance(
         db,
@@ -596,6 +626,22 @@ def create_activity_event(
     if existing is not None:
         return existing, True
 
+    event_at = utc(event_timestamp)
+    session_start = utc(session.started_at)
+    session_end = utc(session.ended_at) if session.ended_at is not None else None
+    if event_at < session_start or (session_end is not None and event_at > session_end):
+        raise ApiError(
+            "EVENT_OUTSIDE_SESSION_BOUNDS",
+            "Activity events must be inside their work session.",
+            409,
+            details={
+                "session_id": str(session.id),
+                "session_started_at": session_start.isoformat(),
+                "session_ended_at": session_end.isoformat() if session_end else None,
+                "event_timestamp": event_at.isoformat(),
+            },
+        )
+
     event = ActivityEvent(
         id=uuid4(),
         company_id=device.company_id,
@@ -603,7 +649,7 @@ def create_activity_event(
         device_id=device.id,
         session_id=session.id,
         event_type=event_type,
-        event_timestamp=utc(event_timestamp),
+        event_timestamp=event_at,
         payload=payload,
         idempotency_key=idempotency_key,
     )
@@ -642,6 +688,10 @@ def start_or_get_session(
     start_source: str = "automatic_start",
 ) -> dict[str, Any]:
     now = bounded_client_timestamp(payload.started_at)
+    # Serialize starts for the same installation. Together with the partial
+    # unique index this prevents two concurrent requests from creating two
+    # open sessions for one device.
+    db.execute(select(Device.id).where(Device.id == device.id).with_for_update())
     recovery_key = (
         f"offline-session-recovery:{payload.offline_recovery_id}"
         if payload.offline_recovery and payload.offline_recovery_id is not None
@@ -662,7 +712,7 @@ def start_or_get_session(
                 recovered_event.session_id,
             )
             return session_response(db, recovered_session, created=False)
-    device.last_seen_at = now
+    mark_device_seen(device)
     zone = employee_zone(db, device)
     current = get_current_session(
         db,
@@ -671,6 +721,44 @@ def start_or_get_session(
     )
     continued_session_started_at: datetime | None = None
     if current is not None:
+        if now < utc(current.started_at):
+            current_zone = session_zone(db, current)
+            if payload.offline_recovery and same_local_day(
+                current.started_at,
+                now,
+                current_zone,
+            ):
+                # The explicit, idempotent recovery channel may extend the
+                # same local workday backwards. It cannot cross a day boundary
+                # or close/replace a newer session.
+                current.started_at = now
+                current.status = "active"
+                create_activity_event(
+                    db,
+                    device=device,
+                    session=current,
+                    event_type="session_started",
+                    event_timestamp=now,
+                    idempotency_key=(
+                        recovery_key
+                        or f"offline-session-start:{device.id}:{now.isoformat()}"
+                    ),
+                    payload={"source": "offline_recovery"},
+                )
+                db.commit()
+                return session_response(db, current, created=False)
+            # A delayed offline queue must never rewrite or close a newer live
+            # session. Keep the accepted ledger monotonic and let the caller
+            # continue with the authoritative current session.
+            response = session_response(db, current, created=False)
+            response.update(
+                {
+                    "ignored": True,
+                    "ignore_reason": "event_precedes_session",
+                }
+            )
+            db.commit()
+            return response
         current_zone = session_zone(db, current)
         if current_zone.key != zone.key:
             close_open_session(
@@ -723,18 +811,11 @@ def start_or_get_session(
 
     if current is not None:
         if payload.offline_recovery:
-            backdated = now < utc(current.started_at)
-            if backdated:
-                current.started_at = now
             create_activity_event(
                 db,
                 device=device,
                 session=current,
-                event_type=(
-                    "session_started"
-                    if backdated
-                    else "offline_session_recovered"
-                ),
+                event_type="offline_session_recovered",
                 event_timestamp=now,
                 idempotency_key=(
                     recovery_key
@@ -980,24 +1061,38 @@ def record_heartbeat(
     payload: HeartbeatRequest,
 ) -> dict[str, Any]:
     session = get_owned_session(db, device, session_id)
+    heartbeat_at = bounded_client_timestamp(payload.timestamp)
+    received_at = utc()
+    mark_device_seen(device, received_at=received_at)
+    device.agent_version = payload.agent_version
+
+    def ignored(reason: str) -> dict[str, Any]:
+        db.commit()
+        return {
+            "event_id": None,
+            "duplicate": False,
+            **session_response(db, session),
+            "restarted": False,
+            "ignored": True,
+            "ignore_reason": reason,
+        }
+
     if session.ended_at is not None:
         # Only real work reopens a workday. An unattended machine keeps sending
         # idle heartbeats, and restarting on those spawned a fresh session the
         # moment the previous one closed - which is how workdays ended up
         # beginning at midnight.
         if payload.status in NON_WORKING_SESSION_STATUSES:
-            device.last_seen_at = utc(payload.timestamp)
-            db.commit()
-            return {
-                "event_id": None,
-                "duplicate": False,
-                **session_response(db, session),
-                "restarted": False,
-            }
+            return ignored("closed_session_non_working_signal")
+        if heartbeat_at < utc(session.started_at):
+            return ignored("event_precedes_session")
+        if heartbeat_at <= utc(session.ended_at):
+            return ignored("closed_session_is_immutable")
         restarted = start_or_get_session(
-            db, device, SessionStartRequest(started_at=payload.timestamp)
+            db,
+            device,
+            SessionStartRequest(started_at=heartbeat_at, task_id=session.task_id),
         )
-        device.last_seen_at = utc(payload.timestamp)
         db.commit()
         return {
             "event_id": None,
@@ -1005,79 +1100,56 @@ def record_heartbeat(
             **restarted,
             "restarted": True,
         }
-    heartbeat_at = bounded_client_timestamp(payload.timestamp)
+
+    if heartbeat_at < utc(session.started_at):
+        return ignored("event_precedes_session")
+
     zone = session_zone(db, session)
     current_device_zone = employee_zone(db, device)
     timezone_changed = zone.key != current_device_zone.key
     local_day_changed = not same_local_day(session.started_at, heartbeat_at, zone)
-    if (
-        local_day_changed
-        and not timezone_changed
-        and session.status != "offline"
-        and payload.status == "active"
-    ):
-        restarted = start_or_get_session(
-            db,
-            device,
-            SessionStartRequest(started_at=heartbeat_at, task_id=session.task_id),
-        )
-        next_session = get_owned_session(db, device, UUID(restarted["session"]["id"]))
-        event, duplicate = create_activity_event(
-            db,
-            device=device,
-            session=next_session,
-            event_type="heartbeat",
-            event_timestamp=heartbeat_at,
-            idempotency_key=str(payload.event_id),
-            payload=payload.model_dump(mode="json"),
-        )
-        next_session.status = payload.status
-        device.last_seen_at = heartbeat_at
-        device.agent_version = payload.agent_version
-        db.commit()
-        db.refresh(next_session)
-        return {
-            "event_id": str(event.id),
-            "duplicate": duplicate,
-            **session_response(db, next_session),
-            "restarted": True,
-        }
-    if session.status == "offline" or timezone_changed:
+    if local_day_changed or session.status == "offline" or timezone_changed:
+        if timezone_changed:
+            trusted_end = heartbeat_at
+            reason = "Device timezone changed"
+        else:
+            cutoff = (
+                next_local_midnight(session.started_at, zone)
+                if local_day_changed
+                else heartbeat_at
+            )
+            trusted_end = min(
+                heartbeat_at,
+                cutoff,
+                last_worked_activity_at(db, session, not_after=cutoff),
+            )
+            reason = (
+                "New local workday started"
+                if local_day_changed
+                else "Previous agent run was offline"
+            )
         close_open_session(
             db,
             device=device,
             session=session,
-            ended_at=(
-                heartbeat_at
-                if timezone_changed
-                else min(
-                    heartbeat_at,
-                    next_local_midnight(session.started_at, zone),
-                    max(last_worked_activity_at(db, session), utc(session.started_at)),
-                )
-            ),
-            reason=(
-                "Device timezone changed"
-                if timezone_changed
-                else "Previous agent run was offline"
-            ),
+            ended_at=trusted_end,
+            reason=reason,
         )
+        # autoflush is disabled; make the close visible before looking for or
+        # creating the authoritative current session.
+        db.flush()
         db.commit()
         if payload.status in NON_WORKING_SESSION_STATUSES:
-            device.last_seen_at = heartbeat_at
-            db.commit()
-            return {
-                "event_id": None,
-                "duplicate": False,
-                **session_response(db, session),
-                "restarted": False,
-            }
+            return ignored(
+                "new_workday_requires_active_input"
+                if local_day_changed
+                else "closed_session_non_working_signal"
+            )
         restarted = start_or_get_session(
             db,
             device,
             SessionStartRequest(started_at=heartbeat_at, task_id=session.task_id),
         )
-        device.last_seen_at = heartbeat_at
         db.commit()
         return {
             "event_id": None,
@@ -1098,8 +1170,6 @@ def record_heartbeat(
         payload=payload.model_dump(mode="json"),
     )
     if not duplicate:
-        device.last_seen_at = heartbeat_at
-        device.agent_version = payload.agent_version
         session.status = payload.status
         next_active_seconds = (
             payload.active_seconds
@@ -1235,7 +1305,7 @@ def restart_session_after_long_idle(
     payload: ActivityEventRequest,
 ) -> dict[str, Any]:
     idle_started_at = utc(idle_started_at)
-    returned_at = utc(payload.event_timestamp)
+    returned_at = bounded_client_timestamp(payload.event_timestamp)
     gap_seconds = max(0, int((returned_at - idle_started_at).total_seconds()))
     previous_task_id = session.task_id
     previous_session_ended_at = max(utc(session.started_at), returned_at)
@@ -1321,6 +1391,56 @@ def record_agent_event(
         return response
 
     session = get_owned_session(db, device, session_id)
+    event_at = bounded_client_timestamp(payload.event_timestamp)
+    mark_device_seen(device)
+
+    def ignored(reason: str) -> dict[str, Any]:
+        db.commit()
+        return {
+            "event_id": None,
+            "duplicate": False,
+            **session_response(db, session),
+            "ignored": True,
+            "ignore_reason": reason,
+        }
+
+    if event_at < utc(session.started_at):
+        return ignored("event_precedes_session")
+
+    if session.ended_at is not None:
+        # Closed sessions are immutable. A client can still have queued events
+        # that reference the old id after an active heartbeat has created a new
+        # session, so redirect only live non-terminal evidence to that already
+        # open session. Never reopen or mutate the closed row itself.
+        current = get_current_session(db, device)
+        redirectable = payload.event_type not in {"agent_stopped", "session_ended"}
+        if (
+            redirectable
+            and current is not None
+            and current.id != session.id
+            and event_at >= utc(current.started_at)
+        ):
+            session = current
+        else:
+            return ignored("closed_session_is_immutable")
+
+    zone = session_zone(db, session)
+    if not same_local_day(session.started_at, event_at, zone):
+        cutoff = next_local_midnight(session.started_at, zone)
+        close_open_session(
+            db,
+            device=device,
+            session=session,
+            ended_at=min(
+                event_at,
+                cutoff,
+                last_worked_activity_at(db, session, not_after=cutoff),
+            ),
+            reason="New local workday started",
+        )
+        db.flush()
+        return ignored("new_workday_requires_current_session")
+
     event_payload = payload.payload
     if payload.event_type == "foreground_activity":
         source = payload.payload or {}
@@ -1359,7 +1479,7 @@ def record_agent_event(
         idle_started = latest_automatic_idle_start(
             db,
             session,
-            ended_at=payload.event_timestamp,
+            ended_at=event_at,
         )
         idle_started_at = (
             utc(idle_started.event_timestamp) if idle_started is not None else None
@@ -1392,7 +1512,7 @@ def record_agent_event(
                     0,
                     int(
                         (
-                            utc(payload.event_timestamp) - idle_started_at
+                            event_at - idle_started_at
                         ).total_seconds()
                     ),
                 )
@@ -1417,7 +1537,7 @@ def record_agent_event(
         device=device,
         session=session,
         event_type=payload.event_type,
-        event_timestamp=payload.event_timestamp,
+        event_timestamp=event_at,
         idempotency_key=str(payload.event_id),
         payload=event_payload,
     )
@@ -1438,11 +1558,19 @@ def record_agent_event(
             db,
             device=device,
             session=session,
-            ended_at=payload.event_timestamp,
+            ended_at=event_at,
             reason="Agent stopped",
         )
     if payload.payload and isinstance(payload.payload.get("idle_seconds"), int):
-        session.idle_seconds = max(session.idle_seconds, payload.payload["idle_seconds"])
+        elapsed_seconds = max(
+            0,
+            int((event_at - utc(session.started_at)).total_seconds()),
+        )
+        max_idle_seconds = max(0, elapsed_seconds - int(session.active_seconds))
+        session.idle_seconds = min(
+            max_idle_seconds,
+            max(session.idle_seconds, payload.payload["idle_seconds"]),
+        )
 
     db.commit()
     db.refresh(session)
@@ -1466,7 +1594,10 @@ def end_session(
     if session.ended_at is not None:
         return {"session": serialize_session(session)}
 
-    ended_at = bounded_client_timestamp(payload.ended_at)
+    ended_at = max(
+        utc(session.started_at),
+        bounded_client_timestamp(payload.ended_at),
+    )
     elapsed_seconds = max(
         0, int((ended_at - utc(session.started_at)).total_seconds())
     )
@@ -1481,8 +1612,11 @@ def end_session(
                 min(elapsed_seconds, payload.active_seconds),
             )
         if payload.idle_seconds is not None:
-            session.idle_seconds = max(session.idle_seconds, payload.idle_seconds)
-        device.last_seen_at = ended_at
+            session.idle_seconds = min(
+                max(0, elapsed_seconds - int(session.active_seconds)),
+                max(session.idle_seconds, payload.idle_seconds),
+            )
+        mark_device_seen(device)
         sync_session_time_buckets(db, session, at=ended_at)
         db.commit()
         db.refresh(session)
@@ -1496,7 +1630,10 @@ def end_session(
             min(elapsed_seconds, payload.active_seconds),
         )
     if payload.idle_seconds is not None:
-        session.idle_seconds = max(session.idle_seconds, payload.idle_seconds)
+        session.idle_seconds = min(
+            max(0, elapsed_seconds - int(session.active_seconds)),
+            max(session.idle_seconds, payload.idle_seconds),
+        )
     sync_session_time_buckets(db, session, at=ended_at)
 
     create_activity_event(

@@ -221,10 +221,14 @@ def calculate_daily_attendance(
             intervals.append((item, _utc(item_start), _utc(item_end)))
 
     activity_intervals = [item for item in intervals if item[0]["type"] in {"worked", "idle"}]
+    worked_intervals = [item for item in activity_intervals if item[0]["type"] == "worked"]
     scheduled_activity_intervals = [
         item
         for item in activity_intervals
         if item[0]["type"] != "worked" or item[0].get("work_category") != "extra"
+    ]
+    scheduled_worked_intervals = [
+        item for item in scheduled_activity_intervals if item[0]["type"] == "worked"
     ]
     # Lateness is measured from sustained work, not from a brief touch that was
     # followed by hours away from the machine.
@@ -233,13 +237,14 @@ def calculate_daily_attendance(
     def first_activity_at(candidates) -> datetime | None:
         blocks = [(item[0]["type"], item[1], item[2]) for item in candidates]
         return sustained_work_start(blocks, idle_threshold) or min(
-            (item[1] for item in candidates), default=None
+            (item[1] for item in candidates if item[0]["type"] == "worked"),
+            default=None,
         )
 
     raw_first_at = first_activity_at(activity_intervals)
-    raw_last_at = max((item[2] for item in activity_intervals), default=None)
+    raw_last_at = max((item[2] for item in worked_intervals), default=None)
     scheduled_first_at = first_activity_at(scheduled_activity_intervals)
-    scheduled_last_at = max((item[2] for item in scheduled_activity_intervals), default=None)
+    scheduled_last_at = max((item[2] for item in scheduled_worked_intervals), default=None)
     correction = db.scalar(
         select(AttendanceCorrection).where(
             AttendanceCorrection.company_id == employee.company_id,
@@ -362,7 +367,9 @@ def calculate_daily_attendance(
                 paid_break += attended_break_seconds
             else:
                 unpaid_break += attended_break_seconds
-    attended = bool(scheduled_activity_intervals or approved_manual or correction)
+    # Device-on/idle is not proof that the employee attended. Attendance starts
+    # only from worked evidence (or an explicit approved/manual correction).
+    attended = bool(scheduled_worked_intervals or approved_manual or correction)
     tracked_work = any(item[0]["type"] == "worked" for item in activity_intervals)
 
     raw_late = (

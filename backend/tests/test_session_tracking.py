@@ -36,7 +36,7 @@ from app.services.session_tracking import (
     start_or_get_session,
     sync_session_time_buckets,
 )
-from app.services.activity_timeline import build_workday_timeline
+from app.services.activity_timeline import build_workday_timeline, session_observation_bounds
 
 
 @pytest.fixture()
@@ -647,7 +647,7 @@ def test_idle_gap_of_exactly_four_hours_keeps_the_same_session(tracking_context)
     assert resumed["session"]["ended_at"] is None
 
 
-def test_long_idle_across_midnight_remains_recorded_before_new_session(
+def test_idle_heartbeat_after_midnight_closes_yesterday_without_starting_today(
     tracking_context,
 ):
     db, device = tracking_context
@@ -688,6 +688,24 @@ def test_long_idle_across_midnight_remains_recorded_before_new_session(
     )
     assert idle_heartbeat.get("restarted") is not True
     assert idle_heartbeat["session"]["id"] == str(session_id)
+    assert idle_heartbeat["ignored"] is True
+    assert idle_heartbeat["ignore_reason"] == "new_workday_requires_active_input"
+
+    previous_session = db.get(WorkSession, session_id)
+    assert previous_session.status == "ended"
+    assert previous_session.ended_at.replace(tzinfo=UTC) == idle_started_at
+
+    today_timeline = build_workday_timeline(
+        db,
+        company_id=device.company_id,
+        employee_id=device.employee_id,
+        timezone_name="UTC",
+        target_date=idle_heartbeat_at.date(),
+        now=idle_heartbeat_at + timedelta(minutes=1),
+        device_id=device.id,
+    )
+    assert today_timeline["intervals"] == []
+    assert today_timeline["is_running"] is False
 
     resumed = record_agent_event(
         db,
@@ -705,13 +723,189 @@ def test_long_idle_across_midnight_remains_recorded_before_new_session(
         ),
     )
 
-    previous_session = db.get(WorkSession, session_id)
-    assert previous_session.status == "ended"
-    assert previous_session.ended_at.replace(tzinfo=UTC) == returned_at
-    assert previous_session.active_seconds == 3600
-    assert previous_session.idle_seconds == 4 * 60 * 60 + 1
-    assert resumed["restarted"] is True
-    assert resumed["session"]["started_at"] == returned_at.isoformat()
+    assert resumed["ignored"] is True
+    assert resumed["ignore_reason"] == "closed_session_is_immutable"
+    db.refresh(previous_session)
+    assert previous_session.ended_at.replace(tzinfo=UTC) == idle_started_at
+
+    restarted = record_heartbeat(
+        db,
+        device=device,
+        session_id=session_id,
+        payload=HeartbeatRequest(
+            event_id=uuid4(),
+            timestamp=returned_at,
+            status="active",
+            active_seconds=0,
+            idle_seconds=0,
+            agent_version="1.1.92",
+        ),
+    )
+    assert restarted["restarted"] is True
+    assert restarted["session"]["started_at"] == returned_at.isoformat()
+
+
+def test_closed_session_rejects_late_events_without_mutating_status(tracking_context):
+    db, device = tracking_context
+    started_at = datetime.now(UTC) - timedelta(minutes=10)
+    ended_at = started_at + timedelta(minutes=5)
+    session = WorkSession(
+        company_id=device.company_id,
+        employee_id=device.employee_id,
+        device_id=device.id,
+        timezone="UTC",
+        started_at=started_at,
+        ended_at=ended_at,
+        status="ended",
+        active_seconds=5 * 60,
+        idle_seconds=0,
+    )
+    db.add(session)
+    db.commit()
+    event_id = uuid4()
+
+    result = record_agent_event(
+        db,
+        device=device,
+        session_id=session.id,
+        payload=ActivityEventRequest(
+            event_id=event_id,
+            event_type="manual_pause_started",
+            event_timestamp=ended_at + timedelta(minutes=1),
+            payload={"idle_seconds": 60},
+        ),
+    )
+
+    db.refresh(session)
+    assert result["ignored"] is True
+    assert result["ignore_reason"] == "closed_session_is_immutable"
+    assert session.status == "ended"
+    assert session.ended_at.replace(tzinfo=UTC) == ended_at
+    assert db.scalar(
+        select(func.count(ActivityEvent.id)).where(
+            ActivityEvent.idempotency_key == str(event_id)
+        )
+    ) == 0
+
+
+def test_observation_bounds_ignore_historical_events_after_session_end(tracking_context):
+    db, device = tracking_context
+    started_at = datetime(2026, 8, 4, 9, 0, tzinfo=UTC)
+    ended_at = started_at + timedelta(hours=1)
+    session = WorkSession(
+        company_id=device.company_id,
+        employee_id=device.employee_id,
+        device_id=device.id,
+        timezone="UTC",
+        started_at=started_at,
+        ended_at=ended_at,
+        status="ended",
+        active_seconds=60 * 60,
+        idle_seconds=0,
+    )
+    db.add(session)
+    db.flush()
+    db.add_all(
+        [
+            ActivityEvent(
+                company_id=device.company_id,
+                employee_id=device.employee_id,
+                device_id=device.id,
+                session_id=session.id,
+                event_type="heartbeat",
+                event_timestamp=ended_at,
+                payload={"status": "active"},
+                idempotency_key="valid-closing-heartbeat",
+            ),
+            # Simulates the production corruption generated before this guard.
+            ActivityEvent(
+                company_id=device.company_id,
+                employee_id=device.employee_id,
+                device_id=device.id,
+                session_id=session.id,
+                event_type="heartbeat",
+                event_timestamp=ended_at + timedelta(days=1),
+                payload={"status": "idle"},
+                idempotency_key="invalid-post-close-heartbeat",
+            ),
+        ]
+    )
+    db.commit()
+
+    observation = session_observation_bounds(
+        db,
+        company_id=device.company_id,
+        sessions=[session],
+        now=ended_at + timedelta(days=2),
+    )[session.id]
+
+    assert observation["last_signal_at"] == ended_at
+    assert observation["effective_end_at"] == ended_at
+
+
+def test_stale_heartbeat_cannot_close_a_newer_session_backwards(tracking_context):
+    db, device = tracking_context
+    started_at = datetime.now(UTC) - timedelta(minutes=5)
+    started = start_or_get_session(
+        db,
+        device,
+        SessionStartRequest(started_at=started_at),
+    )
+    session_id = UUID(started["session"]["id"])
+    event_id = uuid4()
+
+    result = record_heartbeat(
+        db,
+        device=device,
+        session_id=session_id,
+        payload=HeartbeatRequest(
+            event_id=event_id,
+            timestamp=started_at - timedelta(days=1),
+            status="active",
+            active_seconds=8 * 60 * 60,
+            idle_seconds=0,
+            agent_version="1.1.92",
+        ),
+    )
+
+    session = db.get(WorkSession, session_id)
+    assert result["ignored"] is True
+    assert result["ignore_reason"] == "event_precedes_session"
+    assert session.ended_at is None
+    assert session.status == "active"
+    assert session.active_seconds == 0
+    assert db.scalar(
+        select(func.count(ActivityEvent.id)).where(
+            ActivityEvent.idempotency_key == str(event_id)
+        )
+    ) == 0
+
+
+def test_session_end_before_start_is_clamped_to_zero_duration(tracking_context):
+    db, device = tracking_context
+    started_at = datetime.now(UTC) - timedelta(minutes=5)
+    started = start_or_get_session(
+        db,
+        device,
+        SessionStartRequest(started_at=started_at),
+    )
+
+    result = end_session(
+        db,
+        device=device,
+        session_id=UUID(started["session"]["id"]),
+        payload=SessionEndRequest(
+            event_id=uuid4(),
+            ended_at=started_at - timedelta(hours=2),
+            active_seconds=999,
+            idle_seconds=999,
+            reason="Delayed stale close",
+        ),
+    )
+
+    assert result["session"]["ended_at"] == started_at.isoformat()
+    assert result["session"]["active_seconds"] == 0
+    assert result["session"]["idle_seconds"] == 0
 
 
 def test_overnight_session_ends_at_the_last_active_heartbeat(tracking_context):
