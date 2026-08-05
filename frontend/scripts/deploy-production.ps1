@@ -141,11 +141,15 @@ BACKUP_ROOT="/var/backups/khaliduo"
 DASHBOARD="$APP_ROOT/frontend/admin-dashboard"
 NEXT_OUTPUT="$DASHBOARD/.output.next-$DEPLOY_ID"
 ROLLBACK_OUTPUT="$DASHBOARD/.output.rollback-$DEPLOY_ID"
+API_NEEDS_RESTORE=0
 
-restore_health_timer() {
+restore_deploy_services() {
+  if [ "$API_NEEDS_RESTORE" -eq 1 ]; then
+    systemctl start khaliduo-api >/dev/null 2>&1 || true
+  fi
   systemctl start khaliduo-healthcheck.timer >/dev/null 2>&1 || true
 }
-trap restore_health_timer EXIT
+trap restore_deploy_services EXIT
 systemctl stop khaliduo-healthcheck.timer khaliduo-healthcheck.service 2>/dev/null || true
 
 cd "$APP_ROOT"
@@ -173,6 +177,11 @@ cd "$APP_ROOT/backend"
 if "$APP_ROOT/venv/bin/python" -m alembic current --check-heads >/dev/null; then
   echo "Database schema is already at the Alembic head."
 else
+  # Revision 54 adds ledger-wide constraints. Stop the old API briefly so its
+  # writes cannot deadlock with PostgreSQL's validation locks. The EXIT trap
+  # restores the service if migration or any following command fails.
+  API_NEEDS_RESTORE=1
+  systemctl stop khaliduo-api
   migrated=0
   for attempt in 1 2 3; do
     if "$APP_ROOT/venv/bin/python" -m alembic upgrade head; then
@@ -198,8 +207,13 @@ install -m 0644 \
   "$APP_ROOT/backend/deployment/systemd/reliability.conf" \
   /etc/systemd/system/khaliduo-dashboard.service.d/reliability.conf
 systemctl daemon-reload
-systemctl restart khaliduo-api
+if [ "$API_NEEDS_RESTORE" -eq 1 ]; then
+  systemctl start khaliduo-api
+else
+  systemctl restart khaliduo-api
+fi
 systemctl is-active --quiet khaliduo-api
+API_NEEDS_RESTORE=0
 
 cd "$DASHBOARD"
 npm ci
