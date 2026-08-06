@@ -22,6 +22,7 @@ import {
   timelineIntervalsForDisplay,
   timelineIntervalPresentation,
   timelineDisplayType,
+  workdayTimingState,
 } from "./timelinePresentation";
 import {
   requestableIdleMinutes,
@@ -1988,6 +1989,17 @@ function HomeView({
     "locked",
     "sleeping",
   ].includes(status.trackingStatus);
+  const workdayTiming = workdayTimingState({
+    timelineStartedAt: status.todayTimeline?.first_started_at ?? null,
+    timelineIsRunning: status.todayTimeline?.is_running ?? false,
+    localSessionStartedAt: status.sessionStartedAt,
+    localTrackingActive: hasRunningSession,
+  });
+  const workdayTimezone =
+    status.todayTimeline?.timezone ??
+    status.requestPolicy?.timezone ??
+    Intl.DateTimeFormat().resolvedOptions().timeZone ??
+    "UTC";
   const isAutomaticIdle =
     status.trackingStatus === "idle" && !status.trackingPaused;
   const heroStatusLabel = !hasRunningSession
@@ -2159,7 +2171,9 @@ function HomeView({
             <strong>
               {status.todayTimeline?.first_started_at
                 ? formatTimelineStart(status.todayTimeline)
-                : "Not started"}
+                : workdayTiming.startedAt
+                  ? formatClock(workdayTiming.startedAt, workdayTimezone)
+                  : "Not started"}
             </strong>
           </div>
           <div>
@@ -2170,20 +2184,24 @@ function HomeView({
                     status.todayTimeline.last_activity_at,
                     status.todayTimeline.timezone,
                   )
-                : "—"}
+                : workdayTiming.localSyncPending
+                  ? "Sync pending"
+                  : "—"}
             </strong>
           </div>
           <div>
-            <span>{status.todayTimeline?.is_running ? "Session" : "Signed out"}</span>
+            <span>{workdayTiming.isRunning ? "Session" : "Signed out"}</span>
             <strong>
               {status.todayTimeline?.is_running
                 ? "Still running - no sign-out yet"
-                : status.todayTimeline?.last_ended_at
-                  ? formatClock(
-                      status.todayTimeline.last_ended_at,
-                      status.todayTimeline.timezone,
-                    )
-                  : "—"}
+                : workdayTiming.localSyncPending
+                  ? "Running locally - syncing"
+                  : status.todayTimeline?.last_ended_at
+                    ? formatClock(
+                        status.todayTimeline.last_ended_at,
+                        status.todayTimeline.timezone,
+                      )
+                    : "—"}
             </strong>
           </div>
         </section>

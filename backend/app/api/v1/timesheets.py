@@ -83,6 +83,7 @@ def _empty_timesheet_item(
         "_latest_end_at": None,
         "_last_signal_at": None,
         "_has_open_session": False,
+        "_tracking_status": None,
         "_has_cross_day_session": False,
         "_sessions": [],
         "_session_count": 0,
@@ -284,6 +285,18 @@ def timesheet_rows(
                     and bool(observation["is_fresh"])
                 )
                 item["_has_open_session"] = item["_has_open_session"] or is_fresh_open
+                if is_fresh_open:
+                    live_status_priority = {
+                        "sleeping": 1,
+                        "locked": 2,
+                        "idle": 3,
+                        "active": 4,
+                    }
+                    current_status = item.get("_tracking_status")
+                    if live_status_priority.get(session.status, 0) > live_status_priority.get(
+                        current_status, 0
+                    ):
+                        item["_tracking_status"] = session.status
                 if not is_fresh_open:
                     item["_latest_end_at"] = max(
                         value
@@ -579,6 +592,7 @@ def timesheet_rows(
                     if item.get("_last_signal_at")
                     else None
                 ),
+                "tracking_status": item.get("_tracking_status"),
                 "leave_status": item.get("leave_status"),
                 "leave_type": item.get("leave_type"),
                 "session_count": int(item.get("_session_count", 0)),

@@ -9,6 +9,7 @@ type BackendTimesheet = {
   start_time?: string | null;
   end_time?: string | null;
   last_signal_at?: string | null;
+  tracking_status?: "active" | "idle" | "locked" | "sleeping" | null;
   leave_status?: "approved" | null;
   leave_type?: string | null;
   session_count?: number;
@@ -62,7 +63,11 @@ function resolveTimesheetStatus(row: BackendTimesheet): Timesheet["status"] {
     (row.adjustment_seconds ?? 0) > 0;
   if (!hasRecordedTime && row.leave_status === "approved") return "approved_leave";
   if (!hasRecordedTime) return "missing";
-  return row.end_time ? "complete" : "in_progress";
+  if (row.end_time) return "complete";
+  if (["idle", "locked", "sleeping"].includes(row.tracking_status ?? "")) {
+    return row.tracking_status as "idle" | "locked" | "sleeping";
+  }
+  return "in_progress";
 }
 
 export type TimesheetEmployeeOption = {

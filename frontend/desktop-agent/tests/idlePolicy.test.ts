@@ -7,6 +7,7 @@ import {
   BREAK_IDLE_THRESHOLD_SECONDS,
   hasReachedIdleThreshold,
   idleDurationAfterThreshold,
+  idleReturnInputDetected,
   idleReturnVerificationExpired,
   IDLE_RETURN_VERIFICATION_SECONDS,
   IDLE_THRESHOLD_MINUTES,
@@ -44,6 +45,39 @@ test("returning early from a break is detected from fresh input", () => {
   assert.equal(inputResumedAfterIdle(181, 180), false);
   assert.equal(inputResumedAfterIdle(0, 240), true);
   assert.equal(inputResumedAfterIdle(3, 240), true);
+});
+
+test("a stale keyboard probe timestamp cannot hide a later mouse return", () => {
+  assert.equal(
+    idleReturnInputDetected({
+      latestRealInputAt: 10_000,
+      lastHandledRealInputAt: 10_000,
+      systemIdleSeconds: 0,
+      previousSystemIdleSeconds: 900,
+    }),
+    true,
+  );
+  assert.equal(
+    idleReturnInputDetected({
+      latestRealInputAt: 10_000,
+      lastHandledRealInputAt: 10_000,
+      systemIdleSeconds: 901,
+      previousSystemIdleSeconds: 900,
+    }),
+    false,
+  );
+});
+
+test("fresh low-level mouse input still opens the return review", () => {
+  assert.equal(
+    idleReturnInputDetected({
+      latestRealInputAt: 10_001,
+      lastHandledRealInputAt: 10_000,
+      systemIdleSeconds: 900,
+      previousSystemIdleSeconds: 899,
+    }),
+    true,
+  );
 });
 
 test("input opens a review and explicit confirmation resumes immediately", () => {

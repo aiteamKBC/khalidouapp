@@ -20,6 +20,40 @@ export function shouldResetDailyCountersForSession(input: {
   );
 }
 
+export function shouldRolloverRestoredLocalSession(input: {
+  checkpointCounterDate: string;
+  todayCounterDate: string;
+}) {
+  return input.checkpointCounterDate !== input.todayCounterDate;
+}
+
+export function canAdoptPromotedLocalSession(input: {
+  promotedSessionId: string;
+  activeLocalSessionId: string | null;
+}) {
+  return input.activeLocalSessionId === input.promotedSessionId;
+}
+
+export function promotableLocalSessionIds(input: {
+  pendingSessions: Array<{ sessionId: string }>;
+  activeLocalSessionId: string | null;
+  hasOpenServerSession: boolean;
+}) {
+  if (!input.hasOpenServerSession) {
+    return input.pendingSessions.map((session) => session.sessionId);
+  }
+
+  if (!input.activeLocalSessionId) {
+    return [];
+  }
+
+  return input.pendingSessions.some(
+    (session) => session.sessionId === input.activeLocalSessionId,
+  )
+    ? [input.activeLocalSessionId]
+    : [];
+}
+
 export function reconcileWorkedToday(input: {
   trackedTodaySeconds: number;
   activeSeconds: number;

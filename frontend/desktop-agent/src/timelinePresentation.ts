@@ -93,3 +93,19 @@ export function timelineIntervalPresentation(
     durationSeconds: Math.floor((endedAtMs - startedAtMs) / 1000),
   };
 }
+
+export function workdayTimingState(input: {
+  timelineStartedAt: string | null;
+  timelineIsRunning: boolean;
+  localSessionStartedAt: string | null;
+  localTrackingActive: boolean;
+}) {
+  const localSyncPending = input.localTrackingActive && !input.timelineIsRunning;
+  return {
+    startedAt:
+      input.timelineStartedAt ??
+      (input.localTrackingActive ? input.localSessionStartedAt : null),
+    isRunning: input.timelineIsRunning || input.localTrackingActive,
+    localSyncPending,
+  };
+}

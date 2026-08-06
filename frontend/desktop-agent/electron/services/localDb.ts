@@ -302,6 +302,23 @@ export function getPendingLocalTrackingSessions(
   );
 }
 
+export function getPendingLocalTrackingSession(
+  sessionId: string,
+): LocalTrackingSession | null {
+  return (
+    rows<LocalTrackingSession>(
+      `select session_id as sessionId, device_id as deviceId,
+              started_at as startedAt, ended_at as endedAt, status,
+              active_seconds as activeSeconds, idle_seconds as idleSeconds,
+              coalesce(last_checkpoint_at, started_at) as lastCheckpointAt
+       from local_sessions
+       where session_id = ? and synced_at is null
+       limit 1`,
+      [sessionId],
+    )[0] ?? null
+  );
+}
+
 export function markLocalTrackingSessionSynced(
   sessionId: string,
   syncedAt = new Date().toISOString(),

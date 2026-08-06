@@ -31,6 +31,7 @@ import { formatRelative, formatDate } from "@/lib/format";
 import { toast } from "sonner";
 import { Laptop, ShieldCheck, WifiOff } from "lucide-react";
 import { MetricTile } from "@/components/ui/metric-tile";
+import { findOtherOnlineDeviceForEmployee } from "@/lib/device-presence";
 
 export const Route = createFileRoute("/_app/devices")({
   component: DevicesPage,
@@ -129,10 +130,18 @@ function DevicesList() {
           <TableBody>
             {(devs.data ?? []).map((device) => {
               const emp = (emps.data ?? []).find((employee) => employee.id === device.employeeId);
+              const otherOnlineDevice = findOtherOnlineDeviceForEmployee(devs.data ?? [], device);
               return (
                 <TableRow key={device.id}>
                   <TableCell className="font-medium">{device.name}</TableCell>
-                  <TableCell>{emp?.name ?? "-"}</TableCell>
+                  <TableCell>
+                    <div>{emp?.name ?? "-"}</div>
+                    {device.status === "offline" && otherOnlineDevice && (
+                      <div className="mt-0.5 text-xs font-semibold text-success">
+                        Online on {otherOnlineDevice.name}
+                      </div>
+                    )}
+                  </TableCell>
                   <TableCell className="text-sm">{device.os}</TableCell>
                   <TableCell className="font-mono text-xs">{device.lastIpAddress ?? "-"}</TableCell>
                   <TableCell className="font-mono text-xs">{device.macAddress ?? "-"}</TableCell>

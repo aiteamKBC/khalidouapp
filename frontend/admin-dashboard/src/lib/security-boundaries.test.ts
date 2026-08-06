@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { resolveApiUrl } from "./api-url.ts";
+import { tokensRotatedByAnotherTab } from "./auth-refresh-coordination.ts";
 import { jwtSubjectScopeKey, protectedImageQueryKey } from "./private-query-scope.ts";
 import { retryTransientRequest } from "./query-retry-policy.ts";
 
@@ -46,4 +47,21 @@ test("query retries are bounded and skip client/auth/cancellation failures", () 
   assert.equal(retryTransientRequest(0, { status: 500 }), true);
   assert.equal(retryTransientRequest(1, { status: 503 }), true);
   assert.equal(retryTransientRequest(2, { status: 503 }), false);
+});
+
+test("a tab that loses a refresh race adopts the token pair written by the winning tab", () => {
+  assert.deepEqual(
+    tokensRotatedByAnotherTab(
+      { accessToken: "new-access", refreshToken: "new-refresh" },
+      "old-refresh",
+    ),
+    { access_token: "new-access", refresh_token: "new-refresh" },
+  );
+  assert.equal(
+    tokensRotatedByAnotherTab(
+      { accessToken: "old-access", refreshToken: "old-refresh" },
+      "old-refresh",
+    ),
+    null,
+  );
 });

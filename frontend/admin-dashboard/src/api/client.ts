@@ -1,4 +1,5 @@
 import { resolveApiUrl } from "@/lib/api-url";
+import { tokensRotatedByAnotherTab } from "@/lib/auth-refresh-coordination";
 export { retryTransientRequest } from "@/lib/query-retry-policy";
 
 export const API_BASE_URL = (
@@ -52,6 +53,7 @@ type RefreshedTokens = {
 const AUTH_STORAGE_KEY = "khaliduo.auth";
 const AUTH_REFRESHED_EVENT = "khaliduo:auth-refreshed";
 const AUTH_EXPIRED_EVENT = "khaliduo:auth-expired";
+const AUTH_REFRESH_LOCK = "khaliduo.auth.refresh";
 
 let refreshInFlight: Promise<RefreshedTokens> | null = null;
 const inFlightGetRequests = new Map<string, Promise<unknown>>();
@@ -202,6 +204,17 @@ function readAuth(): PersistedAuthLocation | null {
   return runtimeAuth;
 }
 
+function readAuthFromStorage(storage: Storage): PersistedAuth | null {
+  const raw = storage.getItem(AUTH_STORAGE_KEY);
+  if (!raw) return null;
+  try {
+    const auth = JSON.parse(raw) as PersistedAuth;
+    return auth.accessToken && auth.refreshToken ? auth : null;
+  } catch {
+    return null;
+  }
+}
+
 function clearAuth() {
   forgetAuthTokens();
   if (typeof window === "undefined") return;
@@ -246,15 +259,36 @@ function apiErrorMessage<T>(res: Response, body: ApiEnvelope<T> | null): string 
 async function refreshAuthTokens(authLocation: PersistedAuthLocation): Promise<RefreshedTokens> {
   if (refreshInFlight) return refreshInFlight;
 
-  refreshInFlight = (async () => {
+  const refreshOnce = async () => {
+    const attemptedRefreshToken = authLocation.auth.refreshToken;
+    const alreadyRotated = tokensRotatedByAnotherTab(
+      readAuthFromStorage(authLocation.storage),
+      attemptedRefreshToken,
+    );
+    if (alreadyRotated) return alreadyRotated;
+
     const res = await fetchWithTimeout(apiUrl("/auth/refresh"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ refresh_token: authLocation.auth.refreshToken }),
+      body: JSON.stringify({ refresh_token: attemptedRefreshToken }),
     });
     const body = await parseBody<RefreshedTokens>(res);
     const tokens = body?.data;
     if (!res.ok || body?.success === false || !tokens?.access_token || !tokens.refresh_token) {
+      // Refresh tokens rotate once. If another tab won the race, its new pair
+      // is already in shared storage and this 401 must not sign every tab out.
+      let rotated = tokensRotatedByAnotherTab(
+        readAuthFromStorage(authLocation.storage),
+        attemptedRefreshToken,
+      );
+      if (!rotated && authLocation.storage === localStorage) {
+        await new Promise((resolve) => globalThis.setTimeout(resolve, 250));
+        rotated = tokensRotatedByAnotherTab(
+          readAuthFromStorage(authLocation.storage),
+          attemptedRefreshToken,
+        );
+      }
+      if (rotated) return rotated;
       clearAuth();
       throw new Error(body?.error?.message ?? "Your session has expired. Please sign in again.");
     }
@@ -289,10 +323,17 @@ async function refreshAuthTokens(authLocation: PersistedAuthLocation): Promise<R
       }),
     );
     return tokens;
-  })();
+  };
+
+  const lockManager = typeof navigator !== "undefined" ? navigator.locks : undefined;
+  const pendingRefresh: Promise<RefreshedTokens> =
+    authLocation.storage === localStorage && lockManager
+      ? lockManager.request(AUTH_REFRESH_LOCK, refreshOnce).then((tokens) => tokens)
+      : refreshOnce();
+  refreshInFlight = pendingRefresh;
 
   try {
-    return await refreshInFlight;
+    return await pendingRefresh;
   } finally {
     refreshInFlight = null;
   }

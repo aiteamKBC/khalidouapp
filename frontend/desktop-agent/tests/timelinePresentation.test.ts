@@ -6,6 +6,7 @@ import {
   timelineIntervalsForDisplay,
   timelineIntervalPresentation,
   timelineDisplayType,
+  workdayTimingState,
 } from "../src/timelinePresentation.ts";
 
 test("the employee timeline keeps intervals from the start of the day", () => {
@@ -69,4 +70,36 @@ test("a local idle end never closes a later server idle interval", () => {
 
   assert.equal(presentation.isCurrent, true);
   assert.equal(presentation.endedAt, null);
+});
+
+test("local tracking supplies a start boundary while the timeline is syncing", () => {
+  assert.deepEqual(
+    workdayTimingState({
+      timelineStartedAt: null,
+      timelineIsRunning: false,
+      localSessionStartedAt: "2026-08-06T06:20:00.000Z",
+      localTrackingActive: true,
+    }),
+    {
+      startedAt: "2026-08-06T06:20:00.000Z",
+      isRunning: true,
+      localSyncPending: true,
+    },
+  );
+});
+
+test("the authoritative timeline replaces the local sync fallback", () => {
+  assert.deepEqual(
+    workdayTimingState({
+      timelineStartedAt: "2026-08-06T06:19:58.000Z",
+      timelineIsRunning: true,
+      localSessionStartedAt: "2026-08-06T06:20:00.000Z",
+      localTrackingActive: true,
+    }),
+    {
+      startedAt: "2026-08-06T06:19:58.000Z",
+      isRunning: true,
+      localSyncPending: false,
+    },
+  );
 });

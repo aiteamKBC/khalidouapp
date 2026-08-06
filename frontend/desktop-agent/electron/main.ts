@@ -71,6 +71,7 @@ import {
   getDuePendingScreenshots,
   getLocalTrackingEvents,
   getOpenLocalTrackingSession,
+  getPendingLocalTrackingSession,
   getPendingLocalTrackingSessions,
   initializeLocalDatabase,
   markLocalTrackingSessionSynced,
@@ -86,6 +87,7 @@ import {
   hasReachedIdleThreshold,
   IDLE_THRESHOLD_MINUTES,
   idleDurationAfterThreshold,
+  idleReturnInputDetected,
   inputResumedAfterIdle,
   reclassifyVerifiedReturnCounters,
   shouldWaitForInputBeforeRestart,
@@ -106,7 +108,10 @@ import {
   isPermanentScreenshotSyncFailure,
 } from "./services/runtimePolicies.js";
 import {
+  canAdoptPromotedLocalSession,
+  promotableLocalSessionIds,
   reconcileWorkedToday,
+  shouldRolloverRestoredLocalSession,
   shouldResetDailyCountersForSession,
 } from "./services/dailyCounters.js";
 import { requiresExplicitFreshSessionStart } from "./services/trackingStartPolicy.js";
@@ -317,6 +322,7 @@ let eligibleIdleSecondsBeforeCurrentIdle = 0;
 let idleWallClockStartedAt: number | null = null;
 let automaticIdleStartedDuringBreak = false;
 let lastObservedSystemIdleSeconds: number | null = null;
+let lastObservedOperatingSystemIdleSeconds: number | null = null;
 let lastHandledIdleReturnInputAt = 0;
 let idleReturnVerification: IdleReturnVerification | null = null;
 let waitingForInputAfterIdleSessionClose = false;
@@ -599,6 +605,7 @@ function resetForDeviceReenrollment() {
   manualPauseTransitionPromise = null;
   isFinishingAutomaticIdle = false;
   lastObservedSystemIdleSeconds = null;
+  lastObservedOperatingSystemIdleSeconds = null;
   lastHandledIdleReturnInputAt = 0;
   clearIdleReturnVerification();
   waitingForInputAfterIdleSessionClose = false;
@@ -971,9 +978,11 @@ function startInputIntegrityMonitoring() {
   }
 }
 
-function observedIdleSeconds() {
+function observedIdleSeconds(
+  systemIdleSeconds = powerMonitor.getSystemIdleTime(),
+) {
   startInputIntegrityMonitoring();
-  return inputIntegrityMonitor.idleSeconds(powerMonitor.getSystemIdleTime());
+  return inputIntegrityMonitor.idleSeconds(systemIdleSeconds);
 }
 
 function inputIntegrityObservation(): InputIntegrityObservation | undefined {
@@ -1048,30 +1057,57 @@ function beginLocalTrackingSession(startedAt = new Date()) {
   const staleOpen = getOpenLocalTrackingSession(runtimeStatus.deviceId);
   if (staleOpen) {
     const restored = restoreOpenLocalTrackingSnapshot(staleOpen, startedAt);
-    localTrackingSessionId = staleOpen.sessionId;
-    lastLocalTrackingCheckpointAt = startedAt.getTime();
-    activeCounterDate = localDateKey(new Date(restored.lastCheckpointAt));
-    runtimeStatus.sessionStartedAt = restored.startedAt;
-    runtimeStatus.activeSeconds = restored.activeSeconds;
-    runtimeStatus.idleSeconds = restored.idleSeconds;
-    runtimeStatus.eligibleIdleSeconds = restored.idleSeconds;
-    runtimeStatus.workedTodaySeconds = Math.max(
-      runtimeStatus.workedTodaySeconds,
-      workedTodayBaseSeconds + restored.activeSeconds,
+    const checkpointCounterDate = localDateKey(
+      new Date(restored.lastCheckpointAt),
     );
-    runtimeStatus.trackingStatus = restored.status;
-    runtimeStatus.trackingPaused = false;
-    lastDurationTickAt = startedAt.getTime();
-    startTimers();
-    startScreenshotMonitoring();
-    notifyRendererStatus();
-    rebuildTrayMenu();
-    log.info("Open local tracking session resumed after app restart", {
-      localSessionId: staleOpen.sessionId,
-      startedAt: restored.startedAt,
-      lastCheckpointAt: restored.lastCheckpointAt,
-    });
-    return true;
+    const todayCounterDate = localDateKey(startedAt);
+    if (
+      shouldRolloverRestoredLocalSession({
+        checkpointCounterDate,
+        todayCounterDate,
+      })
+    ) {
+      // A previous-day local session has no evidence after its last durable
+      // checkpoint. Bound it there before starting today so historical replay
+      // can never temporarily own today's live timer.
+      closeLocalTrackingSession({
+        sessionId: staleOpen.sessionId,
+        endedAt: restored.lastCheckpointAt,
+        status: "daily_rollover",
+        activeSeconds: restored.activeSeconds,
+        idleSeconds: restored.idleSeconds,
+      });
+      log.info("Previous-day local session bounded at its checkpoint", {
+        localSessionId: staleOpen.sessionId,
+        startedAt: restored.startedAt,
+        endedAt: restored.lastCheckpointAt,
+      });
+    } else {
+      localTrackingSessionId = staleOpen.sessionId;
+      lastLocalTrackingCheckpointAt = startedAt.getTime();
+      activeCounterDate = checkpointCounterDate;
+      runtimeStatus.sessionStartedAt = restored.startedAt;
+      runtimeStatus.activeSeconds = restored.activeSeconds;
+      runtimeStatus.idleSeconds = restored.idleSeconds;
+      runtimeStatus.eligibleIdleSeconds = restored.idleSeconds;
+      runtimeStatus.workedTodaySeconds = Math.max(
+        runtimeStatus.workedTodaySeconds,
+        workedTodayBaseSeconds + restored.activeSeconds,
+      );
+      runtimeStatus.trackingStatus = restored.status;
+      runtimeStatus.trackingPaused = false;
+      lastDurationTickAt = startedAt.getTime();
+      startTimers();
+      startScreenshotMonitoring();
+      notifyRendererStatus();
+      rebuildTrayMenu();
+      log.info("Open local tracking session resumed after app restart", {
+        localSessionId: staleOpen.sessionId,
+        startedAt: restored.startedAt,
+        lastCheckpointAt: restored.lastCheckpointAt,
+      });
+      return true;
+    }
   }
 
   const preservedWorkedToday = runtimeStatus.workedTodaySeconds;
@@ -1138,7 +1174,9 @@ async function replayLocalTrackingEvents(
   }
 }
 
-async function promotePendingLocalTrackingSessions() {
+async function promotePendingLocalTrackingSessions(
+  options: { hasOpenServerSession?: boolean } = {},
+) {
   if (
     !runtimeStatus.enrolled ||
     !runtimeStatus.deviceId ||
@@ -1147,10 +1185,28 @@ async function promotePendingLocalTrackingSessions() {
     return false;
   }
   checkpointActiveLocalTrackingSession(true);
-  const pendingSessions = getPendingLocalTrackingSessions(
+  const allPendingSessions = getPendingLocalTrackingSessions(
     runtimeStatus.deviceId,
   );
+  if (allPendingSessions.length === 0) {
+    return false;
+  }
+  const promotableIds = new Set(
+    promotableLocalSessionIds({
+      pendingSessions: allPendingSessions,
+      activeLocalSessionId: localTrackingSessionId,
+      hasOpenServerSession:
+        options.hasOpenServerSession ?? Boolean(currentSessionId),
+    }),
+  );
+  const pendingSessions = allPendingSessions.filter((session) =>
+    promotableIds.has(session.sessionId),
+  );
   if (pendingSessions.length === 0) {
+    log.info(
+      "Deferred closed local-session recovery while a server session is running",
+      { count: allPendingSessions.length },
+    );
     return false;
   }
 
@@ -1176,18 +1232,46 @@ async function promotePendingLocalTrackingSessions() {
         serverSessionId,
         serverCounters.idleSeconds,
       );
+      let latestPendingSession =
+        getPendingLocalTrackingSession(pendingSession.sessionId) ??
+        pendingSession;
+      let ownsLiveRuntime = canAdoptPromotedLocalSession({
+        promotedSessionId: pendingSession.sessionId,
+        activeLocalSessionId: localTrackingSessionId,
+      });
+      if (!ownsLiveRuntime && !latestPendingSession.endedAt) {
+        // The active local ID changed while network replay was in flight (most
+        // commonly at midnight). Bound the detached session at its own last
+        // checkpoint; never let it clear or borrow counters from the new day.
+        closeLocalTrackingSession({
+          sessionId: latestPendingSession.sessionId,
+          endedAt: latestPendingSession.lastCheckpointAt,
+          status: "daily_rollover",
+          activeSeconds: latestPendingSession.activeSeconds,
+          idleSeconds: latestPendingSession.idleSeconds,
+        });
+        latestPendingSession = {
+          ...latestPendingSession,
+          endedAt: latestPendingSession.lastCheckpointAt,
+          status: "daily_rollover",
+        };
+      }
       const recovered = mergeRecoveredCounters(serverCounters, {
-        activeSeconds: pendingSession.activeSeconds,
-        idleSeconds: pendingSession.idleSeconds,
+        activeSeconds: ownsLiveRuntime
+          ? runtimeStatus.activeSeconds
+          : latestPendingSession.activeSeconds,
+        idleSeconds: ownsLiveRuntime
+          ? runtimeStatus.idleSeconds
+          : latestPendingSession.idleSeconds,
       });
       const heartbeatAt =
-        pendingSession.endedAt ??
-        pendingSession.lastCheckpointAt ??
+        latestPendingSession.endedAt ??
+        latestPendingSession.lastCheckpointAt ??
         new Date().toISOString();
       const heartbeat = await sendHeartbeat({
         sessionId: serverSessionId,
         eventId: randomUUID(),
-        status: heartbeatStatus(pendingSession.status),
+        status: heartbeatStatus(latestPendingSession.status),
         activeSeconds: recovered.activeSeconds,
         idleSeconds: recovered.idleSeconds,
         counterDate: localDateKey(new Date(heartbeatAt)),
@@ -1195,13 +1279,13 @@ async function promotePendingLocalTrackingSessions() {
         timestamp: heartbeatAt,
       });
 
-      if (pendingSession.endedAt) {
+      if (latestPendingSession.endedAt) {
         await endSession({
           sessionId: serverSessionId,
           activeSeconds: recovered.activeSeconds,
           idleSeconds: recovered.idleSeconds,
           reason: "Recovered from offline device storage",
-          endedAt: pendingSession.endedAt,
+          endedAt: latestPendingSession.endedAt,
           eventId: randomUUID(),
         });
         markLocalTrackingSessionSynced(pendingSession.sessionId);
@@ -1217,14 +1301,52 @@ async function promotePendingLocalTrackingSessions() {
         serverCounters.idleSeconds,
         deliveredLocalEventIds,
       );
-      const latestLocalActiveSeconds =
-        localTrackingSessionId === pendingSession.sessionId
-          ? runtimeStatus.activeSeconds
-          : pendingSession.activeSeconds;
-      const latestLocalIdleSeconds =
-        localTrackingSessionId === pendingSession.sessionId
-          ? runtimeStatus.idleSeconds
-          : pendingSession.idleSeconds;
+      ownsLiveRuntime = canAdoptPromotedLocalSession({
+        promotedSessionId: pendingSession.sessionId,
+        activeLocalSessionId: localTrackingSessionId,
+      });
+      if (!ownsLiveRuntime) {
+        latestPendingSession =
+          getPendingLocalTrackingSession(pendingSession.sessionId) ??
+          latestPendingSession;
+        const detachedEndAt =
+          latestPendingSession.endedAt ?? latestPendingSession.lastCheckpointAt;
+        if (!latestPendingSession.endedAt) {
+          closeLocalTrackingSession({
+            sessionId: latestPendingSession.sessionId,
+            endedAt: detachedEndAt,
+            status: "daily_rollover",
+            activeSeconds: latestPendingSession.activeSeconds,
+            idleSeconds: latestPendingSession.idleSeconds,
+          });
+        }
+        const detachedCounters = mergeRecoveredCounters(serverCounters, {
+          activeSeconds: latestPendingSession.activeSeconds,
+          idleSeconds: latestPendingSession.idleSeconds,
+        });
+        await sendHeartbeat({
+          sessionId: serverSessionId,
+          eventId: randomUUID(),
+          status: heartbeatStatus(latestPendingSession.status),
+          activeSeconds: detachedCounters.activeSeconds,
+          idleSeconds: detachedCounters.idleSeconds,
+          counterDate: localDateKey(new Date(detachedEndAt)),
+          agentVersion: runtimeStatus.agentVersion,
+          timestamp: detachedEndAt,
+        });
+        await endSession({
+          sessionId: serverSessionId,
+          activeSeconds: detachedCounters.activeSeconds,
+          idleSeconds: detachedCounters.idleSeconds,
+          reason: "Recovered from offline device storage",
+          endedAt: detachedEndAt,
+          eventId: randomUUID(),
+        });
+        markLocalTrackingSessionSynced(pendingSession.sessionId);
+        continue;
+      }
+      const latestLocalActiveSeconds = runtimeStatus.activeSeconds;
+      const latestLocalIdleSeconds = runtimeStatus.idleSeconds;
       const latestStatus = runtimeStatus.trackingStatus;
       const latestRecovered = mergeRecoveredCounters(serverCounters, {
         activeSeconds: latestLocalActiveSeconds,
@@ -1233,7 +1355,7 @@ async function promotePendingLocalTrackingSessions() {
       const finalHeartbeat =
         latestRecovered.activeSeconds !== recovered.activeSeconds ||
         latestRecovered.idleSeconds !== recovered.idleSeconds ||
-        latestStatus !== pendingSession.status
+        latestStatus !== latestPendingSession.status
           ? await sendHeartbeat({
               sessionId: serverSessionId,
               eventId: randomUUID(),
@@ -1244,6 +1366,11 @@ async function promotePendingLocalTrackingSessions() {
               agentVersion: runtimeStatus.agentVersion,
             })
           : heartbeat;
+      if (localTrackingSessionId !== pendingSession.sessionId) {
+        // The final heartbeat crossed a rollover. Leave the newer local ID
+        // untouched; the next promotion pass will safely finish this row.
+        continue;
+      }
       localTrackingSessionId = null;
       lastLocalTrackingCheckpointAt = 0;
       syncRuntimeFromSession(finalHeartbeat.session);
@@ -1372,6 +1499,7 @@ function syncRuntimeFromSession(session: WorkSession) {
   if (session.status === "idle" && (changedSession || !wasIdle)) {
     automaticIdleStartedDuringBreak = isInsideScheduledBreak(new Date());
     lastObservedSystemIdleSeconds = null;
+    lastObservedOperatingSystemIdleSeconds = null;
   } else if (session.status !== "idle") {
     automaticIdleStartedDuringBreak = false;
   }
@@ -1438,7 +1566,10 @@ function waitForInputAfterIdleSessionClose(
   clearIdleReturnVerification();
   waitingForInputAfterIdleSessionClose = true;
   runtimeStatus.trackingStatus = status;
-  lastObservedSystemIdleSeconds = observedIdleSeconds();
+  lastObservedOperatingSystemIdleSeconds = powerMonitor.getSystemIdleTime();
+  lastObservedSystemIdleSeconds = observedIdleSeconds(
+    lastObservedOperatingSystemIdleSeconds,
+  );
   notifyRendererStatus();
   rebuildTrayMenu();
 }
@@ -1450,6 +1581,7 @@ function resumeAfterIdleSessionClose() {
   waitingForInputAfterIdleSessionClose = false;
   clearIdleReturnVerification();
   lastObservedSystemIdleSeconds = null;
+  lastObservedOperatingSystemIdleSeconds = null;
   runtimeStatus.trackingStatus = "starting";
   scheduleAutomaticTrackingRestart(0);
   notifyRendererStatus();
@@ -2063,18 +2195,23 @@ function clearIdleReturnVerification() {
 }
 
 function immediateIdleReturnInputDetected(
-  idleSeconds: number,
-  previousIdleSeconds: number | null,
+  operatingSystemIdleSeconds: number,
+  previousOperatingSystemIdleSeconds: number | null,
 ) {
   const latestRealInputAt = inputIntegrityMonitor.latestRealInputAt();
-  if (latestRealInputAt !== null) {
-    if (latestRealInputAt <= lastHandledIdleReturnInputAt) {
-      return false;
-    }
+  const freshRealInput =
+    latestRealInputAt !== null &&
+    latestRealInputAt > lastHandledIdleReturnInputAt;
+  const detected = idleReturnInputDetected({
+    latestRealInputAt,
+    lastHandledRealInputAt: lastHandledIdleReturnInputAt,
+    systemIdleSeconds: operatingSystemIdleSeconds,
+    previousSystemIdleSeconds: previousOperatingSystemIdleSeconds,
+  });
+  if (freshRealInput) {
     lastHandledIdleReturnInputAt = latestRealInputAt;
-    return true;
   }
-  return inputResumedAfterIdle(idleSeconds, previousIdleSeconds);
+  return detected;
 }
 
 function creditVerifiedReturnPeriod(
@@ -2302,6 +2439,7 @@ function startIdleMonitor() {
         isQuitting
       ) {
         lastObservedSystemIdleSeconds = null;
+        lastObservedOperatingSystemIdleSeconds = null;
         return;
       }
       const idleSeconds = observedIdleSeconds();
@@ -2320,11 +2458,15 @@ function startIdleMonitor() {
       !["starting", "active", "idle"].includes(runtimeStatus.trackingStatus)
     ) {
       lastObservedSystemIdleSeconds = null;
+      lastObservedOperatingSystemIdleSeconds = null;
       return;
     }
 
-    const idleSeconds = observedIdleSeconds();
-    const previousSystemIdleSeconds = lastObservedSystemIdleSeconds;
+    const operatingSystemIdleSeconds = powerMonitor.getSystemIdleTime();
+    const idleSeconds = observedIdleSeconds(operatingSystemIdleSeconds);
+    const previousOperatingSystemIdleSeconds =
+      lastObservedOperatingSystemIdleSeconds;
+    lastObservedOperatingSystemIdleSeconds = operatingSystemIdleSeconds;
     lastObservedSystemIdleSeconds = idleSeconds;
     if (runtimeStatus.trackingStatus === "idle" && idleReturnVerification) {
       if (
@@ -2366,8 +2508,8 @@ function startIdleMonitor() {
       automaticIdleReturnAction({
         trackingStatus: runtimeStatus.trackingStatus,
         immediateInputDetected: immediateIdleReturnInputDetected(
-          idleSeconds,
-          previousSystemIdleSeconds,
+          operatingSystemIdleSeconds,
+          previousOperatingSystemIdleSeconds,
         ),
         confirmationAccepted: false,
         sustainedInputConfirmed: false,
@@ -3307,8 +3449,21 @@ async function startTrackingAutomatically() {
       // This is a session that was already tracking before a restart/update;
       // it must continue even when the shift boundary has passed.
       beginLocalTrackingSession(attemptedAt);
-      await promotePendingLocalTrackingSessions();
     }
+    const currentBeforeRecovery = await getCurrentSession();
+    const hasOpenServerSession = Boolean(
+      currentBeforeRecovery.session &&
+        !currentBeforeRecovery.session.ended_at &&
+        currentBeforeRecovery.session.status !== "ended" &&
+        currentBeforeRecovery.session.status !== "offline",
+    );
+    // A graceful quit closes a local-only row so time is bounded precisely.
+    // Recover those closed rows before creating the next server session. If a
+    // server session is already live, only its matching open local row may be
+    // promoted; historical rows wait for a safe startup instead of ending it.
+    const recoveredLocalSessions = await promotePendingLocalTrackingSessions({
+      hasOpenServerSession,
+    });
     await syncPendingQueues(true);
     const rawConfig = await getAgentConfig();
     trackingConfig = normalizeTrackingConfig(rawConfig);
@@ -3319,6 +3474,9 @@ async function startTrackingAutomatically() {
     runtimeStatus.requestPolicy = rawConfig.request_policy ?? null;
     saveTrackingPreferences();
     void refreshTasks();
+    if (recoveredLocalSessions) {
+      await refreshWorkedTodayTotal();
+    }
     const current = await getCurrentSession();
     if (
       current.session &&

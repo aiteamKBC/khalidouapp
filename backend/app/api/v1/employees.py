@@ -440,6 +440,13 @@ def list_employee_overviews(
     managers_by_employee = employee_manager_summaries(db, employee_ids)
     teams_by_employee: dict[UUID, list[str]] = {item: [] for item in employee_ids}
     team_role_by_employee: dict[UUID, str] = {}
+    team_role_priority = {
+        "trainee": 0,
+        "member": 1,
+        "senior": 2,
+        "team_lead": 3,
+        "team_manager": 4,
+    }
     if employee_ids:
         memberships = db.execute(
             select(TeamMember.employee_id, TeamMember.team_id, TeamMember.role).where(
@@ -449,8 +456,20 @@ def list_employee_overviews(
         ).all()
         for membership_employee_id, membership_team_id, membership_role in memberships:
             teams_by_employee.setdefault(membership_employee_id, []).append(str(membership_team_id))
-            if team_id is not None and membership_team_id == team_id:
-                team_role_by_employee[membership_employee_id] = membership_role or "member"
+            role = membership_role or "member"
+            if team_id is not None:
+                if membership_team_id == team_id:
+                    team_role_by_employee[membership_employee_id] = role
+                continue
+
+            # People management is normally loaded without a team filter. Return
+            # the employee's highest active team role so a refresh does not turn a
+            # persisted manager/lead back into the UI's default "member" value.
+            current_role = team_role_by_employee.get(membership_employee_id)
+            if current_role is None or team_role_priority.get(role, 0) > team_role_priority.get(
+                current_role, 0
+            ):
+                team_role_by_employee[membership_employee_id] = role
 
     data = []
     for row in rows:

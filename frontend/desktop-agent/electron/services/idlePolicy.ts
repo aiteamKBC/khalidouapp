@@ -41,6 +41,29 @@ export function inputResumedAfterIdle(
   );
 }
 
+export function idleReturnInputDetected(options: {
+  latestRealInputAt: number | null;
+  lastHandledRealInputAt: number;
+  systemIdleSeconds: number;
+  previousSystemIdleSeconds: number | null;
+}): boolean {
+  const freshRealInput =
+    options.latestRealInputAt !== null &&
+    options.latestRealInputAt > options.lastHandledRealInputAt;
+
+  // The low-level probe can keep reporting while one of its Windows hooks is
+  // no longer delivering events. A stale keyboard timestamp must not suppress
+  // the operating-system idle-clock fallback for a later physical mouse move.
+  // This path only opens the return review; it never credits time by itself.
+  return (
+    freshRealInput ||
+    inputResumedAfterIdle(
+      options.systemIdleSeconds,
+      options.previousSystemIdleSeconds,
+    )
+  );
+}
+
 export function automaticIdleReturnAction(options: {
   trackingStatus: string;
   immediateInputDetected: boolean;

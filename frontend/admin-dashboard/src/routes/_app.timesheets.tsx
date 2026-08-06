@@ -334,21 +334,32 @@ function TimesheetsPage() {
                       ) : (
                         <>
                           First start {formatClock(t.startTime)} ·{" "}
-                          {t.endTime ? `Last end ${formatClock(t.endTime)}` : "Open session"}
+                          {t.endTime
+                            ? `Last end ${formatClock(t.endTime)}`
+                            : t.status === "idle"
+                              ? "Idle — agent still online"
+                              : t.status === "locked"
+                                ? "Screen locked — agent still online"
+                                : t.status === "sleeping"
+                                  ? "Device sleeping — agent still online"
+                                  : "Open working session"}
                           {t.sessionCount > 1 ? ` · ${t.sessionCount} separate sessions` : ""}
                         </>
                       )}
                     </p>
-                    {t.status === "in_progress" && t.lastSignalAt && (
-                      <p className="mt-1 text-[11px] font-semibold text-muted-foreground">
-                        Last device sync {formatRelative(t.lastSignalAt)}
-                      </p>
-                    )}
+                    {!["complete", "missing", "approved_leave"].includes(t.status) &&
+                      t.lastSignalAt && (
+                        <p className="mt-1 text-[11px] font-semibold text-muted-foreground">
+                          Last device sync {formatRelative(t.lastSignalAt)}
+                        </p>
+                      )}
                   </div>
 
                   <div>
                     <div className="mb-2 flex items-center justify-between text-xs">
-                      <span className="font-bold text-muted-foreground">Observed time span</span>
+                      <span className="font-bold text-muted-foreground">
+                        Observed span (work + idle)
+                      </span>
                       <span className="font-mono-numeric font-extrabold">
                         {formatMinutes(t.observedSpanMinutes)}
                       </span>

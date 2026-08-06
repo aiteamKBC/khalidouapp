@@ -68,6 +68,50 @@ test("Windows startup does not create a local session before schedule checks", (
   assert.match(source, /await startTrackingAutomatically\(\)/);
 });
 
+test("offline promotion checks ownership before clearing the live local session", () => {
+  const source = sourceBetween(
+    "async function promotePendingLocalTrackingSessions(",
+    "function resetDailyRuntimeCounters(",
+  );
+  const ownershipCheckAt = source.lastIndexOf(
+    "if (localTrackingSessionId !== pendingSession.sessionId)",
+  );
+  const clearAt = source.lastIndexOf("localTrackingSessionId = null");
+  assert.ok(ownershipCheckAt >= 0, "promotion ownership guard is missing");
+  assert.ok(
+    clearAt > ownershipCheckAt,
+    "a promoted historical session can clear a newer local session",
+  );
+});
+
+test("startup promotes a bounded local session before uploading queues or starting fresh", () => {
+  const source = sourceBetween(
+    "async function startTrackingAutomatically()",
+    "function clearPaidPauseTimer()",
+  );
+  const preflightAt = source.indexOf(
+    "const currentBeforeRecovery = await getCurrentSession()",
+  );
+  const promoteAt = source.indexOf(
+    "await promotePendingLocalTrackingSessions({",
+  );
+  const queuesAt = source.indexOf("await syncPendingQueues(true)");
+  const freshStartAt = source.indexOf("const started = await startSession()");
+  assert.ok(preflightAt >= 0, "server-session preflight is missing");
+  assert.ok(
+    promoteAt > preflightAt,
+    "local recovery must follow the server preflight",
+  );
+  assert.ok(
+    queuesAt > promoteAt,
+    "local work must recover before screenshot/event queues upload",
+  );
+  assert.ok(
+    freshStartAt > queuesAt,
+    "recovered time must exist before a fresh session starts",
+  );
+});
+
 test("the fresh-session prompt requires an explicit renderer action", () => {
   assert.match(rendererSource, /Start work tracking\?/);
   assert.match(rendererSource, /confirmTrackingStart\(\)/);

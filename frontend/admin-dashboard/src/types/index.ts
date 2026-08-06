@@ -266,7 +266,8 @@ export interface Timesheet {
   deductedMinutes: number;
   points: number;
   screenshotCount: number;
-  status: "complete" | "in_progress" | "missing" | "approved_leave";
+  status:
+    "complete" | "in_progress" | "idle" | "locked" | "sleeping" | "missing" | "approved_leave";
 }
 
 export interface TrackingSettings {

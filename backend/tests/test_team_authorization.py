@@ -3465,6 +3465,65 @@ def test_workday_timeline_stops_stale_open_session_at_last_heartbeat(team_client
     )
     assert timesheet_response.status_code == 200
     assert timesheet_row["end_time"] == heartbeat_at.isoformat()
+    assert timesheet_row["tracking_status"] is None
+
+
+def test_timesheet_marks_a_fresh_idle_agent_as_idle_not_in_progress(team_client):
+    client, data = team_client
+    now = datetime.now(UTC).replace(microsecond=0)
+    started_at = now - timedelta(hours=1)
+    idle_started_at = started_at + timedelta(seconds=20)
+
+    db: Session = data["session_factory"]()
+    try:
+        session = db.get(WorkSession, data["session_a"].id)
+        session.started_at = started_at
+        session.ended_at = None
+        session.status = "idle"
+        session.active_seconds = 19
+        session.idle_seconds = 60 * 60 - 19
+        db.add_all(
+            [
+                ActivityEvent(
+                    company_id=session.company_id,
+                    employee_id=session.employee_id,
+                    device_id=session.device_id,
+                    session_id=session.id,
+                    event_type="idle_started",
+                    event_timestamp=idle_started_at,
+                    payload={"status": "idle"},
+                    idempotency_key=str(uuid4()),
+                ),
+                ActivityEvent(
+                    company_id=session.company_id,
+                    employee_id=session.employee_id,
+                    device_id=session.device_id,
+                    session_id=session.id,
+                    event_type="heartbeat",
+                    event_timestamp=now,
+                    payload={"status": "idle"},
+                    idempotency_key=str(uuid4()),
+                ),
+            ]
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    response = client.get(
+        f"/api/v1/timesheets/daily?day={now.date().isoformat()}",
+        headers=data["general_headers"],
+    )
+
+    assert response.status_code == 200
+    row = next(
+        item
+        for item in response.json()["data"]
+        if item["employee_id"] == str(data["employee_a"].id)
+    )
+    assert row["tracking_status"] == "idle"
+    assert row["end_time"] is None
+    assert row["last_signal_at"] == now.isoformat()
 
 
 def test_workday_timeline_shows_the_exact_gap_between_sessions(team_client):
@@ -4162,6 +4221,58 @@ def test_invited_hr_can_manage_a_team_or_join_with_a_member_role(team_client):
         assert manager_membership.role == "team_manager"
         assert member_membership is not None
         assert member_membership.role == "member"
+
+
+def test_employee_overview_keeps_saved_team_role_after_refresh(team_client):
+    client, data = team_client
+
+    update_response = client.patch(
+        f"/api/v1/teams/{data['team_a'].id}/members/{data['employee_a'].id}",
+        headers=data["general_headers"],
+        json={"role": "team_manager"},
+    )
+    refresh_response = client.get(
+        f"/api/v1/employees-overview?employee_id={data['employee_a'].id}",
+        headers=data["general_headers"],
+    )
+
+    assert update_response.status_code == 200
+    assert refresh_response.status_code == 200
+    refreshed_employee = refresh_response.json()["data"][0]
+    assert refreshed_employee["team_role"] == "team_manager"
+    assert refreshed_employee["team_ids"] == [str(data["team_a"].id)]
+
+
+def test_employee_overview_uses_filtered_role_and_highest_unfiltered_role(team_client):
+    client, data = team_client
+    with data["session_factory"]() as db:
+        memberships = db.scalars(
+            select(TeamMember).where(
+                TeamMember.employee_id == data["shared_employee"].id,
+                TeamMember.status == "active",
+            )
+        ).all()
+        for membership in memberships:
+            membership.role = "team_lead" if membership.team_id == data["team_a"].id else "member"
+        db.commit()
+
+    unfiltered_response = client.get(
+        f"/api/v1/employees-overview?employee_id={data['shared_employee'].id}",
+        headers=data["general_headers"],
+    )
+    filtered_response = client.get(
+        "/api/v1/employees-overview",
+        params={
+            "employee_id": str(data["shared_employee"].id),
+            "team_id": str(data["team_b"].id),
+        },
+        headers=data["general_headers"],
+    )
+
+    assert unfiltered_response.status_code == 200
+    assert unfiltered_response.json()["data"][0]["team_role"] == "team_lead"
+    assert filtered_response.status_code == 200
+    assert filtered_response.json()["data"][0]["team_role"] == "member"
 
 
 def test_employee_overview_includes_all_assigned_team_managers(team_client):
