@@ -9,6 +9,7 @@ from app.database.base import Base
 from app.models import (
     ActivityEvent,
     AdminUser,
+    AuditLog,
     AttendanceCorrection,
     Company,
     Device,
@@ -243,6 +244,105 @@ def test_unscheduled_work_is_pending_review_and_not_reported_as_rejected(
     assert row.unapproved_overtime_seconds == 4 * 3600 + 50 * 60
     assert {issue["code"] for issue in row.issues} >= {"overtime_pending"}
     assert not any(issue["code"] == "overtime_rejected" for issue in row.issues)
+
+
+def test_shift_override_keeps_explicit_weekly_off_work_as_overtime(attendance_context):
+    db, employee, device, admin = attendance_context
+    work_date = date(2026, 7, 25)  # Saturday is an explicit weekly off.
+    override = WorkScheduleOverride(
+        company_id=employee.company_id,
+        employee_id=employee.id,
+        scope="employee",
+        override_type="shift",
+        effective_date=work_date,
+        permanent=False,
+        shift_start=time(10, 0),
+        shift_end=time(18, 0),
+        reason="Coverage hours on weekly off",
+        created_by_admin_user_id=admin.id,
+    )
+    db.add(override)
+    _session(
+        db,
+        employee,
+        device,
+        datetime(2026, 7, 25, 11, 0, tzinfo=UTC),
+        datetime(2026, 7, 25, 14, 0, tzinfo=UTC),
+    )
+    db.commit()
+
+    row, timeline = calculate_daily_attendance(
+        db,
+        employee=employee,
+        work_date=work_date,
+        now=datetime(2026, 7, 26, tzinfo=UTC),
+    )
+
+    assert row.status == "worked_off_day"
+    assert row.scheduled_start_at is None
+    assert row.scheduled_end_at is None
+    assert row.normal_worked_seconds == 0
+    assert row.recorded_overtime_seconds == 3 * 3600
+    assert row.calculation_sources["schedule_override_id"] == str(override.id)
+    assert timeline["worked_seconds"] == 3 * 3600
+    assert all(
+        interval.get("work_category") == "extra"
+        for interval in timeline["intervals"]
+        if interval["type"] == "worked"
+    )
+
+
+def test_weekly_off_profile_change_does_not_reclassify_a_closed_past_day(
+    attendance_context,
+):
+    db, employee, device, admin = attendance_context
+    work_date = date(2026, 7, 24)  # Friday was the weekly off before the change.
+    profile = db.scalar(
+        select(EmployeeWorkProfile).where(EmployeeWorkProfile.employee_id == employee.id)
+    )
+    profile.working_days = [0, 1, 2, 3, 4, 5]
+    profile.weekly_off_days = [6]
+    db.add(
+        AuditLog(
+            company_id=employee.company_id,
+            admin_user_id=admin.id,
+            action="updated",
+            entity_type="employee_work_profile",
+            entity_id=employee.id,
+            entity_name=employee.email,
+            details={
+                "old": {
+                    "working_days": [0, 1, 2, 3, 5, 6],
+                    "weekly_off_days": [4],
+                },
+                "new": {
+                    "working_days": [0, 1, 2, 3, 4, 5],
+                    "weekly_off_days": [6],
+                },
+            },
+            created_at=datetime(2026, 7, 26, 10, 0, tzinfo=UTC),
+        )
+    )
+    _session(
+        db,
+        employee,
+        device,
+        datetime(2026, 7, 24, 11, 0, tzinfo=UTC),
+        datetime(2026, 7, 24, 14, 0, tzinfo=UTC),
+    )
+    db.commit()
+
+    row, _ = calculate_daily_attendance(
+        db,
+        employee=employee,
+        work_date=work_date,
+        now=datetime(2026, 7, 27, tzinfo=UTC),
+    )
+
+    assert row.status == "worked_off_day"
+    assert row.scheduled_start_at is None
+    assert row.normal_worked_seconds == 0
+    assert row.recorded_overtime_seconds == 3 * 60 * 60
 
 
 def test_attendance_starts_at_work_resumed_after_a_false_start(attendance_context):
@@ -1521,6 +1621,8 @@ def test_early_leave_is_stored_and_approved_permission_excuses_it(attendance_con
         now=datetime(2026, 7, 22, tzinfo=UTC),
     )
     assert unexcused.early_leave_seconds == 3600
+    assert unexcused.status == "left_early"
+    assert {issue["code"] for issue in unexcused.issues} >= {"early_leave"}
 
     db.add(
         TimeAdjustmentRequest(
@@ -1550,6 +1652,31 @@ def test_early_leave_is_stored_and_approved_permission_excuses_it(attendance_con
     assert excused.early_leave_seconds == 0
     assert excused.total_payable_seconds == 8 * 3600
     assert excused.calculation_sources["approved_early_leave_seconds"] == 3600
+
+
+def test_late_arrival_and_early_leave_preserve_both_status_signals(attendance_context):
+    db, employee, device, _ = attendance_context
+    work_date = date(2026, 7, 21)
+    _session(
+        db,
+        employee,
+        device,
+        datetime(2026, 7, 21, 10, 0, tzinfo=UTC),
+        datetime(2026, 7, 21, 15, 0, tzinfo=UTC),
+    )
+    db.commit()
+
+    row, _ = calculate_daily_attendance(
+        db,
+        employee=employee,
+        work_date=work_date,
+        now=datetime(2026, 7, 22, tzinfo=UTC),
+    )
+
+    assert row.status == "late"
+    assert row.deductible_late_seconds == 45 * 60
+    assert row.early_leave_seconds == 2 * 60 * 60
+    assert {issue["code"] for issue in row.issues} >= {"late", "early_leave"}
 
 
 def test_locked_windows_time_is_not_worked_or_idle(attendance_context):

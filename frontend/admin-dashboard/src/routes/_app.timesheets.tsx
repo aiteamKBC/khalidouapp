@@ -1,10 +1,26 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
-import { Activity, AlertTriangle, Camera, Clock3, Coffee, Download, RefreshCw } from "lucide-react";
+import {
+  Activity,
+  AlertTriangle,
+  Camera,
+  Clock3,
+  Coffee,
+  Download,
+  RefreshCw,
+  TimerReset,
+} from "lucide-react";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -15,6 +31,8 @@ import {
 } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { StatusBadge } from "@/components/ui/status-badge";
+import { WorkdayTimeline } from "@/components/workday-timeline";
+import { getDailyAttendance } from "@/api/attendance";
 import { listTimesheetEmployeeOptions, listTimesheets } from "@/api/timesheets";
 import { listTeams } from "@/api/teams";
 import { retryTransientRequest } from "@/api/client";
@@ -22,6 +40,7 @@ import { useAuth } from "@/lib/auth";
 import { downloadCSV, formatClock, formatMinutes, formatRelative } from "@/lib/format";
 import { paginateRows } from "@/lib/timesheet-pagination";
 import type { LucideIcon } from "lucide-react";
+import type { Timesheet } from "@/types";
 
 export const Route = createFileRoute("/_app/timesheets")({
   component: TimesheetsPage,
@@ -35,6 +54,7 @@ function TimesheetsPage() {
   const [teamId, setTeamId] = useState("all");
   const [empId, setEmpId] = useState("all");
   const [page, setPage] = useState(0);
+  const [selectedTimeline, setSelectedTimeline] = useState<Timesheet | null>(null);
   const perPage = 50;
   const isCurrentPeriod = selectedPeriodIncludesToday(view, date);
 
@@ -87,14 +107,13 @@ function TimesheetsPage() {
     () =>
       filtered.reduce(
         (sum, row) => ({
-          total: sum.total + row.totalMinutes,
-          span: sum.span + row.observedSpanMinutes,
+          regular: sum.regular + Math.max(0, row.activeMinutes - row.overtimeMinutes),
+          overtime: sum.overtime + row.overtimeMinutes,
           untracked: sum.untracked + row.untrackedMinutes,
-          active: sum.active + row.activeMinutes,
           idle: sum.idle + row.idleMinutes,
           screenshots: sum.screenshots + row.screenshotCount,
         }),
-        { total: 0, span: 0, untracked: 0, active: 0, idle: 0, screenshots: 0 },
+        { regular: 0, overtime: 0, untracked: 0, idle: 0, screenshots: 0 },
       ),
     [filtered],
   );
@@ -117,6 +136,8 @@ function TimesheetsPage() {
                   employee: empName(t.employeeId, t.employeeName),
                   team: teamName(t.teamId),
                   total_minutes: t.totalMinutes,
+                  regular_work_minutes: Math.max(0, t.activeMinutes - t.overtimeMinutes),
+                  overtime_minutes: t.overtimeMinutes,
                   observed_span_minutes: t.observedSpanMinutes,
                   untracked_minutes: t.untrackedMinutes,
                   active_minutes: t.activeMinutes,
@@ -240,12 +261,17 @@ function TimesheetsPage() {
       </Card>
 
       <div className="mb-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-        <TimesheetMetric icon={Clock3} label="Tracked time" value={formatMinutes(totals.total)} />
         <TimesheetMetric
-          icon={Activity}
-          label="Active"
-          value={formatMinutes(totals.active)}
+          icon={Clock3}
+          label="Regular work"
+          value={formatMinutes(totals.regular)}
           tone="green"
+        />
+        <TimesheetMetric
+          icon={TimerReset}
+          label="Overtime"
+          value={formatMinutes(totals.overtime)}
+          tone="fuchsia"
         />
         <TimesheetMetric
           icon={Coffee}
@@ -303,13 +329,17 @@ function TimesheetsPage() {
             </div>
           ) : (
             pagination.rows.map((t) => {
-              const activePct = t.observedSpanMinutes
-                ? Math.round((t.activeMinutes / t.observedSpanMinutes) * 100)
+              const regularActiveMinutes = Math.max(0, t.activeMinutes - t.overtimeMinutes);
+              const regularPct = t.observedSpanMinutes
+                ? Math.round((regularActiveMinutes / t.observedSpanMinutes) * 100)
+                : 0;
+              const overtimePct = t.observedSpanMinutes
+                ? Math.round((t.overtimeMinutes / t.observedSpanMinutes) * 100)
                 : 0;
               const idlePct = t.observedSpanMinutes
                 ? Math.round((t.idleMinutes / t.observedSpanMinutes) * 100)
                 : 0;
-              const untrackedPct = Math.max(0, 100 - activePct - idlePct);
+              const untrackedPct = Math.max(0, 100 - regularPct - overtimePct - idlePct);
               return (
                 <div
                   key={t.id}
@@ -367,13 +397,20 @@ function TimesheetsPage() {
                     <div className="flex h-3 overflow-hidden rounded-full bg-muted">
                       <span
                         className="bg-success"
-                        style={{ width: `${Math.max(0, activePct)}%` }}
+                        style={{ width: `${Math.max(0, regularPct)}%` }}
+                      />
+                      <span
+                        className="bg-fuchsia-500 dark:bg-pink-400"
+                        style={{ width: `${Math.max(0, overtimePct)}%` }}
                       />
                       <span className="bg-warning" style={{ width: `${Math.max(0, idlePct)}%` }} />
                       <span className="bg-destructive/35" style={{ width: `${untrackedPct}%` }} />
                     </div>
-                    <div className="mt-2 grid grid-cols-2 gap-2 text-[11px] text-muted-foreground sm:grid-cols-5">
-                      <span>Active {formatMinutes(t.activeMinutes)}</span>
+                    <div className="mt-2 grid grid-cols-2 gap-2 text-[11px] text-muted-foreground sm:grid-cols-6">
+                      <span>Regular {formatMinutes(regularActiveMinutes)}</span>
+                      <span className="font-semibold text-fuchsia-700 dark:text-pink-300">
+                        Overtime {formatMinutes(t.overtimeMinutes)}
+                      </span>
                       <span>Recorded idle {formatMinutes(t.idleMinutes)}</span>
                       <span>Untracked {formatMinutes(t.untrackedMinutes)}</span>
                       <span>Shift idle {formatMinutes(t.accountableIdleMinutes)}</span>
@@ -382,6 +419,15 @@ function TimesheetsPage() {
                   </div>
 
                   <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setSelectedTimeline(t)}
+                    >
+                      <Activity className="mr-1 h-3.5 w-3.5" />
+                      Timeline
+                    </Button>
                     <span className="rounded-full bg-muted px-2.5 py-1 text-xs font-bold text-muted-foreground">
                       {t.screenshotCount} shots
                     </span>
@@ -427,6 +473,21 @@ function TimesheetsPage() {
           </div>
         )}
       </Card>
+
+      <TimesheetTimelineDialog
+        timesheet={selectedTimeline}
+        employeeName={
+          selectedTimeline
+            ? empName(selectedTimeline.employeeId, selectedTimeline.employeeName)
+            : undefined
+        }
+        onOpenChange={(open) => {
+          if (!open) {
+            setSelectedTimeline(null);
+            void ts.refetch();
+          }
+        }}
+      />
     </div>
   );
 }
@@ -478,12 +539,13 @@ function TimesheetMetric({
   icon: LucideIcon;
   label: string;
   value: string | number;
-  tone?: "default" | "green" | "amber";
+  tone?: "default" | "green" | "amber" | "fuchsia";
 }) {
   const toneClass = {
     default: "bg-primary/10 text-primary",
     green: "bg-success/10 text-success",
     amber: "bg-warning/20 text-warning-foreground",
+    fuchsia: "bg-fuchsia-500/15 text-fuchsia-700 dark:text-pink-300",
   }[tone];
 
   return (
@@ -500,5 +562,50 @@ function TimesheetMetric({
         </div>
       </div>
     </Card>
+  );
+}
+
+function TimesheetTimelineDialog({
+  timesheet,
+  employeeName,
+  onOpenChange,
+}: {
+  timesheet: Timesheet | null;
+  employeeName?: string;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const isCurrentDay = timesheet?.date === todayDateValue();
+  const detail = useQuery({
+    queryKey: ["timesheet-timeline", timesheet?.employeeId, timesheet?.date],
+    queryFn: ({ signal }) => getDailyAttendance(timesheet!.employeeId, timesheet!.date, signal),
+    enabled: Boolean(timesheet),
+    staleTime: isCurrentDay ? 30_000 : 5 * 60_000,
+    refetchInterval: timesheet && isCurrentDay ? 60_000 : false,
+    refetchIntervalInBackground: false,
+  });
+
+  return (
+    <Dialog open={Boolean(timesheet)} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[90vh] max-w-5xl overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>
+            {employeeName ?? "Employee"} · {timesheet?.date}
+          </DialogTitle>
+          <DialogDescription>
+            Workday timeline with regular work and overtime shown as separate totals.
+          </DialogDescription>
+        </DialogHeader>
+
+        {detail.isLoading ? (
+          <div className="h-64 animate-pulse rounded-xl bg-muted" />
+        ) : detail.isError ? (
+          <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-5 text-sm text-destructive">
+            This workday timeline could not be loaded.
+          </div>
+        ) : (
+          <WorkdayTimeline timeline={detail.data?.timeline} />
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }

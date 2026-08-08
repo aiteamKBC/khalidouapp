@@ -59,6 +59,7 @@ import {
   formatSessionStatus,
 } from "@/lib/format";
 import { WorkdayTimeline } from "@/components/workday-timeline";
+import { AttendanceStatusBadges } from "@/components/attendance/attendance-status-badges";
 import { PageHeader } from "@/components/ui/page-header";
 import { StatCard } from "@/components/ui/stat-card";
 import { Button } from "@/components/ui/button";
@@ -995,7 +996,11 @@ function MonthlyAttendanceRow({
       <TableCell className="font-semibold">{shortTime(row.totalPayableSeconds)}</TableCell>
       <AttendanceOvertimeCell row={row} />
       <TableCell>
-        <StatusBadge status={row.status} />
+        <AttendanceStatusBadges
+          status={row.status}
+          deductibleLateSeconds={row.deductibleLateSeconds}
+          earlyLeaveSeconds={row.earlyLeaveSeconds}
+        />
       </TableCell>
       <TableCell className="text-right">
         <Button type="button" size="sm" variant="outline" asChild>

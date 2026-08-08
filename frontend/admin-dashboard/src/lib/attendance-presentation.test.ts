@@ -1,7 +1,22 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { buildAttendanceNotices, overtimeReviewExplanation } from "./attendance-presentation.ts";
+import {
+  attendanceStatusBadges,
+  buildAttendanceNotices,
+  overtimeReviewExplanation,
+} from "./attendance-presentation.ts";
+
+test("late arrival and early leave are both presented as attendance statuses", () => {
+  assert.deepEqual(
+    attendanceStatusBadges({
+      status: "late",
+      deductibleLateSeconds: 32 * 60,
+      earlyLeaveSeconds: 2 * 60 * 60,
+    }),
+    ["late", "left_early"],
+  );
+});
 
 test("pending overtime is presented once and never described as rejected", () => {
   const notices = buildAttendanceNotices({

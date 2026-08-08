@@ -20,6 +20,7 @@ type BackendTimesheet = {
   active_seconds: number;
   idle_seconds: number;
   observed_idle_seconds?: number;
+  recorded_overtime_seconds?: number;
   adjustment_seconds?: number;
   deducted_seconds?: number;
   points?: number;
@@ -47,6 +48,7 @@ function mapTimesheet(row: BackendTimesheet, teamId: string): Timesheet {
     activeMinutes: toMinutes(row.active_seconds),
     idleMinutes: toMinutes(row.observed_idle_seconds ?? row.idle_seconds),
     accountableIdleMinutes: toMinutes(row.idle_seconds),
+    overtimeMinutes: toMinutes(row.recorded_overtime_seconds ?? 0),
     adjustmentMinutes: toMinutes(row.adjustment_seconds ?? 0),
     deductedMinutes: toMinutes(row.deducted_seconds ?? 0),
     points: row.points ?? Math.round((row.active_seconds / 3600) * 100) / 100,

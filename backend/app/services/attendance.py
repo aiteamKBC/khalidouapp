@@ -494,6 +494,8 @@ def calculate_daily_attendance(
     issues: list[dict] = []
     if deductible_late:
         issues.append({"code": "late", "seconds": deductible_late})
+    if early_leave:
+        issues.append({"code": "early_leave", "seconds": early_leave})
     if deductible_idle:
         issues.append({"code": "unexplained_idle", "seconds": deductible_idle})
     if pending_overtime:
@@ -592,6 +594,7 @@ def calculate_daily_attendance(
             "leave_request_id": str(leave.id) if leave else None,
             "approved_early_leave_seconds": approved_early_leave_seconds,
             "schedule_override_id": schedule["override_id"],
+            "profile_history_applied": bool(schedule.get("profile_history_applied", False)),
             "attendance_correction_id": str(correction.id) if correction else None,
             "attendance_adjustment_seconds": attendance_adjustment_seconds,
             "attendance_correction_reason": correction.reason if correction else None,
@@ -770,6 +773,7 @@ def current_idle_contexts(
                     EmployeeWorkProfile.shift_start,
                     EmployeeWorkProfile.shift_end,
                     EmployeeWorkProfile.working_days,
+                    EmployeeWorkProfile.weekly_off_days,
                     EmployeeWorkProfile.break_rules,
                 )
             )

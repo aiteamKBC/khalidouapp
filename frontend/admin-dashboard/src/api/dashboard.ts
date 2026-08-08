@@ -77,6 +77,7 @@ export async function listDashboardWorkTrend(
     activeMinutes: toMinutes(row.active_seconds),
     idleMinutes: toMinutes(row.idle_seconds),
     accountableIdleMinutes: toMinutes(row.idle_seconds),
+    overtimeMinutes: 0,
     adjustmentMinutes: toMinutes(row.adjustment_seconds),
     deductedMinutes: toMinutes(row.deducted_seconds),
     points: Math.round((row.active_seconds / 3600) * 100) / 100,

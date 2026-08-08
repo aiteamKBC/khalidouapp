@@ -564,8 +564,13 @@ def daily_attendance(
             if data["actual_sign_out_at"] is None:
                 data["actual_sign_out_at"] = data["actual_last_activity_at"]
 
-        if status and data["status"] != status:
-            continue
+        if status:
+            if status == "late" and int(data["deductible_late_seconds"]) <= 0:
+                continue
+            if status == "left_early" and int(data["early_leave_seconds"]) <= 0:
+                continue
+            if status not in {"late", "left_early"} and data["status"] != status:
+                continue
         if late_only and int(data["deductible_late_seconds"]) <= 0:
             continue
         if missing_check_in and not any(
@@ -975,7 +980,28 @@ def employee_attendance_range(
     cursor = start_date
     while cursor <= ledger_end_date:
         attendance = existing_by_day.get(cursor)
-        if attendance is not None and cursor != employee_today:
+        schedule_history_applied = bool(
+            schedules_by_day.get(cursor, {}).get("profile_history_applied", False)
+        )
+        attendance_has_schedule_history = bool(
+            attendance
+            and (attendance.calculation_sources or {}).get("profile_history_applied", False)
+        )
+        if (
+            attendance is not None
+            and cursor != employee_today
+            and (not schedule_history_applied or attendance_has_schedule_history)
+        ):
+            item = serialize_daily_attendance(attendance)
+        elif attendance is not None and schedule_history_applied:
+            attendance, _ = calculate_daily_attendance(
+                db,
+                employee=employee,
+                work_date=cursor,
+                now=now,
+                existing_attendance=attendance,
+                profile=profile,
+            )
             item = serialize_daily_attendance(attendance)
         elif cursor == employee_today or cursor in evidence_days:
             attendance, _ = cached_daily_attendance(

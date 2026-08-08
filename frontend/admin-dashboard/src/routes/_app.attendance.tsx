@@ -15,6 +15,7 @@ import {
 
 import { getDailyAttendance, listDailyAttendanceWithMeta } from "@/api/attendance";
 import { listTeams } from "@/api/teams";
+import { AttendanceStatusBadges } from "@/components/attendance/attendance-status-badges";
 import { EmployeeAttendanceHistoryDialog } from "@/components/attendance/employee-attendance-history-dialog";
 import { WorkdayTimeline } from "@/components/workday-timeline";
 import { Button } from "@/components/ui/button";
@@ -406,7 +407,11 @@ function AttendancePage() {
                             Calculating…
                           </span>
                         ) : (
-                          <StatusBadge status={row.status} />
+                          <AttendanceStatusBadges
+                            status={row.status}
+                            deductibleLateSeconds={row.deductibleLateSeconds}
+                            earlyLeaveSeconds={row.earlyLeaveSeconds}
+                          />
                         )}
                       </TableCell>
                       <TableCell className="text-right">

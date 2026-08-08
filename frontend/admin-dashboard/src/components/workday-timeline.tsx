@@ -121,10 +121,23 @@ export function WorkdayTimeline({ timeline }: { timeline?: WorkdayTimelineData }
     1,
     timeline.intervals.reduce((total, interval) => total + interval.durationSeconds, 0),
   );
+  const overtimeSeconds = timeline.intervals.reduce(
+    (total, interval) =>
+      total +
+      (interval.type === "worked" && interval.workCategory === "extra"
+        ? interval.durationSeconds
+        : 0),
+    0,
+  );
+  const regularWorkedSeconds = Math.max(0, timeline.workedSeconds - overtimeSeconds);
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-3 text-sm md:grid-cols-6">
+      <div
+        className={`grid grid-cols-2 gap-3 text-sm ${
+          overtimeSeconds > 0 ? "md:grid-cols-7" : "md:grid-cols-6"
+        }`}
+      >
         <Metric
           label="First start"
           value={formatAttendanceStart(
@@ -142,7 +155,10 @@ export function WorkdayTimeline({ timeline }: { timeline?: WorkdayTimelineData }
           label="Session"
           value={formatSessionStatus(timeline.isRunning, timeline.lastEndedAt, timeline.timezone)}
         />
-        <Metric label="Worked" value={formatDurationSeconds(timeline.workedSeconds)} />
+        <Metric label="Regular worked" value={formatDurationSeconds(regularWorkedSeconds)} />
+        {overtimeSeconds > 0 && (
+          <Metric label="Overtime" value={formatDurationSeconds(overtimeSeconds)} />
+        )}
         <Metric
           label={timeline.approvedLeave ? "Leave" : "Timeline idle"}
           value={formatDurationSeconds(

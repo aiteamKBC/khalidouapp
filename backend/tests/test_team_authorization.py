@@ -406,6 +406,43 @@ def test_daily_attendance_includes_start_grace_for_dashboard_alerts(team_client)
     assert employee_row["screenshot_count"] == 1
 
 
+def test_daily_attendance_left_early_filter_includes_an_also_late_employee(team_client):
+    client, data = team_client
+    work_day = date(2026, 8, 6)
+    with data["session_factory"]() as db:
+        db.add(
+            DailyAttendance(
+                company_id=data["employee_a"].company_id,
+                employee_id=data["employee_a"].id,
+                work_date=work_day,
+                timezone="UTC",
+                scheduled_start_at=datetime(2026, 8, 6, 9, 0, tzinfo=UTC),
+                scheduled_end_at=datetime(2026, 8, 6, 16, 0, tzinfo=UTC),
+                actual_first_activity_at=datetime(2026, 8, 6, 9, 47, tzinfo=UTC),
+                actual_last_activity_at=datetime(2026, 8, 6, 14, 0, tzinfo=UTC),
+                deductible_late_seconds=32 * 60,
+                early_leave_seconds=2 * 60 * 60,
+                status="late",
+                issues=[
+                    {"code": "late", "seconds": 32 * 60},
+                    {"code": "early_leave", "seconds": 2 * 60 * 60},
+                ],
+                calculated_at=datetime(2026, 8, 7, tzinfo=UTC),
+            )
+        )
+        db.commit()
+
+    response = client.get(
+        "/api/v1/attendance/daily",
+        params={"day": work_day.isoformat(), "status": "left_early"},
+        headers=data["general_headers"],
+    )
+
+    assert response.status_code == 200
+    employee_ids = {row["employee_id"] for row in response.json()["data"]["rows"]}
+    assert str(data["employee_a"].id) in employee_ids
+
+
 def test_attendance_screenshot_counts_exclude_soft_deleted_captures(team_client):
     client, data = team_client
     today = local_today("UTC")
@@ -2833,7 +2870,9 @@ def test_daily_timesheet_uses_employee_local_date_for_sessions_and_screenshots(
     )
 
 
-def test_timesheet_records_five_idle_hours_inside_an_eleven_hour_span(team_client):
+def test_timesheet_excludes_post_shift_idle_from_observed_time_and_reports_overtime(
+    team_client,
+):
     client, data = team_client
     work_day = datetime(2026, 7, 21, tzinfo=UTC).date()
     started_at = datetime(2026, 7, 21, 9, 30, tzinfo=UTC)
@@ -2878,6 +2917,15 @@ def test_timesheet_records_five_idle_hours_inside_an_eleven_hour_span(team_clien
         )
         db.commit()
 
+    # Materialize the schedule-scoped projection before reading the bounded
+    # list endpoint; timesheet lists intentionally do not rebuild a timeline
+    # for every employee.
+    attendance_response = client.get(
+        f"/api/v1/attendance/employee/{data['employee_a'].id}/{work_day.isoformat()}",
+        headers=data["general_headers"],
+    )
+    assert attendance_response.status_code == 200
+
     response = client.get(
         f"/api/v1/timesheets/daily?day={work_day.isoformat()}",
         headers=data["general_headers"],
@@ -2890,12 +2938,160 @@ def test_timesheet_records_five_idle_hours_inside_an_eleven_hour_span(team_clien
         if item["employee_id"] == str(data["employee_a"].id)
     )
     assert row["active_seconds"] == 6 * 60 * 60
-    assert row["observed_idle_seconds"] == 5 * 60 * 60
-    assert row["observed_tracked_seconds"] == 11 * 60 * 60
-    assert row["observed_span_seconds"] == 11 * 60 * 60
-    assert row["untracked_seconds"] == 0
+    # Only the 15:30-18:00 in-shift portion is eligible, less the configured
+    # 16:30-16:45 break. The remaining post-shift device-idle state must not be
+    # presented as worked/attendance time.
+    assert row["observed_idle_seconds"] == 2 * 60 * 60 + 15 * 60
+    assert row["observed_tracked_seconds"] == 8 * 60 * 60 + 15 * 60
+    assert row["observed_span_seconds"] == 8 * 60 * 60 + 30 * 60
+    assert row["untracked_seconds"] == 15 * 60
+    assert row["recorded_overtime_seconds"] == 30 * 60
     assert row["start_time"] == started_at.isoformat()
-    assert row["end_time"] == ended_at.isoformat()
+    assert row["end_time"] == datetime(2026, 7, 21, 18, 0, tzinfo=UTC).isoformat()
+
+
+def test_timesheet_repairs_stale_regular_work_on_explicit_weekly_off(team_client):
+    client, data = team_client
+    work_day = date(2026, 7, 24)  # Friday is the default explicit weekly off.
+    started_at = datetime(2026, 7, 24, 10, 0, tzinfo=UTC)
+    ended_at = datetime(2026, 7, 24, 13, 0, tzinfo=UTC)
+
+    with data["session_factory"]() as db:
+        employee = db.get(Employee, data["employee_a"].id)
+        profile = get_or_create_work_profile(db, employee)
+        profile.working_days = sorted(set(profile.working_days or []) | {work_day.weekday()})
+        profile.weekly_off_days = sorted(
+            set(profile.weekly_off_days or []) | {work_day.weekday()}
+        )
+        session = db.get(WorkSession, data["session_a"].id)
+        session.timezone = "UTC"
+        session.started_at = started_at
+        session.ended_at = ended_at
+        session.status = "ended"
+        session.active_seconds = 3 * 60 * 60
+        session.idle_seconds = 0
+        db.add(
+            DailyAttendance(
+                company_id=employee.company_id,
+                employee_id=employee.id,
+                work_date=work_day,
+                timezone="UTC",
+                scheduled_start_at=datetime(2026, 7, 24, 9, 0, tzinfo=UTC),
+                scheduled_end_at=datetime(2026, 7, 24, 18, 0, tzinfo=UTC),
+                actual_first_activity_at=started_at,
+                actual_last_activity_at=ended_at,
+                normal_worked_seconds=3 * 60 * 60,
+                recorded_overtime_seconds=0,
+                status="present",
+                calculated_at=datetime(2026, 7, 25, tzinfo=UTC),
+            )
+        )
+        db.commit()
+
+    response = client.get(
+        f"/api/v1/timesheets/daily?day={work_day.isoformat()}",
+        headers=data["general_headers"],
+    )
+
+    assert response.status_code == 200
+    row = next(
+        item
+        for item in response.json()["data"]
+        if item["employee_id"] == str(data["employee_a"].id)
+    )
+    assert row["recorded_overtime_seconds"] == 3 * 60 * 60
+
+    with data["session_factory"]() as db:
+        repaired = db.scalar(
+            select(DailyAttendance).where(
+                DailyAttendance.employee_id == data["employee_a"].id,
+                DailyAttendance.work_date == work_day,
+            )
+        )
+        assert repaired.status == "worked_off_day"
+        assert repaired.scheduled_start_at is None
+        assert repaired.normal_worked_seconds == 0
+        assert repaired.recorded_overtime_seconds == 3 * 60 * 60
+
+
+def test_schedule_change_repairs_past_attendance_with_the_historical_weekly_off(
+    team_client,
+):
+    client, data = team_client
+    work_day = date(2026, 7, 24)  # Friday was the weekly off before the change.
+    started_at = datetime(2026, 7, 24, 10, 0, tzinfo=UTC)
+    ended_at = datetime(2026, 7, 24, 13, 0, tzinfo=UTC)
+
+    with data["session_factory"]() as db:
+        employee = db.get(Employee, data["employee_a"].id)
+        get_or_create_work_profile(db, employee)
+        session = db.get(WorkSession, data["session_a"].id)
+        session.timezone = "UTC"
+        session.started_at = started_at
+        session.ended_at = ended_at
+        session.status = "ended"
+        session.active_seconds = 3 * 60 * 60
+        session.idle_seconds = 0
+        db.commit()
+
+    original = client.get(
+        f"/api/v1/attendance/employee/{data['employee_a'].id}/{work_day.isoformat()}",
+        headers=data["general_headers"],
+    )
+    assert original.status_code == 200
+    assert original.json()["data"]["status"] == "worked_off_day"
+
+    changed = client.patch(
+        f"/api/v1/employees/{data['employee_a'].id}/work-profile",
+        json={
+            "working_days": [0, 1, 2, 3, 4, 5],
+            "weekly_off_days": [6],
+        },
+        headers=data["general_headers"],
+    )
+    assert changed.status_code == 200
+
+    def store_stale_regular_projection() -> None:
+        with data["session_factory"]() as db:
+            attendance = db.scalar(
+                select(DailyAttendance).where(
+                    DailyAttendance.employee_id == data["employee_a"].id,
+                    DailyAttendance.work_date == work_day,
+                )
+            )
+            attendance.scheduled_start_at = datetime(2026, 7, 24, 9, 0, tzinfo=UTC)
+            attendance.scheduled_end_at = datetime(2026, 7, 24, 18, 0, tzinfo=UTC)
+            attendance.normal_worked_seconds = 3 * 60 * 60
+            attendance.recorded_overtime_seconds = 0
+            attendance.status = "present"
+            attendance.calculation_sources = {}
+            db.commit()
+
+    store_stale_regular_projection()
+    history = client.get(
+        f"/api/v1/attendance/employee/{data['employee_a'].id}",
+        params={"start_date": work_day.isoformat(), "end_date": work_day.isoformat()},
+        headers=data["general_headers"],
+    )
+    assert history.status_code == 200
+    history_row = history.json()["data"]["rows"][0]
+    assert history_row["status"] == "worked_off_day"
+    assert history_row["scheduled_start_at"] is None
+    assert history_row["normal_worked_seconds"] == 0
+    assert history_row["recorded_overtime_seconds"] == 3 * 60 * 60
+
+    store_stale_regular_projection()
+    timesheet = client.get(
+        f"/api/v1/timesheets/daily?day={work_day.isoformat()}",
+        headers=data["general_headers"],
+    )
+    assert timesheet.status_code == 200
+    timesheet_row = next(
+        item
+        for item in timesheet.json()["data"]
+        if item["employee_id"] == str(data["employee_a"].id)
+    )
+    assert timesheet_row["recorded_overtime_seconds"] == 3 * 60 * 60
 
 
 def test_timesheet_ignores_a_terminal_event_days_after_the_last_heartbeat(team_client):
@@ -3189,11 +3385,11 @@ def test_desktop_today_excludes_idle_on_an_off_day(team_client):
         row for row in timesheet.json()["data"] if row["employee_id"] == str(data["employee_a"].id)
     )
     assert timesheet_row["idle_seconds"] == 0
-    assert timesheet_row["observed_idle_seconds"] == 20 * 60
-    assert timesheet_row["observed_tracked_seconds"] == (timesheet_row["active_seconds"] + 20 * 60)
-    assert timesheet_row["observed_span_seconds"] == (
-        timesheet_row["observed_tracked_seconds"] + timesheet_row["untracked_seconds"]
-    )
+    assert timesheet_row["observed_idle_seconds"] == 0
+    assert timesheet_row["observed_tracked_seconds"] == timesheet_row["active_seconds"]
+    assert timesheet_row["observed_span_seconds"] == timesheet_row["active_seconds"]
+    assert timesheet_row["untracked_seconds"] == 0
+    assert timesheet_row["recorded_overtime_seconds"] == timesheet_row["active_seconds"]
     assert timeline_response.json()["data"]["idle_seconds"] == 0
     overview_row = employee_overview.json()["data"][0]
     assert overview_row["idle_seconds"] == 0

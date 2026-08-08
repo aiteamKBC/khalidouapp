@@ -8,6 +8,7 @@ import {
   getEmployeeAttendanceRange,
   type DailyAttendance,
 } from "@/api/attendance";
+import { AttendanceStatusBadges } from "@/components/attendance/attendance-status-badges";
 import { WorkdayTimeline } from "@/components/workday-timeline";
 import { Button } from "@/components/ui/button";
 import {
@@ -17,7 +18,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { StatusBadge } from "@/components/ui/status-badge";
 import {
   Table,
   TableBody,
@@ -363,7 +363,11 @@ function AttendanceDayRow({
         </span>
       </TableCell>
       <TableCell>
-        <StatusBadge status={row.status} />
+        <AttendanceStatusBadges
+          status={row.status}
+          deductibleLateSeconds={row.deductibleLateSeconds}
+          earlyLeaveSeconds={row.earlyLeaveSeconds}
+        />
       </TableCell>
       <TableCell className="text-right">
         <Button type="button" size="sm" variant="outline" asChild>

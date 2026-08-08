@@ -25,7 +25,15 @@ from app.models import (
     WorkSession,
 )
 from app.services.activity_timeline import local_today, session_observation_bounds
-from app.services.attendance import accountable_idle_seconds, cached_daily_attendance
+from app.services.attendance import (
+    accountable_idle_seconds,
+    cached_daily_attendance,
+    calculate_daily_attendance,
+)
+from app.services.schedules import (
+    profile_schedule_audits_by_employee,
+    profile_schedule_history_applies,
+)
 
 router = APIRouter(prefix="/timesheets", tags=["timesheets"])
 ACTIVE_SESSION_STATUSES = {"active", "idle", "locked", "sleeping"}
@@ -84,12 +92,15 @@ def _empty_timesheet_item(
         "_last_signal_at": None,
         "_has_open_session": False,
         "_tracking_status": None,
-        "_has_cross_day_session": False,
+        "_has_attendance_projection": False,
+        "_attendance_start_at": None,
+        "_attendance_end_at": None,
         "_sessions": [],
         "_session_count": 0,
         "active_seconds": 0,
         "idle_seconds": 0,
         "_observed_idle_seconds": 0,
+        "recorded_overtime_seconds": 0,
         "deducted_seconds": 0,
         "adjustment_seconds": 0,
     }
@@ -263,8 +274,6 @@ def timesheet_rows(
             for session in item["_sessions"]:
                 observation = observations_by_session[session.id]
                 effective_end_at = observation["effective_end_at"]
-                if _employee_local_date(effective_end_at, timezone_name) != work_date:
-                    item["_has_cross_day_session"] = True
                 clipped_end_at = _clip_to_workday(
                     effective_end_at,
                     work_date,
@@ -317,31 +326,6 @@ def timesheet_rows(
         )
 
     employee_ids = {key[0] for key in result_by_key}
-    employees_by_id = (
-        {
-            employee.id: employee
-            for employee in db.scalars(
-                select(Employee)
-                .options(
-                    selectinload(Employee.work_profile).load_only(
-                        EmployeeWorkProfile.id,
-                        EmployeeWorkProfile.employee_id,
-                        EmployeeWorkProfile.shift_start,
-                        EmployeeWorkProfile.shift_end,
-                        EmployeeWorkProfile.working_days,
-                        EmployeeWorkProfile.break_rules,
-                        EmployeeWorkProfile.late_grace_minutes,
-                    )
-                )
-                .where(
-                    Employee.company_id == company_id,
-                    Employee.id.in_(employee_ids),
-                )
-            ).all()
-        }
-        if employee_ids and refresh_current_attendance
-        else {}
-    )
     stored_attendance_by_key: dict[tuple[UUID, date], DailyAttendance] = {}
     if employee_ids:
         for attendance in db.scalars(
@@ -354,20 +338,117 @@ def timesheet_rows(
         ).all():
             stored_attendance_by_key[(attendance.employee_id, attendance.work_date)] = attendance
 
-    # Raw session idle is a device state, not necessarily accountable idle.
-    # Migration 51 clears the derived attendance cache so old days can adopt
-    # the sustained-work rule. Rebuild only missing rows here; after the first
-    # read they are stored again and historical range reads stay inexpensive.
+    employees_by_id: dict[UUID, Employee] = {}
+    profiles_by_employee_id: dict[UUID, EmployeeWorkProfile] = {}
+    if employee_ids and refresh_current_attendance:
+        employees_by_id = {
+            employee.id: employee
+            for employee in db.scalars(
+                select(Employee)
+                .options(
+                    selectinload(Employee.work_profile).load_only(
+                        EmployeeWorkProfile.id,
+                        EmployeeWorkProfile.employee_id,
+                        EmployeeWorkProfile.shift_start,
+                        EmployeeWorkProfile.shift_end,
+                        EmployeeWorkProfile.working_days,
+                        EmployeeWorkProfile.weekly_off_days,
+                        EmployeeWorkProfile.break_rules,
+                        EmployeeWorkProfile.late_grace_minutes,
+                    )
+                )
+                .where(
+                    Employee.company_id == company_id,
+                    Employee.id.in_(employee_ids),
+                )
+            ).all()
+        }
+        profiles_by_employee_id = {
+            employee_id: employee.work_profile
+            for employee_id, employee in employees_by_id.items()
+            if employee.work_profile is not None
+        }
+    elif stale_candidate_ids := {
+        attendance.employee_id
+        for attendance in stored_attendance_by_key.values()
+    }:
+        # Historical repair needs only employees with a previously scheduled
+        # projection. Load each employee and profile together in one query so
+        # the normal list path keeps its bounded query count.
+        for employee, profile in db.execute(
+            select(Employee, EmployeeWorkProfile)
+            .join(EmployeeWorkProfile, EmployeeWorkProfile.employee_id == Employee.id)
+            .where(
+                Employee.company_id == company_id,
+                Employee.id.in_(stale_candidate_ids),
+            )
+        ).all():
+            employees_by_id[employee.id] = employee
+            profiles_by_employee_id[employee.id] = profile
+
+    profile_audits_by_employee = (
+        profile_schedule_audits_by_employee(db, list(employees_by_id.values()))
+        if stored_attendance_by_key and employees_by_id
+        else {}
+    )
+
+    # Raw session idle is a device state, not necessarily attendance idle.
+    # Broad daily/weekly/monthly reads deliberately reuse materialized
+    # attendance so they never rebuild a timeline per employee. Callers that
+    # opt into refresh create missing projections and refresh the current day.
     attendance_now = datetime.now(UTC)
+    repaired_stale_attendance = False
     for (row_employee_id, work_date), item in result_by_key.items():
         timezone_name = str(item["timezone"])
         attendance = stored_attendance_by_key.get((row_employee_id, work_date))
         timeline = None
+        employee = employees_by_id.get(row_employee_id)
+        profile = profiles_by_employee_id.get(row_employee_id)
+        is_explicit_weekly_off = bool(
+            profile is not None
+            and work_date.weekday() in set(profile.weekly_off_days or [])
+        )
+        needs_profile_history_repair = bool(
+            attendance is not None
+            and employee is not None
+            and profile is not None
+            and not (attendance.calculation_sources or {}).get(
+                "profile_history_applied", False
+            )
+            and profile_schedule_history_applies(
+                employee,
+                profile,
+                work_date,
+                profile_audits_by_employee.get(row_employee_id),
+                timezone_name=timezone_name,
+            )
+        )
+        if (
+            attendance is not None
+            and (
+                needs_profile_history_repair
+                or (attendance.scheduled_start_at is not None and is_explicit_weekly_off)
+            )
+            and employee is not None
+        ):
+            # Repair historical projections produced before schedule history
+            # and explicit weekly-off precedence were enforced.
+            attendance, timeline = calculate_daily_attendance(
+                db,
+                employee=employee,
+                work_date=work_date,
+                now=attendance_now,
+                timezone_name=timezone_name,
+                device_id=device_id,
+                existing_attendance=attendance,
+                profile=profile,
+            )
+            stored_attendance_by_key[(row_employee_id, work_date)] = attendance
+            repaired_stale_attendance = True
         if refresh_current_attendance and (
             attendance is None
             or work_date == local_today(timezone_name, attendance_now)
         ):
-            employee = employees_by_id.get(row_employee_id)
             if employee is None:
                 continue
             attendance, timeline = cached_daily_attendance(
@@ -385,33 +466,36 @@ def timesheet_rows(
 
         if attendance is not None:
             calculation_sources = attendance.calculation_sources or {}
+            item["_has_attendance_projection"] = True
             item["idle_seconds"] = accountable_idle_seconds(attendance)
-            materialized_observed_idle = max(
+            # The scoped attendance timeline excludes idle/locked/sleeping
+            # device state outside the scheduled shift. Once that projection
+            # exists it is authoritative; taking max(raw, scoped) used to put
+            # hours of post-shift/overtime idle back into the timesheet.
+            item["_observed_idle_seconds"] = max(
                 0,
                 int(
                     calculation_sources.get(
                         "observed_idle_seconds",
-                        item["_observed_idle_seconds"],
+                        accountable_idle_seconds(attendance),
                     )
                 ),
             )
-            item["_observed_idle_seconds"] = (
-                materialized_observed_idle
-                if item["_has_cross_day_session"]
-                else max(
-                    int(item["_observed_idle_seconds"]),
-                    materialized_observed_idle,
-                )
+            item["recorded_overtime_seconds"] = max(
+                0,
+                int(attendance.recorded_overtime_seconds),
             )
-            item["start_time"] = (
+            attendance_start_at = (
                 _clip_to_workday(
                     attendance.actual_first_activity_at,
                     work_date,
                     timezone_name,
-                ).isoformat()
+                )
                 if attendance.actual_first_activity_at
                 else None
             )
+            item["_attendance_start_at"] = attendance_start_at
+            item["start_time"] = attendance_start_at.isoformat() if attendance_start_at else None
             is_running = (
                 work_date == local_today(timezone_name, attendance_now)
                 and bool(item["_has_open_session"])
@@ -428,6 +512,7 @@ def timesheet_rows(
             # activity. Once attendance has been calculated, its bounded work
             # evidence is authoritative for the displayed end.
             resolved_end = clipped_attendance_end
+            item["_attendance_end_at"] = resolved_end
             item["end_time"] = (
                 None
                 if is_running
@@ -556,18 +641,25 @@ def timesheet_rows(
             max(0, workday_capacity_seconds - active_seconds),
             max(0, int(item.get("_observed_idle_seconds", idle_seconds))),
         )
-        first_observed_at = item.get("_start_at")
-        last_observed_at = max(
-            (
-                value
-                for value in (
-                    item.get("_latest_end_at"),
-                    item.get("_last_signal_at"),
-                )
-                if value is not None
-            ),
-            default=None,
-        )
+        if item.get("_has_attendance_projection"):
+            # Attendance bounds stop at the last in-shift state or proven
+            # overtime work. A later idle heartbeat must not lengthen the
+            # employee's workday span.
+            first_observed_at = item.get("_attendance_start_at")
+            last_observed_at = item.get("_attendance_end_at")
+        else:
+            first_observed_at = item.get("_start_at")
+            last_observed_at = max(
+                (
+                    value
+                    for value in (
+                        item.get("_latest_end_at"),
+                        item.get("_last_signal_at"),
+                    )
+                    if value is not None
+                ),
+                default=None,
+            )
         raw_observed_span_seconds = (
             max(0, int((last_observed_at - first_observed_at).total_seconds()))
             if first_observed_at is not None and last_observed_at is not None
@@ -603,13 +695,17 @@ def timesheet_rows(
                 "active_seconds": active_seconds,
                 "idle_seconds": idle_seconds,
                 "observed_idle_seconds": observed_idle_seconds,
+                "recorded_overtime_seconds": max(
+                    0,
+                    int(item["recorded_overtime_seconds"]),
+                ),
                 "adjustment_seconds": int(item["adjustment_seconds"]),
                 "deducted_seconds": int(item["deducted_seconds"]),
                 "points": round(active_seconds / 3600, 2),
                 "screenshot_count": int(screenshot_count),
             }
         )
-    if refresh_current_attendance:
+    if refresh_current_attendance or repaired_stale_attendance:
         db.commit()
     return result
 

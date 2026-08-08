@@ -12,10 +12,26 @@ export type AttendanceNotice = {
 
 const ISSUE_LABELS: Record<string, string> = {
   late: "Late arrival",
+  early_leave: "Left early",
   unexplained_idle: "Deductible idle after grace",
   attendance_corrected: "Attendance corrected",
   missing_check_in: "Missing check-in",
 };
+
+export function attendanceStatusBadges(input: {
+  status: string;
+  deductibleLateSeconds: number;
+  earlyLeaveSeconds: number;
+}) {
+  const statuses = [input.status];
+  if (input.deductibleLateSeconds > 0 && !statuses.includes("late")) {
+    statuses.push("late");
+  }
+  if (input.earlyLeaveSeconds > 0 && !statuses.includes("left_early")) {
+    statuses.push("left_early");
+  }
+  return statuses;
+}
 
 function fallbackIssueLabel(code: string) {
   const label = code.replaceAll("_", " ");

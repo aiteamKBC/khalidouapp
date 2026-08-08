@@ -262,6 +262,7 @@ export interface Timesheet {
   activeMinutes: number;
   idleMinutes: number;
   accountableIdleMinutes: number;
+  overtimeMinutes: number;
   adjustmentMinutes: number;
   deductedMinutes: number;
   points: number;

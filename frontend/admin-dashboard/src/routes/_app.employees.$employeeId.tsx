@@ -44,6 +44,7 @@ import {
 } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { StatusBadge } from "@/components/ui/status-badge";
+import { AttendanceStatusBadges } from "@/components/attendance/attendance-status-badges";
 import { DatePicker } from "@/components/ui/date-picker";
 import {
   Table,
@@ -679,7 +680,11 @@ function EmployeeDetailPage() {
                         {formatSeconds(row.totalPayableSeconds)}
                       </TableCell>
                       <TableCell>
-                        <StatusBadge status={row.status} />
+                        <AttendanceStatusBadges
+                          status={row.status}
+                          deductibleLateSeconds={row.deductibleLateSeconds}
+                          earlyLeaveSeconds={row.earlyLeaveSeconds}
+                        />
                       </TableCell>
                       <TableCell>
                         <div className="flex justify-end gap-2">
