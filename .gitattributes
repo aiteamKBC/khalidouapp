@@ -1,0 +1,2 @@
+backend/deployment/systemd/* text eol=lf
+frontend/scripts/deploy-production.ps1 text eol=crlf

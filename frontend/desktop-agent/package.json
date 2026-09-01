@@ -1,7 +1,7 @@
 {
   "name": "khaliduo",
   "private": true,
-  "version": "1.1.54",
+  "version": "1.1.94",
   "type": "module",
   "description": "Khaliduo desktop app by Kent Consultancy.",
   "main": "dist-electron-khaliduo/main.js",
@@ -11,6 +11,7 @@
     "build": "tsc -b && vite build && tsc -p tsconfig.electron.json",
     "dist": "powershell -NoProfile -ExecutionPolicy Bypass -File ../scripts/build-desktop-installer.ps1",
     "lint": "oxlint src electron",
+    "test": "node --test tests/*.test.ts",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -64,6 +65,10 @@
       {
         "from": "build-runtime.env",
         "to": "khaliduo-runtime.env"
+      },
+      {
+        "from": "native-bin/KhaliduoInputProbe.exe",
+        "to": "input-integrity/KhaliduoInputProbe.exe"
       }
     ],
     "win": {
@@ -72,10 +77,11 @@
       "artifactName": "KhaliduoSetup.exe"
     },
     "nsis": {
-      "oneClick": false,
-      "perMachine": true,
+      "oneClick": true,
+      "perMachine": false,
+      "allowElevation": false,
       "include": "installer/installer.nsh",
-      "allowToChangeInstallationDirectory": true,
+      "allowToChangeInstallationDirectory": false,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "Khaliduo"

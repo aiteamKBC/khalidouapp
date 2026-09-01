@@ -23,6 +23,28 @@ def invitation_status(invitation: EmployeeInvitation, now: datetime | None = Non
     return "pending"
 
 
+def employee_onboarding_status(
+    employee: Employee,
+    invitation: EmployeeInvitation | None,
+    *,
+    desktop_app_linked: bool,
+) -> str:
+    """Return the employee lifecycle shown to admins.
+
+    Accepting an invitation enables authentication, but the employee is not
+    operationally active until the desktop app registers its first device.
+    Existing active employees without an invitation keep their current status.
+    """
+    if (
+        employee.status == "active"
+        and invitation is not None
+        and invitation_status(invitation) == "accepted"
+        and not desktop_app_linked
+    ):
+        return "app_pending"
+    return employee.status
+
+
 def serialize_employee_invitation(invitation: EmployeeInvitation) -> dict:
     status = invitation_status(invitation)
     return {

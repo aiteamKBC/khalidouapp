@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Query, UploadFile
 from fastapi.responses import FileResponse
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_employee
@@ -55,11 +55,13 @@ from app.services.task_workflow import (
     resolve_task_block,
     serialize_notification,
     sync_due_notifications_for_employee,
+    team_owner_admin_for_employee,
     validate_employee_stage_change,
     stop_task_tracking,
 )
-from app.services.screenshots import serialize_screenshot
-from app.services.activity_timeline import build_workday_timeline, local_today
+from app.services.screenshots import build_thumbnail, serialize_screenshot
+from app.storage.local import LocalScreenshotStorage
+from app.services.activity_timeline import local_today
 from app.services.attendance import calculate_daily_attendance, serialize_daily_attendance
 from app.services.time_adjustments import serialize_time_adjustment_request
 from app.services.work_profiles import (
@@ -77,6 +79,18 @@ from app.services.request_notifications import enqueue_request_review_emails
 router = APIRouter(prefix="/employee-portal", tags=["employee-portal"])
 
 
+def employee_task_participation(employee_id: UUID):
+    return or_(
+        Task.assignee_employee_id == employee_id,
+        select(1)
+        .where(
+            TaskCollaborator.task_id == Task.id,
+            TaskCollaborator.employee_id == employee_id,
+        )
+        .exists(),
+    )
+
+
 def employee_day_bounds(target_day: date, timezone_name: str | None) -> tuple[datetime, datetime]:
     try:
         tz = ZoneInfo(timezone_name or "UTC")
@@ -92,53 +106,16 @@ def participant_task(db: Session, employee: Employee, task_id: UUID) -> tuple[Ta
         select(Task, Project, Team)
         .join(Project, Project.id == Task.project_id)
         .join(Team, Team.id == Project.team_id)
-        .outerjoin(TaskCollaborator, TaskCollaborator.task_id == Task.id)
         .where(
             Task.id == task_id,
             Task.company_id == employee.company_id,
             Task.stage.not_in(["rejected", "cancelled"]),
-            (
-                (Task.assignee_employee_id == employee.id)
-                | (TaskCollaborator.employee_id == employee.id)
-            ),
+            employee_task_participation(employee.id),
         )
-        .distinct()
     ).one_or_none()
     if row is None:
         raise ApiError("TASK_NOT_FOUND", "Your assigned task was not found.", 404)
     return row
-
-
-def _is_profile_workday(profile, target_day: date) -> bool:
-    working_days = profile.working_days or [0, 1, 2, 3, 4]
-    off_days = profile.weekly_off_days or []
-    weekday = target_day.weekday()
-    return weekday in working_days and weekday not in off_days
-
-
-def _idle_limit_for_day(profile, target_day: date, active_seconds: int) -> int:
-    if not _is_profile_workday(profile, target_day):
-        return 0
-    required_seconds = int(profile.required_daily_minutes or 480) * 60
-    return max(0, required_seconds - active_seconds)
-
-
-def apply_work_profile_idle_rules(rows: list[dict], profile) -> list[dict]:
-    adjusted_rows = []
-    for row in rows:
-        adjusted = dict(row)
-        try:
-            row_day = date.fromisoformat(str(adjusted["date"]))
-        except (KeyError, ValueError):
-            adjusted_rows.append(adjusted)
-            continue
-        active_seconds = int(adjusted.get("active_seconds", 0))
-        idle_seconds = int(adjusted.get("idle_seconds", 0))
-        adjusted["idle_seconds"] = min(
-            idle_seconds, _idle_limit_for_day(profile, row_day, active_seconds)
-        )
-        adjusted_rows.append(adjusted)
-    return adjusted_rows
 
 
 def period_summary(rows: list[dict], manual_status_seconds: dict[str, int] | None = None) -> dict:
@@ -188,6 +165,7 @@ def manual_request_status_seconds(
         select(TimeAdjustmentRequest).where(
             TimeAdjustmentRequest.company_id == employee.company_id,
             TimeAdjustmentRequest.employee_id == employee.id,
+            TimeAdjustmentRequest.request_type != "early_leave",
             TimeAdjustmentRequest.requested_date >= start_date,
             TimeAdjustmentRequest.requested_date <= end_date,
         )
@@ -208,10 +186,12 @@ def summary(
     week_start = today - timedelta(days=today.weekday())
     month_start = today.replace(day=1)
     month_end = today.replace(day=monthrange(today.year, today.month)[1])
-    profile = get_or_create_work_profile(db, current_employee)
-    daily_rows = apply_work_profile_idle_rules(
-        timesheet_rows(db, current_employee.company_id, today, today, current_employee.id),
-        profile,
+    daily_rows = timesheet_rows(
+        db,
+        current_employee.company_id,
+        today,
+        today,
+        current_employee.id,
     )
     weekly_rows = timesheet_rows(
         db,
@@ -220,7 +200,6 @@ def summary(
         week_start + timedelta(days=6),
         current_employee.id,
     )
-    weekly_rows = apply_work_profile_idle_rules(weekly_rows, profile)
     monthly_rows = timesheet_rows(
         db,
         current_employee.company_id,
@@ -228,13 +207,11 @@ def summary(
         month_end,
         current_employee.id,
     )
-    monthly_rows = apply_work_profile_idle_rules(monthly_rows, profile)
-    today_timeline = build_workday_timeline(
+    daily_attendance, today_timeline = calculate_daily_attendance(
         db,
-        company_id=current_employee.company_id,
-        employee_id=current_employee.id,
-        timezone_name=current_employee.timezone,
-        target_date=today,
+        employee=current_employee,
+        work_date=today,
+        now=datetime.now(UTC),
     )
     today_summary = reconcile_today_summary_with_timeline(
         period_summary(
@@ -242,12 +219,6 @@ def summary(
             manual_request_status_seconds(db, current_employee, today, today),
         ),
         today_timeline,
-    )
-    daily_attendance, _ = calculate_daily_attendance(
-        db,
-        employee=current_employee,
-        work_date=today,
-        now=datetime.now(UTC),
     )
     db.commit()
     return success_response(
@@ -312,7 +283,6 @@ def tasks(
         .join(Project, Project.id == Task.project_id)
         .join(Team, Team.id == Project.team_id)
         .join(TeamMember, TeamMember.team_id == Team.id)
-        .outerjoin(TaskCollaborator, TaskCollaborator.task_id == Task.id)
         .where(
             Task.company_id == current_employee.company_id,
             Task.status == "active",
@@ -321,12 +291,8 @@ def tasks(
             TeamMember.employee_id == current_employee.id,
             TeamMember.status == "active",
             Task.stage.not_in(["rejected", "cancelled"]),
-            (
-                (Task.assignee_employee_id == current_employee.id)
-                | (TaskCollaborator.employee_id == current_employee.id)
-            ),
+            employee_task_participation(current_employee.id),
         )
-        .distinct()
         .order_by(Team.name, Project.name, Task.name)
     ).all()
     time_totals = employee_task_time_totals(
@@ -393,6 +359,12 @@ def create_own_task(
         raise ApiError(
             "TASK_NAME_IN_USE", "A task with this name already exists in the project.", 409
         )
+    team_leader_admin = team_owner_admin_for_employee(
+        db,
+        company_id=current_employee.company_id,
+        team_id=project.team_id,
+        employee_id=current_employee.id,
+    )
     task = Task(
         company_id=current_employee.company_id,
         project_id=project.id,
@@ -400,7 +372,7 @@ def create_own_task(
         created_by_employee_id=current_employee.id,
         name=clean_name,
         description=payload.description,
-        stage="new_requests",
+        stage="assigned" if team_leader_admin is not None else "new_requests",
         status="active",
         start_date=payload.start_date,
         deadline=payload.deadline,
@@ -410,31 +382,40 @@ def create_own_task(
     )
     db.add(task)
     db.flush()
-    workflow_request = create_workflow_request(
-        db,
-        task,
-        requested_by_employee_id=current_employee.id,
-        request_type="task_creation",
-        from_stage="new_requests",
-        requested_stage="assigned",
-    )
-    record_task_activity(
-        db,
-        task,
-        "employee_task_requested",
-        employee=current_employee,
-        details={"workflow_request_id": str(workflow_request.id)},
-    )
-    notify_project_admins(
-        db,
-        task,
-        project,
-        "task_approval_requested",
-        "New task needs approval",
-        f"{current_employee.name} requested: {task.name}",
-        "employee-task-requested",
-        workflow_request_id=workflow_request.id,
-    )
+    if team_leader_admin is not None:
+        record_task_activity(
+            db,
+            task,
+            "team_leader_task_created",
+            employee=current_employee,
+            details={"stage": "assigned"},
+        )
+    else:
+        workflow_request = create_workflow_request(
+            db,
+            task,
+            requested_by_employee_id=current_employee.id,
+            request_type="task_creation",
+            from_stage="new_requests",
+            requested_stage="assigned",
+        )
+        record_task_activity(
+            db,
+            task,
+            "employee_task_requested",
+            employee=current_employee,
+            details={"workflow_request_id": str(workflow_request.id)},
+        )
+        notify_project_admins(
+            db,
+            task,
+            project,
+            "task_approval_requested",
+            "New task needs approval",
+            f"{current_employee.name} requested: {task.name}",
+            "employee-task-requested",
+            workflow_request_id=workflow_request.id,
+        )
     db.commit()
     db.refresh(task)
     team = db.scalar(select(Team).where(Team.id == project.team_id))
@@ -464,7 +445,11 @@ def update_own_task(
             "estimated_minutes",
         }
         if forbidden:
-            raise ApiError("TASK_AWAITING_APPROVAL", "An admin must approve this task first.", 409)
+            raise ApiError(
+                "TASK_AWAITING_APPROVAL",
+                "A Team Leader or company admin must approve this task first.",
+                409,
+            )
     else:
         forbidden = set(changes) - {"stage"}
         if forbidden:
@@ -647,12 +632,40 @@ def own_task_workspace(
         select(TaskComment)
         .where(TaskComment.task_id == task.id)
         .order_by(TaskComment.created_at.desc())
+        .limit(200)
     ).all()
     attachments = db.scalars(
         select(TaskAttachment)
         .where(TaskAttachment.task_id == task.id)
         .order_by(TaskAttachment.created_at.desc())
+        .limit(200)
     ).all()
+    employee_ids = {comment.employee_id for comment in comments if comment.employee_id}
+    admin_ids = {comment.admin_user_id for comment in comments if comment.admin_user_id}
+    employee_names = (
+        dict(
+            db.execute(
+                select(Employee.id, Employee.name).where(
+                    Employee.company_id == current_employee.company_id,
+                    Employee.id.in_(employee_ids),
+                )
+            ).all()
+        )
+        if employee_ids
+        else {}
+    )
+    admin_names = (
+        dict(
+            db.execute(
+                select(AdminUser.id, AdminUser.name).where(
+                    AdminUser.company_id == current_employee.company_id,
+                    AdminUser.id.in_(admin_ids),
+                )
+            ).all()
+        )
+        if admin_ids
+        else {}
+    )
     return success_response(
         data={
             "comments": [
@@ -660,10 +673,10 @@ def own_task_workspace(
                     "id": str(comment.id),
                     "body": comment.body,
                     "author_name": (
-                        db.get(Employee, comment.employee_id).name
-                        if comment.employee_id and db.get(Employee, comment.employee_id)
-                        else db.get(AdminUser, comment.admin_user_id).name
-                        if comment.admin_user_id and db.get(AdminUser, comment.admin_user_id)
+                        employee_names.get(comment.employee_id, "Employee")
+                        if comment.employee_id
+                        else admin_names.get(comment.admin_user_id, "Admin")
+                        if comment.admin_user_id
                         else "System"
                     ),
                     "created_at": comment.created_at.isoformat(),
@@ -726,14 +739,14 @@ def create_own_task_comment(
 
 
 @router.post("/tasks/{task_id}/attachments")
-async def upload_own_task_attachment(
+def upload_own_task_attachment(
     task_id: UUID,
     current_employee: Annotated[Employee, Depends(get_current_employee)],
     db: Annotated[Session, Depends(get_db)],
     file: UploadFile = File(...),
 ):
     task, project, _team = participant_task(db, current_employee, task_id)
-    content = await file.read(20 * 1024 * 1024 + 1)
+    content = file.file.read(20 * 1024 * 1024 + 1)
     if not content:
         raise ApiError("EMPTY_ATTACHMENT", "The selected file is empty.", 400)
     if len(content) > 20 * 1024 * 1024:
@@ -870,16 +883,18 @@ def screenshots(
     for screenshot in rows:
         item = serialize_screenshot(screenshot)
         item["temporary_url"] = f"/api/v1/employee-portal/screenshots/{screenshot.id}/file"
+        item["thumbnail_url"] = (
+            f"/api/v1/employee-portal/screenshots/{screenshot.id}/thumbnail"
+        )
         data.append(item)
     return success_response(data=data)
 
 
-@router.get("/screenshots/{screenshot_id}/file")
-def screenshot_file(
+def _employee_screenshot_or_404(
+    db: Session,
+    current_employee: Employee,
     screenshot_id: UUID,
-    current_employee: Annotated[Employee, Depends(get_current_employee)],
-    db: Annotated[Session, Depends(get_db)],
-):
+) -> Screenshot:
     screenshot = db.scalar(
         select(Screenshot).where(
             Screenshot.id == screenshot_id,
@@ -890,10 +905,72 @@ def screenshot_file(
     )
     if screenshot is None:
         raise ApiError("SCREENSHOT_NOT_FOUND", "Screenshot was not found.", 404)
-    path = (settings.screenshot_storage_path / screenshot.storage_path).resolve()
+    return screenshot
+
+
+@router.get("/screenshots/{screenshot_id}/file")
+def screenshot_file(
+    screenshot_id: UUID,
+    current_employee: Annotated[Employee, Depends(get_current_employee)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    screenshot = _employee_screenshot_or_404(db, current_employee, screenshot_id)
+    storage = LocalScreenshotStorage()
+    try:
+        path = storage.resolve(screenshot.storage_path)
+    except ValueError as exc:
+        raise ApiError("SCREENSHOT_FILE_NOT_FOUND", "Screenshot file was not found.", 404) from exc
     if not path.exists():
         raise ApiError("SCREENSHOT_FILE_NOT_FOUND", "Screenshot file was not found.", 404)
-    return FileResponse(path, media_type=screenshot.mime_type)
+    return FileResponse(
+        path,
+        media_type=screenshot.mime_type,
+        headers={
+            "Cache-Control": "private, max-age=1800",
+            "Vary": "Authorization",
+        },
+    )
+
+
+@router.get("/screenshots/{screenshot_id}/thumbnail")
+def screenshot_thumbnail(
+    screenshot_id: UUID,
+    current_employee: Annotated[Employee, Depends(get_current_employee)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    screenshot = _employee_screenshot_or_404(db, current_employee, screenshot_id)
+    storage = LocalScreenshotStorage()
+    try:
+        original_path = storage.resolve(screenshot.storage_path)
+        thumbnail_path = storage.resolve(screenshot.thumbnail_path) if screenshot.thumbnail_path else None
+    except ValueError as exc:
+        raise ApiError(
+            "SCREENSHOT_FILE_NOT_FOUND",
+            "Screenshot preview was not found.",
+            404,
+        ) from exc
+
+    if thumbnail_path is None or not thumbnail_path.is_file():
+        if not original_path.is_file():
+            raise ApiError("SCREENSHOT_FILE_NOT_FOUND", "Screenshot preview was not found.", 404)
+        thumbnail = build_thumbnail(original_path.read_bytes(), screenshot.storage_path)
+        if thumbnail is not None:
+            screenshot.thumbnail_path, thumbnail_content = thumbnail
+            thumbnail_path = storage.save(screenshot.thumbnail_path, thumbnail_content)
+            db.add(screenshot)
+            db.commit()
+
+    path = thumbnail_path if thumbnail_path and thumbnail_path.is_file() else original_path
+    if not path.is_file():
+        raise ApiError("SCREENSHOT_FILE_NOT_FOUND", "Screenshot preview was not found.", 404)
+    return FileResponse(
+        path,
+        media_type="image/jpeg" if path == thumbnail_path else screenshot.mime_type,
+        headers={
+            "Cache-Control": "private, max-age=1800",
+            "Vary": "Authorization",
+        },
+    )
 
 
 @router.get("/time-adjustment-requests")

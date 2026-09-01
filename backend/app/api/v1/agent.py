@@ -34,7 +34,6 @@ from app.models import (
     Team,
     TeamMember,
     TimeAdjustmentRequest,
-    WorkScheduleOverride,
 )
 from app.schemas.agent import (
     AgentChecklistItemCreate,
@@ -76,11 +75,13 @@ from app.services.session_tracking import (
     update_session_task,
 )
 from app.services.screenshots import (
+    available_screenshot_preview_path,
     complete_screenshot,
     initiate_screenshot,
     record_screenshot_skip,
     upload_screenshot_content,
 )
+from app.storage.local import LocalScreenshotStorage
 from app.services.request_notifications import enqueue_request_review_emails
 from app.services.projects import (
     ensure_general_work_project,
@@ -94,22 +95,29 @@ from app.services.task_workflow import (
     notify_project_admins,
     record_task_activity,
     resolve_task_block,
+    team_owner_admin_for_employee,
     validate_employee_stage_change,
     stop_task_tracking,
 )
-from app.services.activity_timeline import build_workday_timeline, local_today
+from app.services.activity_timeline import local_today
 from app.services.leave_management import (
     requested_workdays,
     serialize_balance,
     serialize_leave_request,
 )
+from app.services.idle_request_periods import build_idle_request_periods
 from app.services.time_adjustments import (
     create_employee_time_adjustment_request,
     serialize_time_adjustment_request,
 )
-from app.services.work_profiles import get_or_create_work_profile
-from app.services.rate_limit import enforce_rate_limit
-from app.services.attendance import cached_daily_attendance
+from app.services.work_profiles import (
+    DEFAULT_WORKING_DAYS,
+    get_or_create_work_profile,
+    resolve_day_policy,
+)
+from app.services.rate_limit import enforce_rate_limit, request_client_ip
+from app.services.attendance import calculate_daily_attendance
+from app.services.device_location import refresh_device_location
 
 router = APIRouter(prefix="/agent", tags=["desktop-agent"])
 logger = logging.getLogger(__name__)
@@ -117,87 +125,15 @@ logger = logging.getLogger(__name__)
 DEFAULT_DAILY_TARGET_SECONDS = 8 * 60 * 60
 
 
-def _employee_zone(employee: Employee) -> ZoneInfo:
+def _employee_zone(employee: Employee, timezone_name: str | None = None) -> ZoneInfo:
     try:
-        return ZoneInfo(employee.timezone or "UTC")
+        return ZoneInfo(timezone_name or employee.timezone or "UTC")
     except ZoneInfoNotFoundError:
         return ZoneInfo("UTC")
 
 
 def _as_utc(value: datetime) -> datetime:
     return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
-
-
-def _latest_day_override(
-    db: Session,
-    employee: Employee,
-    work_date: date,
-    override_types: list[str],
-) -> WorkScheduleOverride | None:
-    common = (
-        WorkScheduleOverride.company_id == employee.company_id,
-        WorkScheduleOverride.permanent.is_(False),
-        WorkScheduleOverride.effective_date == work_date,
-        WorkScheduleOverride.override_type.in_(override_types),
-    )
-    employee_override = db.scalar(
-        select(WorkScheduleOverride)
-        .where(*common, WorkScheduleOverride.employee_id == employee.id)
-        .order_by(WorkScheduleOverride.created_at.desc())
-    )
-    if employee_override:
-        return employee_override
-    return db.scalar(
-        select(WorkScheduleOverride)
-        .where(*common, WorkScheduleOverride.employee_id.is_(None))
-        .order_by(WorkScheduleOverride.created_at.desc())
-    )
-
-
-def _resolved_day_policy(db: Session, employee: Employee, profile, work_date: date) -> dict:
-    shift_override = _latest_day_override(db, employee, work_date, ["shift", "both"])
-    break_override = _latest_day_override(db, employee, work_date, ["breaks", "both"])
-    approved_leave = db.scalar(
-        select(LeaveRequest.id).where(
-            LeaveRequest.company_id == employee.company_id,
-            LeaveRequest.employee_id == employee.id,
-            LeaveRequest.status == "approved",
-            LeaveRequest.start_date <= work_date,
-            LeaveRequest.end_date >= work_date,
-        )
-    )
-    approved_early_leave = db.scalar(
-        select(TimeAdjustmentRequest)
-        .where(
-            TimeAdjustmentRequest.company_id == employee.company_id,
-            TimeAdjustmentRequest.employee_id == employee.id,
-            TimeAdjustmentRequest.request_type == "early_leave",
-            TimeAdjustmentRequest.requested_date == work_date,
-            TimeAdjustmentRequest.status == "approved",
-        )
-        .order_by(TimeAdjustmentRequest.created_at.desc())
-    )
-    return {
-        "shift_start": (
-            shift_override.shift_start
-            if shift_override and shift_override.shift_start
-            else profile.shift_start
-        ),
-        "shift_end": (
-            shift_override.shift_end
-            if shift_override and shift_override.shift_end
-            else profile.shift_end
-        ),
-        "break_rules": (
-            break_override.break_rules
-            if break_override and break_override.break_rules is not None
-            else profile.break_rules or []
-        ),
-        "approved_leave": bool(approved_leave),
-        "approved_early_leave_from": (
-            approved_early_leave.source_start_at if approved_early_leave else None
-        ),
-    }
 
 
 def _seconds_after_exclusions(
@@ -227,9 +163,11 @@ def _eligible_idle_seconds(
     profile,
     work_date: date,
     timeline: dict,
+    *,
+    timezone_name: str | None = None,
 ) -> int:
-    policy = _resolved_day_policy(db, employee, profile, work_date)
-    working_days = profile.working_days or [0, 1, 2, 3, 4]
+    policy = resolve_day_policy(db, employee, profile, work_date)
+    working_days = profile.working_days or DEFAULT_WORKING_DAYS
     weekly_off_days = profile.weekly_off_days or []
     if (
         work_date.weekday() not in working_days
@@ -240,7 +178,7 @@ def _eligible_idle_seconds(
     ):
         return 0
 
-    zone = _employee_zone(employee)
+    zone = _employee_zone(employee, timezone_name)
     shift_start = datetime.combine(work_date, policy["shift_start"], tzinfo=zone).astimezone(UTC)
     shift_end = datetime.combine(work_date, policy["shift_end"], tzinfo=zone).astimezone(UTC)
     if shift_end <= shift_start:
@@ -302,7 +240,7 @@ def enroll_authenticated(
 ):
     """Link the desktop after employee email/password authentication."""
     enforce_rate_limit(request, action="device-enroll-authenticated", limit=15, window_seconds=300)
-    ip_address = request.client.host if request.client else None
+    ip_address = request_client_ip(request)
     return success_response(
         data=enroll_employee_device(db, current_employee, payload.device, ip_address)
     )
@@ -310,6 +248,7 @@ def enroll_authenticated(
 
 @router.get("/config")
 def config(
+    request: Request,
     context: Annotated[DeviceAuthContext, Depends(get_current_device)],
     db: Annotated[Session, Depends(get_db)],
 ):
@@ -317,9 +256,16 @@ def config(
     employee = db.get(Employee, context.device.employee_id)
     if employee is None:
         raise ApiError("EMPLOYEE_NOT_FOUND", "Employee profile was not found.", 404)
+    refresh_device_location(
+        context.device,
+        client_ip=request_client_ip(request),
+        reported_timezone=None,
+        employee_timezone=employee.timezone,
+    )
+    device_timezone = context.device.timezone or employee.timezone or "UTC"
     profile = get_or_create_work_profile(db, employee)
-    today = local_today(employee.timezone)
-    day_policy = _resolved_day_policy(db, employee, profile, today)
+    today = local_today(device_timezone)
+    day_policy = resolve_day_policy(db, employee, profile, today)
     week_start = today - timedelta(days=today.weekday())
     week_end = week_start + timedelta(days=6)
     early_leave_seconds = (
@@ -346,19 +292,19 @@ def config(
             },
             **serialize_tracking_settings(settings_row),
             "request_policy": {
-                "timezone": employee.timezone,
+                "timezone": device_timezone,
                 "shift_start": day_policy["shift_start"].isoformat(timespec="minutes")
                 if day_policy["shift_start"]
                 else None,
                 "shift_end": day_policy["shift_end"].isoformat(timespec="minutes")
                 if day_policy["shift_end"]
                 else None,
-                "working_days": profile.working_days or [0, 1, 2, 3, 4],
+                "working_days": profile.working_days or DEFAULT_WORKING_DAYS,
                 "break_rules": day_policy["break_rules"],
                 "approved_leave_today": day_policy["approved_leave"],
                 "approved_early_leave_from": (
                     _as_utc(day_policy["approved_early_leave_from"])
-                    .astimezone(_employee_zone(employee))
+                    .astimezone(_employee_zone(employee, device_timezone))
                     .strftime("%H:%M")
                     if day_policy["approved_early_leave_from"]
                     else None
@@ -414,7 +360,8 @@ def projects(
 
 def agent_period_summary(context: DeviceAuthContext, db: Session) -> dict:
     employee = db.get(Employee, context.device.employee_id)
-    today = local_today(employee.timezone if employee else None)
+    device_timezone = context.device.timezone or (employee.timezone if employee else None) or "UTC"
+    today = local_today(device_timezone)
     week_start = today - timedelta(days=today.weekday())
     month_start = today.replace(day=1)
     month_end = today.replace(day=monthrange(today.year, today.month)[1])
@@ -428,24 +375,38 @@ def agent_period_summary(context: DeviceAuthContext, db: Session) -> dict:
             start,
             end,
             context.device.employee_id,
+            device_id=context.device.id,
         )
         return period_summary(
             rows,
             manual_request_status_seconds(db, employee, start, end),
         )
 
-    timeline = build_workday_timeline(
+    _, timeline = calculate_daily_attendance(
         db,
-        company_id=context.device.company_id,
-        employee_id=context.device.employee_id,
-        timezone_name=employee.timezone,
+        employee=employee,
+        work_date=today,
+        now=datetime.now(UTC),
+        persist=False,
+        device_id=context.device.id,
+        timezone_name=device_timezone,
     )
     today_summary = reconcile_today_summary_with_timeline(summarize(today, today), timeline)
-    today_summary["idle_seconds"] = _eligible_idle_seconds(db, employee, profile, today, timeline)
+    today_summary["eligible_idle_seconds"] = _eligible_idle_seconds(
+        db,
+        employee,
+        profile,
+        today,
+        timeline,
+        timezone_name=device_timezone,
+    )
+    # Device idle outside the employee's scheduled shift is a live device state,
+    # not accountable attendance idle.
+    today_summary["idle_seconds"] = int(timeline.get("idle_seconds", 0))
     today_summary["tracked_seconds"] = (
         today_summary["active_seconds"] + today_summary["idle_seconds"]
     )
-    today_policy = _resolved_day_policy(db, employee, profile, today)
+    today_policy = resolve_day_policy(db, employee, profile, today)
     shift_start = today_policy["shift_start"]
     shift_end = today_policy["shift_end"]
     target_seconds = int(profile.required_daily_minutes or 480) * 60
@@ -458,6 +419,14 @@ def agent_period_summary(context: DeviceAuthContext, db: Session) -> dict:
         )
     tracked_seconds = today_summary["tracked_active_seconds"]
     activity_base_seconds = tracked_seconds + today_summary["idle_seconds"]
+    idle_request_periods = build_idle_request_periods(
+        db,
+        employee=employee,
+        company_id=context.device.company_id,
+        work_date=today,
+        timeline=timeline,
+        timezone_name=device_timezone,
+    )
     return {
         "employee": {
             "id": str(employee.id),
@@ -476,6 +445,7 @@ def agent_period_summary(context: DeviceAuthContext, db: Session) -> dict:
         else 0,
         "today": today_summary,
         "today_timeline": timeline,
+        "idle_request_periods": idle_request_periods,
         "week": summarize(week_start, week_start + timedelta(days=6)),
         "month": summarize(month_start, month_end),
     }
@@ -563,6 +533,12 @@ def create_own_task(
         )
     )
     if existing is None:
+        team_leader_admin = team_owner_admin_for_employee(
+            db,
+            company_id=context.device.company_id,
+            team_id=project.team_id,
+            employee_id=context.device.employee_id,
+        )
         existing = Task(
             company_id=context.device.company_id,
             project_id=project.id,
@@ -570,7 +546,7 @@ def create_own_task(
             name=clean_name,
             description=payload.description or "Created by employee from the desktop app.",
             status="active",
-            stage="new_requests",
+            stage="assigned" if team_leader_admin is not None else "new_requests",
             created_by_employee_id=context.device.employee_id,
             start_date=payload.start_date,
             deadline=payload.deadline,
@@ -581,31 +557,40 @@ def create_own_task(
         db.add(existing)
         db.flush()
         employee = db.get(Employee, context.device.employee_id)
-        workflow_request = create_workflow_request(
-            db,
-            existing,
-            requested_by_employee_id=context.device.employee_id,
-            request_type="task_creation",
-            from_stage="new_requests",
-            requested_stage="assigned",
-        )
-        record_task_activity(
-            db,
-            existing,
-            "employee_task_requested",
-            employee=employee,
-            details={"workflow_request_id": str(workflow_request.id)},
-        )
-        notify_project_admins(
-            db,
-            existing,
-            project,
-            "task_approval_requested",
-            "New task needs approval",
-            f"{employee.name if employee else 'An employee'} requested: {existing.name}",
-            "employee-task-requested",
-            workflow_request_id=workflow_request.id,
-        )
+        if team_leader_admin is not None:
+            record_task_activity(
+                db,
+                existing,
+                "team_leader_task_created",
+                employee=employee,
+                details={"stage": "assigned"},
+            )
+        else:
+            workflow_request = create_workflow_request(
+                db,
+                existing,
+                requested_by_employee_id=context.device.employee_id,
+                request_type="task_creation",
+                from_stage="new_requests",
+                requested_stage="assigned",
+            )
+            record_task_activity(
+                db,
+                existing,
+                "employee_task_requested",
+                employee=employee,
+                details={"workflow_request_id": str(workflow_request.id)},
+            )
+            notify_project_admins(
+                db,
+                existing,
+                project,
+                "task_approval_requested",
+                "New task needs approval",
+                f"{employee.name if employee else 'An employee'} requested: {existing.name}",
+                "employee-task-requested",
+                workflow_request_id=workflow_request.id,
+            )
     elif existing.assignee_employee_id != context.device.employee_id:
         from app.core.exceptions import ApiError
 
@@ -651,7 +636,11 @@ def update_own_task(
             "estimated_minutes",
         }
         if forbidden:
-            raise ApiError("TASK_AWAITING_APPROVAL", "An admin must approve this task first.", 409)
+            raise ApiError(
+                "TASK_AWAITING_APPROVAL",
+                "A team manager or company admin must approve this task first.",
+                409,
+            )
     else:
         forbidden = set(changes) - {"stage"}
         if forbidden:
@@ -898,8 +887,18 @@ def heartbeat(
     context: Annotated[DeviceAuthContext, Depends(get_current_device)],
     db: Annotated[Session, Depends(get_db)],
 ):
-    context.device.last_ip_address = (
-        request.client.host if request.client else context.device.last_ip_address
+    employee = db.get(Employee, context.device.employee_id)
+    client_ip = request_client_ip(request)
+    if client_ip:
+        context.device.last_ip_address = client_ip
+    refresh_device_location(
+        context.device,
+        # Public-IP geolocation can take seconds and is already refreshed by
+        # the periodic config request. A heartbeat only needs the locally
+        # reported timezone and must stay on the fast ingestion path.
+        client_ip=None,
+        reported_timezone=payload.timezone,
+        employee_timezone=employee.timezone if employee else None,
     )
     if payload.mac_address:
         context.device.mac_address = payload.mac_address
@@ -909,22 +908,9 @@ def heartbeat(
         session_id=session_id,
         payload=payload,
     )
-    # Attendance is a derived read model. Refresh it at most once per minute so
-    # live admin screens remain current without making every heartbeat heavy.
-    try:
-        employee = db.get(Employee, context.device.employee_id)
-        if employee is not None:
-            cached_daily_attendance(
-                db,
-                employee=employee,
-                work_date=local_today(employee.timezone or "UTC", payload.timestamp),
-                now=payload.timestamp,
-                max_age_seconds=60,
-            )
-            db.commit()
-    except Exception:
-        db.rollback()
-        logger.exception("Unable to refresh the daily attendance snapshot")
+    # DailyAttendance is a derived read model. Attendance/payroll reads refresh
+    # it when needed; doing a full-day rebuild in every agent heartbeat caused
+    # reconnect bursts to starve the interactive admin API.
     return success_response(data=response)
 
 
@@ -1005,13 +991,32 @@ def screenshot_skip(
     return success_response(data=record_screenshot_skip(db, context.device, payload))
 
 
+def _own_screenshot_or_404(
+    db: Session,
+    context: DeviceAuthContext,
+    screenshot_id: UUID,
+) -> Screenshot:
+    screenshot = db.scalar(
+        select(Screenshot).where(
+            Screenshot.id == screenshot_id,
+            Screenshot.company_id == context.device.company_id,
+            Screenshot.employee_id == context.device.employee_id,
+            Screenshot.deleted_at.is_(None),
+            Screenshot.status.in_(("uploaded", "completed")),
+        )
+    )
+    if screenshot is None:
+        raise ApiError("SCREENSHOT_NOT_FOUND", "Screenshot was not found.", 404)
+    return screenshot
+
+
 @router.get("/screenshots/recent")
 def recent_screenshots(
     context: Annotated[DeviceAuthContext, Depends(get_current_device)],
     db: Annotated[Session, Depends(get_db)],
     limit: int = Query(default=4, ge=1, le=4),
 ):
-    rows = db.scalars(
+    candidates = db.scalars(
         select(Screenshot)
         .where(
             Screenshot.company_id == context.device.company_id,
@@ -1020,8 +1025,16 @@ def recent_screenshots(
             Screenshot.status.in_(("uploaded", "completed")),
         )
         .order_by(Screenshot.captured_at.desc())
-        .limit(limit)
+        # Some legacy rows outlived their local files. Scan a bounded recent
+        # window so a stale row cannot break the employee's latest preview.
+        .limit(max(20, limit * 10))
     ).all()
+    storage = LocalScreenshotStorage()
+    rows = [
+        screenshot
+        for screenshot in candidates
+        if available_screenshot_preview_path(storage, screenshot) is not None
+    ][:limit]
     return success_response(
         data=[
             {
@@ -1035,38 +1048,66 @@ def recent_screenshots(
     )
 
 
+@router.get("/screenshots/{screenshot_id}/preview")
+def own_screenshot_preview(
+    screenshot_id: UUID,
+    context: Annotated[DeviceAuthContext, Depends(get_current_device)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    screenshot = _own_screenshot_or_404(db, context, screenshot_id)
+    path = available_screenshot_preview_path(LocalScreenshotStorage(), screenshot)
+    if path is None:
+        raise ApiError("SCREENSHOT_FILE_NOT_FOUND", "Screenshot preview was not found.", 404)
+    return FileResponse(
+        path,
+        media_type="image/jpeg" if path.name.endswith(".thumb.jpg") else screenshot.mime_type,
+        headers={
+            "Cache-Control": "private, max-age=1800",
+            "Vary": "Authorization",
+        },
+    )
+
+
 @router.get("/screenshots/{screenshot_id}/file")
 def own_screenshot_file(
     screenshot_id: UUID,
     context: Annotated[DeviceAuthContext, Depends(get_current_device)],
     db: Annotated[Session, Depends(get_db)],
 ):
-    screenshot = db.scalar(
-        select(Screenshot).where(
-            Screenshot.id == screenshot_id,
-            Screenshot.company_id == context.device.company_id,
-            Screenshot.employee_id == context.device.employee_id,
-            Screenshot.deleted_at.is_(None),
-            Screenshot.status.in_(("uploaded", "completed")),
-        )
-    )
-    if screenshot is None:
-        raise ApiError("SCREENSHOT_NOT_FOUND", "Screenshot was not found.", 404)
-    storage_root = settings.screenshot_storage_path.resolve()
-    file_path = (storage_root / screenshot.storage_path).resolve()
-    if not file_path.is_relative_to(storage_root) or not file_path.exists():
+    screenshot = _own_screenshot_or_404(db, context, screenshot_id)
+    storage = LocalScreenshotStorage()
+    try:
+        file_path = storage.resolve(screenshot.storage_path)
+    except ValueError as exc:
+        raise ApiError("SCREENSHOT_FILE_NOT_FOUND", "Screenshot file was not found.", 404) from exc
+    if not file_path.is_file():
+        # Desktop 1.1.89 requests this legacy route for its home-page preview.
+        # Keep it working while clients update by serving an existing compact
+        # thumbnail when the legacy original has already gone missing.
+        file_path = available_screenshot_preview_path(storage, screenshot)
+    if file_path is None or not file_path.is_file():
         raise ApiError("SCREENSHOT_FILE_NOT_FOUND", "Screenshot file was not found.", 404)
-    return FileResponse(file_path, media_type=screenshot.mime_type)
+    return FileResponse(
+        file_path,
+        media_type=(
+            "image/jpeg" if file_path.name.endswith(".thumb.jpg") else screenshot.mime_type
+        ),
+        headers={
+            "Cache-Control": "private, max-age=1800",
+            "Vary": "Authorization",
+        },
+    )
 
 
 @router.post("/screenshots/{screenshot_id}/upload")
-async def screenshot_upload(
+def screenshot_upload(
     screenshot_id: UUID,
     file: UploadFile,
     context: Annotated[DeviceAuthContext, Depends(get_current_device)],
     db: Annotated[Session, Depends(get_db)],
 ):
-    content = await file.read()
+    max_bytes = settings.screenshot_max_file_size_mb * 1024 * 1024
+    content = file.file.read(max_bytes + 1)
     return success_response(
         data=upload_screenshot_content(
             db,
@@ -1122,7 +1163,8 @@ def create_time_adjustment_request(
     row = create_employee_time_adjustment_request(
         db,
         device=context.device,
-        requested_date=payload.requested_date or local_today(employee.timezone),
+        requested_date=payload.requested_date
+        or local_today(context.device.timezone or employee.timezone),
         requested_minutes=payload.requested_minutes,
         reason=payload.reason,
         request_type=payload.request_type,
@@ -1166,7 +1208,11 @@ def list_leave_requests(
     ).all()
     return success_response(
         data={
-            "balance": serialize_balance(db, employee, local_today(employee.timezone).year),
+            "balance": serialize_balance(
+                db,
+                employee,
+                local_today(context.device.timezone or employee.timezone).year,
+            ),
             "requests": [serialize_leave_request(row) for row in rows],
         }
     )

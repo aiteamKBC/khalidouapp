@@ -17,6 +17,26 @@ import type {
   RecentScreenshot,
   WorkdayTimeline,
 } from "./types/electron";
+import {
+  TIMELINE_LABELS,
+  timelineIntervalsForDisplay,
+  timelineIntervalPresentation,
+  timelineDisplayType,
+  workdayTimingState,
+} from "./timelinePresentation";
+import {
+  requestableIdleMinutes,
+  totalRequestableIdleMinutes,
+} from "./idleRequests";
+import { OperationTimeoutError, withOperationTimeout } from "./promiseTimeout";
+import {
+  screenshotSyncLabel,
+  shouldReloadScreenshotsAfterRecovery,
+} from "./screenshotRecovery";
+import {
+  mainTimerSeconds,
+  reconciledNormalTodaySeconds,
+} from "./timerDisplay";
 import "sweetalert2/dist/sweetalert2.min.css";
 import "./App.css";
 
@@ -35,6 +55,7 @@ const fallbackStatus: AgentStatus = {
   workedTodaySeconds: 0,
   activeSeconds: 0,
   idleSeconds: 0,
+  currentIdleSeconds: 0,
   eligibleIdleSeconds: 0,
   paidPauseEndsAt: null,
   paidPauseRemainingSeconds: 0,
@@ -62,19 +83,21 @@ const fallbackStatus: AgentStatus = {
   extraTimeStatus: "none",
   recentTasks: [],
   todayTimeline: null,
+  idleRequestPeriods: [],
   lastIdleAlert: null,
+  locallyEndedIdleAt: null,
   updateStatus: "idle",
   updateVersion: null,
   updatePercent: null,
   privacyNotice:
-    "While this enrolled device is active, unlocked, and connected to AC power, company policy may capture periodic workplace screenshots even when no task timer is selected. It does not record typed text, passwords, webcam, microphone, or personal files.",
+    "While work tracking is active, Khaliduo records the foreground application name and, for supported browsers, the website domain. Company policy may also capture periodic workplace screenshots while this enrolled device is active, unlocked, and connected to AC power. Full URLs, page titles, typed text, passwords, webcam, microphone, and personal files are not recorded.",
 };
 
 const TRACKABLE_TASK_STAGES = new Set(["backlog", "assigned", "in_progress"]);
 const THEME_STORAGE_KEY = "khaliduo-theme";
 const LIGHT_DEFAULT_RESET_KEY = "khaliduo-desktop-light-default-applied";
+const TRACKING_CONTROL_TIMEOUT_MS = 20_000;
 
-type TimelineInterval = WorkdayTimeline["intervals"][number];
 type IdleRequestOption = {
   key: string;
   sessionId: string;
@@ -111,17 +134,6 @@ function formatDuration(totalSeconds: number) {
   return `${hours}:${minutes}:${seconds}`;
 }
 
-function idleRequestKey(input: {
-  session_id?: string;
-  work_session_id?: string | null;
-  started_at?: string;
-  ended_at?: string | null;
-  source_start_at?: string | null;
-  source_end_at?: string | null;
-}) {
-  return `${input.session_id ?? input.work_session_id ?? ""}|${input.started_at ?? input.source_start_at ?? ""}|${input.ended_at ?? input.source_end_at ?? ""}`;
-}
-
 type KIconName =
   | "timer"
   | "tasks"
@@ -131,8 +143,11 @@ type KIconName =
   | "briefcase"
   | "worked"
   | "idle"
+  | "break"
+  | "manual"
   | "locked"
   | "sleeping"
+  | "untracked"
   | "settings";
 
 function KIcon({
@@ -202,6 +217,19 @@ function KIcon({
         <path d="M12 22a8 8 0 1 0 0-16 8 8 0 0 0 0 16Z" />
       </>
     ),
+    break: (
+      <>
+        <path d="M5 8h11v6a5 5 0 0 1-5 5H10a5 5 0 0 1-5-5Z" />
+        <path d="M16 10h1a3 3 0 0 1 0 6h-2" />
+        <path d="M8 3v2M12 3v2" />
+      </>
+    ),
+    manual: (
+      <>
+        <path d="M9 12l2 2 4-5" />
+        <circle cx="12" cy="12" r="9" />
+      </>
+    ),
     locked: (
       <>
         <path d="M7 11V8a5 5 0 0 1 10 0v3" />
@@ -212,6 +240,15 @@ function KIcon({
       <>
         <path d="M18 15.5A7 7 0 0 1 8.5 6a7 7 0 1 0 9.5 9.5Z" />
         <path d="M15 4h4l-4 5h4" />
+      </>
+    ),
+    untracked: (
+      <>
+        <path d="M5 5 19 19" />
+        <path d="M8.5 8.5A8.5 8.5 0 0 1 20 10" />
+        <path d="M4 10a8.5 8.5 0 0 1 1.3-2.8" />
+        <path d="M7 14a5 5 0 0 1 7.4-4.4" />
+        <path d="M10 18a2.8 2.8 0 0 1 4.2-2.4" />
       </>
     ),
     settings: (
@@ -236,19 +273,42 @@ function KIcon({
 
 function formatTimestamp(value: string | null) {
   if (!value) return "Not available";
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
   }).format(new Date(value));
 }
 
 function formatClock(value: string | null, timezone: string) {
   if (!value) return "-";
-  return new Intl.DateTimeFormat(undefined, {
+  return new Intl.DateTimeFormat("en-US", {
     hour: "numeric",
     minute: "2-digit",
+    hour12: true,
     timeZone: timezone,
   }).format(new Date(value));
+}
+
+function formatTimelineStart(timeline: WorkdayTimeline) {
+  if (!timeline.continued_from_previous_day) {
+    return formatClock(timeline.first_started_at, timeline.timezone);
+  }
+  const originalStart =
+    timeline.continued_session_started_at ?? timeline.first_started_at;
+  if (!originalStart) {
+    return "Continued from previous day";
+  }
+  const startedAt = new Date(originalStart);
+  const day = new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    timeZone: timeline.timezone,
+  }).format(startedAt);
+  return `Continued from ${day}, ${formatClock(originalStart, timeline.timezone)}`;
 }
 
 function localDateKey(value = new Date()) {
@@ -274,9 +334,10 @@ function formatScheduledTime(value: string | null | undefined) {
   const minutes = timeToMinutes(value);
   if (minutes === null) return "Not configured";
   const date = new Date(2000, 0, 1, Math.floor(minutes / 60), minutes % 60);
-  return new Intl.DateTimeFormat(undefined, {
+  return new Intl.DateTimeFormat("en-US", {
     hour: "numeric",
     minute: "2-digit",
+    hour12: true,
   }).format(date);
 }
 
@@ -369,7 +430,6 @@ function App() {
   >("home");
   const [projectFilterId, setProjectFilterId] = useState("");
   const [sessionNote, setSessionNote] = useState("");
-  const [timeRequestMinutes, setTimeRequestMinutes] = useState(15);
   const [timeRequestReason, setTimeRequestReason] = useState("");
   const [selectedIdleRequestKey, setSelectedIdleRequestKey] = useState("");
   const [earlyLeaveDate, setEarlyLeaveDate] = useState(localDateKey());
@@ -419,64 +479,12 @@ function App() {
   const [screenshotError, setScreenshotError] = useState<string | null>(null);
   const [theme, setTheme] = useState<"light" | "dark">(initialTheme);
   const shownIdleAlertId = useRef<string | null>(null);
-  const promptedUpdateVersion = useRef<string | null>(null);
-  const updatePromptActive = useRef(false);
-  const updateStatusRef = useRef(status.updateStatus);
-  updateStatusRef.current = status.updateStatus;
   const screenshotsLoadedForEnrollment = useRef(false);
   const lastLoadedScreenshotAt = useRef<string | null>(null);
+  const previousScreenshotConnectionStatus = useRef(status.connectionStatus);
   const isDesktopRuntime = Boolean(window.khaliduo);
   const desktopRuntimeMessage =
     "Open Khaliduo desktop app to enroll this device. The browser preview cannot access the secure desktop identity store.";
-
-  const showRequiredUpdate = useCallback(async (version: string | null) => {
-    const promptKey = version ?? "ready";
-    if (
-      updatePromptActive.current ||
-      promptedUpdateVersion.current === promptKey
-    )
-      return;
-    promptedUpdateVersion.current = promptKey;
-    updatePromptActive.current = true;
-    window.khaliduo?.setUpdateAttention(true);
-
-    try {
-      while (true) {
-        const result = await Swal.fire({
-          title: "Required update",
-          text: `Khaliduo ${version ? `v${version}` : ""} is ready to install. You must install this update now to continue using the app. Your active session will be closed safely and Khaliduo will restart automatically.`,
-          icon: "info",
-          confirmButtonText: "Install update now",
-          confirmButtonColor: "#e91e63",
-          allowEscapeKey: false,
-          allowOutsideClick: false,
-          showCancelButton: false,
-          showCloseButton: false,
-          backdrop: true,
-          heightAuto: false,
-        });
-        if (!result.isConfirmed) continue;
-
-        const installResult = await window.khaliduo?.installUpdate();
-        if (installResult?.success !== false) return;
-        await Swal.fire({
-          title: "Update could not start",
-          text: installResult?.message ?? "Please try again.",
-          icon: "error",
-          confirmButtonText: "Try again",
-          allowEscapeKey: false,
-          allowOutsideClick: false,
-          showCancelButton: false,
-          showCloseButton: false,
-        });
-      }
-    } finally {
-      updatePromptActive.current = false;
-      window.khaliduo?.setUpdateAttention(updateStatusRef.current === "ready");
-      if (updateStatusRef.current !== "ready")
-        promptedUpdateVersion.current = null;
-    }
-  }, []);
 
   useEffect(() => {
     let mounted = true;
@@ -512,25 +520,15 @@ function App() {
           void showIdleAlert(nextStatus.lastIdleAlert);
         }
       }) ?? (() => undefined);
-    const removeRequiredUpdateListener =
-      window.khaliduo.onRequiredUpdate?.((update) => {
-        void showRequiredUpdate(update.version);
-      }) ?? (() => undefined);
     const interval = window.setInterval(() => void loadStatus(), 1000);
 
     return () => {
       mounted = false;
       removeIdleAlertListener();
       removeStatusChangedListener();
-      removeRequiredUpdateListener();
       window.clearInterval(interval);
     };
-  }, [desktopRuntimeMessage, showRequiredUpdate]);
-
-  useEffect(() => {
-    if (status.updateStatus !== "ready") return;
-    void showRequiredUpdate(status.updateVersion);
-  }, [showRequiredUpdate, status.updateStatus, status.updateVersion]);
+  }, [desktopRuntimeMessage]);
 
   useEffect(() => {
     if (status.selectedTask?.projectId) {
@@ -605,12 +603,36 @@ function App() {
     [projectFilterId, status.projects, status.selectedTask?.projectId],
   );
 
+  const manualApprovedTodaySeconds =
+    status.timeSummary?.today.manual_approved_seconds ?? 0;
+  const trackedTodaySeconds = Math.max(
+    status.timeSummary?.today.active_seconds ?? 0,
+    (status.timeSummary?.today.tracked_active_seconds ?? 0) +
+      manualApprovedTodaySeconds,
+    status.normalSeconds + status.extraSeconds + manualApprovedTodaySeconds,
+    status.workedTodaySeconds + manualApprovedTodaySeconds,
+  );
+  const normalSeconds = status.enrolled
+    ? reconciledNormalTodaySeconds({
+        normalSeconds: status.normalSeconds,
+        extraSeconds: status.extraSeconds,
+        manualApprovedSeconds: manualApprovedTodaySeconds,
+        trackedTodaySeconds,
+      })
+    : status.normalSeconds;
+  const extraSeconds = status.extraSeconds;
+
   const timeBreakdown = useMemo(() => {
     const period = status.timeSummary?.today;
+    const visibleIdleSeconds = Math.max(
+      period?.idle_seconds ?? 0,
+      status.todayTimeline?.idle_seconds ?? 0,
+      status.eligibleIdleSeconds,
+    );
     const segments = [
       {
         label: "Normal shift work",
-        seconds: status.normalSeconds,
+        seconds: normalSeconds,
         className: "worked",
         counted: true,
       },
@@ -622,7 +644,7 @@ function App() {
       },
       {
         label: "Idle",
-        seconds: status.eligibleIdleSeconds,
+        seconds: visibleIdleSeconds,
         className: "idle",
         counted: false,
       },
@@ -655,70 +677,26 @@ function App() {
   }, [
     status.extraSeconds,
     status.eligibleIdleSeconds,
-    status.normalSeconds,
+    status.todayTimeline?.idle_seconds,
     status.timeSummary,
+    normalSeconds,
   ]);
 
   const idleRequestOptions = useMemo<IdleRequestOption[]>(() => {
-    const timeline = status.todayTimeline;
-    const policy = status.requestPolicy;
-    const shiftStart = timeToMinutes(policy?.shift_start);
-    const shiftEnd = timeToMinutes(policy?.shift_end);
-    if (!timeline || !policy || shiftStart === null || shiftEnd === null)
-      return [];
-    if (
-      !policy.working_days.includes(weekdayIndex(timeline.date)) ||
-      shiftEnd <= shiftStart
-    )
-      return [];
-    const requestedByIdle = new Map<string, number>();
-    for (const request of status.timeAdjustmentRequests) {
-      if (request.request_type !== "idle_time" || request.status === "rejected")
-        continue;
-      const key = idleRequestKey(request);
-      requestedByIdle.set(
-        key,
-        (requestedByIdle.get(key) ?? 0) + request.requested_minutes * 60,
-      );
-    }
-    return timeline.intervals
-      .filter(
-        (interval): interval is TimelineInterval & { ended_at: string } =>
-          interval.type === "idle" &&
-          Boolean(interval.ended_at) &&
-          !interval.is_current &&
-          interval.duration_seconds >= 60,
-      )
-      .filter(
-        (interval) =>
-          localDateAt(interval.started_at, policy.timezone) === timeline.date &&
-          localDateAt(interval.ended_at, policy.timezone) === timeline.date &&
-          localMinutesAt(interval.started_at, policy.timezone) >= shiftStart &&
-          localMinutesAt(interval.ended_at, policy.timezone) <= shiftEnd,
-      )
-      .map((interval) => {
-        const key = idleRequestKey(interval);
-        return {
-          key,
-          sessionId: interval.session_id,
-          startedAt: interval.started_at,
-          endedAt: interval.ended_at,
-          durationSeconds: interval.duration_seconds,
-          availableSeconds: Math.max(
-            0,
-            interval.duration_seconds - (requestedByIdle.get(key) ?? 0),
-          ),
-          projectName: interval.project_name,
-          taskName: interval.task_name,
-        };
-      })
+    return (status.idleRequestPeriods ?? [])
+      .map((period) => ({
+        key: `${period.work_session_id}|${period.started_at}|${period.ended_at}`,
+        sessionId: period.work_session_id,
+        startedAt: period.started_at,
+        endedAt: period.ended_at,
+        durationSeconds: period.duration_seconds,
+        availableSeconds: period.available_seconds,
+        projectName: period.project_name,
+        taskName: period.task_name,
+      }))
       .filter((option) => option.availableSeconds >= 60)
       .reverse();
-  }, [
-    status.requestPolicy,
-    status.timeAdjustmentRequests,
-    status.todayTimeline,
-  ]);
+  }, [status.idleRequestPeriods]);
 
   const selectedIdleRequest =
     idleRequestOptions.find(
@@ -741,17 +719,6 @@ function App() {
       setSelectedIdleRequestKey(idleRequestOptions[0].key);
     }
   }, [idleRequestOptions, selectedIdleRequestKey]);
-
-  useEffect(() => {
-    if (!selectedIdleRequest) return;
-    const maxMinutes = Math.max(
-      1,
-      Math.floor(selectedIdleRequest.availableSeconds / 60),
-    );
-    setTimeRequestMinutes((minutes) =>
-      Math.min(Math.max(1, minutes), maxMinutes),
-    );
-  }, [selectedIdleRequest]);
 
   useEffect(() => {
     const shiftEnd = timeToMinutes(status.requestPolicy?.shift_end);
@@ -777,19 +744,6 @@ function App() {
   const countedTodaySeconds = timeBreakdown.segments
     .filter((segment) => segment.counted)
     .reduce((total, segment) => total + segment.seconds, 0);
-  const manualApprovedTodaySeconds =
-    status.timeSummary?.today.manual_approved_seconds ?? 0;
-  const trackedTodaySeconds = Math.max(
-    status.timeSummary?.today.tracked_active_seconds ?? 0,
-    status.normalSeconds + status.extraSeconds + manualApprovedTodaySeconds,
-    status.workedTodaySeconds,
-  );
-  const normalSeconds = status.enrolled
-    ? status.normalSeconds
-    : Math.min(countedTodaySeconds, status.dailyTargetSeconds);
-  const extraSeconds = status.enrolled
-    ? status.extraSeconds
-    : Math.max(0, countedTodaySeconds - status.dailyTargetSeconds);
   const targetProgress = Math.max(
     0,
     Math.min(
@@ -812,6 +766,8 @@ function App() {
   const isIdleState = ["idle", "locked", "sleeping"].includes(
     status.trackingStatus,
   );
+  const isNotWorkingOutsideShift =
+    isExtraTime && (isPaused || isIdleState || !isTracking);
   const timerTone = isPaused
     ? "paused"
     : isTracking && isExtraTime
@@ -821,20 +777,24 @@ function App() {
         : isIdleState
           ? "paused"
           : "stopped";
-  const statusText = isPaused
-    ? "Paused"
-    : isTracking
-      ? isExtraTime
-        ? isIdleState
-          ? "Extra paused"
-          : "Extra time"
-        : isIdleState
-          ? "Shift idle"
-          : "Paid shift"
-      : "No timer running";
-  const displayedTimerSeconds = isExtraTime
-    ? extraSeconds
-    : countedTodaySeconds;
+  const statusText = isNotWorkingOutsideShift
+    ? "Off shift"
+    : isPaused
+      ? "Paused"
+      : isTracking
+        ? isExtraTime
+          ? "Extra time"
+          : isIdleState
+            ? "Shift idle"
+            : "Paid shift"
+        : "No timer running";
+  const displayedTimerSeconds = mainTimerSeconds({
+    isAutomaticIdle: status.trackingStatus === "idle" && !isPaused,
+    isExtraTime,
+    currentIdleSeconds: status.currentIdleSeconds,
+    extraSeconds,
+    trackedTodaySeconds,
+  });
 
   async function refreshStatusAfterEnrollment() {
     if (status.enrolled) {
@@ -884,17 +844,10 @@ function App() {
       setTimeRequestError("No completed idle period is available to request.");
       return;
     }
-    const maxMinutes = Math.max(
-      1,
-      Math.floor(selectedIdleRequest.availableSeconds / 60),
-    );
-    if (
-      !Number.isFinite(timeRequestMinutes) ||
-      timeRequestMinutes < 1 ||
-      timeRequestMinutes > maxMinutes
-    ) {
+    const requestedMinutes = requestableIdleMinutes(selectedIdleRequest);
+    if (requestedMinutes < 1) {
       setTimeRequestError(
-        `You can request up to ${maxMinutes} minute(s) from this idle period.`,
+        "This idle period has no whole minutes remaining to request.",
       );
       return;
     }
@@ -908,7 +861,7 @@ function App() {
     setIsSubmittingTimeRequest(true);
     try {
       const result = await window.khaliduo.createTimeAdjustmentRequest({
-        requestedMinutes: timeRequestMinutes,
+        requestedMinutes,
         reason: timeRequestReason,
         requestType: "idle_time",
         requestedDate: status.todayTimeline?.date ?? localDateKey(),
@@ -921,7 +874,9 @@ function App() {
         return;
       }
       setTimeRequestReason("");
-      setTimeRequestSuccess("Idle time request sent for review.");
+      setTimeRequestSuccess(
+        `The full idle period (${requestedMinutes} minute${requestedMinutes === 1 ? "" : "s"}) was sent for review.`,
+      );
       setSelectedIdleRequestKey("");
       if (result.status) setStatus(result.status);
     } finally {
@@ -1211,9 +1166,13 @@ function App() {
         status.trackingStatus === "paused" ||
         status.trackingStatus === "offline" ||
         status.trackingStatus === "error";
-      const result = shouldResume
-        ? await window.khaliduo.resumeTracking()
-        : await window.khaliduo.pauseTracking();
+      const result = await withOperationTimeout(
+        shouldResume
+          ? window.khaliduo.resumeTracking()
+          : window.khaliduo.pauseTracking(),
+        TRACKING_CONTROL_TIMEOUT_MS,
+        "Tracking control did not respond within 20 seconds.",
+      );
       if (!result.success) {
         setTrackingControlMessage(
           result.message ?? "The tracking state could not be changed.",
@@ -1227,6 +1186,24 @@ function App() {
             : "Paused. Resume when you return; screenshot monitoring remains active."),
       );
       setStatus(await window.khaliduo.getAgentStatus());
+    } catch (error) {
+      try {
+        const nextStatus = await withOperationTimeout(
+          window.khaliduo.getAgentStatus(),
+          2_000,
+        );
+        setStatus(nextStatus);
+      } catch {
+        // The control must still be released if the Electron main process is
+        // temporarily unable to answer the follow-up status request.
+      }
+      setTrackingControlMessage(
+        error instanceof OperationTimeoutError
+          ? "The button was released because syncing took too long. Your locally saved time is safe; check the current status before trying again."
+          : error instanceof Error
+            ? error.message
+            : "The tracking state could not be changed.",
+      );
     } finally {
       setIsChangingTracking(false);
     }
@@ -1278,6 +1255,22 @@ function App() {
     void handleLoadRecentScreenshots();
   }, [handleLoadRecentScreenshots, status.enrolled, status.lastScreenshotAt]);
 
+  useEffect(() => {
+    const previousConnectionStatus = previousScreenshotConnectionStatus.current;
+    previousScreenshotConnectionStatus.current = status.connectionStatus;
+    if (
+      !shouldReloadScreenshotsAfterRecovery({
+        previousConnectionStatus,
+        connectionStatus: status.connectionStatus,
+        hasLoadError: Boolean(screenshotError),
+      })
+    ) {
+      return;
+    }
+    lastLoadedScreenshotAt.current = null;
+    void handleLoadRecentScreenshots();
+  }, [handleLoadRecentScreenshots, screenshotError, status.connectionStatus]);
+
   async function handleLogout() {
     if (!window.khaliduo || isLoggingOut) return;
     const confirmation = await Swal.fire({
@@ -1315,29 +1308,35 @@ function App() {
     if (shownIdleAlertId.current === alert.id) return;
     shownIdleAlertId.current = alert.id;
     window.khaliduo?.setIdleAlertAttention(true);
+    const isTrackingStart = alert.kind === "tracking_start";
     const canRequestManualTime =
-      !alert.outsideScheduledShift && alert.eligibleLostSeconds > 0;
-    const lostMinutes = Math.max(
-      1,
-      Math.round(
-        (canRequestManualTime ? alert.eligibleLostSeconds : alert.lostSeconds) /
-          60,
-      ),
-    );
+      !isTrackingStart &&
+      !alert.outsideScheduledShift &&
+      alert.eligibleLostSeconds > 0;
     let result: SweetAlertResult;
     try {
       result = await Swal.fire({
-        title: canRequestManualTime
-          ? "Do you want to continue tracking?"
-          : "Extra time resumed",
-        text: canRequestManualTime
-          ? `Mouse activity returned after ${formatDuration(alert.lostSeconds)} away. ${formatDuration(alert.eligibleLostSeconds)} was inside your paid shift and is available to explain.`
-          : `Mouse activity returned after ${formatDuration(alert.lostSeconds)} away. The extra-time timer was paused, and this period was not recorded as idle because it was outside your paid shift.`,
+        title: isTrackingStart
+          ? alert.outsideScheduledShift
+            ? "Start extra time?"
+            : "Start work tracking?"
+          : "Confirm you are back",
+        text: isTrackingStart
+          ? alert.outsideScheduledShift
+            ? "You are outside your scheduled shift. A device being on or mouse and keyboard movement alone will not start time. Confirm only if you are actually working."
+            : "Khaliduo will not count time just because this device is on. Confirm that you are present and actually starting work."
+          : canRequestManualTime
+            ? `Input was detected after ${formatDuration(alert.lostSeconds)} away. Choose Continue to resume now; ${formatDuration(alert.eligibleLostSeconds)} inside your paid shift remains available to explain.`
+            : `Input was detected after ${formatDuration(alert.lostSeconds)} away. Choose Continue to resume tracking now.`,
         icon: "warning",
         showDenyButton: true,
         showCancelButton: canRequestManualTime,
-        confirmButtonText: "Continue tracking",
-        denyButtonText: "Stop tracking",
+        confirmButtonText: isTrackingStart
+          ? alert.outsideScheduledShift
+            ? "Start extra time"
+            : "Start work"
+          : "Continue tracking",
+        denyButtonText: isTrackingStart ? "Not working" : "Stop tracking",
         cancelButtonText: "Request manual time",
         confirmButtonColor: "#1f7a4d",
         denyButtonColor: "#842029",
@@ -1349,12 +1348,17 @@ function App() {
     }
 
     if (result.isConfirmed) {
-      const resumeResult = await window.khaliduo?.resumeAutomaticIdle();
-      if (resumeResult?.message) setTrackingControlMessage(resumeResult.message);
+      const resumeResult = isTrackingStart
+        ? await window.khaliduo?.confirmTrackingStart()
+        : await window.khaliduo?.resumeAutomaticIdle();
+      if (resumeResult?.message)
+        setTrackingControlMessage(resumeResult.message);
       const nextStatus = await window.khaliduo?.getAgentStatus();
       if (nextStatus) setStatus(nextStatus);
     } else if (result.isDenied) {
-      const pauseResult = await window.khaliduo?.pauseTracking();
+      const pauseResult = isTrackingStart
+        ? await window.khaliduo?.declineTrackingStart()
+        : await window.khaliduo?.pauseTracking();
       if (pauseResult?.message) setTrackingControlMessage(pauseResult.message);
       const nextStatus = await window.khaliduo?.getAgentStatus();
       if (nextStatus) setStatus(nextStatus);
@@ -1363,10 +1367,10 @@ function App() {
       result.dismiss === Swal.DismissReason.cancel
     ) {
       const resumeResult = await window.khaliduo?.resumeAutomaticIdle();
-      if (resumeResult?.message) setTrackingControlMessage(resumeResult.message);
+      if (resumeResult?.message)
+        setTrackingControlMessage(resumeResult.message);
       setExpandedRequest("idle");
       setActiveView("requests");
-      setTimeRequestMinutes(lostMinutes);
       setTimeRequestReason(
         "Offline meeting or work completed while away from the computer.",
       );
@@ -1379,16 +1383,22 @@ function App() {
 
   async function handleUpdateButton() {
     if (!window.khaliduo || isCheckingUpdate) return;
+    const isInstallAction = status.updateStatus === "ready";
     setIsCheckingUpdate(true);
     try {
-      const result =
-        status.updateStatus === "ready"
-          ? await window.khaliduo.installUpdate()
-          : await window.khaliduo.checkForUpdates();
+      const result = isInstallAction
+        ? await window.khaliduo.installUpdate()
+        : await window.khaliduo.checkForUpdates();
       if (result?.success === false) {
         await Swal.fire({
-          title: "Update check failed",
-          text: result.message ?? "Khaliduo could not check for updates.",
+          title: isInstallAction
+            ? "Update installation failed"
+            : "Update check failed",
+          text:
+            result.message ??
+            (isInstallAction
+              ? "Khaliduo could not install the update."
+              : "Khaliduo could not check for updates."),
           icon: "error",
           confirmButtonText: "OK",
         });
@@ -1401,20 +1411,25 @@ function App() {
   }
 
   const updateButtonLabel =
-    status.updateStatus === "ready"
-      ? "Install update"
-      : status.updateStatus === "downloading"
-        ? `Updating ${Math.round(status.updatePercent ?? 0)}%`
-        : status.updateStatus === "available"
-          ? "Downloading update"
-          : isCheckingUpdate || status.updateStatus === "checking"
-            ? "Checking..."
-            : "Check update";
+    status.updateStatus === "installing"
+      ? "Installing update..."
+      : status.updateStatus === "ready"
+        ? "Install update"
+        : status.updateStatus === "downloading"
+          ? `Updating ${Math.round(status.updatePercent ?? 0)}%`
+          : status.updateStatus === "available"
+            ? "Downloading update"
+            : status.updateStatus === "error"
+              ? "Retry update"
+              : isCheckingUpdate || status.updateStatus === "checking"
+                ? "Checking..."
+                : "Check update";
   const updateButtonDisabled =
     isCheckingUpdate ||
     status.updateStatus === "checking" ||
     status.updateStatus === "downloading" ||
-    status.updateStatus === "available";
+    status.updateStatus === "available" ||
+    status.updateStatus === "installing";
 
   return (
     <main className="k-app" data-tone={timerTone} data-theme={theme}>
@@ -1438,13 +1453,14 @@ function App() {
                 : "is-paused"
             }`}
             title={
-              status.screenshotCaptureActive && status.connectionStatus === "offline"
+              status.screenshotCaptureActive &&
+              status.connectionStatus === "offline"
                 ? "Screenshots are captured locally and queued until the API connection returns"
                 : status.screenshotCaptureActive
                   ? "Workplace screenshots are active and syncing"
-                : status.powerSource === "battery"
-                  ? "Screenshots pause while this device is on battery"
-                  : "Screenshot monitoring is temporarily paused"
+                  : status.powerSource === "battery"
+                    ? "Screenshots pause while this device is on battery"
+                    : "Screenshot monitoring is temporarily paused"
             }
           >
             <span aria-hidden="true">●</span>
@@ -1465,7 +1481,11 @@ function App() {
               : "API sync is offline; click to retry. Local tracking and queued screenshots are preserved."
           }
         >
-          {status.connectionStatus === "online" ? "Synced" : "Offline"}
+          {status.connectionStatus === "online"
+            ? "Synced"
+            : isTracking
+              ? "Offline - tracking locally"
+              : "Offline"}
         </button>
         {status.enrolled && (
           <button
@@ -1482,7 +1502,11 @@ function App() {
           className="k-theme-button"
           onClick={() => void handleUpdateButton()}
           disabled={updateButtonDisabled}
-          title="Check for Khaliduo updates now"
+          title={
+            status.updateStatus === "ready"
+              ? "Install the downloaded Khaliduo update now"
+              : "Check for Khaliduo updates now"
+          }
         >
           {updateButtonLabel}
         </button>
@@ -1522,18 +1546,22 @@ function App() {
         </div>
       </header>
 
-      {["available", "downloading", "ready"].includes(status.updateStatus) && (
+      {["available", "downloading", "ready", "installing"].includes(
+        status.updateStatus,
+      ) && (
         <section className="k-update" role="status" aria-live="assertive">
           <strong>
             Required update{" "}
             {status.updateVersion ? `v${status.updateVersion}` : ""}
           </strong>
           <span>
-            {status.updateStatus === "ready"
-              ? "Ready to install. Follow the installation message to continue."
-              : status.updateStatus === "downloading"
-                ? `Downloading: ${Math.round(status.updatePercent ?? 0)}%`
-                : "Preparing the required download..."}
+            {status.updateStatus === "installing"
+              ? "Installing automatically now. Khaliduo will restart when it finishes."
+              : status.updateStatus === "ready"
+                ? "Downloaded and ready. Automatic installation is starting now; you can also click Install update."
+                : status.updateStatus === "downloading"
+                  ? `Downloading: ${Math.round(status.updatePercent ?? 0)}%`
+                  : "Preparing the required download..."}
           </span>
         </section>
       )}
@@ -1591,9 +1619,6 @@ function App() {
               onRequestManualTime={(option) => {
                 if (option) {
                   setSelectedIdleRequestKey(option.key);
-                  setTimeRequestMinutes(
-                    Math.max(1, Math.floor(option.availableSeconds / 60)),
-                  );
                 }
                 setExpandedRequest("idle");
                 setActiveView("requests");
@@ -1641,7 +1666,6 @@ function App() {
           {activeView === "requests" && (
             <RequestCentreView
               status={status}
-              timeRequestMinutes={timeRequestMinutes}
               timeRequestReason={timeRequestReason}
               timeRequestError={timeRequestError}
               timeRequestSuccess={timeRequestSuccess}
@@ -1656,7 +1680,6 @@ function App() {
               onLeaveEndDateChange={setLeaveEndDate}
               onLeaveReasonChange={setLeaveReason}
               onSubmitLeaveRequest={handleLeaveRequest}
-              onTimeRequestMinutesChange={setTimeRequestMinutes}
               onTimeRequestReasonChange={setTimeRequestReason}
               selectedIdleRequestKey={selectedIdleRequestKey}
               idleRequestOptions={idleRequestOptions}
@@ -1697,9 +1720,13 @@ function App() {
         <span
           className={status.connectionStatus === "online" ? "k-ok" : "k-danger"}
         >
-          {status.connectionStatus === "online" ? "Synced" : "Offline"}
+          {status.connectionStatus === "online"
+            ? "Synced"
+            : isTracking
+              ? "Sync pending - time saved locally"
+              : "Offline"}
         </span>
-        <span>Normal today {formatDuration(countedTodaySeconds)}</span>
+        <span>Worked today {formatDuration(trackedTodaySeconds)}</span>
         <span>Activity {status.activityPercent}%</span>
         <span>v{status.agentVersion}</span>
       </footer>
@@ -1757,7 +1784,11 @@ function EnrollmentView({
               required
             />
           </label>
-          <button type="submit" disabled={isSubmitting || !isDesktopRuntime}>
+          <button
+            type="submit"
+            className="k-primary k-enroll-submit"
+            disabled={isSubmitting || !isDesktopRuntime}
+          >
             {isSubmitting ? "Signing in..." : "Sign in and link device"}
           </button>
         </form>
@@ -1839,7 +1870,7 @@ function Sidebar({
             {status.connectionStatus === "online"
               ? "Online - Synced"
               : isTracking
-                ? "Online - Sync pending"
+                ? "Offline - tracking locally"
                 : "Offline"}
           </small>
         </div>
@@ -1917,7 +1948,13 @@ function HomeView({
   idleRequestOptions: IdleRequestOption[];
   onRequestManualTime: (option?: IdleRequestOption) => void;
 }) {
-  const todayIdleSeconds = status.eligibleIdleSeconds;
+  const todayIdleSeconds = Math.max(
+    status.timeSummary?.today.idle_seconds ?? 0,
+    status.todayTimeline?.idle_seconds ?? 0,
+    status.eligibleIdleSeconds,
+  );
+  const requestableIdleMinuteTotal =
+    totalRequestableIdleMinutes(idleRequestOptions);
   const isPaused = status.trackingPaused || status.trackingStatus === "paused";
   const shouldResume =
     isPaused ||
@@ -1952,17 +1989,32 @@ function HomeView({
     "locked",
     "sleeping",
   ].includes(status.trackingStatus);
+  const workdayTiming = workdayTimingState({
+    timelineStartedAt: status.todayTimeline?.first_started_at ?? null,
+    timelineIsRunning: status.todayTimeline?.is_running ?? false,
+    localSessionStartedAt: status.sessionStartedAt,
+    localTrackingActive: hasRunningSession,
+  });
+  const workdayTimezone =
+    status.todayTimeline?.timezone ??
+    status.requestPolicy?.timezone ??
+    Intl.DateTimeFormat().resolvedOptions().timeZone ??
+    "UTC";
+  const isAutomaticIdle =
+    status.trackingStatus === "idle" && !status.trackingPaused;
   const heroStatusLabel = !hasRunningSession
     ? statusLabel
-    : isPaused
-      ? "Paused"
-      : isExtraTime
-        ? ["idle", "locked", "sleeping"].includes(status.trackingStatus)
-          ? "Extra paused"
-          : "Extra time active"
-        : ["idle", "locked", "sleeping"].includes(status.trackingStatus)
-          ? "Paid shift idle"
-          : "Paid shift active";
+    : isExtraTime &&
+        (isPaused ||
+          ["idle", "locked", "sleeping"].includes(status.trackingStatus))
+      ? "Off shift"
+      : isPaused
+        ? "Paused"
+        : isExtraTime
+          ? "Extra time active"
+          : ["idle", "locked", "sleeping"].includes(status.trackingStatus)
+            ? "Paid shift idle"
+            : "Paid shift active";
   const arcDegrees = Math.round((targetProgress / 100) * 300);
   return (
     <section className="k-home">
@@ -2028,9 +2080,11 @@ function HomeView({
           <div
             className="k-ring"
             aria-label={
-              isExtraTime
-                ? `Recorded overtime ${formatDuration(displayedTimerSeconds)}`
-                : `Worked ${formatDuration(countedTodaySeconds)} of ${formatDuration(status.dailyTargetSeconds)}`
+              isAutomaticIdle
+                ? `Idle for ${formatDuration(displayedTimerSeconds)} after the ten-minute grace period`
+                : isExtraTime
+                  ? `Recorded overtime ${formatDuration(displayedTimerSeconds)}`
+                  : `Worked today ${formatDuration(trackedTodaySeconds)}; ${formatDuration(countedTodaySeconds)} counts toward the ${formatDuration(status.dailyTargetSeconds)} target`
             }
           >
             <span className="k-gauge-mark mark-0">0h</span>
@@ -2041,9 +2095,11 @@ function HomeView({
             <div className="k-gauge-readout">
               <strong>{formatDuration(displayedTimerSeconds)}</strong>
               <small>
-                {isExtraTime
-                  ? "Overtime recorded today"
-                  : `${targetProgress}% of ${formatDuration(status.dailyTargetSeconds)}`}
+                {isAutomaticIdle
+                  ? "Idle time after 10-minute grace"
+                  : isExtraTime
+                    ? "Overtime recorded today"
+                    : `Worked today · ${targetProgress}% of ${formatDuration(status.dailyTargetSeconds)} target`}
               </small>
             </div>
           </div>
@@ -2089,13 +2145,18 @@ function HomeView({
             <div>
               <span>Idle</span>
               <strong>{formatDuration(todayIdleSeconds)}</strong>
+              <small className="k-meta-note">
+                {requestableIdleMinuteTotal > 0
+                  ? `${requestableIdleMinuteTotal} min requestable`
+                  : "No requestable time"}
+              </small>
               <button
                 type="button"
                 className="k-meta-action"
                 onClick={() => onRequestManualTime(idleRequestOptions[0])}
                 disabled={!idleRequestOptions.length}
               >
-                Request idle time
+                Explain idle
               </button>
             </div>
           </div>
@@ -2109,11 +2170,10 @@ function HomeView({
             <span>Started at</span>
             <strong>
               {status.todayTimeline?.first_started_at
-                ? formatClock(
-                    status.todayTimeline.first_started_at,
-                    status.todayTimeline.timezone,
-                  )
-                : "Not started"}
+                ? formatTimelineStart(status.todayTimeline)
+                : workdayTiming.startedAt
+                  ? formatClock(workdayTiming.startedAt, workdayTimezone)
+                  : "Not started"}
             </strong>
           </div>
           <div>
@@ -2124,20 +2184,24 @@ function HomeView({
                     status.todayTimeline.last_activity_at,
                     status.todayTimeline.timezone,
                   )
-                : "—"}
+                : workdayTiming.localSyncPending
+                  ? "Sync pending"
+                  : "—"}
             </strong>
           </div>
           <div>
-            <span>Ended at</span>
+            <span>{workdayTiming.isRunning ? "Session" : "Signed out"}</span>
             <strong>
               {status.todayTimeline?.is_running
-                ? "In progress"
-                : status.todayTimeline?.last_ended_at
-                  ? formatClock(
-                      status.todayTimeline.last_ended_at,
-                      status.todayTimeline.timezone,
-                    )
-                  : "—"}
+                ? "Still running - no sign-out yet"
+                : workdayTiming.localSyncPending
+                  ? "Running locally - syncing"
+                  : status.todayTimeline?.last_ended_at
+                    ? formatClock(
+                        status.todayTimeline.last_ended_at,
+                        status.todayTimeline.timezone,
+                      )
+                    : "—"}
             </strong>
           </div>
         </section>
@@ -2226,7 +2290,13 @@ function HomeView({
               />
               <figcaption>
                 <span>{formatTimestamp(recentScreenshots[0].capturedAt)}</span>
-                <b className="k-ok">Synced</b>
+                <b
+                  className={
+                    status.connectionStatus === "online" ? "k-ok" : "k-muted"
+                  }
+                >
+                  {screenshotSyncLabel(status.connectionStatus)}
+                </b>
               </figcaption>
             </figure>
           )}
@@ -2239,6 +2309,7 @@ function HomeView({
         {status.todayTimeline && (
           <Timeline
             timeline={status.todayTimeline}
+            locallyEndedIdleAt={status.locallyEndedIdleAt}
             idleRequestOptions={idleRequestOptions}
             onRequestIdleTime={onRequestManualTime}
           />
@@ -2285,26 +2356,51 @@ function Stat({
 
 function Timeline({
   timeline,
+  locallyEndedIdleAt,
   idleRequestOptions,
   onRequestIdleTime,
 }: {
   timeline: WorkdayTimeline;
+  locallyEndedIdleAt: string | null;
   idleRequestOptions: IdleRequestOption[];
   onRequestIdleTime: (option: IdleRequestOption) => void;
 }) {
-  const labels = {
-    worked: "Worked",
-    idle: "Idle",
-    locked: "Locked",
-    sleeping: "Sleeping",
-    extra: "Overtime",
-    leave: "Leave",
-  } as const;
-  const idleOptionsByKey = new Map(
-    idleRequestOptions.map((option) => [option.key, option]),
-  );
+  const requestableMinutes = totalRequestableIdleMinutes(idleRequestOptions);
   return (
     <section className="k-side-section">
+      {idleRequestOptions.length ? (
+        <section
+          className="k-idle-needs"
+          aria-label="Idle periods needing explanation"
+        >
+          <header>
+            <strong>Needs explanation</strong>
+            <span>{requestableMinutes} min requestable</span>
+          </header>
+          <div className="k-idle-needs-list">
+            {idleRequestOptions.map((option) => (
+              <button
+                key={option.key}
+                type="button"
+                className="k-idle-needs-item"
+                onClick={() => onRequestIdleTime(option)}
+              >
+                <i className="k-timeline-icon">
+                  <KIcon name="idle" />
+                </i>
+                <span>
+                  {formatClock(option.startedAt, timeline.timezone)} -{" "}
+                  {formatClock(option.endedAt, timeline.timezone)}
+                </span>
+                <small>
+                  {formatDuration(option.durationSeconds)} idle period
+                </small>
+                <b>Explain up to {requestableIdleMinutes(option)} min</b>
+              </button>
+            ))}
+          </div>
+        </section>
+      ) : null}
       <strong>Today's timeline</strong>
       <div className="k-timeline">
         {timeline.intervals.length === 0 && timeline.approved_leave ? (
@@ -2317,16 +2413,20 @@ function Timeline({
             <small>Approved</small>
           </div>
         ) : null}
-        {timeline.intervals.slice(-6).map((interval, index) => {
-          const displayType = timeline.approved_leave
-            ? interval.type === "worked"
-              ? "extra"
-              : "leave"
-            : interval.type;
-          const idleOption =
-            !timeline.approved_leave && interval.type === "idle"
-              ? idleOptionsByKey.get(idleRequestKey(interval))
-              : undefined;
+        {timelineIntervalsForDisplay(timeline.intervals).map((interval, index) => {
+          const presentation = timelineIntervalPresentation(
+            interval,
+            locallyEndedIdleAt,
+          );
+          const displayType = timelineDisplayType(
+            interval.type,
+            Boolean(timeline.approved_leave),
+            interval.work_category,
+          );
+          const displaysWork =
+            displayType === "worked" ||
+            displayType === "extra" ||
+            displayType === "break_work";
           return (
             <div
               key={`${interval.session_id}-${interval.started_at}-${index}`}
@@ -2337,28 +2437,27 @@ function Timeline({
               </i>
               <span>
                 {formatClock(interval.started_at, timeline.timezone)} -{" "}
-                {interval.is_current
-                  ? "Now"
-                  : formatClock(interval.ended_at, timeline.timezone)}
+                {presentation.isCurrent
+                  ? "Until now"
+                  : formatClock(presentation.endedAt, timeline.timezone)}
               </span>
               <b
                 title={
-                  displayType === "worked" || displayType === "extra"
+                  displaysWork
                     ? (interval.task_name ??
                       interval.project_name ??
-                      labels[displayType])
-                    : labels[displayType]
+                      TIMELINE_LABELS[displayType])
+                    : TIMELINE_LABELS[displayType]
                 }
               >
-                {labels[displayType]}
-                {(displayType === "worked" || displayType === "extra") &&
-                (interval.task_name || interval.project_name)
+                {TIMELINE_LABELS[displayType]}
+                {displaysWork && (interval.task_name || interval.project_name)
                   ? ` · ${interval.task_name ?? interval.project_name}`
                   : ""}
               </b>
               <small>
                 {formatDuration(
-                  interval.is_current
+                  presentation.isCurrent
                     ? Math.max(
                         0,
                         Math.floor(
@@ -2367,18 +2466,9 @@ function Timeline({
                             1000,
                         ),
                       )
-                    : interval.duration_seconds,
+                    : presentation.durationSeconds,
                 )}
               </small>
-              {idleOption ? (
-                <button
-                  type="button"
-                  className="k-timeline-request"
-                  onClick={() => onRequestIdleTime(idleOption)}
-                >
-                  Request
-                </button>
-              ) : null}
             </div>
           );
         })}
@@ -2787,7 +2877,6 @@ function TasksView({
 
 type RequestCentreProps = {
   status: AgentStatus;
-  timeRequestMinutes: number;
   timeRequestReason: string;
   timeRequestError: string | null;
   timeRequestSuccess: string | null;
@@ -2809,7 +2898,6 @@ type RequestCentreProps = {
   onLeaveEndDateChange: (value: string) => void;
   onLeaveReasonChange: (value: string) => void;
   onSubmitLeaveRequest: (event: FormEvent<HTMLFormElement>) => void;
-  onTimeRequestMinutesChange: (value: number) => void;
   onTimeRequestReasonChange: (value: string) => void;
   onSelectedIdleRequestChange: (value: string) => void;
   onEarlyLeaveDateChange: (value: string) => void;
@@ -2861,7 +2949,7 @@ function RequestCentreView(props: RequestCentreProps) {
     idleRequestOptions[0] ??
     null;
   const maxIdleMinutes = selectedIdle
-    ? Math.max(1, Math.floor(selectedIdle.availableSeconds / 60))
+    ? Math.max(1, requestableIdleMinutes(selectedIdle))
     : 0;
   const requests = useMemo(
     () =>
@@ -3036,27 +3124,17 @@ function RequestCentreView(props: RequestCentreProps) {
                             option.endedAt,
                             status.todayTimeline?.timezone ?? "UTC",
                           )}{" "}
-                          · {formatDuration(option.availableSeconds)} available
+                          | {formatDuration(option.durationSeconds)} idle | up
+                          to {requestableIdleMinutes(option)} min remaining
                         </option>
                       ))}
                     </select>
                   </label>
                   <label>
-                    Minutes to count
+                    Minutes requested (full idle period)
                     <input
-                      type="number"
-                      min={1}
-                      max={maxIdleMinutes || 1}
-                      value={props.timeRequestMinutes}
-                      disabled={!selectedIdle}
-                      onChange={(event) =>
-                        props.onTimeRequestMinutesChange(
-                          Math.min(
-                            Math.max(1, Number(event.target.value)),
-                            maxIdleMinutes || 1,
-                          ),
-                        )
-                      }
+                      value={selectedIdle ? `${maxIdleMinutes} min` : "0 min"}
+                      disabled
                     />
                   </label>
                 </div>
@@ -3076,10 +3154,13 @@ function RequestCentreView(props: RequestCentreProps) {
                 </label>
                 <div className="k-form-footer">
                   <span>
-                    Eligible:{" "}
+                    Idle period:{" "}
                     {selectedIdle
-                      ? formatDuration(selectedIdle.availableSeconds)
+                      ? formatDuration(selectedIdle.durationSeconds)
                       : "00:00:00"}
+                    {selectedIdle
+                      ? ` | The full ${requestableIdleMinutes(selectedIdle)} min will be sent`
+                      : ""}
                   </span>
                   <button
                     className="k-primary"
@@ -3504,7 +3585,9 @@ function SettingsView({
               This employee account is linked to this Windows device.
             </p>
           </div>
-          <span className={`k-connection-badge ${status.enrolled ? "online" : "offline"}`}>
+          <span
+            className={`k-connection-badge ${status.enrolled ? "online" : "offline"}`}
+          >
             {status.enrolled ? "Enrolled" : "Not enrolled"}
           </span>
         </div>
@@ -3620,7 +3703,7 @@ function MoreView({
     idleRequestOptions[0] ??
     null;
   const maxIdleMinutes = selectedIdle
-    ? Math.max(1, Math.floor(selectedIdle.availableSeconds / 60))
+    ? Math.max(1, requestableIdleMinutes(selectedIdle))
     : 0;
   const recentRequests = status.timeAdjustmentRequests.slice(0, 5);
   return (
@@ -3756,8 +3839,9 @@ function MoreView({
                         option.endedAt,
                         status.todayTimeline?.timezone ?? "UTC",
                       )}
-                      {" · "}
-                      {formatDuration(option.availableSeconds)} available
+                      {" | "}
+                      {formatDuration(option.durationSeconds)} idle | up to{" "}
+                      {requestableIdleMinutes(option)} min
                     </option>
                   ))
                 ) : (
@@ -3766,11 +3850,11 @@ function MoreView({
               </select>
             </label>
             <div className="k-request-meter">
-              <span>Available to request</span>
+              <span>Idle period / maximum request</span>
               <strong>
                 {selectedIdle
-                  ? formatDuration(selectedIdle.availableSeconds)
-                  : "00:00:00"}
+                  ? `${formatDuration(selectedIdle.durationSeconds)} / ${requestableIdleMinutes(selectedIdle)} min`
+                  : "00:00:00 / 0 min"}
               </strong>
             </div>
             <label>

@@ -48,13 +48,22 @@ function ReportsPage() {
   const selectedScope = teamId !== "all" ? [teamId] : scope;
   const totals = useQuery({
     queryKey: ["report-totals", selectedScope],
-    queryFn: () => fetchReportTotals(scope, teamId),
+    queryFn: ({ signal }) => fetchReportTotals(scope, teamId, signal),
   });
-  const teams = useQuery({ queryKey: ["teams", scope], queryFn: () => listTeams(scope) });
-  const emps = useQuery({ queryKey: ["employees", scope], queryFn: () => listEmployees(scope) });
+  const teams = useQuery({
+    queryKey: ["teams", scope],
+    queryFn: ({ signal }) => listTeams(scope, signal),
+    staleTime: 10 * 60_000,
+    gcTime: 30 * 60_000,
+  });
+  const emps = useQuery({
+    queryKey: ["employees", scope],
+    queryFn: ({ signal }) => listEmployees(scope, signal),
+  });
   const timesheets = useQuery({
     queryKey: ["timesheets", "weekly", selectedScope],
-    queryFn: () => listTimesheets(selectedScope, "weekly"),
+    queryFn: ({ signal }) =>
+      listTimesheets(selectedScope, "weekly", undefined, undefined, signal),
   });
   const report = useMemo(
     () =>

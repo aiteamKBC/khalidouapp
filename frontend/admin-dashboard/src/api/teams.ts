@@ -1,7 +1,7 @@
 import { apiFetch, toMinutes, withQuery } from "./client";
 import { mapUser } from "./auth";
 import { normalizeAiAcronym } from "@/lib/text";
-import type { Team, TeamMemberRole, User } from "@/types";
+import type { Team, TeamMemberRole, TeamOwnerSummary, User } from "@/types";
 
 type BackendTeam = {
   id: string;
@@ -11,6 +11,7 @@ type BackendTeam = {
   created_at: string;
   employee_ids?: string[];
   owner_ids?: string[];
+  owners?: { id: string; name: string; email: string }[];
 };
 
 type BackendEmployee = {
@@ -33,48 +34,73 @@ export type TeamCreateInput = {
   description?: string;
 };
 
-function mapTeam(team: BackendTeam, employeeIds: string[], ownerIds: string[]): Team {
+function mapTeam(team: BackendTeam, employeeIds: string[], owners: TeamOwnerSummary[]): Team {
   return {
     id: team.id,
     name: normalizeAiAcronym(team.name),
     description: team.description ?? "",
     status: team.status === "deleted" ? "archived" : team.status,
-    ownerIds,
+    ownerIds: owners.map((owner) => owner.id),
+    owners,
     employeeIds,
     createdAt: team.created_at,
   };
 }
 
-export async function listTeamMembers(teamId: string) {
-  return apiFetch<BackendEmployee[]>(`/teams/${teamId}/members`);
+export async function listTeamMembers(teamId: string, signal?: AbortSignal) {
+  return apiFetch<BackendEmployee[]>(`/teams/${teamId}/members`, { signal });
 }
 
-export async function listTeamOwners(teamId: string): Promise<User[]> {
-  const owners = await apiFetch<BackendUser[]>(`/teams/${teamId}/owners`);
+export async function listTeamOwners(teamId: string, signal?: AbortSignal): Promise<User[]> {
+  const owners = await apiFetch<BackendUser[]>(`/teams/${teamId}/owners`, { signal });
   return owners.map(mapUser);
 }
 
-async function enrichTeam(team: BackendTeam): Promise<Team> {
-  const [members, owners] = await Promise.all([listTeamMembers(team.id), listTeamOwners(team.id)]);
+async function enrichTeam(team: BackendTeam, signal?: AbortSignal): Promise<Team> {
+  const [members, owners] = await Promise.all([
+    listTeamMembers(team.id, signal),
+    listTeamOwners(team.id, signal),
+  ]);
   return mapTeam(
     team,
     members.map((member) => member.id),
-    owners.map((owner) => owner.id),
+    owners.map((owner) => ({ id: owner.id, name: owner.name, email: owner.email })),
   );
 }
 
-export async function listTeams(scopedTeamIds?: string[]): Promise<Team[]> {
+export async function listTeams(scopedTeamIds?: string[], signal?: AbortSignal): Promise<Team[]> {
   const teams = await apiFetch<BackendTeam[]>(
     withQuery("/teams", { page_size: 100, include_relations: "true" }),
+    { signal },
   );
   const filtered = scopedTeamIds?.length
     ? teams.filter((team) => scopedTeamIds.includes(team.id))
     : teams;
-  return filtered.map((team) => mapTeam(team, team.employee_ids ?? [], team.owner_ids ?? []));
+  return filtered.map((team) =>
+    mapTeam(
+      team,
+      team.employee_ids ?? [],
+      // Older backends only returned ids; keep those teams renderable by name-less fallback.
+      team.owners ?? (team.owner_ids ?? []).map((id) => ({ id, name: "", email: "" })),
+    ),
+  );
 }
 
-export async function getTeam(id: string): Promise<Team | undefined> {
-  return enrichTeam(await apiFetch<BackendTeam>(`/teams/${id}`));
+export async function listMonitoringTeams(
+  scopedTeamIds?: string[],
+  signal?: AbortSignal,
+): Promise<Team[]> {
+  const teams = await apiFetch<BackendTeam[]>(
+    withQuery("/teams", { page_size: 100, include_relations: "false" }),
+    { signal },
+  );
+  return teams
+    .filter((team) => !scopedTeamIds?.length || scopedTeamIds.includes(team.id))
+    .map((team) => mapTeam(team, [], []));
+}
+
+export async function getTeam(id: string, signal?: AbortSignal): Promise<Team | undefined> {
+  return enrichTeam(await apiFetch<BackendTeam>(`/teams/${id}`, { signal }), signal);
 }
 
 export async function createTeam(input: TeamCreateInput): Promise<Team> {
@@ -145,22 +171,29 @@ export async function removeTeamOwner(teamId: string, adminUserId: string): Prom
   await apiFetch(`/teams/${teamId}/owners/${adminUserId}`, { method: "DELETE" });
 }
 
-export async function teamStats(id: string) {
+export async function teamStats(id: string, signal?: AbortSignal) {
   const summary = await apiFetch<{
     total_employees: number;
     online_employees: number;
     idle_employees: number;
+    on_break_employees?: number;
+    off_shift_employees: number;
     active_seconds: number;
     idle_seconds: number;
     total_hours_today: number;
     screenshots_today: number;
     screenshot_count: number;
-  }>(`/teams/${id}/summary`);
+  }>(`/teams/${id}/summary`, { signal });
   return {
     total: summary.total_employees,
     online: summary.online_employees,
     idle: summary.idle_employees,
-    offline: Math.max(0, summary.total_employees - summary.online_employees),
+    onBreak: summary.on_break_employees ?? 0,
+    offShift: summary.off_shift_employees,
+    offline: Math.max(
+      0,
+      summary.total_employees - summary.online_employees - summary.off_shift_employees,
+    ),
     hoursToday: summary.total_hours_today,
     activeMin: toMinutes(summary.active_seconds),
     idleMin: toMinutes(summary.idle_seconds),

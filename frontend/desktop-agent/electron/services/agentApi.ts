@@ -8,6 +8,7 @@ import {
   loadIdentity,
   saveEnrollmentIdentity,
 } from "./identityStore.js";
+import type { InputIntegrityObservation } from "./inputIntegrity.js";
 
 // Never let an offline API call freeze quit, sync, or update flows forever.
 const axios = axiosLibrary.create({ timeout: 15_000 });
@@ -31,6 +32,9 @@ type EnrollmentResponse = {
     name: string;
     installation_id: string;
     status: string;
+    timezone: string | null;
+    country_code: string | null;
+    timezone_source: string | null;
   };
   device_token: string;
   token_type: "bearer";
@@ -51,6 +55,7 @@ export type WorkSession = {
   team_id: string | null;
   project_id: string | null;
   task_id: string | null;
+  timezone: string | null;
   started_at: string;
   ended_at: string | null;
   status: "active" | "idle" | "locked" | "sleeping" | "offline" | "ended";
@@ -75,6 +80,7 @@ export type PauseState = {
 };
 
 export type WorkdayState = {
+  work_date?: string;
   required_normal_seconds: number;
   normal_seconds: number;
   normal_remaining_seconds: number;
@@ -206,6 +212,7 @@ export type AgentPeriodSummary = {
   active_seconds: number;
   tracked_active_seconds: number;
   idle_seconds: number;
+  eligible_idle_seconds?: number;
   tracked_seconds: number;
   adjustment_seconds: number;
   manual_approved_seconds: number;
@@ -223,6 +230,8 @@ export type AgentWorkdayTimeline = {
   last_ended_at: string | null;
   last_activity_at: string | null;
   is_running: boolean;
+  continued_from_previous_day?: boolean;
+  continued_session_started_at?: string | null;
   worked_seconds: number;
   idle_seconds: number;
   locked_seconds: number;
@@ -230,17 +239,27 @@ export type AgentWorkdayTimeline = {
   approved_leave?: boolean;
   leave_seconds?: number;
   intervals: Array<{
-    type: "worked" | "idle" | "locked" | "sleeping";
-    source?: "activity" | "manual_pause";
+    type: "worked" | "idle" | "locked" | "sleeping" | "break";
+    source?: "activity" | "manual_pause" | "scheduled_break";
     started_at: string;
     ended_at: string | null;
     duration_seconds: number;
-    session_id: string;
+    session_id: string | null;
     project_name: string | null;
     task_name: string | null;
     is_current: boolean;
-    work_category?: "extra" | null;
+    work_category?: "extra" | "break_work" | null;
   }>;
+};
+
+export type AgentIdleRequestPeriod = {
+  work_session_id: string;
+  started_at: string;
+  ended_at: string;
+  duration_seconds: number;
+  available_seconds: number;
+  project_name: string | null;
+  task_name: string | null;
 };
 
 export type AgentSummary = {
@@ -250,6 +269,7 @@ export type AgentSummary = {
   activity_percent: number;
   today: AgentPeriodSummary;
   today_timeline: AgentWorkdayTimeline;
+  idle_request_periods?: AgentIdleRequestPeriod[];
   week: AgentPeriodSummary;
   month: AgentPeriodSummary;
 };
@@ -281,6 +301,7 @@ function getDeviceInfo(agentVersion: string) {
     agent_version: agentVersion,
     windows_username: os.userInfo().username,
     mac_address: macAddress,
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || null,
   };
 }
 
@@ -410,7 +431,7 @@ export async function listAgentRecentScreenshots(limit = 4) {
 
 export async function downloadAgentScreenshot(screenshotId: string) {
   const response = await axios.get<ArrayBuffer>(
-    `${getApiBaseUrl()}/agent/screenshots/${screenshotId}/file`,
+    `${getApiBaseUrl()}/agent/screenshots/${screenshotId}/preview`,
     {
       headers: getAuthHeaders(),
       responseType: "arraybuffer",
@@ -513,12 +534,20 @@ export async function deleteAgentTaskChecklistItem(
   return response.data.data;
 }
 
-export async function startSession() {
+export async function startSession(options: {
+  startedAt?: string;
+  offlineRecovery?: boolean;
+  offlineRecoveryId?: string;
+} = {}) {
   const response = await axios.post<
     ApiSuccess<SessionPayload & { created: boolean }>
   >(
     `${getApiBaseUrl()}/agent/sessions/start`,
-    { started_at: new Date().toISOString() },
+    {
+      started_at: options.startedAt ?? new Date().toISOString(),
+      offline_recovery: options.offlineRecovery ?? false,
+      offline_recovery_id: options.offlineRecoveryId ?? null,
+    },
     { headers: getAuthHeaders() },
   );
   return response.data.data;
@@ -595,7 +624,10 @@ export async function sendHeartbeat(options: {
   status: "active" | "idle" | "locked" | "offline" | "sleeping";
   idleSeconds: number;
   activeSeconds: number;
+  counterDate: string;
   agentVersion: string;
+  timestamp?: string;
+  inputIntegrity?: InputIntegrityObservation;
 }) {
   const response = await axios.post<
     ApiSuccess<SessionPayload & { duplicate: boolean }>
@@ -603,12 +635,15 @@ export async function sendHeartbeat(options: {
     `${getApiBaseUrl()}/agent/sessions/${options.sessionId}/heartbeat`,
     {
       event_id: options.eventId,
-      timestamp: new Date().toISOString(),
+      timestamp: options.timestamp ?? new Date().toISOString(),
       status: options.status,
       idle_seconds: options.idleSeconds,
       active_seconds: options.activeSeconds,
+      counter_date: options.counterDate,
       agent_version: options.agentVersion,
       mac_address: getDeviceInfo(options.agentVersion).mac_address,
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || null,
+      input_integrity: options.inputIntegrity ?? null,
     },
     { headers: getAuthHeaders() },
   );
@@ -619,6 +654,7 @@ export async function sendActivityEvent(options: {
   sessionId: string;
   eventId: string;
   eventType: string;
+  eventTimestamp?: string;
   payload?: Record<string, unknown>;
 }) {
   const response = await axios.post<
@@ -628,7 +664,7 @@ export async function sendActivityEvent(options: {
     {
       event_id: options.eventId,
       event_type: options.eventType,
-      event_timestamp: new Date().toISOString(),
+      event_timestamp: options.eventTimestamp ?? new Date().toISOString(),
       payload: options.payload ?? {},
     },
     { headers: getAuthHeaders() },
@@ -663,6 +699,7 @@ export type ScreenshotMetadata = {
   displayName?: string;
   displayCount?: number;
   powerSource?: "ac" | "battery" | "unknown";
+  trackingStatus?: string | null;
 };
 
 export async function initiateScreenshot(metadata: ScreenshotMetadata) {
@@ -683,6 +720,7 @@ export async function initiateScreenshot(metadata: ScreenshotMetadata) {
       display_name: metadata.displayName,
       display_count: metadata.displayCount ?? 1,
       power_source: metadata.powerSource ?? "unknown",
+      tracking_status: metadata.trackingStatus,
     },
     { headers: getAuthHeaders() },
   );

@@ -1,8 +1,22 @@
-import { Activity, CalendarDays, Coffee, LockKeyhole, Moon } from "lucide-react";
+import {
+  Activity,
+  CalendarDays,
+  CircleCheck,
+  Coffee,
+  LockKeyhole,
+  Moon,
+  WifiOff,
+} from "lucide-react";
 
 import type { WorkdayIntervalType, WorkdayTimeline as WorkdayTimelineData } from "@/types";
+import {
+  formatAttendanceStart,
+  formatClock,
+  formatDurationSeconds,
+  formatSessionStatus,
+} from "@/lib/format";
 
-type DisplayIntervalType = WorkdayIntervalType | "extra" | "leave";
+type DisplayIntervalType = WorkdayIntervalType | "break_work" | "extra" | "leave";
 
 const intervalStyles: Record<
   DisplayIntervalType,
@@ -16,8 +30,14 @@ const intervalStyles: Record<
   },
   extra: {
     label: "Overtime",
-    bar: "bg-orange-500",
-    badge: "bg-orange-500/15 text-orange-800",
+    bar: "bg-fuchsia-500 dark:bg-pink-400",
+    badge: "bg-fuchsia-500/15 text-fuchsia-700 dark:bg-pink-500/15 dark:text-pink-300",
+    icon: Activity,
+  },
+  break_work: {
+    label: "Worked during break",
+    bar: "bg-violet-500",
+    badge: "bg-violet-500/15 text-violet-800",
     icon: Activity,
   },
   idle: {
@@ -25,6 +45,18 @@ const intervalStyles: Record<
     bar: "bg-amber-400",
     badge: "bg-amber-400/15 text-amber-800",
     icon: Coffee,
+  },
+  break: {
+    label: "Break",
+    bar: "bg-violet-400",
+    badge: "bg-violet-500/15 text-violet-700 dark:text-violet-300",
+    icon: Coffee,
+  },
+  manual: {
+    label: "Manual approved",
+    bar: "bg-sky-500",
+    badge: "bg-sky-500/15 text-sky-700 dark:text-sky-300",
+    icon: CircleCheck,
   },
   locked: {
     label: "Locked",
@@ -38,6 +70,12 @@ const intervalStyles: Record<
     badge: "bg-indigo-500/10 text-indigo-700",
     icon: Moon,
   },
+  untracked: {
+    label: "Untracked",
+    bar: "bg-rose-500",
+    badge: "bg-rose-500/10 text-rose-700 dark:text-rose-300",
+    icon: WifiOff,
+  },
   leave: {
     label: "Leave",
     bar: "bg-sky-400",
@@ -46,20 +84,21 @@ const intervalStyles: Record<
   },
 };
 
-function formatClock(value: string | undefined, timezone: string) {
-  if (!value) return "-";
-  return new Intl.DateTimeFormat([], {
-    hour: "numeric",
-    minute: "2-digit",
-    timeZone: timezone,
-  }).format(new Date(value));
-}
-
-function formatDuration(totalSeconds: number) {
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  if (hours === 0) return `${minutes}m`;
-  return `${hours}h ${minutes}m`;
+function resolveDisplayType(
+  intervalType: WorkdayIntervalType,
+  workCategory: "extra" | "break_work" | null | undefined,
+  approvedLeave: boolean,
+): DisplayIntervalType {
+  if (approvedLeave) {
+    return intervalType === "worked" ? "extra" : "leave";
+  }
+  if (intervalType === "worked" && workCategory === "break_work") {
+    return "break_work";
+  }
+  if (intervalType === "worked" && workCategory === "extra") {
+    return "extra";
+  }
+  return intervalType;
 }
 
 export function WorkdayTimeline({ timeline }: { timeline?: WorkdayTimelineData }) {
@@ -82,33 +121,51 @@ export function WorkdayTimeline({ timeline }: { timeline?: WorkdayTimelineData }
     1,
     timeline.intervals.reduce((total, interval) => total + interval.durationSeconds, 0),
   );
+  const overtimeSeconds = timeline.intervals.reduce(
+    (total, interval) =>
+      total +
+      (interval.type === "worked" && interval.workCategory === "extra"
+        ? interval.durationSeconds
+        : 0),
+    0,
+  );
+  const regularWorkedSeconds = Math.max(0, timeline.workedSeconds - overtimeSeconds);
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-3 text-sm md:grid-cols-5">
+      <div
+        className={`grid grid-cols-2 gap-3 text-sm ${
+          overtimeSeconds > 0 ? "md:grid-cols-7" : "md:grid-cols-6"
+        }`}
+      >
         <Metric
           label="First start"
-          value={formatClock(timeline.firstStartedAt, timeline.timezone)}
+          value={formatAttendanceStart(
+            timeline.firstStartedAt,
+            timeline.timezone,
+            timeline.continuedFromPreviousDay,
+            timeline.continuedSessionStartedAt,
+          )}
         />
         <Metric
           label="Last activity"
           value={formatClock(timeline.lastActivityAt, timeline.timezone)}
         />
         <Metric
-          label="End"
-          value={
-            timeline.isRunning
-              ? "In progress"
-              : formatClock(timeline.lastEndedAt, timeline.timezone)
-          }
+          label="Session"
+          value={formatSessionStatus(timeline.isRunning, timeline.lastEndedAt, timeline.timezone)}
         />
-        <Metric label="Worked" value={formatDuration(timeline.workedSeconds)} />
+        <Metric label="Regular worked" value={formatDurationSeconds(regularWorkedSeconds)} />
+        {overtimeSeconds > 0 && (
+          <Metric label="Overtime" value={formatDurationSeconds(overtimeSeconds)} />
+        )}
         <Metric
-          label={timeline.approvedLeave ? "Leave" : "Idle"}
-          value={formatDuration(
+          label={timeline.approvedLeave ? "Leave" : "Timeline idle"}
+          value={formatDurationSeconds(
             timeline.approvedLeave ? timeline.leaveSeconds : timeline.idleSeconds,
           )}
         />
+        <Metric label="Untracked" value={formatDurationSeconds(timeline.untrackedSeconds)} />
       </div>
 
       <div
@@ -116,29 +173,35 @@ export function WorkdayTimeline({ timeline }: { timeline?: WorkdayTimelineData }
         aria-label="Workday activity bar"
       >
         {timeline.intervals.map((interval, index) => {
-          const displayType: DisplayIntervalType = timeline.approvedLeave
-            ? interval.type === "worked"
-              ? "extra"
-              : "leave"
-            : interval.type;
+          const displayType = resolveDisplayType(
+            interval.type,
+            interval.workCategory,
+            timeline.approvedLeave,
+          );
           return (
             <span
               key={`${interval.sessionId}-${interval.startedAt}-${index}`}
               className={intervalStyles[displayType].bar}
               style={{ width: `${(interval.durationSeconds / visibleSeconds) * 100}%` }}
-              title={`${intervalStyles[displayType].label}: ${formatDuration(interval.durationSeconds)}`}
+              title={`${intervalStyles[displayType].label}: ${formatDurationSeconds(interval.durationSeconds)}`}
             />
           );
         })}
       </div>
 
+      <p className="text-xs text-muted-foreground">
+        Untracked is a gap with no device evidence, so it is not counted as worked or idle. Timeline
+        idle shows recorded device inactivity; requestable or deductible idle can be lower because
+        paid grace, breaks, off-shift time, and periods shorter than one minute are excluded.
+      </p>
+
       <div className="divide-y rounded-md border">
         {timeline.intervals.map((interval, index) => {
-          const displayType: DisplayIntervalType = timeline.approvedLeave
-            ? interval.type === "worked"
-              ? "extra"
-              : "leave"
-            : interval.type;
+          const displayType = resolveDisplayType(
+            interval.type,
+            interval.workCategory,
+            timeline.approvedLeave,
+          );
           const style = intervalStyles[displayType];
           const Icon = style.icon;
           return (
@@ -148,7 +211,7 @@ export function WorkdayTimeline({ timeline }: { timeline?: WorkdayTimelineData }
             >
               <span className="font-mono text-xs">
                 {formatClock(interval.startedAt, timeline.timezone)} -{" "}
-                {interval.endedAt ? formatClock(interval.endedAt, timeline.timezone) : "Now"}
+                {interval.endedAt ? formatClock(interval.endedAt, timeline.timezone) : "Until now"}
               </span>
               <span
                 className={`inline-flex w-fit items-center gap-1.5 rounded px-2 py-1 text-xs font-medium ${style.badge}`}
@@ -157,12 +220,12 @@ export function WorkdayTimeline({ timeline }: { timeline?: WorkdayTimelineData }
                 {style.label}
               </span>
               <span className="min-w-0 truncate text-muted-foreground">
-                {displayType === "worked" || displayType === "extra"
+                {displayType === "worked" || displayType === "extra" || displayType === "break_work"
                   ? (interval.taskName ?? interval.projectName ?? "-")
                   : "-"}
               </span>
               <strong className="text-right text-xs">
-                {formatDuration(interval.durationSeconds)}
+                {formatDurationSeconds(interval.durationSeconds)}
               </strong>
             </div>
           );

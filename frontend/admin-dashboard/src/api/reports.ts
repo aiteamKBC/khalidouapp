@@ -6,10 +6,16 @@ type BackendReportSummary = {
   screenshots: number;
 };
 
-export async function fetchReportTotals(scopedTeamIds?: string[], selectedTeamId?: string) {
+export async function fetchReportTotals(
+  scopedTeamIds?: string[],
+  selectedTeamId?: string,
+  signal?: AbortSignal,
+) {
   const teamScope = selectedTeamId && selectedTeamId !== "all" ? [selectedTeamId] : scopedTeamIds;
   const teamId = teamScope?.length === 1 ? teamScope[0] : undefined;
-  return apiFetch<BackendReportSummary>(withQuery("/reports/summary", { team_id: teamId }));
+  return apiFetch<BackendReportSummary>(withQuery("/reports/summary", { team_id: teamId }), {
+    signal,
+  });
 }
 
 export function buildReport(

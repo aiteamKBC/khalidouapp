@@ -34,12 +34,12 @@ function AuditLogPage() {
   const canViewAudit = can(permissions.auditView);
   const log = useQuery({
     queryKey: ["audit"],
-    queryFn: listAuditLog,
+    queryFn: ({ signal }) => listAuditLog(signal),
     enabled: canViewAudit,
   });
   const users = useQuery({
     queryKey: ["users"],
-    queryFn: listUsers,
+    queryFn: ({ signal }) => listUsers(signal),
     enabled: canViewAudit,
   });
   const [userId, setUserId] = useState("all");

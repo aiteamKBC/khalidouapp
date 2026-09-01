@@ -4,7 +4,7 @@ Revision ID: 20260716_000029
 Revises: 20260716_000028
 """
 from typing import Sequence, Union
-import sqlalchemy as sa
+
 from alembic import op
 
 revision: str = "20260716_000029"

@@ -4,9 +4,11 @@ import log from "electron-log/main";
 import electronUpdater from "electron-updater";
 import dotenv from "dotenv";
 import axios from "axios";
+import { execFile, fork, type ChildProcess } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -59,16 +61,74 @@ import {
 } from "./services/identityStore.js";
 import type { StoredIdentity } from "./services/identityStore.js";
 import {
+  appendLocalTrackingEvent,
+  checkpointLocalTrackingSession,
+  closeLocalTrackingSession,
+  createLocalTrackingSession,
   enqueuePendingEvent,
   enqueuePendingScreenshot,
   getDuePendingEvents,
   getDuePendingScreenshots,
+  getLocalTrackingEvents,
+  getOpenLocalTrackingSession,
+  getPendingLocalTrackingSession,
+  getPendingLocalTrackingSessions,
   initializeLocalDatabase,
+  markLocalTrackingSessionSynced,
   markPendingEventFailed,
+  markPendingEventPermanentlyRejected,
   markPendingEventUploaded,
   markPendingScreenshotFailed,
   markPendingScreenshotUploaded,
+  type LocalTrackingSession,
 } from "./services/localDb.js";
+import {
+  automaticIdleReturnAction,
+  hasReachedIdleThreshold,
+  IDLE_THRESHOLD_MINUTES,
+  idleDurationAfterThreshold,
+  idleReturnInputDetected,
+  inputResumedAfterIdle,
+  reclassifyVerifiedReturnCounters,
+  shouldWaitForInputBeforeRestart,
+} from "./services/idlePolicy.js";
+import { createCoalescedRefresh } from "./services/coalescedRefresh.js";
+import { getUserFacingError } from "./services/userFacingError.js";
+import {
+  mergeRecoveredCounters,
+  offsetRecoveredEventPayload,
+  restoreOpenLocalTrackingSnapshot,
+} from "./services/offlineTracking.js";
+import {
+  InputIntegrityMonitor,
+  type InputIntegrityObservation,
+} from "./services/inputIntegrity.js";
+import {
+  connectionStatusAfterApiFailure,
+  isPermanentScreenshotSyncFailure,
+} from "./services/runtimePolicies.js";
+import {
+  canAdoptPromotedLocalSession,
+  promotableLocalSessionIds,
+  reconcileWorkedToday,
+  shouldRolloverRestoredLocalSession,
+  shouldResetDailyCountersForSession,
+} from "./services/dailyCounters.js";
+import { requiresExplicitFreshSessionStart } from "./services/trackingStartPolicy.js";
+import {
+  CRASH_RECOVERY_STABLE_MS,
+  crashRecoveryAttempt,
+  isCrashRecoveryLaunch,
+} from "./services/crashRecovery.js";
+import {
+  isWhatsAppScreenshotActivity,
+  privacyBlurSampleSize,
+} from "./services/screenshotPrivacy.js";
+import { isPermanentPendingEventSyncFailure } from "./services/pendingSyncPolicy.js";
+import {
+  shouldClearInstallRecoveryOnBeforeQuit,
+  UPDATE_INSTALL_RECOVERY_MS,
+} from "./services/updateInstallPolicy.js";
 
 const { nativeImage, shell } = electronCommon;
 const {
@@ -139,13 +199,16 @@ type AgentRuntimeStatus = {
   paidPauseBalanceRemainingSeconds: number | null;
   recentTasks: RuntimeTask[];
   todayTimeline: AgentSummary["today_timeline"] | null;
+  idleRequestPeriods: NonNullable<AgentSummary["idle_request_periods"]>;
   lastIdleAlert: IdleLossAlert | null;
+  locallyEndedIdleAt: string | null;
   updateStatus:
     | "idle"
     | "checking"
     | "available"
     | "downloading"
     | "ready"
+    | "installing"
     | "up-to-date"
     | "error";
   updateVersion: string | null;
@@ -187,47 +250,105 @@ type RuntimeTask = {
 
 type IdleLossAlert = {
   id: string;
+  kind: "idle_return" | "tracking_start";
   lostSeconds: number;
   eligibleLostSeconds: number;
   outsideScheduledShift: boolean;
   endedAt: string;
 };
 
+type IdleReturnVerification = {
+  startedAt: number;
+  eventTimestamp: string;
+  counterDate: string | null;
+  idleSecondsAtStart: number;
+  eligibleIdleSecondsAtStart: number;
+};
+
+type ForegroundActivity = {
+  applicationName: string;
+  processName: string;
+  siteDomain: string | null;
+};
+
+type ForegroundActivitySegment = ForegroundActivity & {
+  sessionId: string;
+  startedAt: number;
+  lastObservedAt: number;
+};
+
+const execFileAsync = promisify(execFile);
+const FOREGROUND_SAMPLE_INTERVAL_MS = 15_000;
+const FOREGROUND_SEGMENT_MAX_MS = 60_000;
+const LONG_IDLE_SESSION_SPLIT_SECONDS = 4 * 60 * 60;
+
 let mainWindow: Electron.BrowserWindow | null = null;
 let tray: Electron.Tray | null = null;
 let isQuitting = false;
+let crashRecoveryWatchdog: ChildProcess | null = null;
+let crashRecoveryStableTimer: ReturnType<typeof setTimeout> | null = null;
+let crashRecoveryRestartTimer: ReturnType<typeof setTimeout> | null = null;
 let quitNotificationSent = false;
 let currentSessionId: string | null = null;
+let localTrackingSessionId: string | null = null;
+let isPromotingLocalTrackingSessions = false;
+let lastLocalTrackingCheckpointAt = 0;
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 let durationTimer: ReturnType<typeof setInterval> | null = null;
+let foregroundActivityTimer: ReturnType<typeof setInterval> | null = null;
+let foregroundActivityTickRunning = false;
+let foregroundActivitySegment: ForegroundActivitySegment | null = null;
+const inputIntegrityMonitor = new InputIntegrityMonitor();
+let lastInputProbeStartAttemptAt = 0;
+let inputProbeMissingWasLogged = false;
 let idleTimer: ReturnType<typeof setInterval> | null = null;
 let idleAttentionTimer: ReturnType<typeof setTimeout> | null = null;
 let idleAlertAttentionActive = false;
-let idleReviewPending = false;
+let isFinishingAutomaticIdle = false;
+let automaticIdleStartPromise: Promise<boolean> | null = null;
+let automaticIdleFinishPromise: Promise<boolean> | null = null;
+let manualPauseTransitionPromise: Promise<boolean> | null = null;
 let updateAttentionActive = false;
 let screenshotTimer: ReturnType<typeof setTimeout> | null = null;
 let screenshotQueue: number[] = [];
 let screenshotWindowEndsAt: number | null = null;
 let syncTimer: ReturnType<typeof setInterval> | null = null;
+let pendingQueueSyncPromise: Promise<void> | null = null;
 let automaticTrackingRetryTimer: ReturnType<typeof setTimeout> | null = null;
+let trackingWatchdogTimer: ReturnType<typeof setInterval> | null = null;
 let isStartingTrackingAutomatically = false;
 let idleSecondsBeforeCurrentIdle = 0;
 let eligibleIdleSecondsBeforeCurrentIdle = 0;
 let idleWallClockStartedAt: number | null = null;
+let automaticIdleStartedDuringBreak = false;
+let lastObservedSystemIdleSeconds: number | null = null;
+let lastObservedOperatingSystemIdleSeconds: number | null = null;
+let lastHandledIdleReturnInputAt = 0;
+let idleReturnVerification: IdleReturnVerification | null = null;
+let waitingForInputAfterIdleSessionClose = false;
+let freshSessionStartConfirmed = false;
+let freshSessionStartPromptActive = false;
 let lastDurationTickAt: number | null = null;
 let workedTodayBaseSeconds = 0;
+let activeCounterDate: string | null = null;
 let trackingPausedByUser = false;
 let unpaidPauseActive = false;
 let isHandlingWindowClose = false;
 let hasShownMinimizeBalloon = false;
 let updateCheckTimer: ReturnType<typeof setInterval> | null = null;
 let initialUpdateCheckTimer: ReturnType<typeof setTimeout> | null = null;
+let updateRetryTimer: ReturnType<typeof setTimeout> | null = null;
+let updateInstallRecoveryTimer: ReturnType<typeof setTimeout> | null = null;
 let manualUpdateCheckRequested = false;
 let isUpdateCheckRunning = false;
 let isInstallingUpdate = false;
-let hasPromptedForDownloadedUpdate = false;
+let consecutiveUpdateFailures = 0;
 let lastFullSummaryRefreshAt = 0;
 let lastMetadataRefreshAt = 0;
+let isRefreshingTrackingConfig = false;
+let isRefreshingTasks = false;
+let isRefreshingTimeAdjustments = false;
+let isRefreshingLeaveRequests = false;
 let paidPauseTimer: ReturnType<typeof setTimeout> | null = null;
 let displaySleepBlockerId: number | null = null;
 let onAcPower = true;
@@ -283,14 +404,82 @@ const runtimeStatus: AgentRuntimeStatus = {
   paidPauseBalanceRemainingSeconds: null,
   recentTasks: [],
   todayTimeline: null,
+  idleRequestPeriods: [],
   lastIdleAlert: null,
+  locallyEndedIdleAt: null,
   updateStatus: "idle",
   updateVersion: null,
   updatePercent: null,
 };
 
 const privacyNotice =
-  "While this enrolled device is active, unlocked, and connected to AC power, company policy may capture periodic workplace screenshots even when no task timer is selected. It does not record typed text, passwords, webcam, microphone, or personal files.";
+  "While work tracking is active, Khaliduo records the foreground application name and, for supported browsers, the website domain. Company policy may also capture periodic workplace screenshots while this enrolled device is active, unlocked, and connected to AC power. To protect attendance integrity, the Windows agent counts real versus software-injected input events; it never records keys, typed text, click coordinates, passwords, webcam, microphone, full URLs, or personal files.";
+
+const FOREGROUND_WINDOW_POWERSHELL = String.raw`
+$ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class KhaliduoForegroundWindow {
+  [DllImport("user32.dll")]
+  public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")]
+  public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+}
+'@ -ErrorAction SilentlyContinue
+
+$handle = [KhaliduoForegroundWindow]::GetForegroundWindow()
+if ($handle -eq [IntPtr]::Zero) {
+  [PSCustomObject]@{ processName = $null; url = $null } | ConvertTo-Json -Compress
+  exit 0
+}
+
+$processId = [uint32]0
+[void][KhaliduoForegroundWindow]::GetWindowThreadProcessId($handle, [ref]$processId)
+$processInfo = Get-Process -Id $processId -ErrorAction Stop
+$processName = $processInfo.ProcessName.ToLowerInvariant()
+$url = $null
+$browserProcesses = @('chrome', 'msedge', 'firefox', 'brave', 'opera', 'vivaldi')
+
+if ($browserProcesses -contains $processName) {
+  try {
+    Add-Type -AssemblyName UIAutomationClient
+    $root = [System.Windows.Automation.AutomationElement]::FromHandle($handle)
+    $rootBounds = $root.Current.BoundingRectangle
+    $editCondition = New-Object System.Windows.Automation.PropertyCondition(
+      [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+      [System.Windows.Automation.ControlType]::Edit
+    )
+    $edits = $root.FindAll(
+      [System.Windows.Automation.TreeScope]::Descendants,
+      $editCondition
+    )
+    foreach ($element in $edits) {
+      try {
+        $rectangle = $element.Current.BoundingRectangle
+        if ($rectangle.Top -gt ($rootBounds.Top + 240)) { continue }
+        $pattern = $element.GetCurrentPattern(
+          [System.Windows.Automation.ValuePattern]::Pattern
+        )
+        $candidate = $pattern.Current.Value.Trim()
+        if (
+          $candidate -match '^(https?://|[a-z0-9][a-z0-9.-]+\.[a-z]{2,}([/:]|$))'
+        ) {
+          $url = $candidate
+          break
+        }
+      } catch {
+        continue
+      }
+    }
+  } catch {
+    $url = $null
+  }
+}
+
+[PSCustomObject]@{ processName = $processName; url = $url } | ConvertTo-Json -Compress
+`;
 
 dotenv.config({
   path: app.isPackaged
@@ -301,6 +490,7 @@ dotenv.config({
 function normalizeTrackingConfig(config: TrackingConfig): TrackingConfig {
   return {
     ...config,
+    idle_threshold_minutes: IDLE_THRESHOLD_MINUTES,
     screenshot_interval_minutes: Math.max(
       1,
       Math.min(240, config.screenshot_interval_minutes ?? 10),
@@ -344,14 +534,37 @@ function selectRuntimeTask(taskId?: string | null) {
     : null;
 }
 
-function getUserFacingError(error: unknown, fallback: string) {
-  if (axios.isAxiosError(error)) {
-    const data = error.response?.data as
-      { error?: { message?: string }; detail?: string } | undefined;
-    return data?.error?.message ?? data?.detail ?? error.message ?? fallback;
-  }
+type ApiErrorPayload = {
+  error?: { code?: string; message?: string };
+  detail?: string;
+};
 
-  return error instanceof Error ? error.message : fallback;
+function apiResponseStatus(error: unknown) {
+  return axios.isAxiosError(error) ? error.response?.status : undefined;
+}
+
+function apiErrorCode(error: unknown) {
+  if (!axios.isAxiosError(error)) return undefined;
+  return (error.response?.data as ApiErrorPayload | undefined)?.error?.code;
+}
+
+/** Keep credentials and request headers out of persistent desktop logs. */
+function safeErrorForLog(error: unknown) {
+  if (axios.isAxiosError(error)) {
+    const payload = error.response?.data as ApiErrorPayload | undefined;
+    return {
+      name: error.name,
+      message: error.message,
+      code: error.code,
+      status: error.response?.status,
+      apiCode: payload?.error?.code,
+      apiMessage: payload?.error?.message ?? payload?.detail,
+    };
+  }
+  if (error instanceof Error) {
+    return { name: error.name, message: error.message };
+  }
+  return { message: String(error) };
 }
 
 function isDeviceIdentityMismatch(error: unknown) {
@@ -359,26 +572,45 @@ function isDeviceIdentityMismatch(error: unknown) {
     return false;
   }
   const data = error.response.data as
-    | { error?: { message?: string }; detail?: string }
-    | undefined;
-  const message = String(data?.error?.message ?? data?.detail ?? "").toLowerCase();
+    { error?: { message?: string }; detail?: string } | undefined;
+  const message = String(
+    data?.error?.message ?? data?.detail ?? "",
+  ).toLowerCase();
   return message.includes("device token identity does not match");
 }
 
 function resetForDeviceReenrollment() {
   // Keep pending local screenshots/events on disk. They can be retried after
   // the employee signs in again; only the invalid local credential is cleared.
+  recalculateWorkedTime();
+  closeActiveLocalTrackingSession(
+    new Date().toISOString(),
+    "device_identity_mismatch",
+  );
   clearRuntimeTimers();
+  inputIntegrityMonitor.stop();
   clearEnrollmentIdentity();
   configureAutoStart(false);
   trackingPausedByUser = false;
   unpaidPauseActive = false;
   currentSessionId = null;
   workedTodayBaseSeconds = 0;
+  activeCounterDate = null;
   idleSecondsBeforeCurrentIdle = 0;
   eligibleIdleSecondsBeforeCurrentIdle = 0;
   idleWallClockStartedAt = null;
-  idleReviewPending = false;
+  automaticIdleStartedDuringBreak = false;
+  automaticIdleStartPromise = null;
+  automaticIdleFinishPromise = null;
+  manualPauseTransitionPromise = null;
+  isFinishingAutomaticIdle = false;
+  lastObservedSystemIdleSeconds = null;
+  lastObservedOperatingSystemIdleSeconds = null;
+  lastHandledIdleReturnInputAt = 0;
+  clearIdleReturnVerification();
+  waitingForInputAfterIdleSessionClose = false;
+  freshSessionStartConfirmed = false;
+  freshSessionStartPromptActive = false;
   Object.assign(runtimeStatus, {
     enrolled: false,
     employeeName: "Not enrolled",
@@ -404,7 +636,9 @@ function resetForDeviceReenrollment() {
     timeAdjustmentRequests: [],
     timeSummary: null,
     todayTimeline: null,
+    idleRequestPeriods: [],
     lastIdleAlert: null,
+    locallyEndedIdleAt: null,
   } satisfies Partial<AgentRuntimeStatus>);
   tray?.setImage(createTrayImage("#b7791f"));
   rebuildTrayMenu();
@@ -489,7 +723,7 @@ function formatDuration(totalSeconds: number) {
 function updateDisplaySleepBlocker() {
   const shouldKeepDisplayAwake =
     runtimeStatus.enrolled &&
-    Boolean(currentSessionId) &&
+    hasTrackingSession() &&
     !trackingPausedByUser &&
     !runtimeStatus.trackingPaused &&
     !isQuitting;
@@ -521,7 +755,7 @@ function rebuildTrayMenu() {
   updateDisplaySleepBlocker();
 
   const trackingActive =
-    Boolean(currentSessionId) &&
+    hasTrackingSession() &&
     !trackingPausedByUser &&
     !runtimeStatus.trackingPaused;
   const normalTodaySeconds = Math.min(
@@ -530,15 +764,17 @@ function rebuildTrayMenu() {
       (runtimeStatus.timeSummary?.today.manual_approved_seconds ?? 0),
   );
   const updateLabel =
-    runtimeStatus.updateStatus === "ready"
-      ? `Update ${runtimeStatus.updateVersion ?? ""} ready to install`.trim()
-      : runtimeStatus.updateStatus === "downloading"
-        ? `Downloading update: ${Math.round(runtimeStatus.updatePercent ?? 0)}%`
-        : runtimeStatus.updateStatus === "checking"
-          ? "Checking for updates..."
-          : runtimeStatus.updateStatus === "error"
-            ? "Update check failed"
-            : `Version: ${runtimeStatus.agentVersion}`;
+    runtimeStatus.updateStatus === "installing"
+      ? `Installing update ${runtimeStatus.updateVersion ?? ""}`.trim()
+      : runtimeStatus.updateStatus === "ready"
+        ? `Update ${runtimeStatus.updateVersion ?? ""} ready to install`.trim()
+        : runtimeStatus.updateStatus === "downloading"
+          ? `Downloading update: ${Math.round(runtimeStatus.updatePercent ?? 0)}%`
+          : runtimeStatus.updateStatus === "checking"
+            ? "Checking for updates..."
+            : runtimeStatus.updateStatus === "error"
+              ? "Update check failed"
+              : `Version: ${runtimeStatus.agentVersion}`;
   const menu = Menu.buildFromTemplate([
     { label: "Khaliduo — Kent Consultancy", enabled: false },
     {
@@ -596,7 +832,11 @@ function rebuildTrayMenu() {
         }
       : {
           label: "Check for Updates",
-          enabled: !isUpdateCheckRunning,
+          enabled:
+            !isUpdateCheckRunning &&
+            !["available", "downloading", "installing"].includes(
+              runtimeStatus.updateStatus,
+            ),
           click: () => void checkForUpdates(true),
         },
     { type: "separator" },
@@ -623,11 +863,13 @@ function loadTrackingPreferences(resumeForWindowsStartup = false) {
     ) as {
       paused_by_user?: boolean;
       unpaid_pause_active?: boolean;
+      request_policy?: RequestPolicy | null;
     };
     trackingPausedByUser =
       !resumeForWindowsStartup && preferences.paused_by_user === true;
     unpaidPauseActive =
       !resumeForWindowsStartup && preferences.unpaid_pause_active === true;
+    runtimeStatus.requestPolicy = preferences.request_policy ?? null;
   } catch {
     trackingPausedByUser = false;
     unpaidPauseActive = false;
@@ -649,6 +891,7 @@ function saveTrackingPreferences() {
       {
         paused_by_user: trackingPausedByUser,
         unpaid_pause_active: unpaidPauseActive,
+        request_policy: runtimeStatus.requestPolicy,
       },
       null,
       2,
@@ -682,6 +925,525 @@ function saveScreenshotSchedule(nextAt: number | null) {
   );
 }
 
+function localDateKey(at = new Date()) {
+  const timezone =
+    runtimeStatus.requestPolicy?.timezone ||
+    Intl.DateTimeFormat().resolvedOptions().timeZone ||
+    "UTC";
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(at);
+  const part = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((item) => item.type === type)?.value ?? "";
+  return `${part("year")}-${part("month")}-${part("day")}`;
+}
+
+function inputProbeExecutablePath() {
+  return app.isPackaged
+    ? path.join(
+        process.resourcesPath,
+        "input-integrity",
+        "KhaliduoInputProbe.exe",
+      )
+    : path.join(app.getAppPath(), "native-bin", "KhaliduoInputProbe.exe");
+}
+
+function startInputIntegrityMonitoring() {
+  if (process.platform !== "win32" || inputIntegrityMonitor.running) {
+    return;
+  }
+  const now = Date.now();
+  if (now - lastInputProbeStartAttemptAt < 30_000) {
+    return;
+  }
+  lastInputProbeStartAttemptAt = now;
+  const executablePath = inputProbeExecutablePath();
+  if (!fs.existsSync(executablePath)) {
+    if (!inputProbeMissingWasLogged) {
+      inputProbeMissingWasLogged = true;
+      log.warn("Input-integrity probe is unavailable", { executablePath });
+    }
+    return;
+  }
+  if (
+    !inputIntegrityMonitor.start(
+      executablePath,
+      powerMonitor.getSystemIdleTime(),
+    )
+  ) {
+    log.warn("Input-integrity probe could not be started");
+  }
+}
+
+function observedIdleSeconds(
+  systemIdleSeconds = powerMonitor.getSystemIdleTime(),
+) {
+  startInputIntegrityMonitoring();
+  return inputIntegrityMonitor.idleSeconds(systemIdleSeconds);
+}
+
+function inputIntegrityObservation(): InputIntegrityObservation | undefined {
+  if (process.platform !== "win32") return undefined;
+  startInputIntegrityMonitoring();
+  return inputIntegrityMonitor.takeObservation();
+}
+
+function hasTrackingSession() {
+  return Boolean(currentSessionId || localTrackingSessionId);
+}
+
+function heartbeatStatus(
+  status: string,
+): "active" | "idle" | "locked" | "offline" | "sleeping" {
+  return ["idle", "locked", "offline", "sleeping"].includes(status)
+    ? (status as "idle" | "locked" | "offline" | "sleeping")
+    : "active";
+}
+
+function checkpointActiveLocalTrackingSession(force = false) {
+  if (!localTrackingSessionId) {
+    return;
+  }
+  const now = Date.now();
+  if (!force && now - lastLocalTrackingCheckpointAt < 5_000) {
+    return;
+  }
+  lastLocalTrackingCheckpointAt = now;
+  checkpointLocalTrackingSession({
+    sessionId: localTrackingSessionId,
+    status: runtimeStatus.trackingStatus,
+    activeSeconds: runtimeStatus.activeSeconds,
+    idleSeconds: runtimeStatus.idleSeconds,
+    checkpointAt: new Date(now).toISOString(),
+  });
+}
+
+function closeActiveLocalTrackingSession(
+  endedAt = new Date().toISOString(),
+  status = "ended",
+) {
+  const sessionId = localTrackingSessionId;
+  if (!sessionId) {
+    return;
+  }
+  checkpointActiveLocalTrackingSession(true);
+  closeLocalTrackingSession({
+    sessionId,
+    endedAt,
+    status,
+    activeSeconds: runtimeStatus.activeSeconds,
+    idleSeconds: runtimeStatus.idleSeconds,
+  });
+  localTrackingSessionId = null;
+  lastLocalTrackingCheckpointAt = 0;
+}
+
+function beginLocalTrackingSession(startedAt = new Date()) {
+  if (
+    currentSessionId ||
+    localTrackingSessionId ||
+    !runtimeStatus.enrolled ||
+    !runtimeStatus.deviceId ||
+    trackingPausedByUser ||
+    unpaidPauseActive ||
+    isQuitting
+  ) {
+    return false;
+  }
+
+  const staleOpen = getOpenLocalTrackingSession(runtimeStatus.deviceId);
+  if (staleOpen) {
+    const restored = restoreOpenLocalTrackingSnapshot(staleOpen, startedAt);
+    const checkpointCounterDate = localDateKey(
+      new Date(restored.lastCheckpointAt),
+    );
+    const todayCounterDate = localDateKey(startedAt);
+    if (
+      shouldRolloverRestoredLocalSession({
+        checkpointCounterDate,
+        todayCounterDate,
+      })
+    ) {
+      // A previous-day local session has no evidence after its last durable
+      // checkpoint. Bound it there before starting today so historical replay
+      // can never temporarily own today's live timer.
+      closeLocalTrackingSession({
+        sessionId: staleOpen.sessionId,
+        endedAt: restored.lastCheckpointAt,
+        status: "daily_rollover",
+        activeSeconds: restored.activeSeconds,
+        idleSeconds: restored.idleSeconds,
+      });
+      log.info("Previous-day local session bounded at its checkpoint", {
+        localSessionId: staleOpen.sessionId,
+        startedAt: restored.startedAt,
+        endedAt: restored.lastCheckpointAt,
+      });
+    } else {
+      localTrackingSessionId = staleOpen.sessionId;
+      lastLocalTrackingCheckpointAt = startedAt.getTime();
+      activeCounterDate = checkpointCounterDate;
+      runtimeStatus.sessionStartedAt = restored.startedAt;
+      runtimeStatus.activeSeconds = restored.activeSeconds;
+      runtimeStatus.idleSeconds = restored.idleSeconds;
+      runtimeStatus.eligibleIdleSeconds = restored.idleSeconds;
+      runtimeStatus.workedTodaySeconds = Math.max(
+        runtimeStatus.workedTodaySeconds,
+        workedTodayBaseSeconds + restored.activeSeconds,
+      );
+      runtimeStatus.trackingStatus = restored.status;
+      runtimeStatus.trackingPaused = false;
+      lastDurationTickAt = startedAt.getTime();
+      startTimers();
+      startScreenshotMonitoring();
+      notifyRendererStatus();
+      rebuildTrayMenu();
+      log.info("Open local tracking session resumed after app restart", {
+        localSessionId: staleOpen.sessionId,
+        startedAt: restored.startedAt,
+        lastCheckpointAt: restored.lastCheckpointAt,
+      });
+      return true;
+    }
+  }
+
+  const preservedWorkedToday = runtimeStatus.workedTodaySeconds;
+  const localSessionId = randomUUID();
+  const startedAtIso = startedAt.toISOString();
+  createLocalTrackingSession({
+    sessionId: localSessionId,
+    deviceId: runtimeStatus.deviceId,
+    startedAt: startedAtIso,
+    status: "active",
+  });
+  localTrackingSessionId = localSessionId;
+  lastLocalTrackingCheckpointAt = startedAt.getTime();
+  activeCounterDate = localDateKey(startedAt);
+  workedTodayBaseSeconds = Math.max(
+    workedTodayBaseSeconds,
+    preservedWorkedToday,
+  );
+  runtimeStatus.sessionStartedAt = startedAtIso;
+  runtimeStatus.activeSeconds = 0;
+  runtimeStatus.idleSeconds = 0;
+  runtimeStatus.eligibleIdleSeconds = 0;
+  runtimeStatus.trackingStatus = "active";
+  runtimeStatus.trackingPaused = false;
+  lastDurationTickAt = startedAt.getTime();
+  startTimers();
+  startScreenshotMonitoring();
+  notifyRendererStatus();
+  rebuildTrayMenu();
+  log.info("Local tracking session started before API recovery", {
+    localSessionId,
+    startedAt: startedAtIso,
+  });
+  return true;
+}
+
+async function replayLocalTrackingEvents(
+  localSession: LocalTrackingSession,
+  serverSessionId: string,
+  serverIdleSeconds: number,
+  deliveredIds = new Set<string>(),
+) {
+  while (true) {
+    const pending = getLocalTrackingEvents(localSession.sessionId).filter(
+      (event) => !deliveredIds.has(event.id),
+    );
+    if (pending.length === 0) {
+      return deliveredIds;
+    }
+    for (const event of pending) {
+      const payload = offsetRecoveredEventPayload(
+        JSON.parse(event.payloadJson) as Record<string, unknown>,
+        serverIdleSeconds,
+      );
+      await sendActivityEvent({
+        sessionId: serverSessionId,
+        eventId: event.id,
+        eventType: event.eventType,
+        eventTimestamp: event.eventTimestamp,
+        payload,
+      });
+      deliveredIds.add(event.id);
+    }
+  }
+}
+
+async function promotePendingLocalTrackingSessions(
+  options: { hasOpenServerSession?: boolean } = {},
+) {
+  if (
+    !runtimeStatus.enrolled ||
+    !runtimeStatus.deviceId ||
+    isPromotingLocalTrackingSessions
+  ) {
+    return false;
+  }
+  checkpointActiveLocalTrackingSession(true);
+  const allPendingSessions = getPendingLocalTrackingSessions(
+    runtimeStatus.deviceId,
+  );
+  if (allPendingSessions.length === 0) {
+    return false;
+  }
+  const promotableIds = new Set(
+    promotableLocalSessionIds({
+      pendingSessions: allPendingSessions,
+      activeLocalSessionId: localTrackingSessionId,
+      hasOpenServerSession:
+        options.hasOpenServerSession ?? Boolean(currentSessionId),
+    }),
+  );
+  const pendingSessions = allPendingSessions.filter((session) =>
+    promotableIds.has(session.sessionId),
+  );
+  if (pendingSessions.length === 0) {
+    log.info(
+      "Deferred closed local-session recovery while a server session is running",
+      { count: allPendingSessions.length },
+    );
+    return false;
+  }
+
+  isPromotingLocalTrackingSessions = true;
+  try {
+    for (const pendingSession of pendingSessions) {
+      const started = await startSession({
+        startedAt: pendingSession.startedAt,
+        offlineRecovery: true,
+        offlineRecoveryId: pendingSession.sessionId,
+      });
+      const serverSessionId = started.session.id;
+      if (pendingSession.endedAt && started.session.ended_at) {
+        markLocalTrackingSessionSynced(pendingSession.sessionId);
+        continue;
+      }
+      const serverCounters = {
+        activeSeconds: started.session.active_seconds,
+        idleSeconds: started.session.idle_seconds,
+      };
+      const deliveredLocalEventIds = await replayLocalTrackingEvents(
+        pendingSession,
+        serverSessionId,
+        serverCounters.idleSeconds,
+      );
+      let latestPendingSession =
+        getPendingLocalTrackingSession(pendingSession.sessionId) ??
+        pendingSession;
+      let ownsLiveRuntime = canAdoptPromotedLocalSession({
+        promotedSessionId: pendingSession.sessionId,
+        activeLocalSessionId: localTrackingSessionId,
+      });
+      if (!ownsLiveRuntime && !latestPendingSession.endedAt) {
+        // The active local ID changed while network replay was in flight (most
+        // commonly at midnight). Bound the detached session at its own last
+        // checkpoint; never let it clear or borrow counters from the new day.
+        closeLocalTrackingSession({
+          sessionId: latestPendingSession.sessionId,
+          endedAt: latestPendingSession.lastCheckpointAt,
+          status: "daily_rollover",
+          activeSeconds: latestPendingSession.activeSeconds,
+          idleSeconds: latestPendingSession.idleSeconds,
+        });
+        latestPendingSession = {
+          ...latestPendingSession,
+          endedAt: latestPendingSession.lastCheckpointAt,
+          status: "daily_rollover",
+        };
+      }
+      const recovered = mergeRecoveredCounters(serverCounters, {
+        activeSeconds: ownsLiveRuntime
+          ? runtimeStatus.activeSeconds
+          : latestPendingSession.activeSeconds,
+        idleSeconds: ownsLiveRuntime
+          ? runtimeStatus.idleSeconds
+          : latestPendingSession.idleSeconds,
+      });
+      const heartbeatAt =
+        latestPendingSession.endedAt ??
+        latestPendingSession.lastCheckpointAt ??
+        new Date().toISOString();
+      const heartbeat = await sendHeartbeat({
+        sessionId: serverSessionId,
+        eventId: randomUUID(),
+        status: heartbeatStatus(latestPendingSession.status),
+        activeSeconds: recovered.activeSeconds,
+        idleSeconds: recovered.idleSeconds,
+        counterDate: localDateKey(new Date(heartbeatAt)),
+        agentVersion: runtimeStatus.agentVersion,
+        timestamp: heartbeatAt,
+      });
+
+      if (latestPendingSession.endedAt) {
+        await endSession({
+          sessionId: serverSessionId,
+          activeSeconds: recovered.activeSeconds,
+          idleSeconds: recovered.idleSeconds,
+          reason: "Recovered from offline device storage",
+          endedAt: latestPendingSession.endedAt,
+          eventId: randomUUID(),
+        });
+        markLocalTrackingSessionSynced(pendingSession.sessionId);
+        continue;
+      }
+
+      // A lock/idle transition may have been recorded locally while the
+      // recovery heartbeat was in flight. Replay once more before atomically
+      // switching this live session from local storage to the server ID.
+      await replayLocalTrackingEvents(
+        pendingSession,
+        serverSessionId,
+        serverCounters.idleSeconds,
+        deliveredLocalEventIds,
+      );
+      ownsLiveRuntime = canAdoptPromotedLocalSession({
+        promotedSessionId: pendingSession.sessionId,
+        activeLocalSessionId: localTrackingSessionId,
+      });
+      if (!ownsLiveRuntime) {
+        latestPendingSession =
+          getPendingLocalTrackingSession(pendingSession.sessionId) ??
+          latestPendingSession;
+        const detachedEndAt =
+          latestPendingSession.endedAt ?? latestPendingSession.lastCheckpointAt;
+        if (!latestPendingSession.endedAt) {
+          closeLocalTrackingSession({
+            sessionId: latestPendingSession.sessionId,
+            endedAt: detachedEndAt,
+            status: "daily_rollover",
+            activeSeconds: latestPendingSession.activeSeconds,
+            idleSeconds: latestPendingSession.idleSeconds,
+          });
+        }
+        const detachedCounters = mergeRecoveredCounters(serverCounters, {
+          activeSeconds: latestPendingSession.activeSeconds,
+          idleSeconds: latestPendingSession.idleSeconds,
+        });
+        await sendHeartbeat({
+          sessionId: serverSessionId,
+          eventId: randomUUID(),
+          status: heartbeatStatus(latestPendingSession.status),
+          activeSeconds: detachedCounters.activeSeconds,
+          idleSeconds: detachedCounters.idleSeconds,
+          counterDate: localDateKey(new Date(detachedEndAt)),
+          agentVersion: runtimeStatus.agentVersion,
+          timestamp: detachedEndAt,
+        });
+        await endSession({
+          sessionId: serverSessionId,
+          activeSeconds: detachedCounters.activeSeconds,
+          idleSeconds: detachedCounters.idleSeconds,
+          reason: "Recovered from offline device storage",
+          endedAt: detachedEndAt,
+          eventId: randomUUID(),
+        });
+        markLocalTrackingSessionSynced(pendingSession.sessionId);
+        continue;
+      }
+      const latestLocalActiveSeconds = runtimeStatus.activeSeconds;
+      const latestLocalIdleSeconds = runtimeStatus.idleSeconds;
+      const latestStatus = runtimeStatus.trackingStatus;
+      const latestRecovered = mergeRecoveredCounters(serverCounters, {
+        activeSeconds: latestLocalActiveSeconds,
+        idleSeconds: latestLocalIdleSeconds,
+      });
+      const finalHeartbeat =
+        latestRecovered.activeSeconds !== recovered.activeSeconds ||
+        latestRecovered.idleSeconds !== recovered.idleSeconds ||
+        latestStatus !== latestPendingSession.status
+          ? await sendHeartbeat({
+              sessionId: serverSessionId,
+              eventId: randomUUID(),
+              status: heartbeatStatus(latestStatus),
+              activeSeconds: latestRecovered.activeSeconds,
+              idleSeconds: latestRecovered.idleSeconds,
+              counterDate: localDateKey(),
+              agentVersion: runtimeStatus.agentVersion,
+            })
+          : heartbeat;
+      if (localTrackingSessionId !== pendingSession.sessionId) {
+        // The final heartbeat crossed a rollover. Leave the newer local ID
+        // untouched; the next promotion pass will safely finish this row.
+        continue;
+      }
+      localTrackingSessionId = null;
+      lastLocalTrackingCheckpointAt = 0;
+      syncRuntimeFromSession(finalHeartbeat.session);
+      runtimeStatus.activeSeconds = Math.max(
+        runtimeStatus.activeSeconds,
+        latestRecovered.activeSeconds,
+      );
+      runtimeStatus.idleSeconds = Math.max(
+        runtimeStatus.idleSeconds,
+        latestRecovered.idleSeconds,
+      );
+      runtimeStatus.eligibleIdleSeconds = Math.max(
+        runtimeStatus.eligibleIdleSeconds,
+        latestRecovered.idleSeconds,
+      );
+      runtimeStatus.trackingStatus = latestStatus;
+      runtimeStatus.workedTodaySeconds =
+        workedTodayBaseSeconds + runtimeStatus.activeSeconds;
+      markLocalTrackingSessionSynced(pendingSession.sessionId);
+    }
+    runtimeStatus.connectionStatus = "online";
+    runtimeStatus.lastSuccessfulSyncAt = new Date().toISOString();
+    log.info("Local tracking sessions synchronized with the API", {
+      count: pendingSessions.length,
+    });
+    return true;
+  } finally {
+    isPromotingLocalTrackingSessions = false;
+  }
+}
+
+function resetDailyRuntimeCounters(nextCounterDate: string, now = new Date()) {
+  activeCounterDate = nextCounterDate;
+  workedTodayBaseSeconds = 0;
+  runtimeStatus.activeSeconds = 0;
+  runtimeStatus.idleSeconds = 0;
+  runtimeStatus.eligibleIdleSeconds = 0;
+  runtimeStatus.normalSeconds = 0;
+  runtimeStatus.extraSeconds = 0;
+  runtimeStatus.workedTodaySeconds = 0;
+  runtimeStatus.dailyTargetProgressPercent = 0;
+  runtimeStatus.activityPercent = 0;
+  runtimeStatus.timeSummary = null;
+  runtimeStatus.todayTimeline = null;
+  runtimeStatus.idleRequestPeriods = [];
+  runtimeStatus.locallyEndedIdleAt = null;
+  clearIdleReturnVerification();
+  lastHandledIdleReturnInputAt = now.getTime();
+  idleSecondsBeforeCurrentIdle = 0;
+  eligibleIdleSecondsBeforeCurrentIdle = 0;
+  lastDurationTickAt = now.getTime();
+}
+
+function ensureCurrentCounterDate(now = new Date()) {
+  const nextCounterDate = localDateKey(now);
+  if (activeCounterDate === null) {
+    activeCounterDate = nextCounterDate;
+    return;
+  }
+  if (activeCounterDate === nextCounterDate) {
+    return;
+  }
+
+  const restartLocalTracking = Boolean(localTrackingSessionId);
+  closeActiveLocalTrackingSession(now.toISOString(), "daily_rollover");
+  resetDailyRuntimeCounters(nextCounterDate, now);
+  if (restartLocalTracking && automaticTrackingIsExpected()) {
+    beginLocalTrackingSession(now);
+  }
+  notifyRendererStatus();
+  rebuildTrayMenu();
+}
+
 function getPendingScreenshotDirectory() {
   return path.join(app.getPath("userData"), "pending-screenshots");
 }
@@ -690,6 +1452,24 @@ function syncRuntimeFromSession(session: WorkSession) {
   if (trackingPausedByUser) {
     return;
   }
+  const todayCounterDate = localDateKey();
+  const sessionCounterDate = localDateKey(new Date(session.started_at));
+  const previousSessionCounterDate = runtimeStatus.sessionStartedAt
+    ? localDateKey(new Date(runtimeStatus.sessionStartedAt))
+    : null;
+  const changedSession = currentSessionId !== session.id;
+  if (
+    shouldResetDailyCountersForSession({
+      activeCounterDate,
+      todayCounterDate,
+      previousSessionCounterDate,
+      nextSessionCounterDate: sessionCounterDate,
+      changedSession,
+    })
+  ) {
+    resetDailyRuntimeCounters(todayCounterDate);
+  }
+  const sessionBelongsToToday = sessionCounterDate === todayCounterDate;
   if (
     session.ended_at ||
     session.status === "ended" ||
@@ -700,24 +1480,35 @@ function syncRuntimeFromSession(session: WorkSession) {
     }
     runtimeStatus.sessionStartedAt = null;
     runtimeStatus.trackingStatus = "offline";
-    runtimeStatus.activeSeconds = session.active_seconds;
-    runtimeStatus.idleSeconds = session.idle_seconds;
+    runtimeStatus.activeSeconds = sessionBelongsToToday
+      ? session.active_seconds
+      : 0;
+    runtimeStatus.idleSeconds = sessionBelongsToToday ? session.idle_seconds : 0;
     runtimeStatus.workedTodaySeconds =
       workedTodayBaseSeconds + runtimeStatus.activeSeconds;
     lastDurationTickAt = null;
     return;
   }
-  const changedSession = currentSessionId !== session.id;
+  const wasIdle = runtimeStatus.trackingStatus === "idle";
   const localActiveSeconds = changedSession ? 0 : runtimeStatus.activeSeconds;
   const localIdleSeconds = changedSession ? 0 : runtimeStatus.idleSeconds;
+  activeCounterDate = todayCounterDate;
   currentSessionId = session.id;
   runtimeStatus.sessionStartedAt = session.started_at;
   runtimeStatus.trackingStatus = session.status;
-  runtimeStatus.activeSeconds = Math.max(
-    session.active_seconds,
-    localActiveSeconds,
-  );
-  runtimeStatus.idleSeconds = Math.max(session.idle_seconds, localIdleSeconds);
+  if (session.status === "idle" && (changedSession || !wasIdle)) {
+    automaticIdleStartedDuringBreak = isInsideScheduledBreak(new Date());
+    lastObservedSystemIdleSeconds = null;
+    lastObservedOperatingSystemIdleSeconds = null;
+  } else if (session.status !== "idle") {
+    automaticIdleStartedDuringBreak = false;
+  }
+  runtimeStatus.activeSeconds = sessionBelongsToToday
+    ? Math.max(session.active_seconds, localActiveSeconds)
+    : 0;
+  runtimeStatus.idleSeconds = sessionBelongsToToday
+    ? Math.max(session.idle_seconds, localIdleSeconds)
+    : 0;
   runtimeStatus.workedTodaySeconds =
     workedTodayBaseSeconds + runtimeStatus.activeSeconds;
   if (changedSession) {
@@ -729,20 +1520,28 @@ function syncRuntimeFromSession(session: WorkSession) {
 
 function applyWorkdayState(workday?: WorkdayState | null) {
   if (workday) {
+    if (
+      workday.work_date &&
+      activeCounterDate &&
+      workday.work_date !== activeCounterDate
+    ) {
+      return;
+    }
+    activeCounterDate = workday.work_date ?? activeCounterDate;
     runtimeStatus.dailyTargetSeconds = workday.required_normal_seconds;
     runtimeStatus.normalSeconds = workday.normal_seconds;
     runtimeStatus.extraSeconds = workday.extra_seconds;
     runtimeStatus.overtimeEnabled = workday.overtime_enabled;
     runtimeStatus.extraTimeStatus = workday.extra_time_status;
     const trackedTodaySeconds = workday.normal_seconds + workday.extra_seconds;
-    runtimeStatus.workedTodaySeconds = Math.max(
-      runtimeStatus.workedTodaySeconds,
+    const reconciled = reconcileWorkedToday({
       trackedTodaySeconds,
-    );
-    workedTodayBaseSeconds = Math.max(
-      0,
-      trackedTodaySeconds - runtimeStatus.activeSeconds,
-    );
+      activeSeconds: runtimeStatus.activeSeconds,
+      previousBaseSeconds: workedTodayBaseSeconds,
+      preservePreviousBase: true,
+    });
+    workedTodayBaseSeconds = reconciled.baseSeconds;
+    runtimeStatus.workedTodaySeconds = reconciled.workedTodaySeconds;
     runtimeStatus.dailyTargetProgressPercent = Math.min(
       100,
       Math.round(
@@ -759,6 +1558,84 @@ function timeToMinuteOfDay(value?: string | null) {
   const [hour, minute] = value.slice(0, 5).split(":").map(Number);
   if (!Number.isFinite(hour) || !Number.isFinite(minute)) return null;
   return hour * 60 + minute;
+}
+
+function waitForInputAfterIdleSessionClose(
+  status: "idle" | "locked" | "sleeping",
+) {
+  clearIdleReturnVerification();
+  waitingForInputAfterIdleSessionClose = true;
+  runtimeStatus.trackingStatus = status;
+  lastObservedOperatingSystemIdleSeconds = powerMonitor.getSystemIdleTime();
+  lastObservedSystemIdleSeconds = observedIdleSeconds(
+    lastObservedOperatingSystemIdleSeconds,
+  );
+  notifyRendererStatus();
+  rebuildTrayMenu();
+}
+
+function resumeAfterIdleSessionClose() {
+  if (!waitingForInputAfterIdleSessionClose) {
+    return false;
+  }
+  waitingForInputAfterIdleSessionClose = false;
+  clearIdleReturnVerification();
+  lastObservedSystemIdleSeconds = null;
+  lastObservedOperatingSystemIdleSeconds = null;
+  runtimeStatus.trackingStatus = "starting";
+  scheduleAutomaticTrackingRestart(0);
+  notifyRendererStatus();
+  rebuildTrayMenu();
+  return true;
+}
+
+function isInsideScheduledBreak(at: Date) {
+  const policy = runtimeStatus.requestPolicy;
+  if (!policy || policy.approved_leave_today) return false;
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: policy.timezone || "UTC",
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(at);
+  const part = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((item) => item.type === type)?.value;
+  const weekday =
+    (
+      { Mon: 0, Tue: 1, Wed: 2, Thu: 3, Fri: 4, Sat: 5, Sun: 6 } as Record<
+        string,
+        number
+      >
+    )[part("weekday") ?? ""] ?? -1;
+  if (!policy.working_days.includes(weekday)) return false;
+  const minuteOfDay = Number(part("hour")) * 60 + Number(part("minute"));
+  const shiftStart = timeToMinuteOfDay(policy.shift_start);
+  const shiftEnd = timeToMinuteOfDay(policy.shift_end);
+  if (
+    shiftStart === null ||
+    shiftEnd === null ||
+    minuteOfDay < shiftStart ||
+    minuteOfDay >= shiftEnd
+  ) {
+    return false;
+  }
+  const approvedEarlyLeave = timeToMinuteOfDay(
+    policy.approved_early_leave_from,
+  );
+  if (approvedEarlyLeave !== null && minuteOfDay >= approvedEarlyLeave) {
+    return false;
+  }
+  return (policy.break_rules ?? []).some((rule) => {
+    const start = timeToMinuteOfDay(rule.start_time);
+    const end = timeToMinuteOfDay(rule.end_time);
+    return (
+      start !== null &&
+      end !== null &&
+      minuteOfDay >= start &&
+      minuteOfDay < end
+    );
+  });
 }
 
 function scheduledIdleIsCountable(at: Date) {
@@ -860,8 +1737,9 @@ function activeTimeBucket(at: Date): "normal" | "extra" {
 }
 
 function recalculateWorkedTime() {
+  ensureCurrentCounterDate();
   if (
-    !currentSessionId ||
+    !hasTrackingSession() ||
     !runtimeStatus.sessionStartedAt ||
     !runtimeStatus.enrolled ||
     trackingPausedByUser
@@ -923,10 +1801,11 @@ function recalculateWorkedTime() {
         100,
     ),
   );
+  checkpointActiveLocalTrackingSession();
   rebuildTrayMenu();
 }
 
-async function refreshWorkedTodayTotal() {
+async function refreshWorkedTodayTotalOnce() {
   if (!runtimeStatus.enrolled) {
     workedTodayBaseSeconds = 0;
     runtimeStatus.workedTodaySeconds = 0;
@@ -942,33 +1821,43 @@ async function refreshWorkedTodayTotal() {
       week: summary.week,
       month: summary.month,
     };
-    runtimeStatus.eligibleIdleSeconds = summary.today.idle_seconds;
+    runtimeStatus.eligibleIdleSeconds =
+      summary.today.eligible_idle_seconds ?? summary.today.idle_seconds;
     runtimeStatus.dailyTargetSeconds =
       summary.daily_target_seconds ?? 8 * 60 * 60;
     runtimeStatus.dailyTargetProgressPercent =
       summary.daily_target_progress_percent ?? 0;
     runtimeStatus.activityPercent = summary.activity_percent ?? 0;
     runtimeStatus.todayTimeline = summary.today_timeline;
+    runtimeStatus.idleRequestPeriods = summary.idle_request_periods ?? [];
+    if (
+      !summary.today_timeline.intervals.some(
+        (interval) => interval.type === "idle" && interval.is_current,
+      )
+    ) {
+      runtimeStatus.locallyEndedIdleAt = null;
+    }
     const trackedTodaySeconds = Math.max(
       summary.today.tracked_active_seconds,
       summary.today_timeline?.worked_seconds ?? 0,
     );
-    const serverBaseSeconds = Math.max(
-      0,
-      trackedTodaySeconds - runtimeStatus.activeSeconds,
-    );
-    workedTodayBaseSeconds =
-      previousTimelineDate === summary.today_timeline?.date
-        ? Math.max(workedTodayBaseSeconds, serverBaseSeconds)
-        : serverBaseSeconds;
-    runtimeStatus.workedTodaySeconds = Math.max(
+    const reconciled = reconcileWorkedToday({
       trackedTodaySeconds,
-      workedTodayBaseSeconds + runtimeStatus.activeSeconds,
-    );
+      activeSeconds: runtimeStatus.activeSeconds,
+      previousBaseSeconds: workedTodayBaseSeconds,
+      preservePreviousBase:
+        previousTimelineDate === summary.today_timeline?.date,
+    });
+    workedTodayBaseSeconds = reconciled.baseSeconds;
+    runtimeStatus.workedTodaySeconds = reconciled.workedTodaySeconds;
   } catch (error) {
-    log.warn("Failed to refresh today's worked time", error);
+    log.warn("Failed to refresh today's worked time", safeErrorForLog(error));
   }
 }
+
+const refreshWorkedTodayTotal = createCoalescedRefresh(
+  refreshWorkedTodayTotalOnce,
+);
 
 function showIdleLossAlert(lostSeconds: number, eligibleLostSeconds: number) {
   if (lostSeconds <= 0) {
@@ -977,6 +1866,7 @@ function showIdleLossAlert(lostSeconds: number, eligibleLostSeconds: number) {
 
   runtimeStatus.lastIdleAlert = {
     id: randomUUID(),
+    kind: "idle_return",
     lostSeconds,
     eligibleLostSeconds,
     outsideScheduledShift: eligibleLostSeconds <= 0,
@@ -987,15 +1877,91 @@ function showIdleLossAlert(lostSeconds: number, eligibleLostSeconds: number) {
   mainWindow?.webContents.send("agent:idle-alert", runtimeStatus.lastIdleAlert);
 }
 
+function showFreshSessionStartConfirmation(outsideScheduledShift: boolean) {
+  if (freshSessionStartPromptActive || trackingPausedByUser || isQuitting) {
+    return;
+  }
+  freshSessionStartPromptActive = true;
+  runtimeStatus.trackingPaused = true;
+  runtimeStatus.trackingStatus = "paused";
+  runtimeStatus.lastIdleAlert = {
+    id: randomUUID(),
+    kind: "tracking_start",
+    lostSeconds: 0,
+    eligibleLostSeconds: 0,
+    outsideScheduledShift,
+    endedAt: new Date().toISOString(),
+  };
+  setIdleAlertAttention(true);
+  showMainWindow({ forceForeground: true, centerOnPointerDisplay: true });
+  mainWindow?.webContents.send("agent:idle-alert", runtimeStatus.lastIdleAlert);
+  notifyRendererStatus();
+  rebuildTrayMenu();
+}
+
+async function confirmFreshSessionStart() {
+  if (!runtimeStatus.enrolled) {
+    return {
+      success: false,
+      message: "Enroll this device before starting tracking.",
+    };
+  }
+  const outsideScheduledShift = activeTimeBucket(new Date()) === "extra";
+  freshSessionStartPromptActive = false;
+  freshSessionStartConfirmed = true;
+  trackingPausedByUser = false;
+  runtimeStatus.lastIdleAlert = null;
+  runtimeStatus.trackingPaused = false;
+  runtimeStatus.trackingStatus = "starting";
+  saveTrackingPreferences();
+  // The employee explicitly confirmed that work is starting, so local-first
+  // tracking is safe even if the API is temporarily unavailable.
+  beginLocalTrackingSession();
+  await startTrackingAutomatically();
+  notifyRendererStatus();
+  rebuildTrayMenu();
+  return {
+    success: hasTrackingSession(),
+    message: hasTrackingSession()
+      ? outsideScheduledShift
+        ? "Extra-time tracking started."
+        : "Work tracking started."
+      : "Tracking could not start. Check the connection and try again.",
+  };
+}
+
+function declineFreshSessionStart() {
+  freshSessionStartPromptActive = false;
+  freshSessionStartConfirmed = false;
+  trackingPausedByUser = true;
+  runtimeStatus.lastIdleAlert = null;
+  runtimeStatus.trackingPaused = true;
+  runtimeStatus.trackingStatus = "paused";
+  runtimeStatus.sessionStartedAt = null;
+  saveTrackingPreferences();
+  notifyRendererStatus();
+  rebuildTrayMenu();
+  return { success: true, message: "Work tracking was not started." };
+}
+
 async function refreshTimeAdjustmentRequests() {
   if (!runtimeStatus.enrolled) {
     runtimeStatus.timeAdjustmentRequests = [];
     return;
   }
+  if (isRefreshingTimeAdjustments) {
+    return;
+  }
+  isRefreshingTimeAdjustments = true;
   try {
     runtimeStatus.timeAdjustmentRequests = await listTimeAdjustmentRequests();
   } catch (error) {
-    log.warn("Failed to refresh time adjustment requests", error);
+    log.warn(
+      "Failed to refresh time adjustment requests",
+      safeErrorForLog(error),
+    );
+  } finally {
+    isRefreshingTimeAdjustments = false;
   }
 }
 
@@ -1004,10 +1970,16 @@ async function refreshLeaveRequests() {
     runtimeStatus.leaveRequests = null;
     return;
   }
+  if (isRefreshingLeaveRequests) {
+    return;
+  }
+  isRefreshingLeaveRequests = true;
   try {
     runtimeStatus.leaveRequests = await listLeaveRequests();
   } catch (error) {
-    log.warn("Failed to refresh leave requests", error);
+    log.warn("Failed to refresh leave requests", safeErrorForLog(error));
+  } finally {
+    isRefreshingLeaveRequests = false;
   }
 }
 
@@ -1018,6 +1990,10 @@ async function refreshTasks() {
     runtimeStatus.recentTasks = [];
     return;
   }
+  if (isRefreshingTasks) {
+    return;
+  }
+  isRefreshingTasks = true;
   try {
     const [tasks, projects] = await Promise.all([
       listAgentTasks(),
@@ -1036,39 +2012,85 @@ async function refreshTasks() {
       .slice(0, 3);
     selectRuntimeTask(runtimeStatus.selectedTask?.id ?? null);
   } catch (error) {
-    log.warn("Failed to refresh tasks", error);
+    log.warn("Failed to refresh tasks", safeErrorForLog(error));
+  } finally {
+    isRefreshingTasks = false;
   }
 }
 
 async function sendStateEvent(
   eventType: string,
   status: AgentRuntimeStatus["trackingStatus"],
+  extraPayload: Record<string, unknown> = {},
+  options: {
+    eventTimestamp?: string;
+    waitForDelivery?: Promise<boolean> | null;
+  } = {},
 ) {
+  clearIdleReturnVerification();
   runtimeStatus.trackingStatus = status;
   notifyRendererStatus();
   rebuildTrayMenu();
-  if (!currentSessionId || !runtimeStatus.enrolled) {
-    return;
+  if (!runtimeStatus.enrolled) {
+    return false;
   }
 
   const eventId = randomUUID();
-  const endpoint = `/agent/sessions/${currentSessionId}/events`;
+  const eventTimestamp = options.eventTimestamp ?? new Date().toISOString();
+  const eventPayload = {
+    status,
+    idle_seconds: runtimeStatus.idleSeconds,
+    agent_version: runtimeStatus.agentVersion,
+    ...extraPayload,
+  };
+  if (
+    localTrackingSessionId &&
+    (!currentSessionId || isPromotingLocalTrackingSessions)
+  ) {
+    appendLocalTrackingEvent({
+      id: eventId,
+      localSessionId: localTrackingSessionId,
+      eventType,
+      eventTimestamp,
+      payload: eventPayload,
+    });
+    checkpointActiveLocalTrackingSession(true);
+    return false;
+  }
+  const sessionId = currentSessionId;
+  if (!sessionId) {
+    return false;
+  }
+  const endpoint = `/agent/sessions/${sessionId}/events`;
   const payload = {
     event_id: eventId,
     event_type: eventType,
-    event_timestamp: new Date().toISOString(),
-    payload: {
-      status,
-      idle_seconds: runtimeStatus.idleSeconds,
-      agent_version: runtimeStatus.agentVersion,
-    },
+    event_timestamp: eventTimestamp,
+    payload: eventPayload,
   };
 
   try {
+    const priorEventDelivered = options.waitForDelivery
+      ? await options.waitForDelivery
+      : true;
+    if (!priorEventDelivered) {
+      enqueuePendingEvent({
+        id: eventId,
+        method: "POST",
+        endpoint,
+        payload,
+        idempotencyKey: eventId,
+      });
+      log.info(
+        `Queued ${eventType} behind an earlier offline state transition`,
+      );
+      return false;
+    }
     const result = await sendActivityEvent({
-      sessionId: currentSessionId,
+      sessionId,
       eventId,
       eventType,
+      eventTimestamp,
       payload: payload.payload,
     });
     const latestLocalStatus = runtimeStatus.trackingStatus;
@@ -1080,8 +2102,11 @@ async function sendStateEvent(
     await refreshWorkedTodayTotal();
     runtimeStatus.connectionStatus = "online";
     runtimeStatus.lastSuccessfulSyncAt = new Date().toISOString();
+    return true;
   } catch (error) {
-    runtimeStatus.connectionStatus = "offline";
+    runtimeStatus.connectionStatus = connectionStatusAfterApiFailure(
+      apiResponseStatus(error),
+    );
     enqueuePendingEvent({
       id: eventId,
       method: "POST",
@@ -1089,7 +2114,8 @@ async function sendStateEvent(
       payload,
       idempotencyKey: eventId,
     });
-    log.warn(`Failed to send ${eventType}`, error);
+    log.warn(`Failed to send ${eventType}`, safeErrorForLog(error));
+    return false;
   } finally {
     if (!isQuitting) {
       void refreshTrackingConfig();
@@ -1100,42 +2126,303 @@ async function sendStateEvent(
   }
 }
 
-function finishAutomaticIdleImmediately() {
-  if (
-    unpaidPauseActive ||
-    idleReviewPending ||
-    runtimeStatus.trackingStatus !== "idle" ||
-    !currentSessionId
-  ) {
-    return;
-  }
+function automaticIdleDurationSnapshot(
+  options: {
+    endedAt?: number;
+    idleSecondsAtEnd?: number;
+    eligibleIdleSecondsAtEnd?: number;
+  } = {},
+) {
   recalculateWorkedTime();
+  const endedAt = options.endedAt ?? Date.now();
+  const idleSecondsAtEnd =
+    options.idleSecondsAtEnd ?? runtimeStatus.idleSeconds;
+  const eligibleIdleSecondsAtEnd =
+    options.eligibleIdleSecondsAtEnd ?? runtimeStatus.eligibleIdleSeconds;
   const lostSeconds = Math.max(
     0,
     idleWallClockStartedAt === null
-      ? runtimeStatus.idleSeconds - idleSecondsBeforeCurrentIdle
-      : Math.floor((Date.now() - idleWallClockStartedAt) / 1000),
+      ? idleSecondsAtEnd - idleSecondsBeforeCurrentIdle
+      : Math.floor((endedAt - idleWallClockStartedAt) / 1000),
   );
-  const eligibleLostSeconds = Math.max(
+  return {
+    lostSeconds,
+    eligibleLostSeconds: Math.max(
+      0,
+      eligibleIdleSecondsAtEnd - eligibleIdleSecondsBeforeCurrentIdle,
+    ),
+    idleStartedAt: new Date(
+      idleWallClockStartedAt ?? endedAt - lostSeconds * 1000,
+    ).toISOString(),
+    idleSecondsBeforeGap: idleSecondsBeforeCurrentIdle,
+  };
+}
+
+function dispatchManualPauseTransition(
+  eventType: "manual_pause_started" | "manual_pause_ended",
+  status: "idle" | "active",
+) {
+  const delivery = sendStateEvent(
+    eventType,
+    status,
+    {},
+    {
+      waitForDelivery: manualPauseTransitionPromise,
+    },
+  );
+  manualPauseTransitionPromise = delivery;
+  void delivery.then(
+    (delivered) => {
+      // A failed delivery has been persisted in the ordered local queue. Keep
+      // that result as the predecessor so a fast Pause -> Resume cannot
+      // overtake the queued pause event when connectivity is intermittent.
+      if (delivered && manualPauseTransitionPromise === delivery) {
+        manualPauseTransitionPromise = null;
+      }
+    },
+    (error: unknown) => {
+      log.error(
+        "Manual pause transition failed unexpectedly",
+        safeErrorForLog(error),
+      );
+    },
+  );
+  return delivery;
+}
+
+function clearIdleReturnVerification() {
+  idleReturnVerification = null;
+}
+
+function immediateIdleReturnInputDetected(
+  operatingSystemIdleSeconds: number,
+  previousOperatingSystemIdleSeconds: number | null,
+) {
+  const latestRealInputAt = inputIntegrityMonitor.latestRealInputAt();
+  const freshRealInput =
+    latestRealInputAt !== null &&
+    latestRealInputAt > lastHandledIdleReturnInputAt;
+  const detected = idleReturnInputDetected({
+    latestRealInputAt,
+    lastHandledRealInputAt: lastHandledIdleReturnInputAt,
+    systemIdleSeconds: operatingSystemIdleSeconds,
+    previousSystemIdleSeconds: previousOperatingSystemIdleSeconds,
+  });
+  if (freshRealInput) {
+    lastHandledIdleReturnInputAt = latestRealInputAt;
+  }
+  return detected;
+}
+
+function creditVerifiedReturnPeriod(
+  verification: IdleReturnVerification,
+  now: number,
+) {
+  if (activeCounterDate !== verification.counterDate) {
+    return;
+  }
+  const verifiedSeconds = Math.max(
     0,
-    runtimeStatus.eligibleIdleSeconds - eligibleIdleSecondsBeforeCurrentIdle,
+    Math.floor((now - verification.startedAt) / 1_000),
   );
-  idleSecondsBeforeCurrentIdle = runtimeStatus.idleSeconds;
-  eligibleIdleSecondsBeforeCurrentIdle = runtimeStatus.eligibleIdleSeconds;
-  idleWallClockStartedAt = null;
-  idleReviewPending = lostSeconds > 0;
+  if (verifiedSeconds === 0) {
+    return;
+  }
+
+  const counters = reclassifyVerifiedReturnCounters({
+    activeSeconds: runtimeStatus.activeSeconds,
+    idleSeconds: runtimeStatus.idleSeconds,
+    eligibleIdleSeconds: runtimeStatus.eligibleIdleSeconds,
+    idleSecondsAtVerificationStart: verification.idleSecondsAtStart,
+    eligibleIdleSecondsAtVerificationStart:
+      verification.eligibleIdleSecondsAtStart,
+    verifiedSeconds,
+  });
+  runtimeStatus.activeSeconds = counters.activeSeconds;
+  runtimeStatus.idleSeconds = counters.idleSeconds;
+  runtimeStatus.eligibleIdleSeconds = counters.eligibleIdleSeconds;
+
+  let extraSeconds = 0;
+  for (let offset = 1; offset <= verifiedSeconds; offset += 1) {
+    const at = new Date(verification.startedAt + offset * 1_000);
+    if (activeTimeBucket(at) === "normal") {
+      runtimeStatus.normalSeconds += 1;
+    } else {
+      runtimeStatus.extraSeconds += 1;
+      extraSeconds += 1;
+    }
+  }
+  if (extraSeconds > 0) {
+    runtimeStatus.extraTimeStatus = runtimeStatus.overtimeEnabled
+      ? "pending_overtime"
+      : "recorded_not_counted";
+  }
+  runtimeStatus.workedTodaySeconds =
+    workedTodayBaseSeconds + runtimeStatus.activeSeconds;
+  runtimeStatus.dailyTargetProgressPercent = Math.min(
+    100,
+    Math.round(
+      (runtimeStatus.normalSeconds /
+        Math.max(1, runtimeStatus.dailyTargetSeconds)) *
+        100,
+    ),
+  );
+  checkpointActiveLocalTrackingSession(true);
+}
+
+function showAutomaticIdleReturnReview() {
+  if (
+    unpaidPauseActive ||
+    runtimeStatus.trackingStatus !== "idle" ||
+    !hasTrackingSession() ||
+    runtimeStatus.lastIdleAlert
+  ) {
+    return;
+  }
+  const { lostSeconds, eligibleLostSeconds } = automaticIdleDurationSnapshot();
   showIdleLossAlert(lostSeconds, eligibleLostSeconds);
 }
 
+function finishAutomaticIdleAfterVerification(
+  verification: IdleReturnVerification,
+) {
+  if (
+    unpaidPauseActive ||
+    isFinishingAutomaticIdle ||
+    runtimeStatus.trackingStatus !== "idle" ||
+    !hasTrackingSession()
+  ) {
+    return null;
+  }
+  const now = Date.now();
+  const canBackdateReturn = activeCounterDate === verification.counterDate;
+  const automaticIdleEndedAt = canBackdateReturn
+    ? verification.eventTimestamp
+    : new Date(now).toISOString();
+  const { lostSeconds, idleStartedAt, idleSecondsBeforeGap } =
+    automaticIdleDurationSnapshot(
+      canBackdateReturn
+        ? {
+            endedAt: verification.startedAt,
+            idleSecondsAtEnd: verification.idleSecondsAtStart,
+            eligibleIdleSecondsAtEnd: verification.eligibleIdleSecondsAtStart,
+          }
+        : { endedAt: now },
+    );
+  if (canBackdateReturn) {
+    creditVerifiedReturnPeriod(verification, now);
+  }
+  idleSecondsBeforeCurrentIdle = runtimeStatus.idleSeconds;
+  eligibleIdleSecondsBeforeCurrentIdle = runtimeStatus.eligibleIdleSeconds;
+  idleWallClockStartedAt = null;
+  automaticIdleStartedDuringBreak = false;
+  clearIdleReturnVerification();
+  isFinishingAutomaticIdle = true;
+  runtimeStatus.locallyEndedIdleAt = automaticIdleEndedAt;
+  const finishPromise = sendStateEvent(
+    "idle_ended",
+    "active",
+    {
+      idle_started_at: idleStartedAt,
+      idle_gap_seconds: lostSeconds,
+      idle_seconds_before_gap: idleSecondsBeforeGap,
+    },
+    {
+      eventTimestamp: automaticIdleEndedAt,
+      waitForDelivery: automaticIdleStartPromise,
+    },
+  );
+  automaticIdleFinishPromise = finishPromise;
+  void finishPromise.finally(() => {
+    if (automaticIdleFinishPromise === finishPromise) {
+      automaticIdleFinishPromise = null;
+    }
+    isFinishingAutomaticIdle = false;
+  });
+  runtimeStatus.lastIdleAlert = null;
+  if (lostSeconds > LONG_IDLE_SESSION_SPLIT_SECONDS) {
+    log.info("Started a new work session after more than four hours away");
+  }
+  return finishPromise;
+}
+
 async function resumeAutomaticIdle() {
-  if (!currentSessionId || runtimeStatus.trackingStatus !== "idle") {
-    idleReviewPending = false;
+  if (!hasTrackingSession()) {
     return { success: false, message: "The idle review is no longer active." };
   }
-  idleReviewPending = false;
-  idleWallClockStartedAt = null;
-  await sendStateEvent("idle_ended", "active");
+  if (automaticIdleFinishPromise) {
+    await automaticIdleFinishPromise;
+    return { success: true };
+  }
+  if (runtimeStatus.trackingStatus === "active") {
+    return { success: true };
+  }
+  if (runtimeStatus.trackingStatus !== "idle") {
+    return { success: false, message: "The idle review is no longer active." };
+  }
+  if (idleReturnVerification) {
+    const finishPromise = finishAutomaticIdleAfterVerification(
+      idleReturnVerification,
+    );
+    if (finishPromise) await finishPromise;
+    return { success: Boolean(finishPromise) };
+  }
+  if (
+    automaticIdleReturnAction({
+      trackingStatus: runtimeStatus.trackingStatus,
+      immediateInputDetected: false,
+      confirmationAccepted: true,
+      sustainedInputConfirmed: false,
+    }) !== "resume"
+  ) {
+    return { success: false, message: "Return confirmation is required." };
+  }
+  recalculateWorkedTime();
+  const startedAt = Date.now();
+  const verification: IdleReturnVerification = {
+    startedAt,
+    eventTimestamp: new Date(startedAt).toISOString(),
+    counterDate: activeCounterDate,
+    idleSecondsAtStart: runtimeStatus.idleSeconds,
+    eligibleIdleSecondsAtStart: runtimeStatus.eligibleIdleSeconds,
+  };
+  idleReturnVerification = verification;
+  const finishPromise = finishAutomaticIdleAfterVerification(verification);
+  if (!finishPromise) {
+    return {
+      success: false,
+      message: "The idle review could not be completed.",
+    };
+  }
+  await finishPromise;
   return { success: true };
+}
+
+function showIdleStartedNotification() {
+  const title = "You are now idle";
+  const body =
+    `No keyboard or mouse activity was detected for ${IDLE_THRESHOLD_MINUTES} minutes. ` +
+    "Idle time starts now.";
+
+  if (Notification.isSupported()) {
+    const notification = new Notification({
+      title,
+      body,
+      icon: getAppIconPath(),
+    });
+    notification.on("click", () =>
+      showMainWindow({
+        forceForeground: true,
+        centerOnPointerDisplay: true,
+      }),
+    );
+    notification.show();
+    return;
+  }
+
+  if (process.platform === "win32") {
+    tray?.displayBalloon({ title, content: body, iconType: "warning" });
+  }
 }
 
 function startIdleMonitor() {
@@ -1144,40 +2431,358 @@ function startIdleMonitor() {
   }
 
   idleTimer = setInterval(() => {
+    if (waitingForInputAfterIdleSessionClose) {
+      if (
+        !runtimeStatus.enrolled ||
+        trackingPausedByUser ||
+        unpaidPauseActive ||
+        isQuitting
+      ) {
+        lastObservedSystemIdleSeconds = null;
+        lastObservedOperatingSystemIdleSeconds = null;
+        return;
+      }
+      const idleSeconds = observedIdleSeconds();
+      const previousSystemIdleSeconds = lastObservedSystemIdleSeconds;
+      lastObservedSystemIdleSeconds = idleSeconds;
+      if (inputResumedAfterIdle(idleSeconds, previousSystemIdleSeconds)) {
+        resumeAfterIdleSessionClose();
+      }
+      return;
+    }
     if (
       !runtimeStatus.enrolled ||
+      !hasTrackingSession() ||
+      runtimeStatus.trackingPaused ||
       unpaidPauseActive ||
-      runtimeStatus.trackingStatus === "locked" ||
-      runtimeStatus.trackingStatus === "sleeping"
+      !["starting", "active", "idle"].includes(runtimeStatus.trackingStatus)
     ) {
+      lastObservedSystemIdleSeconds = null;
+      lastObservedOperatingSystemIdleSeconds = null;
       return;
     }
 
-    const idleSeconds = powerMonitor.getSystemIdleTime();
-    const thresholdSeconds = trackingConfig.idle_threshold_minutes * 60;
+    const operatingSystemIdleSeconds = powerMonitor.getSystemIdleTime();
+    const idleSeconds = observedIdleSeconds(operatingSystemIdleSeconds);
+    const previousOperatingSystemIdleSeconds =
+      lastObservedOperatingSystemIdleSeconds;
+    lastObservedOperatingSystemIdleSeconds = operatingSystemIdleSeconds;
+    lastObservedSystemIdleSeconds = idleSeconds;
+    if (runtimeStatus.trackingStatus === "idle" && idleReturnVerification) {
+      if (
+        automaticIdleReturnAction({
+          trackingStatus: runtimeStatus.trackingStatus,
+          immediateInputDetected: false,
+          confirmationAccepted: true,
+          sustainedInputConfirmed: false,
+        }) === "resume"
+      ) {
+        const verification = idleReturnVerification;
+        void finishAutomaticIdleAfterVerification(verification);
+      }
+      return;
+    }
+    const insideScheduledBreak = isInsideScheduledBreak(new Date());
     if (
-      idleSeconds >= thresholdSeconds &&
+      hasReachedIdleThreshold(idleSeconds, insideScheduledBreak) &&
       runtimeStatus.trackingStatus !== "idle"
     ) {
       recalculateWorkedTime();
       idleSecondsBeforeCurrentIdle = runtimeStatus.idleSeconds;
       eligibleIdleSecondsBeforeCurrentIdle = runtimeStatus.eligibleIdleSeconds;
       idleWallClockStartedAt = Date.now();
-      void sendStateEvent("idle_started", "idle");
+      clearIdleReturnVerification();
+      lastHandledIdleReturnInputAt =
+        inputIntegrityMonitor.latestRealInputAt() ?? Date.now();
+      automaticIdleStartedDuringBreak = insideScheduledBreak;
+      runtimeStatus.locallyEndedIdleAt = null;
+      const startPromise = sendStateEvent("idle_started", "idle");
+      automaticIdleStartPromise = startPromise;
+      void startPromise.finally(() => {
+        if (automaticIdleStartPromise === startPromise) {
+          automaticIdleStartPromise = null;
+        }
+      });
+      showIdleStartedNotification();
     } else if (
-      idleSeconds < thresholdSeconds &&
-      runtimeStatus.trackingStatus === "idle"
+      automaticIdleReturnAction({
+        trackingStatus: runtimeStatus.trackingStatus,
+        immediateInputDetected: immediateIdleReturnInputDetected(
+          operatingSystemIdleSeconds,
+          previousOperatingSystemIdleSeconds,
+        ),
+        confirmationAccepted: false,
+        sustainedInputConfirmed: false,
+      }) === "review"
     ) {
-      finishAutomaticIdleImmediately();
+      showAutomaticIdleReturnReview();
     }
   }, 250);
 }
 
-async function heartbeatTick() {
-  if (!currentSessionId || !runtimeStatus.enrolled) {
+function applicationDisplayName(processName: string) {
+  const normalized = processName
+    .trim()
+    .replace(/\.exe$/i, "")
+    .toLowerCase();
+  const knownApplications: Record<string, string> = {
+    chrome: "Google Chrome",
+    msedge: "Microsoft Edge",
+    firefox: "Mozilla Firefox",
+    brave: "Brave",
+    opera: "Opera",
+    vivaldi: "Vivaldi",
+    code: "Visual Studio Code",
+    devenv: "Visual Studio",
+    winword: "Microsoft Word",
+    excel: "Microsoft Excel",
+    powerpnt: "Microsoft PowerPoint",
+    outlook: "Microsoft Outlook",
+    teams: "Microsoft Teams",
+    "ms-teams": "Microsoft Teams",
+    slack: "Slack",
+    explorer: "File Explorer",
+    notepad: "Notepad",
+    photoshop: "Adobe Photoshop",
+    acrobat: "Adobe Acrobat",
+  };
+  return (
+    knownApplications[normalized] ??
+    normalized
+      .split(/[-_.\s]+/)
+      .filter(Boolean)
+      .map((part) => `${part[0]?.toUpperCase() ?? ""}${part.slice(1)}`)
+      .join(" ")
+  );
+}
+
+function siteDomainFromAddress(address: string | null | undefined) {
+  const value = address?.trim();
+  if (!value || /\s/.test(value)) {
+    return null;
+  }
+  try {
+    const candidate = /^[a-z][a-z0-9+.-]*:\/\//i.test(value)
+      ? value
+      : `https://${value}`;
+    const parsed = new URL(candidate);
+    if (!["http:", "https:"].includes(parsed.protocol)) {
+      return null;
+    }
+    return parsed.hostname.toLowerCase().replace(/^www\./, "") || null;
+  } catch {
+    return null;
+  }
+}
+
+async function readForegroundActivity(): Promise<ForegroundActivity | null> {
+  if (process.platform !== "win32") {
+    return null;
+  }
+  try {
+    const { stdout } = await execFileAsync(
+      "powershell.exe",
+      [
+        "-NoLogo",
+        "-NoProfile",
+        "-NonInteractive",
+        "-WindowStyle",
+        "Hidden",
+        "-Command",
+        FOREGROUND_WINDOW_POWERSHELL,
+      ],
+      {
+        encoding: "utf8",
+        timeout: 5_000,
+        windowsHide: true,
+        maxBuffer: 64 * 1024,
+      },
+    );
+    const output = String(stdout).trim();
+    if (!output) {
+      return null;
+    }
+    const metadata = JSON.parse(output) as {
+      processName?: unknown;
+      url?: unknown;
+    };
+    if (
+      typeof metadata.processName !== "string" ||
+      !metadata.processName.trim()
+    ) {
+      return null;
+    }
+    const processName = metadata.processName.trim().slice(0, 120);
+    return {
+      processName,
+      applicationName: applicationDisplayName(processName).slice(0, 160),
+      siteDomain:
+        typeof metadata.url === "string"
+          ? (siteDomainFromAddress(metadata.url)?.slice(0, 253) ?? null)
+          : null,
+    };
+  } catch (error) {
+    log.debug("Foreground application could not be read", error);
+    return null;
+  }
+}
+
+function sameForegroundActivity(
+  left: ForegroundActivitySegment,
+  right: ForegroundActivity,
+) {
+  return (
+    left.processName === right.processName &&
+    left.applicationName === right.applicationName &&
+    left.siteDomain === right.siteDomain
+  );
+}
+
+async function uploadForegroundActivitySegment(
+  segment: ForegroundActivitySegment,
+  endedAtMs: number,
+) {
+  const effectiveEnd = Math.max(segment.startedAt + 1_000, endedAtMs);
+  const durationSeconds = Math.max(
+    1,
+    Math.min(300, Math.round((effectiveEnd - segment.startedAt) / 1_000)),
+  );
+  const eventId = randomUUID();
+  const eventTimestamp = new Date(segment.startedAt).toISOString();
+  const payload = {
+    application_name: segment.applicationName,
+    process_name: segment.processName,
+    site_domain: segment.siteDomain,
+    ended_at: new Date(effectiveEnd).toISOString(),
+    duration_seconds: durationSeconds,
+  };
+  try {
+    await sendActivityEvent({
+      sessionId: segment.sessionId,
+      eventId,
+      eventType: "foreground_activity",
+      eventTimestamp,
+      payload,
+    });
+  } catch (error) {
+    enqueuePendingEvent({
+      id: eventId,
+      method: "POST",
+      endpoint: `/agent/sessions/${segment.sessionId}/events`,
+      payload: {
+        event_id: eventId,
+        event_type: "foreground_activity",
+        event_timestamp: eventTimestamp,
+        payload,
+      },
+      idempotencyKey: eventId,
+    });
+    log.warn(
+      "Foreground application segment was queued for sync",
+      safeErrorForLog(error),
+    );
+  }
+}
+
+async function flushForegroundActivitySegment(endedAtMs = Date.now()) {
+  const segment = foregroundActivitySegment;
+  foregroundActivitySegment = null;
+  if (!segment) {
+    return;
+  }
+  await uploadForegroundActivitySegment(
+    segment,
+    Math.max(segment.lastObservedAt, endedAtMs),
+  );
+}
+
+async function foregroundActivityTick() {
+  if (foregroundActivityTickRunning) {
+    return;
+  }
+  foregroundActivityTickRunning = true;
+  try {
+    const sessionId = currentSessionId;
+    const shouldCapture =
+      Boolean(sessionId) &&
+      runtimeStatus.enrolled &&
+      !runtimeStatus.trackingPaused &&
+      runtimeStatus.trackingStatus === "active";
+    if (!shouldCapture || !sessionId) {
+      await flushForegroundActivitySegment();
+      return;
+    }
+
+    const activity = await readForegroundActivity();
+    const observedAt = Date.now();
+    if (
+      !foregroundActivityTimer ||
+      currentSessionId !== sessionId ||
+      runtimeStatus.trackingPaused ||
+      runtimeStatus.trackingStatus !== "active"
+    ) {
+      await flushForegroundActivitySegment(observedAt);
+      return;
+    }
+    if (!activity) {
+      await flushForegroundActivitySegment(observedAt);
+      return;
+    }
+
+    if (
+      foregroundActivitySegment &&
+      foregroundActivitySegment.sessionId === sessionId &&
+      sameForegroundActivity(foregroundActivitySegment, activity)
+    ) {
+      foregroundActivitySegment.lastObservedAt = observedAt;
+      if (
+        observedAt - foregroundActivitySegment.startedAt >=
+        FOREGROUND_SEGMENT_MAX_MS
+      ) {
+        await flushForegroundActivitySegment(observedAt);
+        foregroundActivitySegment = {
+          ...activity,
+          sessionId,
+          startedAt: observedAt,
+          lastObservedAt: observedAt,
+        };
+      }
+      return;
+    }
+
+    await flushForegroundActivitySegment(observedAt);
+    foregroundActivitySegment = {
+      ...activity,
+      sessionId,
+      startedAt: observedAt,
+      lastObservedAt: observedAt,
+    };
+  } finally {
+    foregroundActivityTickRunning = false;
+  }
+}
+
+function startForegroundActivityMonitoring() {
+  if (foregroundActivityTimer || process.platform !== "win32") {
+    return;
+  }
+  foregroundActivityTimer = setInterval(
+    () => void foregroundActivityTick(),
+    FOREGROUND_SAMPLE_INTERVAL_MS,
+  );
+  void foregroundActivityTick();
+}
+
+async function heartbeatTick(options: { refreshMetadata?: boolean } = {}) {
+  if (
+    !currentSessionId ||
+    !runtimeStatus.enrolled ||
+    isPromotingLocalTrackingSessions
+  ) {
     return;
   }
 
+  const sessionId = currentSessionId;
   recalculateWorkedTime();
   const eventId = randomUUID();
   const status =
@@ -1186,6 +2791,7 @@ async function heartbeatTick() {
     runtimeStatus.trackingStatus === "sleeping"
       ? runtimeStatus.trackingStatus
       : "active";
+  const integrityObservation = inputIntegrityObservation();
   const payload = {
     event_id: eventId,
     timestamp: new Date().toISOString(),
@@ -1193,35 +2799,66 @@ async function heartbeatTick() {
     idle_seconds: runtimeStatus.idleSeconds,
     active_seconds: runtimeStatus.activeSeconds,
     agent_version: runtimeStatus.agentVersion,
+    input_integrity: integrityObservation ?? null,
   };
 
   try {
     const result = await sendHeartbeat({
-      sessionId: currentSessionId,
+      sessionId,
       eventId,
       status,
       idleSeconds: runtimeStatus.idleSeconds,
       activeSeconds: runtimeStatus.activeSeconds,
+      counterDate: activeCounterDate ?? localDateKey(),
       agentVersion: runtimeStatus.agentVersion,
+      inputIntegrity: integrityObservation,
     });
+    const serverClosedDuringNonWorking = shouldWaitForInputBeforeRestart(
+      status,
+      Boolean(result.session.ended_at) ||
+        result.session.status === "ended" ||
+        result.session.status === "offline",
+    );
     const latestLocalStatus = runtimeStatus.trackingStatus;
     syncRuntimeFromSession(result.session);
     applyWorkdayState(result.workday);
-    if (latestLocalStatus !== status) {
+    if (serverClosedDuringNonWorking) {
+      waitForInputAfterIdleSessionClose(status);
+    } else if (latestLocalStatus !== status) {
       runtimeStatus.trackingStatus = latestLocalStatus;
     }
     applyPauseState(result.pause);
-    if (Date.now() - lastFullSummaryRefreshAt > 60 * 1000) {
+    if (
+      options.refreshMetadata !== false &&
+      Date.now() - lastFullSummaryRefreshAt > 60 * 1000
+    ) {
       lastFullSummaryRefreshAt = Date.now();
       await refreshWorkedTodayTotal();
     }
     runtimeStatus.connectionStatus = "online";
     runtimeStatus.lastSuccessfulSyncAt = new Date().toISOString();
+    if (!currentSessionId) {
+      if (serverClosedDuringNonWorking) {
+        log.info(
+          "The server closed the inactive session; waiting for fresh input before tracking again",
+        );
+      } else {
+        log.info(
+          "The server closed the current session; starting a fresh session automatically",
+        );
+        scheduleAutomaticTrackingRestart(1_000);
+      }
+    }
   } catch (error) {
-    runtimeStatus.connectionStatus = "offline";
+    runtimeStatus.connectionStatus = connectionStatusAfterApiFailure(
+      apiResponseStatus(error),
+    );
     if (isDeviceIdentityMismatch(error)) {
       resetForDeviceReenrollment();
-      log.warn("Device identity mismatch; local enrollment was cleared", error);
+      log.warn(
+        "Device identity mismatch; local enrollment was cleared",
+        safeErrorForLog(error),
+      );
       return;
     }
     const sessionNotFound =
@@ -1233,37 +2870,71 @@ async function heartbeatTick() {
       // session while preserving the local tracking state.
       currentSessionId = null;
       runtimeStatus.sessionStartedAt = null;
-      runtimeStatus.trackingStatus = "starting";
-      lastDurationTickAt = null;
-      if (
-        !automaticTrackingRetryTimer &&
-        !isStartingTrackingAutomatically &&
-        !trackingPausedByUser &&
-        !isQuitting
-      ) {
-        automaticTrackingRetryTimer = setTimeout(() => {
-          automaticTrackingRetryTimer = null;
-          void startTrackingAutomatically();
-        }, 1000);
-      }
+      beginLocalTrackingSession();
+      scheduleAutomaticTrackingRestart(1_000);
     } else {
       enqueuePendingEvent({
         id: eventId,
         method: "POST",
-        endpoint: `/agent/sessions/${currentSessionId}/heartbeat`,
+        endpoint: `/agent/sessions/${sessionId}/heartbeat`,
         payload,
         idempotencyKey: eventId,
       });
     }
-    log.warn("Heartbeat failed", error);
+    log.warn("Heartbeat failed", safeErrorForLog(error));
   } finally {
-    if (Date.now() - lastMetadataRefreshAt > 60 * 1000) {
+    if (
+      options.refreshMetadata !== false &&
+      Date.now() - lastMetadataRefreshAt > 60 * 1000
+    ) {
       lastMetadataRefreshAt = Date.now();
       void refreshTrackingConfig();
       void refreshTasks();
     }
     rebuildTrayMenu();
   }
+}
+
+function automaticTrackingIsExpected() {
+  return (
+    runtimeStatus.enrolled &&
+    !trackingPausedByUser &&
+    !unpaidPauseActive &&
+    !waitingForInputAfterIdleSessionClose &&
+    !freshSessionStartPromptActive &&
+    !isQuitting
+  );
+}
+
+function scheduleAutomaticTrackingRestart(delayMs = 1_000) {
+  if (
+    !automaticTrackingIsExpected() ||
+    currentSessionId ||
+    automaticTrackingRetryTimer
+  ) {
+    return;
+  }
+  if (!localTrackingSessionId) {
+    runtimeStatus.trackingStatus = "starting";
+  }
+  automaticTrackingRetryTimer = setTimeout(
+    () => {
+      automaticTrackingRetryTimer = null;
+      void startTrackingAutomatically();
+    },
+    Math.max(0, delayMs),
+  );
+}
+
+function startTrackingWatchdog() {
+  if (trackingWatchdogTimer) {
+    return;
+  }
+  trackingWatchdogTimer = setInterval(() => {
+    if (!currentSessionId && automaticTrackingIsExpected()) {
+      scheduleAutomaticTrackingRestart(1_000);
+    }
+  }, 15_000);
 }
 
 function startTimers() {
@@ -1283,18 +2954,25 @@ function startTimers() {
     );
   }
   startIdleMonitor();
+  startForegroundActivityMonitoring();
   startScreenshotMonitoring();
+  startTrackingWatchdog();
 }
 
 function startScreenshotMonitoring() {
   scheduleNextScreenshot();
   if (!syncTimer) {
-    syncTimer = setInterval(() => void syncPendingQueues(), 30_000);
+    syncTimer = setInterval(() => void syncPendingQueues(), 15_000);
   }
 }
 
 function clearRuntimeTimers() {
   lastDurationTickAt = null;
+  if (foregroundActivityTimer) {
+    clearInterval(foregroundActivityTimer);
+    foregroundActivityTimer = null;
+  }
+  void flushForegroundActivitySegment();
   if (heartbeatTimer) {
     clearInterval(heartbeatTimer);
     heartbeatTimer = null;
@@ -1319,11 +2997,16 @@ function clearRuntimeTimers() {
     clearTimeout(automaticTrackingRetryTimer);
     automaticTrackingRetryTimer = null;
   }
+  if (trackingWatchdogTimer) {
+    clearInterval(trackingWatchdogTimer);
+    trackingWatchdogTimer = null;
+  }
 }
 
 function screenshotCaptureBlockReason(): string | null {
   if (!runtimeStatus.enrolled) return "device_not_enrolled";
   if (!trackingConfig.screenshot_enabled) return "capture_disabled";
+  if (freshSessionStartPromptActive) return "work_start_not_confirmed";
   if (!onAcPower) return "battery_power";
   if (
     runtimeStatus.trackingStatus === "locked" ||
@@ -1333,12 +3016,11 @@ function screenshotCaptureBlockReason(): string | null {
       ? "screen_locked"
       : "system_sleeping";
   }
-  const systemIdleSeconds = powerMonitor.getSystemIdleTime();
+  const systemIdleSeconds = observedIdleSeconds();
   if (
     !trackingConfig.capture_during_idle &&
     (runtimeStatus.trackingStatus === "idle" ||
-      systemIdleSeconds >=
-        Math.max(60, trackingConfig.idle_threshold_minutes * 60))
+      hasReachedIdleThreshold(systemIdleSeconds))
   ) {
     return "no_user_activity";
   }
@@ -1346,10 +3028,14 @@ function screenshotCaptureBlockReason(): string | null {
 }
 
 async function refreshTrackingConfig() {
-  if (!runtimeStatus.enrolled) {
+  if (!runtimeStatus.enrolled || isRefreshingTrackingConfig) {
     return;
   }
+  isRefreshingTrackingConfig = true;
   try {
+    const previousPolicy = JSON.stringify(runtimeStatus.requestPolicy);
+    const previousEmployeeName = runtimeStatus.employeeName;
+    const previousEmployeeEmail = runtimeStatus.employeeEmail;
     const rawConfig = await getAgentConfig();
     const nextConfig = normalizeTrackingConfig(rawConfig);
     if (rawConfig.employee) {
@@ -1357,7 +3043,13 @@ async function refreshTrackingConfig() {
       runtimeStatus.employeeEmail = rawConfig.employee.email;
     }
     runtimeStatus.requestPolicy = rawConfig.request_policy ?? null;
-    const scheduleChanged =
+    saveTrackingPreferences();
+    const requestPolicyChanged =
+      previousPolicy !== JSON.stringify(runtimeStatus.requestPolicy);
+    const employeeChanged =
+      previousEmployeeName !== runtimeStatus.employeeName ||
+      previousEmployeeEmail !== runtimeStatus.employeeEmail;
+    const screenshotScheduleChanged =
       nextConfig.screenshot_enabled !== trackingConfig.screenshot_enabled ||
       nextConfig.screenshot_interval_minutes !==
         trackingConfig.screenshot_interval_minutes ||
@@ -1365,8 +3057,9 @@ async function refreshTrackingConfig() {
         trackingConfig.screenshots_per_interval;
 
     trackingConfig = nextConfig;
+    lastMetadataRefreshAt = Date.now();
 
-    if (scheduleChanged) {
+    if (screenshotScheduleChanged) {
       if (screenshotTimer) {
         clearTimeout(screenshotTimer);
         screenshotTimer = null;
@@ -1375,8 +3068,17 @@ async function refreshTrackingConfig() {
       screenshotWindowEndsAt = null;
       scheduleNextScreenshot();
     }
+    if (requestPolicyChanged) {
+      await refreshWorkedTodayTotal();
+    }
+    if (requestPolicyChanged || employeeChanged || screenshotScheduleChanged) {
+      notifyRendererStatus();
+      rebuildTrayMenu();
+    }
   } catch (error) {
-    log.warn("Failed to refresh tracking config", error);
+    log.warn("Failed to refresh tracking config", safeErrorForLog(error));
+  } finally {
+    isRefreshingTrackingConfig = false;
   }
 }
 
@@ -1395,10 +3097,26 @@ async function captureAndUploadScreenshot() {
           trackingStatus: runtimeStatus.trackingStatus,
         });
       } catch (error) {
-        log.warn("Failed to report screenshot skip reason", error);
+        log.warn(
+          "Failed to report screenshot skip reason",
+          safeErrorForLog(error),
+        );
       }
     }
     return;
+  }
+
+  const activityAtCapture = await readForegroundActivity();
+  const recentActivity =
+    foregroundActivitySegment &&
+    Date.now() - foregroundActivitySegment.lastObservedAt <= 15_000
+      ? foregroundActivitySegment
+      : null;
+  const protectWhatsApp = isWhatsAppScreenshotActivity(
+    activityAtCapture ?? recentActivity,
+  );
+  if (protectWhatsApp) {
+    log.info("Applying privacy protection to a WhatsApp screenshot");
   }
 
   const displays = screen.getAllDisplays();
@@ -1429,9 +3147,22 @@ async function captureAndUploadScreenshot() {
       continue;
     }
     const screenshotId = randomUUID();
-    const jpeg = source.thumbnail.toJPEG(72);
+    const originalSize = source.thumbnail.getSize();
+    const protectedThumbnail = protectWhatsApp
+      ? source.thumbnail
+          .resize({
+            ...privacyBlurSampleSize(originalSize.width, originalSize.height),
+            quality: "best",
+          })
+          .resize({
+            width: originalSize.width,
+            height: originalSize.height,
+            quality: "best",
+          })
+      : source.thumbnail;
+    const jpeg = protectedThumbnail.toJPEG(72);
     const checksum = createHash("sha256").update(jpeg).digest("hex");
-    const size = source.thumbnail.getSize();
+    const size = protectedThumbnail.getSize();
     const metadata: ScreenshotMetadata = {
       screenshotId,
       sessionId: currentSessionId,
@@ -1445,6 +3176,7 @@ async function captureAndUploadScreenshot() {
       displayName: source.name || `Screen ${index + 1}`,
       displayCount: sources.length,
       powerSource: onAcPower ? "ac" : "battery",
+      trackingStatus: runtimeStatus.trackingStatus,
     };
 
     try {
@@ -1457,15 +3189,26 @@ async function captureAndUploadScreenshot() {
       });
       uploaded += 1;
     } catch (error) {
+      const responseStatus = apiResponseStatus(error);
       const pendingDirectory = getPendingScreenshotDirectory();
       fs.mkdirSync(pendingDirectory, { recursive: true });
       const filePath = path.join(pendingDirectory, `${screenshotId}.jpg`);
       fs.writeFileSync(filePath, jpeg);
       enqueuePendingScreenshot({ screenshotId, metadata, filePath });
+      if (
+        isPermanentScreenshotSyncFailure({
+          responseStatus,
+          apiErrorCode: apiErrorCode(error),
+        })
+      ) {
+        markPendingScreenshotFailed(screenshotId, 0, true);
+      }
       queued += 1;
+      runtimeStatus.connectionStatus =
+        connectionStatusAfterApiFailure(responseStatus);
       log.warn("Screen capture queued for retry", {
         displayId: metadata.displayId,
-        error,
+        error: safeErrorForLog(error),
       });
     }
   }
@@ -1475,12 +3218,16 @@ async function captureAndUploadScreenshot() {
     runtimeStatus.lastSuccessfulSyncAt = new Date().toISOString();
   if (uploaded > 0) {
     runtimeStatus.connectionStatus = "online";
-  } else if (queued > 0 && runtimeStatus.lastSuccessfulSyncAt === null) {
+  } else if (
+    queued > 0 &&
+    runtimeStatus.lastSuccessfulSyncAt === null &&
+    runtimeStatus.connectionStatus !== "online"
+  ) {
     runtimeStatus.connectionStatus = "offline";
   }
   rebuildTrayMenu();
   if (uploaded + queued > 0) {
-    showScreenshotCapturedNotification();
+    showScreenshotCapturedNotification(uploaded, queued);
   }
   log.info("Display screenshots processed", {
     displays: sources.length,
@@ -1489,9 +3236,15 @@ async function captureAndUploadScreenshot() {
   });
 }
 
-function showScreenshotCapturedNotification() {
-  const title = "Screenshot captured";
-  const body = "Khaliduo took a screenshot to document your work and effort.";
+function showScreenshotCapturedNotification(uploaded: number, queued: number) {
+  const waitingForSync = queued > 0;
+  const title = waitingForSync ? "Screenshot saved" : "Screenshot captured";
+  const body =
+    queued > 0 && uploaded > 0
+      ? "Some screens were uploaded. The rest are saved securely and waiting to sync."
+      : queued > 0
+        ? "The screenshot is saved securely on this device and waiting to sync."
+        : "Khaliduo uploaded the screenshot to document your work and effort.";
 
   if (Notification.isSupported()) {
     const notification = new Notification({
@@ -1510,12 +3263,8 @@ function showScreenshotCapturedNotification() {
   }
 }
 
-async function syncPendingQueues(forcePendingEvents = false) {
-  if (!runtimeStatus.enrolled) {
-    return;
-  }
-
-  for (const event of getDuePendingEvents(25, { force: forcePendingEvents })) {
+async function syncPendingQueuesOnce(forcePendingQueues: boolean) {
+  for (const event of getDuePendingEvents(25, { force: forcePendingQueues })) {
     try {
       await sendQueuedRequest(
         event.method,
@@ -1526,14 +3275,32 @@ async function syncPendingQueues(forcePendingEvents = false) {
       runtimeStatus.connectionStatus = "online";
       runtimeStatus.lastSuccessfulSyncAt = new Date().toISOString();
     } catch (error) {
-      markPendingEventFailed(event.id, event.attempts);
-      runtimeStatus.connectionStatus = "offline";
-      log.warn("Pending event sync failed", error);
+      const responseStatus = apiResponseStatus(error);
+      const permanentlyRejected =
+        isPermanentPendingEventSyncFailure(responseStatus);
+      if (permanentlyRejected) {
+        markPendingEventPermanentlyRejected(event.id, event.attempts);
+      } else {
+        // Connection and server failures must never erase recorded work.
+        markPendingEventFailed(event.id, event.attempts);
+      }
+      // Any HTTP response proves that the API is reachable. Keep the agent
+      // online while the rejected item remains pending for a later decision.
+      runtimeStatus.connectionStatus =
+        connectionStatusAfterApiFailure(responseStatus);
+      log.warn("Pending event sync failed", safeErrorForLog(error));
+      if (!permanentlyRejected) {
+        // Avoid multiplying requests while the API is unavailable. A later
+        // single-flight pass resumes from the durable local queue.
+        break;
+      }
       continue;
     }
   }
 
-  for (const screenshot of getDuePendingScreenshots()) {
+  for (const screenshot of getDuePendingScreenshots(10, {
+    force: forcePendingQueues,
+  })) {
     try {
       const metadata = JSON.parse(
         screenshot.metadataJson,
@@ -1555,13 +3322,46 @@ async function syncPendingQueues(forcePendingEvents = false) {
       runtimeStatus.connectionStatus = "online";
       runtimeStatus.lastSuccessfulSyncAt = new Date().toISOString();
     } catch (error) {
-      markPendingScreenshotFailed(screenshot.screenshotId, screenshot.attempts);
-      runtimeStatus.connectionStatus = "offline";
-      log.warn("Pending screenshot sync failed", error);
+      const responseStatus = apiResponseStatus(error);
+      const permanentlyRejected = isPermanentScreenshotSyncFailure({
+        responseStatus,
+        apiErrorCode: apiErrorCode(error),
+      });
+      markPendingScreenshotFailed(
+        screenshot.screenshotId,
+        screenshot.attempts,
+        permanentlyRejected,
+      );
+      runtimeStatus.connectionStatus =
+        connectionStatusAfterApiFailure(responseStatus);
+      log.warn("Pending screenshot sync failed", safeErrorForLog(error));
+      if (!permanentlyRejected) {
+        break;
+      }
       continue;
     }
   }
   rebuildTrayMenu();
+}
+
+async function syncPendingQueues(forcePendingQueues = false) {
+  if (!runtimeStatus.enrolled) {
+    return;
+  }
+  if (pendingQueueSyncPromise) {
+    await pendingQueueSyncPromise;
+    return;
+  }
+
+  const syncPromise = syncPendingQueuesOnce(forcePendingQueues);
+  pendingQueueSyncPromise = syncPromise;
+  try {
+    await syncPromise;
+  } finally {
+    if (pendingQueueSyncPromise === syncPromise) {
+      pendingQueueSyncPromise = null;
+    }
+  }
 }
 
 function scheduleNextScreenshot() {
@@ -1618,8 +3418,7 @@ function scheduleNextScreenshot() {
     screenshotTimer = null;
     captureAndUploadScreenshot()
       .catch((error) => {
-        runtimeStatus.connectionStatus = "offline";
-        log.warn("Screenshot capture/upload failed", error);
+        log.warn("Screenshot capture/upload failed", safeErrorForLog(error));
       })
       .finally(() => scheduleNextScreenshot());
   }, delayMs);
@@ -1630,17 +3429,41 @@ async function startTrackingAutomatically() {
     !runtimeStatus.enrolled ||
     trackingPausedByUser ||
     currentSessionId ||
+    freshSessionStartPromptActive ||
     isStartingTrackingAutomatically
   ) {
     return;
   }
 
+  const attemptedAt = new Date();
   isStartingTrackingAutomatically = true;
   if (automaticTrackingRetryTimer) {
     clearTimeout(automaticTrackingRetryTimer);
     automaticTrackingRetryTimer = null;
   }
   try {
+    const openLocalSession = runtimeStatus.deviceId
+      ? getOpenLocalTrackingSession(runtimeStatus.deviceId)
+      : null;
+    if (openLocalSession) {
+      // This is a session that was already tracking before a restart/update;
+      // it must continue even when the shift boundary has passed.
+      beginLocalTrackingSession(attemptedAt);
+    }
+    const currentBeforeRecovery = await getCurrentSession();
+    const hasOpenServerSession = Boolean(
+      currentBeforeRecovery.session &&
+        !currentBeforeRecovery.session.ended_at &&
+        currentBeforeRecovery.session.status !== "ended" &&
+        currentBeforeRecovery.session.status !== "offline",
+    );
+    // A graceful quit closes a local-only row so time is bounded precisely.
+    // Recover those closed rows before creating the next server session. If a
+    // server session is already live, only its matching open local row may be
+    // promoted; historical rows wait for a safe startup instead of ending it.
+    const recoveredLocalSessions = await promotePendingLocalTrackingSessions({
+      hasOpenServerSession,
+    });
     await syncPendingQueues(true);
     const rawConfig = await getAgentConfig();
     trackingConfig = normalizeTrackingConfig(rawConfig);
@@ -1649,7 +3472,11 @@ async function startTrackingAutomatically() {
       runtimeStatus.employeeEmail = rawConfig.employee.email;
     }
     runtimeStatus.requestPolicy = rawConfig.request_policy ?? null;
-    await refreshTasks();
+    saveTrackingPreferences();
+    void refreshTasks();
+    if (recoveredLocalSessions) {
+      await refreshWorkedTodayTotal();
+    }
     const current = await getCurrentSession();
     if (
       current.session &&
@@ -1661,6 +3488,8 @@ async function startTrackingAutomatically() {
       // made the employee's current-session counter jump back to zero even
       // though the workday and overtime totals were still continuing.
       syncRuntimeFromSession(current.session);
+      freshSessionStartConfirmed = false;
+      freshSessionStartPromptActive = false;
       applyWorkdayState(current.workday);
       applyPauseState(current.pause);
       await refreshWorkedTodayTotal();
@@ -1672,7 +3501,37 @@ async function startTrackingAutomatically() {
       void refreshLeaveRequests();
       return;
     }
+    const systemIdleSeconds = observedIdleSeconds();
+    if (
+      hasReachedIdleThreshold(
+        systemIdleSeconds,
+        isInsideScheduledBreak(new Date()),
+      )
+    ) {
+      waitForInputAfterIdleSessionClose("idle");
+      startIdleMonitor();
+      log.info(
+        "No active server session and Windows is idle; waiting for fresh input before starting one",
+      );
+      return;
+    }
+    if (
+      requiresExplicitFreshSessionStart({
+        hasExistingSession: Boolean(openLocalSession),
+        confirmationAccepted: freshSessionStartConfirmed,
+      })
+    ) {
+      const outsideScheduledShift = activeTimeBucket(attemptedAt) === "extra";
+      showFreshSessionStartConfirmation(outsideScheduledShift);
+      log.info("Fresh work session requires explicit employee confirmation", {
+        outsideScheduledShift,
+      });
+      return;
+    }
     const started = await startSession();
+    freshSessionStartConfirmed = false;
+    freshSessionStartPromptActive = false;
+    waitingForInputAfterIdleSessionClose = false;
     syncRuntimeFromSession(started.session);
     applyWorkdayState(started.workday);
     await refreshWorkedTodayTotal();
@@ -1690,19 +3549,51 @@ async function startTrackingAutomatically() {
     void refreshTimeAdjustmentRequests();
     void refreshLeaveRequests();
   } catch (error) {
-    runtimeStatus.connectionStatus = "offline";
-    runtimeStatus.trackingStatus = "offline";
-    log.error("Automatic tracking start failed", error);
+    runtimeStatus.connectionStatus = connectionStatusAfterApiFailure(
+      apiResponseStatus(error),
+    );
+    if (
+      !hasTrackingSession() &&
+      hasReachedIdleThreshold(
+        observedIdleSeconds(),
+        isInsideScheduledBreak(new Date()),
+      )
+    ) {
+      waitForInputAfterIdleSessionClose("idle");
+      startIdleMonitor();
+      log.info(
+        "Automatic start is offline and Windows is idle; waiting for input",
+      );
+      return;
+    }
+    if (
+      !hasTrackingSession() &&
+      requiresExplicitFreshSessionStart({
+        hasExistingSession: false,
+        confirmationAccepted: freshSessionStartConfirmed,
+      })
+    ) {
+      const outsideScheduledShift =
+        runtimeStatus.requestPolicy !== null &&
+        activeTimeBucket(attemptedAt) === "extra";
+      showFreshSessionStartConfirmation(outsideScheduledShift);
+      log.info("Offline work start requires explicit employee confirmation", {
+        outsideScheduledShift,
+      });
+      return;
+    }
+    if (!localTrackingSessionId) {
+      beginLocalTrackingSession(attemptedAt);
+    }
+    if (!hasTrackingSession()) {
+      runtimeStatus.trackingStatus = "offline";
+    }
+    log.error("Automatic tracking start failed", safeErrorForLog(error));
     if (isDeviceIdentityMismatch(error)) {
       resetForDeviceReenrollment();
       return;
     }
-    if (!isQuitting && runtimeStatus.enrolled && !trackingPausedByUser) {
-      automaticTrackingRetryTimer = setTimeout(() => {
-        automaticTrackingRetryTimer = null;
-        void startTrackingAutomatically();
-      }, 15_000);
-    }
+    scheduleAutomaticTrackingRestart(15_000);
   } finally {
     isStartingTrackingAutomatically = false;
     rebuildTrayMenu();
@@ -1752,9 +3643,14 @@ function applyPauseState(pause?: PauseState | null) {
 async function stopTrackingSession(reason = "Stopped by employee") {
   recalculateWorkedTime();
   trackingPausedByUser = true;
+  waitingForInputAfterIdleSessionClose = false;
+  freshSessionStartConfirmed = false;
+  freshSessionStartPromptActive = false;
   runtimeStatus.trackingPaused = true;
   saveTrackingPreferences();
+  closeActiveLocalTrackingSession(new Date().toISOString(), "paused");
   clearRuntimeTimers();
+  inputIntegrityMonitor.stop();
   // Task/work-time tracking may pause, but workplace screenshot monitoring is
   // an independent company policy and continues for an enrolled active device.
   startScreenshotMonitoring();
@@ -1805,10 +3701,12 @@ async function stopTrackingSession(reason = "Stopped by employee") {
     if (!syncTimer) {
       syncTimer = setInterval(() => void syncPendingQueues(), 30_000);
     }
-    runtimeStatus.connectionStatus = "offline";
+    runtimeStatus.connectionStatus = connectionStatusAfterApiFailure(
+      apiResponseStatus(error),
+    );
     log.warn(
       "Tracking paused locally, but session end could not be synced",
-      error,
+      safeErrorForLog(error),
     );
     return {
       success: true,
@@ -1823,7 +3721,7 @@ async function stopTrackingSession(reason = "Stopped by employee") {
 async function pauseTracking(
   _options?: string | { requestedMinutes?: number; reason?: string },
 ) {
-  if (!runtimeStatus.enrolled || !currentSessionId) {
+  if (!runtimeStatus.enrolled || !hasTrackingSession()) {
     return {
       success: false,
       message: "Start your shift before using Pause.",
@@ -1834,14 +3732,15 @@ async function pauseTracking(
   }
 
   recalculateWorkedTime();
-  idleReviewPending = false;
   unpaidPauseActive = true;
   runtimeStatus.trackingPaused = true;
   idleSecondsBeforeCurrentIdle = runtimeStatus.idleSeconds;
   eligibleIdleSecondsBeforeCurrentIdle = runtimeStatus.eligibleIdleSeconds;
   idleWallClockStartedAt = Date.now();
   saveTrackingPreferences();
-  await sendStateEvent("manual_pause_started", "idle");
+  // Pause is local-first. The employee must never wait for API latency before
+  // the timer stops; sendStateEvent persists failed delivery in the local queue.
+  void dispatchManualPauseTransition("manual_pause_started", "idle");
   rebuildTrayMenu();
   return {
     success: true,
@@ -1880,9 +3779,11 @@ async function resumeTracking() {
           "Pause could not be resumed. Check the connection and try again.",
       };
     }
+    rebuildTrayMenu();
+    return { success: true, message: "Tracking resumed." };
   }
 
-  if (unpaidPauseActive && currentSessionId) {
+  if (unpaidPauseActive && hasTrackingSession()) {
     recalculateWorkedTime();
     unpaidPauseActive = false;
     runtimeStatus.trackingPaused = false;
@@ -1890,7 +3791,9 @@ async function resumeTracking() {
     eligibleIdleSecondsBeforeCurrentIdle = runtimeStatus.eligibleIdleSeconds;
     idleWallClockStartedAt = null;
     saveTrackingPreferences();
-    await sendStateEvent("manual_pause_ended", "active");
+    // Resume counting locally immediately. Delivery remains ordered behind a
+    // still-in-flight/queued pause transition and syncs in the background.
+    void dispatchManualPauseTransition("manual_pause_ended", "active");
     rebuildTrayMenu();
     return {
       success: true,
@@ -1899,14 +3802,25 @@ async function resumeTracking() {
   }
 
   trackingPausedByUser = false;
+  waitingForInputAfterIdleSessionClose = false;
+  freshSessionStartPromptActive = false;
+  if (!hasTrackingSession()) {
+    // Pressing Resume is an explicit employee confirmation to start a new
+    // work session, whether it is inside or outside the scheduled shift.
+    freshSessionStartConfirmed = true;
+  }
+  runtimeStatus.lastIdleAlert = null;
   runtimeStatus.trackingPaused = false;
   runtimeStatus.paidPauseEndsAt = null;
   runtimeStatus.paidPauseRemainingSeconds = 0;
   clearPaidPauseTimer();
-  runtimeStatus.trackingStatus = currentSessionId ? "active" : "starting";
+  beginLocalTrackingSession();
+  runtimeStatus.trackingStatus = hasTrackingSession() ? "active" : "starting";
   saveTrackingPreferences();
-  await startTrackingAutomatically();
-  const success = Boolean(currentSessionId);
+  // Local tracking and five-second checkpoints are already active. API
+  // recovery (including historical queue promotion) must not hold the UI.
+  void startTrackingAutomatically();
+  const success = hasTrackingSession();
   return {
     success,
     message: success
@@ -1920,23 +3834,31 @@ async function logoutDevice() {
     try {
       await syncPendingQueues(true);
     } catch (error) {
-      log.warn("Final sync before sign-out failed", error);
+      log.warn("Final sync before sign-out failed", safeErrorForLog(error));
     }
     await stopTrackingSession("Employee signed out from this device");
   }
 
   clearRuntimeTimers();
+  inputIntegrityMonitor.stop();
   clearEnrollmentIdentity();
   configureAutoStart(false);
   trackingPausedByUser = false;
   unpaidPauseActive = false;
+  manualPauseTransitionPromise = null;
   saveTrackingPreferences();
   currentSessionId = null;
+  waitingForInputAfterIdleSessionClose = false;
+  freshSessionStartConfirmed = false;
+  freshSessionStartPromptActive = false;
   workedTodayBaseSeconds = 0;
+  activeCounterDate = null;
   idleSecondsBeforeCurrentIdle = 0;
   eligibleIdleSecondsBeforeCurrentIdle = 0;
   idleWallClockStartedAt = null;
-  idleReviewPending = false;
+  automaticIdleStartPromise = null;
+  automaticIdleFinishPromise = null;
+  isFinishingAutomaticIdle = false;
   screenshotQueue = [];
   screenshotWindowEndsAt = null;
   saveScreenshotSchedule(null);
@@ -1965,7 +3887,9 @@ async function logoutDevice() {
     timeAdjustmentRequests: [],
     timeSummary: null,
     todayTimeline: null,
+    idleRequestPeriods: [],
     lastIdleAlert: null,
+    locallyEndedIdleAt: null,
   } satisfies Partial<AgentRuntimeStatus>);
   tray?.setImage(createTrayImage("#b7791f"));
   rebuildTrayMenu();
@@ -1974,6 +3898,8 @@ async function logoutDevice() {
 }
 
 async function syncNow() {
+  await refreshTrackingConfig();
+  await promotePendingLocalTrackingSessions();
   await syncPendingQueues();
   if (currentSessionId && !trackingPausedByUser) {
     await heartbeatTick();
@@ -2028,7 +3954,7 @@ async function createMainWindow() {
     if (isQuitting) {
       return;
     }
-    if (!runtimeStatus.enrolled || !currentSessionId) {
+    if (!runtimeStatus.enrolled || !hasTrackingSession()) {
       event.preventDefault();
       app.quit();
       return;
@@ -2189,18 +4115,20 @@ function setUpdateAttention(active: boolean) {
   }
 }
 
-function showRequiredUpdatePrompt(version: string | null) {
-  setUpdateAttention(true);
-  showMainWindow({ forceForeground: true, centerOnPointerDisplay: true });
-  mainWindow?.webContents.send("agent:update-required", {
-    version,
-  });
-}
-
 function runtimeStatusPayload() {
   const screenshotBlockReason = screenshotCaptureBlockReason();
+  const currentIdleSeconds =
+    runtimeStatus.trackingStatus === "idle" &&
+    !runtimeStatus.trackingPaused &&
+    !unpaidPauseActive
+      ? idleDurationAfterThreshold(
+          observedIdleSeconds(),
+          automaticIdleStartedDuringBreak,
+        )
+      : 0;
   return {
     ...runtimeStatus,
+    currentIdleSeconds,
     screenshotMonitoringEnabled:
       runtimeStatus.enrolled && trackingConfig.screenshot_enabled,
     screenshotCaptureActive: screenshotBlockReason === null,
@@ -2237,6 +4165,73 @@ function configureAutoStart(enabled = runtimeStatus.enrolled) {
   );
 }
 
+function startCrashRecoveryWatchdog(attempt: number) {
+  if (process.platform !== "win32" || !app.isPackaged || isQuitting) {
+    return;
+  }
+  if (crashRecoveryWatchdog && !crashRecoveryWatchdog.killed) {
+    return;
+  }
+
+  const watchdogPath = path.join(__dirname, "watchdog.js");
+  const child = fork(
+    watchdogPath,
+    [process.execPath, String(process.pid), String(attempt)],
+    {
+      execPath: process.execPath,
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
+      stdio: ["ignore", "ignore", "ignore", "ipc"],
+    },
+  );
+  crashRecoveryWatchdog = child;
+  child.unref();
+  child.on("error", (error) => {
+    log.warn("Crash recovery watchdog failed", safeErrorForLog(error));
+  });
+  child.once("exit", (code) => {
+    if (crashRecoveryWatchdog !== child) return;
+    crashRecoveryWatchdog = null;
+    if (crashRecoveryStableTimer) {
+      clearTimeout(crashRecoveryStableTimer);
+      crashRecoveryStableTimer = null;
+    }
+    if (!isQuitting) {
+      log.warn("Crash recovery watchdog exited unexpectedly", { code });
+      crashRecoveryRestartTimer = setTimeout(() => {
+        crashRecoveryRestartTimer = null;
+        startCrashRecoveryWatchdog(attempt);
+      }, 60_000);
+    }
+  });
+  crashRecoveryStableTimer = setTimeout(() => {
+    crashRecoveryStableTimer = null;
+    if (crashRecoveryWatchdog === child && child.connected) {
+      child.send({ type: "stable" });
+    }
+  }, CRASH_RECOVERY_STABLE_MS);
+  crashRecoveryStableTimer.unref?.();
+  log.info("Crash recovery watchdog started", { attempt });
+}
+
+function stopCrashRecoveryWatchdog() {
+  if (crashRecoveryStableTimer) {
+    clearTimeout(crashRecoveryStableTimer);
+    crashRecoveryStableTimer = null;
+  }
+  if (crashRecoveryRestartTimer) {
+    clearTimeout(crashRecoveryRestartTimer);
+    crashRecoveryRestartTimer = null;
+  }
+  const child = crashRecoveryWatchdog;
+  crashRecoveryWatchdog = null;
+  if (!child || child.killed) return;
+  if (child.connected) {
+    child.send({ type: "stop" });
+  } else {
+    child.kill();
+  }
+}
+
 function setUpdateStatus(
   status: AgentRuntimeStatus["updateStatus"],
   options: { version?: string | null; percent?: number | null } = {},
@@ -2259,8 +4254,48 @@ async function showUpdateMessage(options: Electron.MessageBoxOptions) {
   return dialog.showMessageBox(options);
 }
 
-async function checkForUpdates(manual = false) {
+type UpdateActionResult = { success: boolean; message?: string };
+
+/**
+ * Re-arms the updater after a failure. Without this a single network blip or a
+ * locked installer file parked the app on the old build until the next 15-minute
+ * tick, and a failure during installation stopped retrying altogether.
+ */
+function scheduleUpdateRetry(reason: string) {
+  if (!app.isPackaged || isInstallingUpdate) {
+    return;
+  }
+  if (updateRetryTimer) clearTimeout(updateRetryTimer);
+  consecutiveUpdateFailures += 1;
+  // 2, 4, 8, 16 minutes, then a 30-minute floor so a permanently failing
+  // machine keeps trying without hammering the update feed.
+  const delayMinutes = Math.min(
+    30,
+    2 ** Math.min(consecutiveUpdateFailures, 4),
+  );
+  log.info(
+    `Khaliduo will retry the update in ${delayMinutes} minute(s) after: ${reason}`,
+  );
+  updateRetryTimer = setTimeout(
+    () => {
+      updateRetryTimer = null;
+      if (runtimeStatus.updateStatus === "ready") {
+        // The download survived; only the installation needs another attempt.
+        void installDownloadedUpdate();
+        return;
+      }
+      void checkForUpdates();
+    },
+    delayMinutes * 60 * 1000,
+  );
+}
+
+async function checkForUpdates(
+  manual = false,
+  showErrorDialog = manual,
+): Promise<UpdateActionResult> {
   if (!app.isPackaged) {
+    const message = "Updates are only available in the installed Khaliduo app.";
     if (manual) {
       await dialog.showMessageBox({
         type: "info",
@@ -2269,14 +4304,22 @@ async function checkForUpdates(manual = false) {
         detail: "The development preview does not install updates.",
       });
     }
-    return;
+    return { success: false, message };
+  }
+  if (isUpdateCheckRunning) {
+    return { success: true, message: "An update check is already running." };
   }
   if (
-    isUpdateCheckRunning ||
-    runtimeStatus.updateStatus === "downloading" ||
-    runtimeStatus.updateStatus === "ready"
+    runtimeStatus.updateStatus === "available" ||
+    runtimeStatus.updateStatus === "downloading"
   ) {
-    return;
+    return { success: true, message: "The update is already downloading." };
+  }
+  if (runtimeStatus.updateStatus === "ready") {
+    return { success: true, message: "The update is ready to install." };
+  }
+  if (runtimeStatus.updateStatus === "installing" || isInstallingUpdate) {
+    return { success: true, message: "The update installation has started." };
   }
 
   manualUpdateCheckRequested = manual;
@@ -2284,10 +4327,16 @@ async function checkForUpdates(manual = false) {
   setUpdateStatus("checking", { percent: null });
   try {
     await autoUpdater.checkForUpdates();
+    return { success: true };
   } catch (error) {
     setUpdateStatus("error", { percent: null });
-    log.error("Khaliduo update check failed", error);
-    if (manual) {
+    scheduleUpdateRetry("the update check failed");
+    log.error("Khaliduo update check failed", safeErrorForLog(error));
+    const message = getUserFacingError(
+      error,
+      "Khaliduo could not check for updates. Check the internet connection and try again.",
+    );
+    if (manual && showErrorDialog) {
       await showUpdateMessage({
         type: "error",
         title: "Khaliduo Updates",
@@ -2296,49 +4345,141 @@ async function checkForUpdates(manual = false) {
           "Check the internet connection and try again from the notification-area icon.",
       });
     }
+    return { success: false, message };
   } finally {
     isUpdateCheckRunning = false;
     rebuildTrayMenu();
   }
 }
 
-async function finishTrackingBeforeUpdate() {
-  recalculateWorkedTime();
-  clearRuntimeTimers();
-  const sessionId = currentSessionId;
-  currentSessionId = null;
-  runtimeStatus.sessionStartedAt = null;
-  updateDisplaySleepBlocker();
-
-  if (sessionId) {
+async function preserveTrackingBeforeUpdate() {
+  try {
+    recalculateWorkedTime();
+    checkpointActiveLocalTrackingSession(true);
+    await flushForegroundActivitySegment();
+  } catch (error) {
+    log.warn(
+      "Could not persist foreground activity before installing the update",
+      safeErrorForLog(error),
+    );
+  }
+  if (hasTrackingSession() && runtimeStatus.enrolled) {
     try {
-      await endSession({
-        sessionId,
-        activeSeconds: runtimeStatus.activeSeconds,
-        idleSeconds: runtimeStatus.idleSeconds,
-        reason: "Khaliduo update installation",
-      });
+      // Persist the latest counters without ending the work session. After the
+      // updater restarts Khaliduo, automatic startup reconnects to this same
+      // open session instead of creating a sign-out/sign-in break.
+      await heartbeatTick({ refreshMetadata: false });
     } catch (error) {
       log.warn(
-        "Could not close the active work session before installing the update",
-        error,
+        "Could not persist the active session before installing the update",
+        safeErrorForLog(error),
       );
     }
   }
+  // Keep heartbeat, duration, screenshot, and queue timers alive until Electron
+  // actually begins quitting. Some older installers returned from
+  // quitAndInstall without closing the app, which left a visible employee app
+  // running but silently stopped all tracking.
 }
 
-async function installDownloadedUpdate() {
-  if (runtimeStatus.updateStatus !== "ready" || isInstallingUpdate) {
-    return;
+function clearUpdateInstallRecoveryTimer() {
+  if (!updateInstallRecoveryTimer) return;
+  clearTimeout(updateInstallRecoveryTimer);
+  updateInstallRecoveryTimer = null;
+}
+
+function recoverFromFailedUpdateInstall(reason: string) {
+  clearUpdateInstallRecoveryTimer();
+  isInstallingUpdate = false;
+  isQuitting = false;
+  quitNotificationSent = false;
+  setUpdateStatus("ready", {
+    version: runtimeStatus.updateVersion,
+    percent: 100,
+  });
+  if (hasTrackingSession() && runtimeStatus.enrolled) {
+    startTimers();
+  }
+  updateDisplaySleepBlocker();
+  startCrashRecoveryWatchdog(crashRecoveryAttempt(process.argv));
+  startUpdateCheckSchedule();
+  scheduleUpdateRetry(reason);
+}
+
+async function installDownloadedUpdate(): Promise<UpdateActionResult> {
+  if (isInstallingUpdate || runtimeStatus.updateStatus === "installing") {
+    return { success: true, message: "The update installation has started." };
+  }
+  if (runtimeStatus.updateStatus !== "ready") {
+    return {
+      success: false,
+      message:
+        runtimeStatus.updateStatus === "downloading" ||
+        runtimeStatus.updateStatus === "available"
+          ? "The update is still downloading."
+          : "No downloaded update is ready to install.",
+    };
   }
   isInstallingUpdate = true;
+  setUpdateStatus("installing", {
+    version: runtimeStatus.updateVersion,
+    percent: 100,
+  });
   setUpdateAttention(false);
   if (updateCheckTimer) clearInterval(updateCheckTimer);
   if (initialUpdateCheckTimer) clearTimeout(initialUpdateCheckTimer);
-  await finishTrackingBeforeUpdate();
+  if (updateRetryTimer) {
+    clearTimeout(updateRetryTimer);
+    updateRetryTimer = null;
+  }
+  log.info(
+    `Installing Khaliduo update ${runtimeStatus.updateVersion ?? ""} automatically`,
+  );
+  await preserveTrackingBeforeUpdate();
   isQuitting = true;
   quitNotificationSent = true;
-  autoUpdater.quitAndInstall(true, true);
+  // Arm recovery before quitAndInstall. Electron can emit before-quit inside
+  // that call, and clearing this watchdog there left the still-visible app on
+  // "Installing update" forever when NSIS failed to take over.
+  clearUpdateInstallRecoveryTimer();
+  updateInstallRecoveryTimer = setTimeout(() => {
+    if (!isInstallingUpdate || !isQuitting) return;
+    log.error(
+      "The downloaded update did not close Khaliduo; tracking has been restored",
+    );
+    recoverFromFailedUpdateInstall(
+      "the downloaded update did not close the application",
+    );
+  }, UPDATE_INSTALL_RECOVERY_MS);
+  try {
+    autoUpdater.quitAndInstall(true, true);
+    return { success: true };
+  } catch (error) {
+    recoverFromFailedUpdateInstall(
+      "the downloaded update could not be installed",
+    );
+    log.error(
+      "Could not launch the downloaded update installer",
+      safeErrorForLog(error),
+    );
+    return {
+      success: false,
+      message: getUserFacingError(error, "Could not install the update."),
+    };
+  }
+}
+
+/**
+ * One scheduled pass of the updater. An installer that finished downloading but
+ * failed to launch must be retried on the next tick, otherwise the app sits on
+ * "ready" forever and every later check short-circuits on that same status.
+ */
+function runScheduledUpdatePass() {
+  if (runtimeStatus.updateStatus === "ready" && !isInstallingUpdate) {
+    void installDownloadedUpdate();
+    return;
+  }
+  void checkForUpdates();
 }
 
 function configureAutoUpdater() {
@@ -2351,30 +4492,19 @@ function configureAutoUpdater() {
   autoUpdater.autoInstallOnAppQuit = true;
   autoUpdater.autoRunAppAfterInstall = true;
   autoUpdater.allowPrerelease = false;
+  // Every release publishes the same KhaliduoSetup.exe file name, so the old and
+  // new block maps live at one URL and a differential download compares a build
+  // against itself. Always fetch the full installer instead.
+  autoUpdater.disableDifferentialDownload = true;
 
   autoUpdater.on("checking-for-update", () => {
     setUpdateStatus("checking", { percent: null });
   });
   autoUpdater.on("update-available", (info) => {
     setUpdateStatus("available", { version: info.version, percent: 0 });
-    log.info(`Khaliduo update ${info.version} is available`);
-    if (process.platform === "win32") {
-      tray?.displayBalloon({
-        title: "Required Khaliduo update",
-        content: `Version ${info.version} is downloading and will be installed automatically.`,
-        iconType: "info",
-      });
-    }
-    void showUpdateMessage({
-      type: "info",
-      title: "Required Khaliduo Update",
-      message: `Khaliduo ${info.version} is available.`,
-      detail:
-        "The required update is downloading now. Khaliduo will ask you to install it as soon as the download finishes.",
-      buttons: ["OK"],
-      defaultId: 0,
-      noLink: true,
-    });
+    log.info(
+      `Khaliduo update ${info.version} is downloading silently in the background`,
+    );
   });
   autoUpdater.on("download-progress", (progress) => {
     setUpdateStatus("downloading", {
@@ -2384,6 +4514,7 @@ function configureAutoUpdater() {
   });
   autoUpdater.on("update-not-available", async () => {
     setUpdateStatus("up-to-date", { version: null, percent: null });
+    consecutiveUpdateFailures = 0;
     if (manualUpdateCheckRequested) {
       manualUpdateCheckRequested = false;
       await showUpdateMessage({
@@ -2394,21 +4525,49 @@ function configureAutoUpdater() {
       });
     }
   });
-  autoUpdater.on("update-downloaded", async (event) => {
+  autoUpdater.on("update-downloaded", (event) => {
     setUpdateStatus("ready", { version: event.version, percent: 100 });
-    if (hasPromptedForDownloadedUpdate) {
-      return;
-    }
-    hasPromptedForDownloadedUpdate = true;
-    showRequiredUpdatePrompt(event.version);
+    consecutiveUpdateFailures = 0;
+    log.info(
+      `Khaliduo update ${event.version} is ready; automatic installation is starting now`,
+    );
+    void installDownloadedUpdate().then((result) => {
+      if (!result.success) {
+        log.error(
+          "Automatic update installation could not start",
+          result.message,
+        );
+      }
+    });
   });
   autoUpdater.on("error", (error) => {
-    setUpdateStatus("error", { percent: null });
+    const failedDuringInstall = isInstallingUpdate || isQuitting;
+    if (failedDuringInstall) {
+      recoverFromFailedUpdateInstall(
+        "the updater reported an installation error",
+      );
+    } else {
+      isInstallingUpdate = false;
+      setUpdateStatus("error", { percent: null });
+      scheduleUpdateRetry("the updater reported an error");
+    }
     manualUpdateCheckRequested = false;
-    log.error("Khaliduo automatic update error", error);
+    log.error("Khaliduo automatic update error", safeErrorForLog(error));
   });
 
-  initialUpdateCheckTimer = setTimeout(() => void checkForUpdates(), 10_000);
+  initialUpdateCheckTimer = setTimeout(runScheduledUpdatePass, 1_000);
+  startUpdateCheckSchedule();
+}
+
+/**
+ * (Re)arms the periodic update pass. Starting an installation clears it because
+ * the app is about to exit; if that installation never happens the schedule has
+ * to come back, or the device silently stops looking for updates.
+ */
+function startUpdateCheckSchedule() {
+  if (!app.isPackaged) {
+    return;
+  }
   const configuredInterval = Number.parseInt(
     process.env.UPDATE_CHECK_INTERVAL_MINUTES ?? "15",
     10,
@@ -2416,8 +4575,9 @@ function configureAutoUpdater() {
   const updateCheckIntervalMinutes = Number.isFinite(configuredInterval)
     ? Math.max(5, Math.min(1_440, configuredInterval))
     : 15;
+  if (updateCheckTimer) clearInterval(updateCheckTimer);
   updateCheckTimer = setInterval(
-    () => void checkForUpdates(),
+    runScheduledUpdatePass,
     updateCheckIntervalMinutes * 60 * 1000,
   );
   log.info(
@@ -2437,31 +4597,39 @@ function wireSystemEvents() {
   });
   powerMonitor.on("lock-screen", () => {
     recalculateWorkedTime();
-    void sendStateEvent("screen_locked", "locked");
+    if (waitingForInputAfterIdleSessionClose) {
+      runtimeStatus.trackingStatus = "locked";
+    } else {
+      void sendStateEvent("screen_locked", "locked");
+    }
     log.info("Windows lock detected");
   });
 
   powerMonitor.on("unlock-screen", () => {
     lastDurationTickAt = Date.now();
     idleSecondsBeforeCurrentIdle = runtimeStatus.idleSeconds;
-    void sendStateEvent("screen_unlocked", "active");
+    if (!resumeAfterIdleSessionClose()) {
+      void sendStateEvent("screen_unlocked", "active");
+    }
     log.info("Windows unlock detected");
-  });
-
-  powerMonitor.on("user-did-become-active", () => {
-    finishAutomaticIdleImmediately();
   });
 
   powerMonitor.on("suspend", () => {
     recalculateWorkedTime();
-    void sendStateEvent("system_suspended", "sleeping");
+    if (waitingForInputAfterIdleSessionClose) {
+      runtimeStatus.trackingStatus = "sleeping";
+    } else {
+      void sendStateEvent("system_suspended", "sleeping");
+    }
     log.info("System suspend detected");
   });
 
   powerMonitor.on("resume", () => {
     lastDurationTickAt = Date.now();
     idleSecondsBeforeCurrentIdle = runtimeStatus.idleSeconds;
-    void sendStateEvent("system_resumed", "active");
+    if (!resumeAfterIdleSessionClose()) {
+      void sendStateEvent("system_resumed", "active");
+    }
     log.info("System resume detected");
   });
 }
@@ -2471,11 +4639,19 @@ if (!gotSingleInstanceLock) {
   app.quit();
 }
 
-app.on("second-instance", () => showMainWindow());
+app.on("second-instance", (_event, commandLine) => {
+  if (!isCrashRecoveryLaunch(commandLine)) {
+    showMainWindow();
+  }
+});
 
 app.on("before-quit", (event) => {
   isQuitting = true;
+  stopCrashRecoveryWatchdog();
   updateDisplaySleepBlocker();
+  if (shouldClearInstallRecoveryOnBeforeQuit(isInstallingUpdate)) {
+    clearUpdateInstallRecoveryTimer();
+  }
   if (updateCheckTimer) clearInterval(updateCheckTimer);
   if (initialUpdateCheckTimer) clearTimeout(initialUpdateCheckTimer);
 
@@ -2490,6 +4666,8 @@ app.on("before-quit", (event) => {
   const sessionId = currentSessionId;
   const eventId = randomUUID();
   const endedAt = new Date().toISOString();
+  closeActiveLocalTrackingSession(endedAt, "app_quit");
+  inputIntegrityMonitor.stop();
   const activeSeconds = runtimeStatus.activeSeconds;
   const idleSeconds = runtimeStatus.idleSeconds;
   clearRuntimeTimers();
@@ -2525,7 +4703,10 @@ app.on("before-quit", (event) => {
           idempotencyKey: eventId,
         });
       }
-      log.warn("Failed to close the work session before quitting", error);
+      log.warn(
+        "Failed to close the work session before quitting",
+        safeErrorForLog(error),
+      );
     })
     .finally(() => {
       app.quit();
@@ -2538,11 +4719,29 @@ app.whenReady().then(async () => {
   }
   log.initialize();
   log.info("Khaliduo agent starting");
+  const recoveryAttempt = crashRecoveryAttempt(process.argv);
+  const launchedForCrashRecovery = isCrashRecoveryLaunch(process.argv);
+  startCrashRecoveryWatchdog(recoveryAttempt);
   await initializeLocalDatabase();
   hydrateIdentityStatus();
+  if (
+    launchedForCrashRecovery &&
+    (!runtimeStatus.enrolled ||
+      !runtimeStatus.deviceId ||
+      !getOpenLocalTrackingSession(runtimeStatus.deviceId))
+  ) {
+    log.info("Crash recovery skipped because no interrupted tracking session exists");
+    stopCrashRecoveryWatchdog();
+    app.exit(0);
+    return;
+  }
   const launchedByWindowsStartup =
     process.argv.includes("--autostart") || process.argv.includes("--hidden");
-  loadTrackingPreferences(launchedByWindowsStartup);
+  const launchedAfterSilentUpdate =
+    process.argv.includes("--updated") || process.argv.includes("--force-run");
+  const launchedInBackground =
+    launchedByWindowsStartup || launchedAfterSilentUpdate || launchedForCrashRecovery;
+  loadTrackingPreferences(launchedByWindowsStartup || launchedForCrashRecovery);
   configureAutoStart();
   wireSystemEvents();
 
@@ -2555,9 +4754,10 @@ app.whenReady().then(async () => {
 
   await createMainWindow();
   configureAutoUpdater();
-  showMainWindow();
+  if (!launchedInBackground) {
+    showMainWindow();
+  }
   if (runtimeStatus.enrolled) {
-    await refreshTrackingConfig();
     startScreenshotMonitoring();
     if (!trackingPausedByUser) {
       await startTrackingAutomatically();
@@ -2586,10 +4786,9 @@ ipcMain.on("agent:set-update-attention", (_, active: boolean) => {
 
 ipcMain.handle("agent:check-for-updates", async () => {
   try {
-    await checkForUpdates(true);
-    return { success: true };
+    return await checkForUpdates(true, false);
   } catch (error) {
-    log.error("Manual update check failed", error);
+    log.error("Manual update check failed", safeErrorForLog(error));
     return {
       success: false,
       message: getUserFacingError(error, "Could not check for updates."),
@@ -2599,10 +4798,9 @@ ipcMain.handle("agent:check-for-updates", async () => {
 
 ipcMain.handle("agent:install-update", async () => {
   try {
-    await installDownloadedUpdate();
-    return { success: true };
+    return await installDownloadedUpdate();
   } catch (error) {
-    log.error("Update installation failed", error);
+    log.error("Update installation failed", safeErrorForLog(error));
     setUpdateAttention(true);
     return {
       success: false,
@@ -2661,6 +4859,14 @@ ipcMain.handle("agent:resume-tracking", () => resumeTracking());
 
 ipcMain.handle("agent:resume-automatic-idle", () => resumeAutomaticIdle());
 
+ipcMain.handle("agent:confirm-tracking-start", () =>
+  confirmFreshSessionStart(),
+);
+
+ipcMain.handle("agent:decline-tracking-start", () =>
+  declineFreshSessionStart(),
+);
+
 ipcMain.handle("agent:logout", () => logoutDevice());
 
 ipcMain.handle("window:minimize", () => {
@@ -2697,7 +4903,7 @@ ipcMain.handle("agent:open-employee-dashboard", async (_, section?: string) => {
     await shell.openExternal(portalUrl.toString());
     return { success: true };
   } catch (error) {
-    log.error("Employee dashboard handoff failed", error);
+    log.error("Employee dashboard handoff failed", safeErrorForLog(error));
     return {
       success: false,
       message: getUserFacingError(
@@ -2713,17 +4919,36 @@ ipcMain.handle("agent:get-recent-screenshots", async () => {
     const screenshots = await listAgentRecentScreenshots(4);
     const data = [];
     for (const screenshot of screenshots) {
-      const image = await downloadAgentScreenshot(screenshot.id);
-      data.push({
-        id: screenshot.id,
-        capturedAt: screenshot.captured_at,
-        displayName: screenshot.display_name,
-        dataUrl: `data:${image.mimeType};base64,${image.content.toString("base64")}`,
-      });
+      try {
+        const image = await downloadAgentScreenshot(screenshot.id);
+        data.push({
+          id: screenshot.id,
+          capturedAt: screenshot.captured_at,
+          displayName: screenshot.display_name,
+          dataUrl: `data:${image.mimeType};base64,${image.content.toString("base64")}`,
+        });
+        // The home panel renders only the latest capture. Avoid downloading
+        // three full images that it never displays.
+        break;
+      } catch (error) {
+        // A legacy database row may outlive its local image. Try the next
+        // recent capture instead of failing the entire panel.
+        if (apiResponseStatus(error) === 404) continue;
+        throw error;
+      }
     }
+    runtimeStatus.connectionStatus = "online";
+    runtimeStatus.lastSuccessfulSyncAt = new Date().toISOString();
+    notifyRendererStatus();
+    rebuildTrayMenu();
     return { success: true, screenshots: data };
   } catch (error) {
-    log.error("Recent screenshots could not be loaded", error);
+    runtimeStatus.connectionStatus = connectionStatusAfterApiFailure(
+      apiResponseStatus(error),
+    );
+    notifyRendererStatus();
+    rebuildTrayMenu();
+    log.error("Recent screenshots could not be loaded", safeErrorForLog(error));
     return {
       success: false,
       message: getUserFacingError(
@@ -2751,9 +4976,11 @@ ipcMain.handle("agent:set-current-task", async (_, taskId: string | null) => {
     rebuildTrayMenu();
     return { success: true, status: runtimeStatusPayload() };
   } catch (error) {
-    runtimeStatus.connectionStatus = "offline";
+    runtimeStatus.connectionStatus = connectionStatusAfterApiFailure(
+      apiResponseStatus(error),
+    );
     rebuildTrayMenu();
-    log.error("Task selection failed", error);
+    log.error("Task selection failed", safeErrorForLog(error));
     return {
       success: false,
       message: getUserFacingError(error, "Task selection failed."),
@@ -2789,7 +5016,7 @@ ipcMain.handle(
         status: runtimeStatusPayload(),
       };
     } catch (error) {
-      log.error("Task creation failed", error);
+      log.error("Task creation failed", safeErrorForLog(error));
       return {
         success: false,
         message: getUserFacingError(error, "Task creation failed."),
@@ -2814,7 +5041,7 @@ ipcMain.handle(
       rebuildTrayMenu();
       return { success: true, status: runtimeStatusPayload() };
     } catch (error) {
-      log.error("Task stage update failed", error);
+      log.error("Task stage update failed", safeErrorForLog(error));
       return {
         success: false,
         message: getUserFacingError(error, "Task stage update failed."),
@@ -2838,7 +5065,7 @@ ipcMain.handle(
       await refreshTasks();
       return { success: true, status: runtimeStatusPayload() };
     } catch (error) {
-      log.error("Task checklist creation failed", error);
+      log.error("Task checklist creation failed", safeErrorForLog(error));
       return {
         success: false,
         message: getUserFacingError(error, "Checklist update failed."),
@@ -2862,7 +5089,7 @@ ipcMain.handle(
       await refreshTasks();
       return { success: true, status: runtimeStatusPayload() };
     } catch (error) {
-      log.error("Task checklist update failed", error);
+      log.error("Task checklist update failed", safeErrorForLog(error));
       return {
         success: false,
         message: getUserFacingError(error, "Checklist update failed."),
@@ -2897,7 +5124,7 @@ ipcMain.handle(
       await refreshTasks();
       return { success: true, status: runtimeStatusPayload() };
     } catch (error) {
-      log.error("Task checklist deletion failed", error);
+      log.error("Task checklist deletion failed", safeErrorForLog(error));
       return {
         success: false,
         message: getUserFacingError(error, "Checklist deletion failed."),
@@ -2923,16 +5150,54 @@ ipcMain.handle(
   ) => {
     try {
       const request = await createTimeAdjustmentRequest(input);
-      await refreshTimeAdjustmentRequests();
-      await refreshTrackingConfig();
+      runtimeStatus.timeAdjustmentRequests = [
+        request,
+        ...runtimeStatus.timeAdjustmentRequests.filter(
+          (existing) => existing.id !== request.id,
+        ),
+      ].slice(0, 10);
+      if (
+        request.request_type === "idle_time" &&
+        request.work_session_id &&
+        request.source_start_at &&
+        request.source_end_at
+      ) {
+        const requestedSeconds = Math.max(0, request.requested_minutes * 60);
+        runtimeStatus.idleRequestPeriods = runtimeStatus.idleRequestPeriods
+          .map((period) =>
+            period.work_session_id === request.work_session_id &&
+            period.started_at === request.source_start_at &&
+            period.ended_at === request.source_end_at
+              ? {
+                  ...period,
+                  available_seconds: Math.max(
+                    0,
+                    period.available_seconds - requestedSeconds,
+                  ),
+                }
+              : period,
+          )
+          .filter((period) => period.available_seconds >= 60);
+      }
       runtimeStatus.connectionStatus = "online";
       runtimeStatus.lastSuccessfulSyncAt = new Date().toISOString();
       rebuildTrayMenu();
-      return { success: true, request, status: runtimeStatusPayload() };
+      const status = runtimeStatusPayload();
+      void Promise.all([
+        refreshTimeAdjustmentRequests(),
+        refreshTrackingConfig(),
+        refreshWorkedTodayTotal(),
+      ]).then(() => {
+        rebuildTrayMenu();
+        notifyRendererStatus();
+      });
+      return { success: true, request, status };
     } catch (error) {
-      runtimeStatus.connectionStatus = "offline";
+      runtimeStatus.connectionStatus = connectionStatusAfterApiFailure(
+        apiResponseStatus(error),
+      );
       rebuildTrayMenu();
-      log.error("Time adjustment request failed", error);
+      log.error("Time adjustment request failed", safeErrorForLog(error));
       return {
         success: false,
         message: getUserFacingError(error, "Time adjustment request failed."),
@@ -2965,9 +5230,11 @@ ipcMain.handle(
       rebuildTrayMenu();
       return { success: true, request, status: runtimeStatusPayload() };
     } catch (error) {
-      runtimeStatus.connectionStatus = "offline";
+      runtimeStatus.connectionStatus = connectionStatusAfterApiFailure(
+        apiResponseStatus(error),
+      );
       rebuildTrayMenu();
-      log.error("Holiday request failed", error);
+      log.error("Holiday request failed", safeErrorForLog(error));
       return {
         success: false,
         message: getUserFacingError(error, "Holiday request failed."),

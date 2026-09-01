@@ -25,8 +25,10 @@ import { Route as AppProfileRouteImport } from './routes/_app.profile'
 import { Route as AppPeopleRouteImport } from './routes/_app.people'
 import { Route as AppPayrollRouteImport } from './routes/_app.payroll'
 import { Route as AppNotificationsRouteImport } from './routes/_app.notifications'
+import { Route as AppMonitoringRouteImport } from './routes/_app.monitoring'
 import { Route as AppLiveActivityRouteImport } from './routes/_app.live-activity'
 import { Route as AppHolidayRequestsRouteImport } from './routes/_app.holiday-requests'
+import { Route as AppHistoryRouteImport } from './routes/_app.history'
 import { Route as AppEmployeesRouteImport } from './routes/_app.employees'
 import { Route as AppDevicesRouteImport } from './routes/_app.devices'
 import { Route as AppDashboardRouteImport } from './routes/_app.dashboard'
@@ -118,6 +120,11 @@ const AppNotificationsRoute = AppNotificationsRouteImport.update({
   path: '/notifications',
   getParentRoute: () => AppRoute,
 } as any)
+const AppMonitoringRoute = AppMonitoringRouteImport.update({
+  id: '/monitoring',
+  path: '/monitoring',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppLiveActivityRoute = AppLiveActivityRouteImport.update({
   id: '/live-activity',
   path: '/live-activity',
@@ -126,6 +133,11 @@ const AppLiveActivityRoute = AppLiveActivityRouteImport.update({
 const AppHolidayRequestsRoute = AppHolidayRequestsRouteImport.update({
   id: '/holiday-requests',
   path: '/holiday-requests',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppHistoryRoute = AppHistoryRouteImport.update({
+  id: '/history',
+  path: '/history',
   getParentRoute: () => AppRoute,
 } as any)
 const AppEmployeesRoute = AppEmployeesRouteImport.update({
@@ -196,8 +208,10 @@ export interface FileRoutesByFullPath {
   '/dashboard': typeof AppDashboardRoute
   '/devices': typeof AppDevicesRouteWithChildren
   '/employees': typeof AppEmployeesRouteWithChildren
+  '/history': typeof AppHistoryRoute
   '/holiday-requests': typeof AppHolidayRequestsRoute
   '/live-activity': typeof AppLiveActivityRoute
+  '/monitoring': typeof AppMonitoringRoute
   '/notifications': typeof AppNotificationsRoute
   '/payroll': typeof AppPayrollRoute
   '/people': typeof AppPeopleRoute
@@ -226,8 +240,10 @@ export interface FileRoutesByTo {
   '/dashboard': typeof AppDashboardRoute
   '/devices': typeof AppDevicesRouteWithChildren
   '/employees': typeof AppEmployeesRouteWithChildren
+  '/history': typeof AppHistoryRoute
   '/holiday-requests': typeof AppHolidayRequestsRoute
   '/live-activity': typeof AppLiveActivityRoute
+  '/monitoring': typeof AppMonitoringRoute
   '/notifications': typeof AppNotificationsRoute
   '/payroll': typeof AppPayrollRoute
   '/people': typeof AppPeopleRoute
@@ -258,8 +274,10 @@ export interface FileRoutesById {
   '/_app/dashboard': typeof AppDashboardRoute
   '/_app/devices': typeof AppDevicesRouteWithChildren
   '/_app/employees': typeof AppEmployeesRouteWithChildren
+  '/_app/history': typeof AppHistoryRoute
   '/_app/holiday-requests': typeof AppHolidayRequestsRoute
   '/_app/live-activity': typeof AppLiveActivityRoute
+  '/_app/monitoring': typeof AppMonitoringRoute
   '/_app/notifications': typeof AppNotificationsRoute
   '/_app/payroll': typeof AppPayrollRoute
   '/_app/people': typeof AppPeopleRoute
@@ -290,8 +308,10 @@ export interface FileRouteTypes {
     | '/dashboard'
     | '/devices'
     | '/employees'
+    | '/history'
     | '/holiday-requests'
     | '/live-activity'
+    | '/monitoring'
     | '/notifications'
     | '/payroll'
     | '/people'
@@ -320,8 +340,10 @@ export interface FileRouteTypes {
     | '/dashboard'
     | '/devices'
     | '/employees'
+    | '/history'
     | '/holiday-requests'
     | '/live-activity'
+    | '/monitoring'
     | '/notifications'
     | '/payroll'
     | '/people'
@@ -351,8 +373,10 @@ export interface FileRouteTypes {
     | '/_app/dashboard'
     | '/_app/devices'
     | '/_app/employees'
+    | '/_app/history'
     | '/_app/holiday-requests'
     | '/_app/live-activity'
+    | '/_app/monitoring'
     | '/_app/notifications'
     | '/_app/payroll'
     | '/_app/people'
@@ -493,6 +517,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppNotificationsRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/monitoring': {
+      id: '/_app/monitoring'
+      path: '/monitoring'
+      fullPath: '/monitoring'
+      preLoaderRoute: typeof AppMonitoringRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/live-activity': {
       id: '/_app/live-activity'
       path: '/live-activity'
@@ -505,6 +536,13 @@ declare module '@tanstack/react-router' {
       path: '/holiday-requests'
       fullPath: '/holiday-requests'
       preLoaderRoute: typeof AppHolidayRequestsRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/history': {
+      id: '/_app/history'
+      path: '/history'
+      fullPath: '/history'
+      preLoaderRoute: typeof AppHistoryRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/employees': {
@@ -642,8 +680,10 @@ interface AppRouteChildren {
   AppDashboardRoute: typeof AppDashboardRoute
   AppDevicesRoute: typeof AppDevicesRouteWithChildren
   AppEmployeesRoute: typeof AppEmployeesRouteWithChildren
+  AppHistoryRoute: typeof AppHistoryRoute
   AppHolidayRequestsRoute: typeof AppHolidayRequestsRoute
   AppLiveActivityRoute: typeof AppLiveActivityRoute
+  AppMonitoringRoute: typeof AppMonitoringRoute
   AppNotificationsRoute: typeof AppNotificationsRoute
   AppPayrollRoute: typeof AppPayrollRoute
   AppPeopleRoute: typeof AppPeopleRoute
@@ -664,8 +704,10 @@ const AppRouteChildren: AppRouteChildren = {
   AppDashboardRoute: AppDashboardRoute,
   AppDevicesRoute: AppDevicesRouteWithChildren,
   AppEmployeesRoute: AppEmployeesRouteWithChildren,
+  AppHistoryRoute: AppHistoryRoute,
   AppHolidayRequestsRoute: AppHolidayRequestsRoute,
   AppLiveActivityRoute: AppLiveActivityRoute,
+  AppMonitoringRoute: AppMonitoringRoute,
   AppNotificationsRoute: AppNotificationsRoute,
   AppPayrollRoute: AppPayrollRoute,
   AppPeopleRoute: AppPeopleRoute,

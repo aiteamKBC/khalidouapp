@@ -24,7 +24,7 @@ import {
 import { StatusBadge } from "@/components/ui/status-badge";
 import { useAuth } from "@/lib/auth";
 import { permissions } from "@/lib/permissions";
-import { listEmployees } from "@/api/employees";
+import { employeeDisplayStatus, listEmployees } from "@/api/employees";
 import { listTeams } from "@/api/teams";
 import { formatMinutes, formatRelative } from "@/lib/format";
 
@@ -47,15 +47,16 @@ export function EmployeesList({ embedded = false }: { embedded?: boolean }) {
   const scope = scopedTeamIds();
   const emps = useQuery({
     queryKey: ["employees", scope],
-    queryFn: () => listEmployees(scope),
+    queryFn: ({ signal }) => listEmployees(scope, signal),
     staleTime: 20_000,
     refetchOnWindowFocus: false,
     placeholderData: (previous) => previous,
   });
   const teams = useQuery({
     queryKey: ["teams", scope],
-    queryFn: () => listTeams(scope),
-    staleTime: 60_000,
+    queryFn: ({ signal }) => listTeams(scope, signal),
+    staleTime: 10 * 60_000,
+    gcTime: 30 * 60_000,
     refetchOnWindowFocus: false,
     placeholderData: (previous) => previous,
   });
@@ -82,7 +83,7 @@ export function EmployeesList({ embedded = false }: { embedded?: boolean }) {
           return false;
         if (teamId !== "all" && !employee.teamIds.includes(teamId)) return false;
         if (jobTitle !== "all" && employee.jobTitle !== jobTitle) return false;
-        const displayStatus = employee.accountStatus === "invited" ? "invited" : employee.status;
+        const displayStatus = employeeDisplayStatus(employee);
         if (status !== "all" && displayStatus !== status) return false;
         return true;
       }),
@@ -152,10 +153,14 @@ export function EmployeesList({ embedded = false }: { embedded?: boolean }) {
             <SelectContent>
               <SelectItem value="all">All statuses</SelectItem>
               <SelectItem value="invited">Invited</SelectItem>
+              <SelectItem value="app_pending">App pending</SelectItem>
               <SelectItem value="active">Active</SelectItem>
               <SelectItem value="idle">Idle</SelectItem>
               <SelectItem value="locked">Locked</SelectItem>
               <SelectItem value="sleeping">Sleeping</SelectItem>
+              <SelectItem value="on_break">On break</SelectItem>
+              <SelectItem value="break_work">Working during break</SelectItem>
+              <SelectItem value="off_shift">Off shift</SelectItem>
               <SelectItem value="offline">Offline</SelectItem>
             </SelectContent>
           </Select>
@@ -188,9 +193,7 @@ export function EmployeesList({ embedded = false }: { embedded?: boolean }) {
                 <TableCell className="font-mono text-xs">{employee.code}</TableCell>
                 <TableCell>{employee.jobTitle || "-"}</TableCell>
                 <TableCell>
-                  <StatusBadge
-                    status={employee.accountStatus === "invited" ? "invited" : employee.status}
-                  />
+                  <StatusBadge status={employeeDisplayStatus(employee)} />
                 </TableCell>
                 <TableCell>{formatMinutes(employee.workedTodayMinutes)}</TableCell>
                 <TableCell>{formatMinutes(employee.activeMinutes)}</TableCell>
@@ -201,8 +204,15 @@ export function EmployeesList({ embedded = false }: { embedded?: boolean }) {
                 <TableCell className="text-sm">{employee.currentDeviceName ?? "-"}</TableCell>
                 <TableCell className="text-right">
                   <Button asChild variant="ghost" size="sm">
-                    <Link to="/employees/$employeeId" params={{ employeeId: employee.id }}>
-                      View
+                    <Link
+                      to="/monitoring"
+                      search={{
+                        employeeId: employee.id,
+                        day: todayIsoDate(),
+                        tab: "attendance",
+                      }}
+                    >
+                      Monitor
                     </Link>
                   </Button>
                 </TableCell>
@@ -220,4 +230,10 @@ export function EmployeesList({ embedded = false }: { embedded?: boolean }) {
       </Card>
     </div>
   );
+}
+
+function todayIsoDate() {
+  const now = new Date();
+  const local = new Date(now.getTime() - now.getTimezoneOffset() * 60_000);
+  return local.toISOString().slice(0, 10);
 }

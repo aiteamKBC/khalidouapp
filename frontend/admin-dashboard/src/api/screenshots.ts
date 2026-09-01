@@ -62,15 +62,20 @@ function mapScreenshot(screenshot: BackendScreenshot, teamId: string): Screensho
   };
 }
 
-export async function listScreenshotPage(options: {
-  scopedTeamIds?: string[];
-  page: number;
-  pageSize?: number;
-  employeeId?: string;
-  teamId?: string;
-  day?: string;
-  workCategory?: string;
-}): Promise<{ items: Screenshot[]; page: number; pages: number; total: number }> {
+export async function listScreenshotPage(
+  options: {
+    scopedTeamIds?: string[];
+    page: number;
+    pageSize?: number;
+    employeeId?: string;
+    teamId?: string;
+    day?: string;
+    startDate?: string;
+    endDate?: string;
+    workCategory?: string;
+  },
+  signal?: AbortSignal,
+): Promise<{ items: Screenshot[]; page: number; pages: number; total: number }> {
   const scopedTeamId = options.scopedTeamIds?.length === 1 ? options.scopedTeamIds[0] : undefined;
   const teamId = options.teamId && options.teamId !== "all" ? options.teamId : scopedTeamId;
   const result = await apiFetchWithMeta<BackendScreenshot[]>(
@@ -80,8 +85,11 @@ export async function listScreenshotPage(options: {
       employee_id: options.employeeId === "all" ? undefined : options.employeeId,
       team_id: teamId,
       day: options.day,
+      start_time: options.startDate,
+      end_time: options.endDate,
       work_category: options.workCategory === "all" ? undefined : options.workCategory,
     }),
+    { signal },
   );
   return {
     items: result.data.map((screenshot) =>
@@ -93,16 +101,20 @@ export async function listScreenshotPage(options: {
   };
 }
 
-export async function listScreenshotFolderPage(options: {
-  scopedTeamIds?: string[];
-  page: number;
-  pageSize?: number;
-  employeeId?: string;
-  teamId?: string;
-  day: string;
-  workCategory?: string;
-  folderStatus?: string;
-}): Promise<{ items: ScreenshotFolder[]; page: number; pages: number; total: number }> {
+export async function listScreenshotFolderPage(
+  options: {
+    scopedTeamIds?: string[];
+    page: number;
+    pageSize?: number;
+    employeeId?: string;
+    teamId?: string;
+    day: string;
+    workCategory?: string;
+    folderStatus?: string;
+    previewLimit?: number;
+  },
+  signal?: AbortSignal,
+): Promise<{ items: ScreenshotFolder[]; page: number; pages: number; total: number }> {
   const scopedTeamId = options.scopedTeamIds?.length === 1 ? options.scopedTeamIds[0] : undefined;
   const teamId = options.teamId && options.teamId !== "all" ? options.teamId : scopedTeamId;
   const result = await apiFetchWithMeta<BackendScreenshotFolder[]>(
@@ -114,7 +126,9 @@ export async function listScreenshotFolderPage(options: {
       day: options.day,
       work_category: options.workCategory === "all" ? undefined : options.workCategory,
       folder_status: options.folderStatus === "all" ? undefined : options.folderStatus,
+      preview_limit: options.previewLimit,
     }),
+    { signal },
   );
   return {
     items: result.data.map((folder) => ({
@@ -139,14 +153,50 @@ export async function listScreenshotFolderPage(options: {
 export async function listScreenshots(
   scopedTeamIds?: string[],
   options: { pageSize?: number } = {},
+  signal?: AbortSignal,
 ): Promise<Screenshot[]> {
   const teamId = scopedTeamIds?.length === 1 ? scopedTeamIds[0] : undefined;
   const screenshots = await apiFetch<BackendScreenshot[]>(
     withQuery("/screenshots", { page_size: options.pageSize ?? 50, team_id: teamId }),
+    { signal },
   );
   return screenshots.map((screenshot) =>
     mapScreenshot(screenshot, screenshot.team_id ?? teamId ?? ""),
   );
+}
+
+export async function listScreenshotPreviews(
+  options: {
+    employeeIds: string[];
+    day: string;
+    limitPerEmployee?: number;
+  },
+  signal?: AbortSignal,
+): Promise<Screenshot[]> {
+  const employeeIds = Array.from(new Set(options.employeeIds));
+  if (employeeIds.length === 0) return [];
+
+  const batches: string[][] = [];
+  for (let index = 0; index < employeeIds.length; index += 20) {
+    batches.push(employeeIds.slice(index, index + 20));
+  }
+
+  const batchResults = await Promise.all(
+    batches.map(async (batch) => {
+      const search = new URLSearchParams({
+        day: options.day,
+        limit_per_employee: String(options.limitPerEmployee ?? 3),
+      });
+      batch.forEach((employeeId) => search.append("employee_id", employeeId));
+      return apiFetch<BackendScreenshot[]>(`/screenshots/previews?${search.toString()}`, {
+        signal,
+      });
+    }),
+  );
+
+  return batchResults
+    .flat()
+    .map((screenshot) => mapScreenshot(screenshot, screenshot.team_id ?? ""));
 }
 
 export async function deleteScreenshot(id: string): Promise<{ deductedMinutes: number }> {
@@ -167,7 +217,7 @@ export async function downloadScreenshot(screenshot: Screenshot): Promise<void> 
   URL.revokeObjectURL(url);
 }
 
-export async function getScreenshotStorageStatus(): Promise<{
+export async function getScreenshotStorageStatus(signal?: AbortSignal): Promise<{
   totalBytes: number;
   usedBytes: number;
   freeBytes: number;
@@ -182,7 +232,7 @@ export async function getScreenshotStorageStatus(): Promise<{
     used_percent: number;
     warning_percent: number;
     healthy: boolean;
-  }>("/screenshots/storage-status");
+  }>("/screenshots/storage-status", { signal });
   return {
     totalBytes: status.total_bytes,
     usedBytes: status.used_bytes,
@@ -215,6 +265,7 @@ export async function listScreenshotCaptureEvents(
     outcome?: "captured" | "skipped";
     pageSize?: number;
   } = {},
+  signal?: AbortSignal,
 ): Promise<ScreenshotCaptureEvent[]> {
   const rows = await apiFetch<
     Array<{
@@ -238,6 +289,7 @@ export async function listScreenshotCaptureEvents(
       outcome: options.outcome,
       page_size: options.pageSize ?? 50,
     }),
+    { signal },
   );
   return rows.map((row) => ({
     id: row.id,

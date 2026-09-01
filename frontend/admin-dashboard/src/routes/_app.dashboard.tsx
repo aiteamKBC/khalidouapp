@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   Activity,
@@ -29,11 +29,18 @@ import { MetricTile } from "@/components/ui/metric-tile";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { ProtectedImage } from "@/components/ProtectedImage";
+import { SCREENSHOT_REFRESH_INTERVAL_MS } from "@/lib/screenshot-display";
+import {
+  matchesMemberActivityFilter,
+  memberActivitySummary,
+  MEMBER_ACTIVITY_FILTERS,
+  type MemberActivityFilter,
+} from "@/lib/member-activity-status";
 import { useAuth } from "@/lib/auth";
-import { getDashboardSummary } from "@/api/dashboard";
-import { listEmployees } from "@/api/employees";
-import { listScreenshots } from "@/api/screenshots";
-import { listTimesheets } from "@/api/timesheets";
+import { listDailyAttendance } from "@/api/attendance";
+import { listDashboardWorkTrend } from "@/api/dashboard";
+import { employeeIsOnline, listMonitoringEmployees } from "@/api/employees";
+import { listScreenshotPreviews } from "@/api/screenshots";
 import { listTeams } from "@/api/teams";
 import { listDevices } from "@/api/devices";
 import { listTimeAdjustmentRequests } from "@/api/timeAdjustments";
@@ -45,9 +52,13 @@ export const Route = createFileRoute("/_app/dashboard")({
   component: DashboardPage,
 });
 
-const LIVE_REFRESH_MS = 15_000;
+const LIVE_REFRESH_MS = 30_000;
 const ACTION_REFRESH_MS = 30_000;
-const MEDIA_REFRESH_MS = 60_000;
+const MEDIA_REFRESH_MS = 15 * 60_000;
+const employeeNameCollator = new Intl.Collator(undefined, {
+  numeric: true,
+  sensitivity: "base",
+});
 
 // ---------- date helpers ----------
 function startOfWeek(d: Date): Date {
@@ -61,6 +72,10 @@ function isoDate(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
     d.getDate(),
   ).padStart(2, "0")}`;
+}
+
+function compareEmployeesByName(left: Employee, right: Employee): number {
+  return employeeNameCollator.compare(left.name, right.name);
 }
 function weekDates(monday: Date): string[] {
   return Array.from({ length: 7 }, (_, i) => {
@@ -77,6 +92,19 @@ function initials(name: string): string {
     .slice(0, 2)
     .join("")
     .toUpperCase();
+}
+
+function randomSeed(): number {
+  return Math.floor(Math.random() * 0x7fffffff);
+}
+
+function seededEmployeeRank(employeeId: string, seed: number): number {
+  let hash = 2166136261 ^ seed;
+  for (let index = 0; index < employeeId.length; index += 1) {
+    hash ^= employeeId.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
 }
 
 type DayAgg = {
@@ -127,97 +155,17 @@ function periodTotals(byDate: Map<string, DayAgg>, dates: string[]) {
 }
 
 function DashboardPage() {
-  const [activityFilter, setActivityFilter] = useState<"all" | Employee["status"]>("all");
+  const [activityFilter, setActivityFilter] = useState<MemberActivityFilter>("active");
   const [attentionOpen, setAttentionOpen] = useState(false);
-  const [loadActions, setLoadActions] = useState(false);
+  const activitySectionRef = useRef<HTMLDivElement>(null);
   const [loadMedia, setLoadMedia] = useState(false);
-  const { scopedTeamIds } = useAuth();
+  const [activityRotationSeed, setActivityRotationSeed] = useState(randomSeed);
+  const { can, scopedTeamIds } = useAuth();
   const scope = scopedTeamIds();
+  const canViewTimeRequests = can("time_requests.view");
+  const canViewAttendance = can("timesheets.view");
   const scopeKey = scope?.join(",") ?? "all";
-
-  const summary = useQuery({
-    queryKey: ["dashboard", scope],
-    queryFn: () => getDashboardSummary(scope),
-    staleTime: 10_000,
-    refetchInterval: LIVE_REFRESH_MS,
-    refetchIntervalInBackground: false,
-    refetchOnWindowFocus: "always",
-    placeholderData: (previous) => previous,
-  });
-  const emps = useQuery({
-    queryKey: ["employees", scope],
-    queryFn: () => listEmployees(scope),
-    staleTime: 10_000,
-    refetchInterval: LIVE_REFRESH_MS,
-    refetchIntervalInBackground: false,
-    refetchOnWindowFocus: "always",
-    placeholderData: (previous) => previous,
-  });
-  const month = useQuery({
-    queryKey: ["timesheets", "monthly", scope],
-    queryFn: () => listTimesheets(scope, "monthly"),
-    staleTime: 30_000,
-    refetchInterval: ACTION_REFRESH_MS,
-    refetchIntervalInBackground: false,
-    refetchOnWindowFocus: "always",
-    placeholderData: (previous) => previous,
-  });
-  const primaryReady = summary.isFetched && emps.isFetched;
-  useEffect(() => {
-    setLoadActions(false);
-    setLoadMedia(false);
-  }, [scopeKey]);
-  useEffect(() => {
-    if (!primaryReady) return;
-    const actionsTimer = window.setTimeout(() => setLoadActions(true), 120);
-    const mediaTimer = window.setTimeout(() => setLoadMedia(true), 500);
-    return () => {
-      window.clearTimeout(actionsTimer);
-      window.clearTimeout(mediaTimer);
-    };
-  }, [primaryReady, scopeKey]);
-
-  const shots = useQuery({
-    queryKey: ["screenshots", scope, "dashboard-recent"],
-    queryFn: () => listScreenshots(scope, { pageSize: 24 }),
-    enabled: loadMedia,
-    staleTime: 45_000,
-    refetchInterval: MEDIA_REFRESH_MS,
-    refetchIntervalInBackground: false,
-    refetchOnWindowFocus: "always",
-    placeholderData: (previous) => previous,
-  });
-  const teams = useQuery({
-    queryKey: ["teams", scope],
-    queryFn: () => listTeams(scope),
-    enabled: loadActions,
-    staleTime: 30_000,
-    refetchInterval: ACTION_REFRESH_MS,
-    refetchIntervalInBackground: false,
-    refetchOnWindowFocus: "always",
-    placeholderData: (previous) => previous,
-  });
-  const devices = useQuery({
-    queryKey: ["devices", scope],
-    queryFn: () => listDevices(scope),
-    enabled: loadActions,
-    staleTime: 10_000,
-    refetchInterval: LIVE_REFRESH_MS,
-    refetchIntervalInBackground: false,
-    refetchOnWindowFocus: "always",
-    placeholderData: (previous) => previous,
-  });
-  const requests = useQuery({
-    queryKey: ["time-adjustments", scope, "pending"],
-    queryFn: () => listTimeAdjustmentRequests({ scopedTeamIds: scope, status: "pending" }),
-    enabled: loadActions,
-    staleTime: 30_000,
-    refetchInterval: ACTION_REFRESH_MS,
-    refetchIntervalInBackground: false,
-    refetchOnWindowFocus: "always",
-    placeholderData: (previous) => previous,
-  });
-
+  const dashboardDay = isoDate(new Date());
   const now = new Date();
   const thisMonday = startOfWeek(now);
   const lastMonday = new Date(thisMonday);
@@ -226,8 +174,132 @@ function DashboardPage() {
   const lastWeek = weekDates(lastMonday);
   const sunday = new Date(thisMonday);
   sunday.setDate(thisMonday.getDate() + 6);
+  const trendStart = isoDate(lastMonday);
+  const trendEnd = isoDate(sunday);
 
-  const byDate = aggregateByDate(month.data ?? []);
+  const emps = useQuery({
+    queryKey: ["dashboard-monitoring-employees", scope],
+    queryFn: ({ signal }) => listMonitoringEmployees(scope, signal),
+    staleTime: 20_000,
+    refetchInterval: LIVE_REFRESH_MS,
+    refetchIntervalInBackground: false,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: "always",
+    placeholderData: (previous) => previous,
+    meta: { suppressGlobalLoading: true },
+  });
+  const trend = useQuery({
+    queryKey: ["dashboard-work-trend", scope, trendStart, trendEnd],
+    queryFn: ({ signal }) => listDashboardWorkTrend(scope, trendStart, trendEnd, signal),
+    staleTime: 5 * 60_000,
+    refetchInterval: 5 * 60_000,
+    refetchIntervalInBackground: false,
+    placeholderData: (previous) => previous,
+    meta: { suppressGlobalLoading: true },
+  });
+  useEffect(() => {
+    setLoadMedia(false);
+    setActivityRotationSeed(randomSeed());
+  }, [scopeKey]);
+  useEffect(() => {
+    const section = activitySectionRef.current;
+    if (!section || loadMedia) return;
+    if (typeof IntersectionObserver === "undefined") {
+      setLoadMedia(true);
+      return;
+    }
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (!entry?.isIntersecting) return;
+        setLoadMedia(true);
+        observer.disconnect();
+      },
+      { rootMargin: "300px" },
+    );
+    observer.observe(section);
+    return () => observer.disconnect();
+  }, [loadMedia, scopeKey]);
+
+  // Select six stable rows first, then request only their previews. Fetching the
+  // latest screenshots company-wide allowed one busy employee to consume the
+  // whole result page and made other rows look empty.
+  const matchingActivityEmployees = (emps.data ?? [])
+    .filter((employee) => employee.currentDeviceId)
+    .filter((employee) => matchesMemberActivityFilter(employee.status, activityFilter))
+    .sort(compareEmployeesByName);
+  const visibleActivityEmployees = [...matchingActivityEmployees]
+    .sort(
+      (left, right) =>
+        seededEmployeeRank(left.id, activityRotationSeed) -
+        seededEmployeeRank(right.id, activityRotationSeed),
+    )
+    .slice(0, 6);
+  const visibleActivityEmployeeIds = visibleActivityEmployees.map((employee) => employee.id);
+  const shots = useQuery({
+    queryKey: ["screenshot-previews", scope, "dashboard", dashboardDay, visibleActivityEmployeeIds],
+    queryFn: ({ signal }) =>
+      listScreenshotPreviews(
+        {
+          employeeIds: visibleActivityEmployeeIds,
+          day: dashboardDay,
+          limitPerEmployee: 3,
+        },
+        signal,
+      ),
+    enabled: loadMedia && visibleActivityEmployeeIds.length > 0,
+    staleTime: MEDIA_REFRESH_MS - 15_000,
+    refetchInterval: MEDIA_REFRESH_MS,
+    refetchIntervalInBackground: false,
+    placeholderData: (previous) => previous,
+    meta: { suppressGlobalLoading: true },
+  });
+  const teams = useQuery({
+    queryKey: ["teams", scope],
+    queryFn: ({ signal }) => listTeams(scope, signal),
+    staleTime: 10 * 60_000,
+    gcTime: 30 * 60_000,
+    placeholderData: (previous) => previous,
+    meta: { suppressGlobalLoading: true },
+  });
+  const devices = useQuery({
+    queryKey: ["devices", scope],
+    queryFn: ({ signal }) => listDevices(scope, signal),
+    staleTime: LIVE_REFRESH_MS,
+    refetchInterval: LIVE_REFRESH_MS,
+    refetchIntervalInBackground: false,
+    placeholderData: (previous) => previous,
+    meta: { suppressGlobalLoading: true },
+  });
+  const requests = useQuery({
+    queryKey: ["time-adjustments", scope, "pending"],
+    queryFn: ({ signal }) =>
+      listTimeAdjustmentRequests({ scopedTeamIds: scope, status: "pending" }, signal),
+    enabled: canViewTimeRequests,
+    staleTime: ACTION_REFRESH_MS,
+    refetchInterval: ACTION_REFRESH_MS,
+    refetchIntervalInBackground: false,
+    placeholderData: (previous) => previous,
+    meta: { suppressGlobalLoading: true },
+  });
+  const todayAttendance = useQuery({
+    queryKey: ["daily-attendance", "dashboard", dashboardDay, scope],
+    queryFn: ({ signal }) =>
+      listDailyAttendance(
+        {
+          day: dashboardDay,
+          teamId: scope?.length === 1 ? scope[0] : undefined,
+        },
+        signal,
+      ),
+    enabled: canViewAttendance,
+    staleTime: ACTION_REFRESH_MS,
+    refetchInterval: ACTION_REFRESH_MS,
+    refetchIntervalInBackground: false,
+    placeholderData: (previous) => previous,
+    meta: { suppressGlobalLoading: true },
+  });
+
+  const byDate = aggregateByDate(trend.data ?? []);
   const week = periodTotals(byDate, thisWeek);
   const prev = periodTotals(byDate, lastWeek);
 
@@ -249,7 +321,7 @@ function DashboardPage() {
   // Per-employee weekly activity (for top / low performers)
   const weekSet = new Set(thisWeek);
   const empWeek = new Map<string, { active: number; idle: number }>();
-  for (const t of month.data ?? []) {
+  for (const t of trend.data ?? []) {
     if (!weekSet.has(t.date)) continue;
     const e = empWeek.get(t.employeeId) ?? { active: 0, idle: 0 };
     e.active += t.activeMinutes;
@@ -284,59 +356,78 @@ function DashboardPage() {
     idleHours: day.idleHours,
   }));
 
-  // Recent activity grouped by employee
+  // Member activity uses exactly the same six employee IDs for both rendering
+  // and the bounded preview request.
   const byEmployee = new Map<string, Screenshot[]>();
-  for (const shot of shots.data ?? []) {
-    byEmployee.set(shot.employeeId, [...(byEmployee.get(shot.employeeId) ?? []), shot]);
+  for (const screenshot of shots.data ?? []) {
+    const previews = byEmployee.get(screenshot.employeeId) ?? [];
+    previews.push(screenshot);
+    byEmployee.set(screenshot.employeeId, previews);
   }
-  const recentActivity = [...byEmployee.entries()]
-    .map(([id, list]) => ({
-      employee: nameById.get(id),
-      shots: [...list]
+  const memberActivity = visibleActivityEmployees
+    .map((employee) => {
+      const images = [...(byEmployee.get(employee.id) ?? [])]
         .sort((a, b) => +new Date(b.capturedAt) - +new Date(a.capturedAt))
-        .slice(0, 3),
-      latest: Math.max(...list.map((s) => +new Date(s.capturedAt))),
-    }))
-    .filter((r) => r.employee)
-    .sort((a, b) => b.latest - a.latest)
-    .slice(0, 5);
-  const filteredActivity = recentActivity.filter(
-    ({ employee }) => activityFilter === "all" || employee?.status === activityFilter,
+        .slice(0, 3);
+      return {
+        employee,
+        shots: images,
+        latest: Math.max(
+          images[0] ? +new Date(images[0].capturedAt) : 0,
+          employee.lastHeartbeat ? +new Date(employee.lastHeartbeat) : 0,
+        ),
+      };
+    })
+    .sort((a, b) => b.latest - a.latest);
+  const filteredActivity = memberActivity;
+  const activitySummary = memberActivitySummary(
+    activityFilter,
+    matchingActivityEmployees.length,
+    filteredActivity.length,
   );
 
-  const online = (emps.data ?? [])
-    .filter((e) => e.status !== "offline")
-    .sort((a, b) => (a.status === "active" ? -1 : 1) - (b.status === "active" ? -1 : 1));
+  const online = (emps.data ?? []).filter(employeeIsOnline).sort(compareEmployeesByName);
   const onlinePreview = online.slice(0, 4);
   const hiddenOnlineCount = Math.max(0, online.length - onlinePreview.length);
 
   const dateRange = `${fmtDay(thisMonday)} - ${fmtDay(sunday)}`;
-  const loading = month.isLoading || summary.isLoading;
+  const loading = trend.isPending && !trend.data;
+  const attentionLoading =
+    (canViewTimeRequests && !requests.data && requests.isPending) ||
+    (!emps.data && emps.isPending) ||
+    (canViewAttendance && !todayAttendance.data && todayAttendance.isPending);
+  const activityMediaLoading =
+    visibleActivityEmployeeIds.length > 0 && (!loadMedia || (shots.isPending && !shots.data));
   const offlineDevices = (devices.data ?? []).filter((device) => device.status === "offline");
-  const inactiveToday = (emps.data ?? []).filter(
-    (employee) => employee.status === "offline" && employee.workedTodayMinutes === 0,
-  );
+  const lateStarts = (todayAttendance.data ?? []).filter((attendance) => {
+    if (
+      attendance.status !== "not_started" ||
+      !attendance.scheduledStartAt ||
+      attendance.actualFirstActivityAt
+    ) {
+      return false;
+    }
+    const graceDeadline =
+      new Date(attendance.scheduledStartAt).getTime() + attendance.lateGraceMinutes * 60_000;
+    return Date.now() > graceDeadline;
+  });
   const idleNow = (emps.data ?? []).filter((employee) => employee.status === "idle");
   const teamsWithoutOwner = (teams.data ?? []).filter(
     (team) => team.status === "active" && team.ownerIds.length === 0,
   );
   const actionItems = [
-    {
-      to: "/time-adjustments" as const,
-      label: "Review time requests",
-      description: "Pending approvals from employees",
-      count: requests.data?.length ?? 0,
-      icon: TimerReset,
-      tone: "text-info bg-info/10",
-    },
-    {
-      to: "/devices" as const,
-      label: "Check offline devices",
-      description: "Machines not reporting right now",
-      count: offlineDevices.length,
-      icon: Monitor,
-      tone: "text-destructive bg-destructive/10",
-    },
+    ...(canViewTimeRequests
+      ? [
+          {
+            to: "/time-adjustments" as const,
+            label: "Review time requests",
+            description: "Pending approvals from employees",
+            count: requests.data?.length ?? 0,
+            icon: TimerReset,
+            tone: "text-info bg-info/10",
+          },
+        ]
+      : []),
     {
       to: "/live-activity" as const,
       label: "Check idle employees",
@@ -345,23 +436,32 @@ function DashboardPage() {
       icon: Clock,
       tone: "text-warning-foreground bg-warning/20",
     },
-    {
-      to: "/employees" as const,
-      label: "Follow up not started",
-      description: "Offline employees with no time today",
-      count: inactiveToday.length,
-      icon: AlertTriangle,
-      tone: "text-warning-foreground bg-warning/20",
-    },
+    ...(canViewAttendance
+      ? [
+          {
+            to: "/attendance" as const,
+            label: "Follow up late starts",
+            description: "Scheduled employees still missing after their grace time",
+            count: lateStarts.length,
+            icon: AlertTriangle,
+            tone: "text-warning-foreground bg-warning/20",
+          },
+        ]
+      : []),
   ].filter((item) => item.count > 0);
   const attentionCount = actionItems.reduce((total, item) => total + item.count, 0);
-  const hasDataError =
-    summary.isError ||
-    emps.isError ||
-    month.isError ||
-    teams.isError ||
-    devices.isError ||
-    requests.isError;
+  const failedDataSources = [
+    { label: "live employee status", failed: emps.isError },
+    { label: "weekly work totals", failed: trend.isError },
+    { label: "teams", failed: teams.isError },
+    { label: "devices", failed: devices.isError },
+    { label: "time requests", failed: canViewTimeRequests && requests.isError },
+    {
+      label: "today's attendance",
+      failed: canViewAttendance && todayAttendance.isError,
+    },
+  ].filter((source) => source.failed);
+  const hasDataError = failedDataSources.length > 0;
 
   return (
     <div className="studio-page">
@@ -383,41 +483,67 @@ function DashboardPage() {
       <div className="mb-4 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
         <MetricTile
           onClick={() => setAttentionOpen(true)}
-          value={attentionCount}
-          label={attentionCount ? "Need attention" : "All healthy"}
-          hint={attentionCount ? "Open issue list" : "Live summary"}
-          icon={attentionCount ? AlertTriangle : CheckCircle2}
-          tone={attentionCount ? "amber" : "green"}
+          value={attentionLoading || hasDataError ? "—" : attentionCount}
+          label={
+            attentionLoading
+              ? "Checking health"
+              : hasDataError
+                ? "Data unavailable"
+                : attentionCount
+                  ? "Need attention"
+                  : "All healthy"
+          }
+          hint={
+            attentionLoading
+              ? "Loading live checks"
+              : hasDataError
+                ? "Retry failed checks"
+                : attentionCount
+                  ? "Open issue list"
+                  : "Live summary"
+          }
+          icon={hasDataError || attentionCount ? AlertTriangle : CheckCircle2}
+          tone={hasDataError ? "danger" : attentionCount ? "amber" : "green"}
         />
-        <MetricTile
-          to="/time-adjustments"
-          value={requests.data?.length ?? 0}
-          label="Time requests"
-          hint="Pending review"
-          icon={TimerReset}
-          tone="blue"
-        />
-        <MetricTile
-          to="/employees"
-          value={inactiveToday.length}
-          label="Not started"
-          hint="Today"
-          icon={Users}
-          tone="muted"
-        />
+        {canViewTimeRequests && (
+          <MetricTile
+            to="/time-adjustments"
+            value={!requests.data && requests.isPending ? "—" : (requests.data?.length ?? 0)}
+            label="Time requests"
+            hint={!requests.data && requests.isPending ? "Loading…" : "Pending review"}
+            icon={TimerReset}
+            tone="blue"
+          />
+        )}
+        {canViewAttendance && (
+          <MetricTile
+            to="/attendance"
+            value={!todayAttendance.data && todayAttendance.isPending ? "—" : lateStarts.length}
+            label="Late starts"
+            hint={
+              !todayAttendance.data && todayAttendance.isPending ? "Loading…" : "Past grace time"
+            }
+            icon={Users}
+            tone="muted"
+          />
+        )}
         <MetricTile
           to="/devices"
-          value={offlineDevices.length}
+          value={!devices.data && devices.isPending ? "—" : offlineDevices.length}
           label="Devices offline"
-          hint={`of ${devices.data?.length ?? 0} devices`}
+          hint={
+            !devices.data && devices.isPending
+              ? "Loading…"
+              : `of ${devices.data?.length ?? 0} devices`
+          }
           icon={Monitor}
           tone="danger"
         />
         <MetricTile
           to="/teams"
-          value={teamsWithoutOwner.length}
+          value={!teams.data && teams.isPending ? "—" : teamsWithoutOwner.length}
           label="Teams unowned"
-          hint="Assign an owner"
+          hint={!teams.data && teams.isPending ? "Loading…" : "Assign an owner"}
           icon={AlertTriangle}
           tone="amber"
         />
@@ -426,15 +552,24 @@ function DashboardPage() {
       <Dialog open={attentionOpen} onOpenChange={setAttentionOpen}>
         <DialogContent className="max-w-xl">
           <DialogHeader>
-            <DialogTitle>Need attention</DialogTitle>
+            <DialogTitle>
+              {hasDataError ? "Dashboard data unavailable" : "Need attention"}
+            </DialogTitle>
             <DialogDescription>
-              {attentionCount
-                ? `${attentionCount} open items need admin follow-up.`
-                : "Everything looks healthy right now."}
+              {hasDataError
+                ? `Couldn't load: ${failedDataSources.map((source) => source.label).join(", ")}.`
+                : attentionCount
+                  ? `${attentionCount} open items need admin follow-up.`
+                  : "Everything looks healthy right now."}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-2">
-            {actionItems.length === 0 ? (
+            {hasDataError && (
+              <div className="rounded-2xl border border-destructive/30 bg-destructive/5 p-4 text-sm text-muted-foreground">
+                Retry the failed checks before relying on the dashboard summary.
+              </div>
+            )}
+            {actionItems.length === 0 && !hasDataError ? (
               <div className="rounded-2xl border border-dashed bg-muted/30 p-5">
                 <div className="flex items-center gap-3">
                   <span className="grid h-11 w-11 place-items-center rounded-full bg-success/10 text-success">
@@ -443,7 +578,7 @@ function DashboardPage() {
                   <div>
                     <p className="text-sm font-extrabold">No open issues</p>
                     <p className="mt-0.5 text-xs text-muted-foreground">
-                      Time requests, devices, idle status, and starts look clean.
+                      Time requests, idle status, and scheduled starts look clean.
                     </p>
                   </div>
                 </div>
@@ -488,7 +623,7 @@ function DashboardPage() {
             <div>
               <p className="text-sm font-medium">Some dashboard data couldn't be loaded</p>
               <p className="text-xs text-muted-foreground">
-                Visible figures may be incomplete until the connection recovers.
+                Unavailable: {failedDataSources.map((source) => source.label).join(", ")}.
               </p>
             </div>
           </div>
@@ -496,12 +631,12 @@ function DashboardPage() {
             variant="outline"
             size="sm"
             onClick={() => {
-              summary.refetch();
               emps.refetch();
-              month.refetch();
+              trend.refetch();
               teams.refetch();
               devices.refetch();
-              requests.refetch();
+              if (canViewTimeRequests) requests.refetch();
+              if (canViewAttendance) todayAttendance.refetch();
             }}
           >
             Retry all
@@ -602,9 +737,7 @@ function DashboardPage() {
                 const members = (emps.data ?? []).filter((employee) =>
                   employee.teamIds.includes(team.id),
                 );
-                const connected = members.filter(
-                  (employee) => employee.status !== "offline",
-                ).length;
+                const connected = members.filter(employeeIsOnline).length;
                 return (
                   <Link
                     key={team.id}
@@ -645,6 +778,21 @@ function DashboardPage() {
           <div className="grid gap-3 lg:grid-cols-3">
             {loading ? (
               Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-36" />)
+            ) : trend.isError && !trend.data ? (
+              <div className="rounded-2xl border border-destructive/30 bg-destructive/5 p-5 lg:col-span-3">
+                <p className="text-sm font-extrabold">Weekly totals couldn't be loaded</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Live employee status remains available while this section retries separately.
+                </p>
+                <Button
+                  className="mt-3"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => trend.refetch()}
+                >
+                  Retry weekly totals
+                </Button>
+              </div>
             ) : (
               <>
                 <HeroCard
@@ -684,16 +832,27 @@ function DashboardPage() {
             )}
           </div>
 
-          <Card className="studio-card overflow-hidden rounded-2xl border-border/70 shadow-none">
-            <CardHeader className="flex-row items-center justify-between space-y-0 border-b border-border/70 p-[18px]">
-              <div className="flex items-center gap-3">
-                <CardTitle className="text-sm font-extrabold">Recent activity</CardTitle>
-                <span className="text-[11px] font-bold text-muted-foreground">
-                  {filteredActivity.length} of {recentActivity.length} members
+          <Card
+            ref={activitySectionRef}
+            className="studio-card overflow-hidden rounded-2xl border-border/70 shadow-none"
+          >
+            <CardHeader className="gap-3 space-y-0 border-b border-border/70 p-[18px] xl:flex-row xl:items-center xl:justify-between">
+              <div className="flex flex-wrap items-center gap-2.5">
+                <CardTitle className="text-sm font-extrabold">Member activity</CardTitle>
+                <span className="text-[11px] font-extrabold text-foreground">
+                  {activitySummary.total}
                 </span>
+                <span className="rounded-full border bg-muted/40 px-2.5 py-1 text-[10px] font-bold text-muted-foreground">
+                  {activitySummary.preview} - live status every 30 sec - rotates every 15 min
+                </span>
+                {shots.isFetching && shots.data && (
+                  <span className="text-[10px] font-bold text-muted-foreground">
+                    Refreshing previews…
+                  </span>
+                )}
               </div>
               <div className="flex flex-wrap gap-1.5">
-                {(["all", "active", "idle", "offline"] as const).map((filter) => (
+                {MEMBER_ACTIVITY_FILTERS.map((filter) => (
                   <button
                     key={filter}
                     type="button"
@@ -705,44 +864,106 @@ function DashboardPage() {
                 ))}
               </div>
             </CardHeader>
-            <CardContent className="space-y-3 p-[18px]">
-              {filteredActivity.length === 0 && (
-                <p className="rounded-[18px] border border-dashed bg-muted/20 p-6 text-sm text-muted-foreground">
-                  No recent screenshots.
-                </p>
+            <CardContent className="grid gap-3 p-[18px] md:grid-cols-2">
+              {emps.isPending &&
+                !emps.data &&
+                Array.from({ length: 6 }).map((_, index) => (
+                  <Skeleton key={index} className="h-[168px] rounded-[18px]" />
+                ))}
+              {emps.isError && !emps.data && (
+                <div className="rounded-[18px] border border-destructive/30 bg-destructive/5 p-5 md:col-span-2">
+                  <p className="text-sm font-extrabold">Member activity couldn't be loaded</p>
+                  <Button
+                    className="mt-3"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => emps.refetch()}
+                  >
+                    Retry members
+                  </Button>
+                </div>
+              )}
+              {!emps.isPending && !emps.isError && filteredActivity.length === 0 && (
+                <div className="rounded-[18px] border border-dashed bg-muted/20 p-6 text-sm text-muted-foreground md:col-span-2">
+                  <p>
+                    {activityFilter === "all"
+                      ? "No members with registered devices."
+                      : `No ${activityFilter} members right now.`}
+                  </p>
+                  <Button
+                    className="mt-3"
+                    variant="outline"
+                    size="sm"
+                    disabled={emps.isFetching}
+                    onClick={() => emps.refetch()}
+                  >
+                    {emps.isFetching ? "Refreshing status..." : "Refresh status"}
+                  </Button>
+                </div>
               )}
               {filteredActivity.map(({ employee, shots: images }) => (
                 <div
-                  key={employee!.id}
-                  className="grid items-center gap-3 rounded-[18px] border border-border/80 bg-card/70 p-3 md:grid-cols-[190px_minmax(0,1fr)] 2xl:grid-cols-[220px_minmax(0,1fr)]"
+                  key={employee.id}
+                  className="overflow-hidden rounded-[18px] border border-border/80 bg-card/70"
                 >
                   <Link
                     to="/employees/$employeeId"
-                    params={{ employeeId: employee!.id }}
-                    className="flex min-w-0 items-center gap-2 rounded-md p-1 transition hover:bg-muted/60"
+                    params={{ employeeId: employee.id }}
+                    className="flex min-w-0 items-center gap-2 border-b border-border/70 px-3 py-2.5 transition hover:bg-muted/60"
                   >
                     <Avatar className="h-9 w-9">
-                      <AvatarFallback className="text-xs">
-                        {initials(employee!.name)}
-                      </AvatarFallback>
+                      <AvatarFallback className="text-xs">{initials(employee.name)}</AvatarFallback>
                     </Avatar>
-                    <span className="truncate text-[12.5px] font-bold">{employee!.name}</span>
-                    <StatusBadge status={employee!.status} className="ml-auto shrink-0" />
+                    <span className="truncate text-[12.5px] font-bold">{employee.name}</span>
+                    <StatusBadge status={employee.status} className="ml-auto shrink-0" />
                   </Link>
-                  <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
-                    {images.map((shot) => (
-                      <Link
-                        key={shot.id}
-                        to="/screenshots"
-                        className="group overflow-hidden rounded-[13px] border border-border bg-background transition hover:border-primary/40 hover:shadow-md"
-                      >
-                        <ProtectedImage
-                          src={shot.thumbnailUrl}
-                          alt={`Screenshot from ${employee!.name}`}
-                          className="aspect-video w-full object-cover transition-transform group-hover:scale-[1.03]"
-                        />
-                      </Link>
-                    ))}
+                  <div className="grid grid-cols-3 gap-2 p-3">
+                    {activityMediaLoading &&
+                      Array.from({ length: 3 }).map((_, index) => (
+                        <Skeleton key={index} className="aspect-video w-full rounded-[12px]" />
+                      ))}
+                    {!activityMediaLoading && shots.isError && !shots.data && (
+                      <div className="col-span-3 flex min-h-24 flex-col items-center justify-center rounded-[13px] border border-destructive/30 bg-destructive/5 px-4 text-center">
+                        <p className="text-xs text-muted-foreground">
+                          Screenshot previews are temporarily unavailable.
+                        </p>
+                        <Button
+                          className="mt-2"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => shots.refetch()}
+                        >
+                          Retry previews
+                        </Button>
+                      </div>
+                    )}
+                    {!activityMediaLoading &&
+                      !(shots.isError && !shots.data) &&
+                      images.length === 0 && (
+                        <p className="col-span-3 flex min-h-24 items-center justify-center rounded-[13px] border border-dashed bg-muted/20 px-4 text-center text-xs text-muted-foreground">
+                          No screenshots captured today.
+                        </p>
+                      )}
+                    {!activityMediaLoading &&
+                      images.map((shot) => (
+                        <Link
+                          key={shot.id}
+                          to="/screenshots"
+                          className="group relative overflow-hidden rounded-[12px] border border-border bg-background transition hover:border-primary/40 hover:shadow-md"
+                        >
+                          <ProtectedImage
+                            src={shot.thumbnailUrl}
+                            alt={`Screenshot from ${employee.name}`}
+                            className="aspect-video w-full object-cover transition-transform group-hover:scale-[1.04]"
+                          />
+                          <span className="absolute bottom-1 right-1 rounded-md bg-black/70 px-1.5 py-0.5 text-[9px] font-bold text-white">
+                            {new Date(shot.capturedAt).toLocaleTimeString([], {
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })}
+                          </span>
+                        </Link>
+                      ))}
                   </div>
                 </div>
               ))}
@@ -758,96 +979,119 @@ function DashboardPage() {
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-6 px-[18px] pb-[18px]">
-              <div>
-                <div className="flex items-start justify-between gap-3">
+              {loading ? (
+                <Skeleton className="h-[330px] rounded-[18px]" />
+              ) : trend.isError && !trend.data ? (
+                <div className="rounded-[18px] border border-destructive/30 bg-destructive/5 p-5">
+                  <p className="text-sm font-extrabold">Insights couldn't be loaded</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    This does not block live status or screenshots.
+                  </p>
+                  <Button
+                    className="mt-3"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => trend.refetch()}
+                  >
+                    Retry insights
+                  </Button>
+                </div>
+              ) : (
+                <>
                   <div>
-                    <p className="text-[13.5px] font-extrabold">Work time classification</p>
-                    <p className="font-mono-numeric mt-1 text-3xl font-extrabold">
-                      {Math.round((activeWork / classifiedTotal) * 100)}%
-                      <span className="ml-1 text-sm font-normal text-muted-foreground">
-                        active work
-                      </span>
-                    </p>
-                  </div>
-                  <span className="rounded-full border bg-muted/45 px-2.5 py-1 text-[11px] font-bold text-muted-foreground">
-                    This week
-                  </span>
-                </div>
-
-                <div className="mt-4 h-[176px] overflow-hidden rounded-[18px] border border-[#2563eb]/20 bg-[#0f3568] p-3 shadow-inner dark:border-[#2e58a4]/40 dark:bg-[#102a58]">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart
-                      data={classificationTrend}
-                      margin={{ top: 10, right: 8, bottom: 0, left: -18 }}
-                    >
-                      <defs>
-                        <linearGradient id="classification-trend" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="0%" stopColor="#60a5fa" stopOpacity={0.58} />
-                          <stop offset="100%" stopColor="#60a5fa" stopOpacity={0.08} />
-                        </linearGradient>
-                      </defs>
-                      <CartesianGrid stroke="#2f72c9" strokeOpacity={0.72} />
-                      <XAxis
-                        dataKey="day"
-                        axisLine={false}
-                        tickLine={false}
-                        tick={{ fill: "#bfdbfe", fontSize: 10, fontWeight: 700 }}
-                        dy={5}
-                      />
-                      <Tooltip
-                        cursor={{ stroke: "#bfdbfe", strokeOpacity: 0.4 }}
-                        contentStyle={{
-                          background: "#0b1635",
-                          border: "1px solid rgba(96,165,250,.35)",
-                          borderRadius: 12,
-                          color: "#fff",
-                          fontSize: 12,
-                        }}
-                        formatter={(value: number) => [`${Math.round(value)}%`, "Activity"]}
-                      />
-                      <Area
-                        type="monotone"
-                        dataKey="activity"
-                        stroke="#bfdbfe"
-                        strokeWidth={3}
-                        fill="url(#classification-trend)"
-                        dot={{ r: 3.5, fill: "#ffffff", stroke: "#60a5fa", strokeWidth: 2 }}
-                        activeDot={{ r: 5, fill: "#ffffff", stroke: "#e5185d", strokeWidth: 2 }}
-                        isAnimationActive={false}
-                      />
-                    </AreaChart>
-                  </ResponsiveContainer>
-                </div>
-
-                <div className="mt-3 grid gap-2 text-xs sm:grid-cols-3">
-                  {classified.map((seg) => (
-                    <div
-                      key={seg.label}
-                      className="rounded-xl border bg-muted/30 px-3 py-2"
-                      title={`${seg.label}: ${formatMinutes(seg.minutes)}`}
-                    >
-                      <span className="flex items-center gap-2 text-muted-foreground">
-                        <span className={`h-2 w-2 rounded-full ${seg.className}`} />
-                        {seg.label}
-                      </span>
-                      <span className="font-mono-numeric mt-1 block text-base font-extrabold">
-                        {Math.round((seg.minutes / classifiedTotal) * 100)}%
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-[13.5px] font-extrabold">Work time classification</p>
+                        <p className="font-mono-numeric mt-1 text-3xl font-extrabold">
+                          {Math.round((activeWork / classifiedTotal) * 100)}%
+                          <span className="ml-1 text-sm font-normal text-muted-foreground">
+                            active work
+                          </span>
+                        </p>
+                      </div>
+                      <span className="rounded-full border bg-muted/45 px-2.5 py-1 text-[11px] font-bold text-muted-foreground">
+                        This week
                       </span>
                     </div>
-                  ))}
-                </div>
-              </div>
 
-              <div className="grid grid-cols-2 gap-4 border-t pt-4">
-                <div>
-                  <p className="mb-2 text-xs font-medium text-muted-foreground">Top activity</p>
-                  <MemberList items={topMembers} tone="text-success" />
-                </div>
-                <div>
-                  <p className="mb-2 text-xs font-medium text-muted-foreground">Needs attention</p>
-                  <MemberList items={lowMembers} tone="text-warning-foreground" />
-                </div>
-              </div>
+                    <div className="mt-4 h-[176px] overflow-hidden rounded-[18px] border border-[#2563eb]/20 bg-[#0f3568] p-3 shadow-inner dark:border-[#2e58a4]/40 dark:bg-[#102a58]">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <AreaChart
+                          data={classificationTrend}
+                          margin={{ top: 10, right: 8, bottom: 0, left: -18 }}
+                        >
+                          <defs>
+                            <linearGradient id="classification-trend" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="0%" stopColor="#60a5fa" stopOpacity={0.58} />
+                              <stop offset="100%" stopColor="#60a5fa" stopOpacity={0.08} />
+                            </linearGradient>
+                          </defs>
+                          <CartesianGrid stroke="#2f72c9" strokeOpacity={0.72} />
+                          <XAxis
+                            dataKey="day"
+                            axisLine={false}
+                            tickLine={false}
+                            tick={{ fill: "#bfdbfe", fontSize: 10, fontWeight: 700 }}
+                            dy={5}
+                          />
+                          <Tooltip
+                            cursor={{ stroke: "#bfdbfe", strokeOpacity: 0.4 }}
+                            contentStyle={{
+                              background: "#0b1635",
+                              border: "1px solid rgba(96,165,250,.35)",
+                              borderRadius: 12,
+                              color: "#fff",
+                              fontSize: 12,
+                            }}
+                            formatter={(value: number) => [`${Math.round(value)}%`, "Activity"]}
+                          />
+                          <Area
+                            type="monotone"
+                            dataKey="activity"
+                            stroke="#bfdbfe"
+                            strokeWidth={3}
+                            fill="url(#classification-trend)"
+                            dot={{ r: 3.5, fill: "#ffffff", stroke: "#60a5fa", strokeWidth: 2 }}
+                            activeDot={{ r: 5, fill: "#ffffff", stroke: "#e5185d", strokeWidth: 2 }}
+                            isAnimationActive={false}
+                          />
+                        </AreaChart>
+                      </ResponsiveContainer>
+                    </div>
+
+                    <div className="mt-3 grid gap-2 text-xs sm:grid-cols-3">
+                      {classified.map((seg) => (
+                        <div
+                          key={seg.label}
+                          className="rounded-xl border bg-muted/30 px-3 py-2"
+                          title={`${seg.label}: ${formatMinutes(seg.minutes)}`}
+                        >
+                          <span className="flex items-center gap-2 text-muted-foreground">
+                            <span className={`h-2 w-2 rounded-full ${seg.className}`} />
+                            {seg.label}
+                          </span>
+                          <span className="font-mono-numeric mt-1 block text-base font-extrabold">
+                            {Math.round((seg.minutes / classifiedTotal) * 100)}%
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4 border-t pt-4">
+                    <div>
+                      <p className="mb-2 text-xs font-medium text-muted-foreground">Top activity</p>
+                      <MemberList items={topMembers} tone="text-success" />
+                    </div>
+                    <div>
+                      <p className="mb-2 text-xs font-medium text-muted-foreground">
+                        Needs attention
+                      </p>
+                      <MemberList items={lowMembers} tone="text-warning-foreground" />
+                    </div>
+                  </div>
+                </>
+              )}
             </CardContent>
           </Card>
 
@@ -856,15 +1100,38 @@ function DashboardPage() {
               <CardTitle className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                 Who's online
               </CardTitle>
-              {summary.data && (
+              {emps.data && (
                 <span className="text-xs text-muted-foreground">
-                  {summary.data.onlineEmployees} online / {summary.data.idleEmployees} idle /{" "}
-                  {summary.data.offlineEmployees} offline
+                  {online.length} online /{" "}
+                  {emps.data.filter((employee) => employee.status === "idle").length} idle /{" "}
+                  {emps.data.filter((employee) => employee.status === "on_break").length} on break /{" "}
+                  {emps.data.filter((employee) => employee.status === "off_shift").length} off shift
+                  / {emps.data.filter((employee) => employee.status === "offline").length} offline
                 </span>
               )}
             </CardHeader>
             <CardContent className="px-[18px] pb-[18px]">
-              {online.length === 0 ? (
+              {emps.isPending && !emps.data ? (
+                <div className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2">
+                  {Array.from({ length: 4 }).map((_, index) => (
+                    <Skeleton key={index} className="h-[66px] rounded-[14px]" />
+                  ))}
+                </div>
+              ) : emps.isError && !emps.data ? (
+                <div className="rounded-[14px] border border-destructive/30 bg-destructive/5 p-4">
+                  <p className="text-xs text-muted-foreground">
+                    Live employee status is temporarily unavailable.
+                  </p>
+                  <Button
+                    className="mt-2"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => emps.refetch()}
+                  >
+                    Retry live status
+                  </Button>
+                </div>
+              ) : online.length === 0 ? (
                 <p className="text-sm text-muted-foreground">No one is currently online.</p>
               ) : (
                 <div className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2">
@@ -1110,7 +1377,15 @@ function MemberList({
 
 function OnlineRow({ employee }: { employee: Employee }) {
   const isActive = employee.status === "active";
-  const statusLabel = isActive ? "Live now" : employee.status === "idle" ? "Idle online" : "Online";
+  const statusLabel = isActive
+    ? "Live now"
+    : employee.status === "idle"
+      ? "Idle online"
+      : employee.status === "on_break"
+        ? "On break"
+        : employee.status === "off_shift"
+          ? "Off shift"
+          : "Online";
   const statusClasses = isActive
     ? "bg-success/12 text-success ring-success/20"
     : "bg-warning/15 text-warning-foreground ring-warning/20";

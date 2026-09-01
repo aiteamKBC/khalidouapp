@@ -1,4 +1,4 @@
-from datetime import UTC, date, datetime, time
+from datetime import UTC, date, datetime, time, timedelta
 
 import pytest
 from sqlalchemy import create_engine, select
@@ -9,6 +9,7 @@ from app.database.base import Base
 from app.models import (
     ActivityEvent,
     AdminUser,
+    AuditLog,
     AttendanceCorrection,
     Company,
     Device,
@@ -20,7 +21,12 @@ from app.models import (
     WorkScheduleOverride,
     WorkSession,
 )
-from app.services.attendance import calculate_daily_attendance
+from app.services.attendance import (
+    calculate_daily_attendance,
+    current_idle_context,
+    serialize_daily_attendance,
+)
+from app.services.activity_timeline import build_workday_timeline
 from app.services.payroll import calculate_employee_metrics
 
 
@@ -149,7 +155,7 @@ def test_multiple_sessions_keep_raw_lateness_and_unapproved_overtime_separate(
         now=datetime(2026, 7, 22, tzinfo=UTC),
     )
 
-    assert len({item["session_id"] for item in timeline["intervals"]}) == 2
+    assert len({item["session_id"] for item in timeline["intervals"] if item["session_id"]}) == 2
     assert row.raw_late_seconds == 20 * 60
     assert row.deductible_late_seconds == 5 * 60
     assert row.normal_worked_seconds == 7 * 3600 + 10 * 60
@@ -157,10 +163,9 @@ def test_multiple_sessions_keep_raw_lateness_and_unapproved_overtime_separate(
     assert row.recorded_overtime_seconds == 3600
     assert row.approved_overtime_seconds == 0
     assert row.unapproved_overtime_seconds == 3600
+    assert {issue["code"] for issue in row.issues} >= {"overtime_pending"}
     assert row.total_payable_seconds == 7 * 3600 + 40 * 60
-    assert row.actual_sign_out_at.replace(tzinfo=UTC) == datetime(
-        2026, 7, 21, 18, 0, tzinfo=UTC
-    )
+    assert row.actual_sign_out_at.replace(tzinfo=UTC) == datetime(2026, 7, 21, 18, 0, tzinfo=UTC)
 
     overtime.status = "approved"
     overtime.approved_seconds = 3600
@@ -172,7 +177,641 @@ def test_multiple_sessions_keep_raw_lateness_and_unapproved_overtime_separate(
         now=datetime(2026, 7, 22, tzinfo=UTC),
     )
     assert approved.approved_overtime_seconds == 3600
+    assert not any(issue["code"].startswith("overtime_") for issue in approved.issues)
     assert approved.total_payable_seconds == 8 * 3600 + 40 * 60
+
+
+def test_rejected_overtime_is_not_reported_as_pending(attendance_context):
+    db, employee, device, _ = attendance_context
+    work_date = date(2026, 7, 21)
+    session = _session(
+        db,
+        employee,
+        device,
+        datetime(2026, 7, 21, 9, 0, tzinfo=UTC),
+        datetime(2026, 7, 21, 18, 0, tzinfo=UTC),
+    )
+    db.add(
+        OvertimeRecord(
+            company_id=employee.company_id,
+            employee_id=employee.id,
+            work_session_id=session.id,
+            work_date=work_date,
+            overtime_enabled_snapshot=True,
+            recorded_extra_seconds=3600,
+            approved_seconds=0,
+            status="rejected",
+        )
+    )
+    db.commit()
+
+    row, _ = calculate_daily_attendance(
+        db,
+        employee=employee,
+        work_date=work_date,
+        now=datetime(2026, 7, 22, tzinfo=UTC),
+    )
+
+    assert row.unapproved_overtime_seconds == 3600
+    assert {issue["code"] for issue in row.issues} >= {"overtime_rejected"}
+    assert not any(issue["code"] == "overtime_pending" for issue in row.issues)
+
+
+def test_unscheduled_work_is_pending_review_and_not_reported_as_rejected(
+    attendance_context,
+):
+    db, employee, device, _ = attendance_context
+    work_date = date(2026, 7, 25)  # Saturday is an off day in the fixture.
+    _session(
+        db,
+        employee,
+        device,
+        datetime(2026, 7, 25, 11, 45, tzinfo=UTC),
+        datetime(2026, 7, 25, 16, 35, tzinfo=UTC),
+    )
+    db.commit()
+
+    row, _ = calculate_daily_attendance(
+        db,
+        employee=employee,
+        work_date=work_date,
+        now=datetime(2026, 7, 26, tzinfo=UTC),
+    )
+
+    assert row.status == "worked_off_day"
+    assert row.recorded_overtime_seconds == 4 * 3600 + 50 * 60
+    assert row.approved_overtime_seconds == 0
+    assert row.unapproved_overtime_seconds == 4 * 3600 + 50 * 60
+    assert {issue["code"] for issue in row.issues} >= {"overtime_pending"}
+    assert not any(issue["code"] == "overtime_rejected" for issue in row.issues)
+
+
+def test_shift_override_keeps_explicit_weekly_off_work_as_overtime(attendance_context):
+    db, employee, device, admin = attendance_context
+    work_date = date(2026, 7, 25)  # Saturday is an explicit weekly off.
+    override = WorkScheduleOverride(
+        company_id=employee.company_id,
+        employee_id=employee.id,
+        scope="employee",
+        override_type="shift",
+        effective_date=work_date,
+        permanent=False,
+        shift_start=time(10, 0),
+        shift_end=time(18, 0),
+        reason="Coverage hours on weekly off",
+        created_by_admin_user_id=admin.id,
+    )
+    db.add(override)
+    _session(
+        db,
+        employee,
+        device,
+        datetime(2026, 7, 25, 11, 0, tzinfo=UTC),
+        datetime(2026, 7, 25, 14, 0, tzinfo=UTC),
+    )
+    db.commit()
+
+    row, timeline = calculate_daily_attendance(
+        db,
+        employee=employee,
+        work_date=work_date,
+        now=datetime(2026, 7, 26, tzinfo=UTC),
+    )
+
+    assert row.status == "worked_off_day"
+    assert row.scheduled_start_at is None
+    assert row.scheduled_end_at is None
+    assert row.normal_worked_seconds == 0
+    assert row.recorded_overtime_seconds == 3 * 3600
+    assert row.calculation_sources["schedule_override_id"] == str(override.id)
+    assert timeline["worked_seconds"] == 3 * 3600
+    assert all(
+        interval.get("work_category") == "extra"
+        for interval in timeline["intervals"]
+        if interval["type"] == "worked"
+    )
+
+
+def test_weekly_off_profile_change_does_not_reclassify_a_closed_past_day(
+    attendance_context,
+):
+    db, employee, device, admin = attendance_context
+    work_date = date(2026, 7, 24)  # Friday was the weekly off before the change.
+    profile = db.scalar(
+        select(EmployeeWorkProfile).where(EmployeeWorkProfile.employee_id == employee.id)
+    )
+    profile.working_days = [0, 1, 2, 3, 4, 5]
+    profile.weekly_off_days = [6]
+    db.add(
+        AuditLog(
+            company_id=employee.company_id,
+            admin_user_id=admin.id,
+            action="updated",
+            entity_type="employee_work_profile",
+            entity_id=employee.id,
+            entity_name=employee.email,
+            details={
+                "old": {
+                    "working_days": [0, 1, 2, 3, 5, 6],
+                    "weekly_off_days": [4],
+                },
+                "new": {
+                    "working_days": [0, 1, 2, 3, 4, 5],
+                    "weekly_off_days": [6],
+                },
+            },
+            created_at=datetime(2026, 7, 26, 10, 0, tzinfo=UTC),
+        )
+    )
+    _session(
+        db,
+        employee,
+        device,
+        datetime(2026, 7, 24, 11, 0, tzinfo=UTC),
+        datetime(2026, 7, 24, 14, 0, tzinfo=UTC),
+    )
+    db.commit()
+
+    row, _ = calculate_daily_attendance(
+        db,
+        employee=employee,
+        work_date=work_date,
+        now=datetime(2026, 7, 27, tzinfo=UTC),
+    )
+
+    assert row.status == "worked_off_day"
+    assert row.scheduled_start_at is None
+    assert row.normal_worked_seconds == 0
+    assert row.recorded_overtime_seconds == 3 * 60 * 60
+
+
+def test_attendance_starts_at_work_resumed_after_a_false_start(attendance_context):
+    db, employee, device, _ = attendance_context
+    work_date = date(2026, 7, 21)
+    session = _session(
+        db,
+        employee,
+        device,
+        datetime(2026, 7, 21, 9, 4, tzinfo=UTC),
+        datetime(2026, 7, 21, 12, 35, tzinfo=UTC),
+    )
+    db.add_all(
+        [
+            ActivityEvent(
+                company_id=employee.company_id,
+                employee_id=employee.id,
+                device_id=device.id,
+                session_id=session.id,
+                event_type="session_started",
+                event_timestamp=datetime(2026, 7, 21, 9, 4, tzinfo=UTC),
+                idempotency_key="false-start-session",
+            ),
+            ActivityEvent(
+                company_id=employee.company_id,
+                employee_id=employee.id,
+                device_id=device.id,
+                session_id=session.id,
+                event_type="idle_started",
+                event_timestamp=datetime(2026, 7, 21, 9, 14, tzinfo=UTC),
+                idempotency_key="false-start-idle",
+            ),
+            ActivityEvent(
+                company_id=employee.company_id,
+                employee_id=employee.id,
+                device_id=device.id,
+                session_id=session.id,
+                event_type="idle_ended",
+                event_timestamp=datetime(2026, 7, 21, 11, 17, tzinfo=UTC),
+                idempotency_key="false-start-resumed",
+            ),
+        ]
+    )
+    db.commit()
+
+    row, timeline = calculate_daily_attendance(
+        db,
+        employee=employee,
+        work_date=work_date,
+        now=datetime(2026, 7, 22, tzinfo=UTC),
+    )
+
+    assert timeline["first_started_at"] == datetime(2026, 7, 21, 11, 17, tzinfo=UTC).isoformat()
+    assert timeline["first_signal_at"] == datetime(2026, 7, 21, 9, 4, tzinfo=UTC).isoformat()
+    assert row.actual_first_activity_at.replace(tzinfo=UTC) == datetime(
+        2026, 7, 21, 11, 17, tzinfo=UTC
+    )
+    assert row.raw_late_seconds == 2 * 3600 + 17 * 60
+
+
+def test_stale_session_closed_days_later_does_not_fill_the_offline_gap(
+    attendance_context,
+):
+    db, employee, device, _ = attendance_context
+    stale = WorkSession(
+        company_id=employee.company_id,
+        employee_id=employee.id,
+        device_id=device.id,
+        started_at=datetime(2026, 7, 23, 8, 2, tzinfo=UTC),
+        ended_at=datetime(2026, 7, 25, 10, 6, tzinfo=UTC),
+        status="ended",
+        active_seconds=5 * 3600,
+        idle_seconds=0,
+    )
+    db.add(stale)
+    db.flush()
+    db.add_all(
+        [
+            ActivityEvent(
+                company_id=employee.company_id,
+                employee_id=employee.id,
+                device_id=device.id,
+                session_id=stale.id,
+                event_type="session_started",
+                event_timestamp=datetime(2026, 7, 23, 8, 2, tzinfo=UTC),
+                idempotency_key="stale-session-started",
+            ),
+            ActivityEvent(
+                company_id=employee.company_id,
+                employee_id=employee.id,
+                device_id=device.id,
+                session_id=stale.id,
+                event_type="heartbeat",
+                event_timestamp=datetime(2026, 7, 23, 13, 2, tzinfo=UTC),
+                idempotency_key="stale-session-last-heartbeat",
+            ),
+            ActivityEvent(
+                company_id=employee.company_id,
+                employee_id=employee.id,
+                device_id=device.id,
+                session_id=stale.id,
+                event_type="session_ended",
+                event_timestamp=datetime(2026, 7, 25, 10, 6, tzinfo=UTC),
+                idempotency_key="stale-session-ended",
+            ),
+        ]
+    )
+    _session(
+        db,
+        employee,
+        device,
+        datetime(2026, 7, 25, 10, 6, tzinfo=UTC),
+        datetime(2026, 7, 25, 11, 44, tzinfo=UTC),
+    )
+    db.commit()
+
+    timeline = build_workday_timeline(
+        db,
+        company_id=employee.company_id,
+        employee_id=employee.id,
+        timezone_name="UTC",
+        target_date=date(2026, 7, 25),
+        now=datetime(2026, 7, 25, 12, 0, tzinfo=UTC),
+    )
+
+    assert timeline["first_started_at"] == datetime(2026, 7, 25, 10, 6, tzinfo=UTC).isoformat()
+    assert timeline["worked_seconds"] == 98 * 60
+    assert len(timeline["intervals"]) == 1
+    assert timeline["intervals"][0]["started_at"] == timeline["first_started_at"]
+
+    historical_attendance, historical_timeline = calculate_daily_attendance(
+        db,
+        employee=employee,
+        work_date=date(2026, 7, 23),
+        now=datetime(2026, 7, 25, 12, 0, tzinfo=UTC),
+    )
+
+    assert (
+        historical_timeline["last_ended_at"] == datetime(2026, 7, 23, 13, 2, tzinfo=UTC).isoformat()
+    )
+    assert historical_attendance.actual_sign_out_at == datetime(2026, 7, 23, 13, 2, tzinfo=UTC)
+
+
+def test_agent_restart_gap_inside_one_session_is_not_counted_as_work(
+    attendance_context,
+):
+    db, employee, device, _ = attendance_context
+    session = WorkSession(
+        company_id=employee.company_id,
+        employee_id=employee.id,
+        device_id=device.id,
+        started_at=datetime(2026, 7, 21, 11, 9, tzinfo=UTC),
+        status="active",
+        active_seconds=8_463,
+        idle_seconds=0,
+    )
+    db.add(session)
+    db.flush()
+    db.add_all(
+        [
+            ActivityEvent(
+                company_id=employee.company_id,
+                employee_id=employee.id,
+                device_id=device.id,
+                session_id=session.id,
+                event_type="heartbeat",
+                event_timestamp=datetime(2026, 7, 21, 11, 45, tzinfo=UTC),
+                payload={"status": "active", "active_seconds": 2_160},
+                idempotency_key="restart-gap-before",
+            ),
+            ActivityEvent(
+                company_id=employee.company_id,
+                employee_id=employee.id,
+                device_id=device.id,
+                session_id=session.id,
+                event_type="heartbeat",
+                event_timestamp=datetime(2026, 7, 21, 13, 36, tzinfo=UTC),
+                payload={"status": "active", "active_seconds": 2_163},
+                idempotency_key="restart-gap-after",
+            ),
+            ActivityEvent(
+                company_id=employee.company_id,
+                employee_id=employee.id,
+                device_id=device.id,
+                session_id=session.id,
+                event_type="heartbeat",
+                event_timestamp=datetime(2026, 7, 21, 15, 21, tzinfo=UTC),
+                payload={"status": "active", "active_seconds": 8_463},
+                idempotency_key="restart-gap-current",
+            ),
+        ]
+    )
+    db.commit()
+
+    timeline = build_workday_timeline(
+        db,
+        company_id=employee.company_id,
+        employee_id=employee.id,
+        timezone_name="UTC",
+        target_date=date(2026, 7, 21),
+        now=datetime(2026, 7, 21, 15, 21, tzinfo=UTC),
+    )
+
+    assert timeline["worked_seconds"] == 8_463
+    assert timeline["untracked_seconds"] == 6_657
+    assert [item["type"] for item in timeline["intervals"]] == [
+        "worked",
+        "untracked",
+        "worked",
+    ]
+    assert (
+        timeline["intervals"][0]["ended_at"]
+        == datetime(2026, 7, 21, 11, 45, tzinfo=UTC).isoformat()
+    )
+    assert (
+        timeline["intervals"][1]["started_at"]
+        == datetime(2026, 7, 21, 11, 45, tzinfo=UTC).isoformat()
+    )
+    assert (
+        timeline["intervals"][1]["ended_at"]
+        == datetime(2026, 7, 21, 13, 35, 57, tzinfo=UTC).isoformat()
+    )
+    assert (
+        timeline["intervals"][2]["started_at"]
+        == datetime(2026, 7, 21, 13, 35, 57, tzinfo=UTC).isoformat()
+    )
+
+
+def test_network_only_heartbeat_gap_keeps_locally_observed_work(
+    attendance_context,
+):
+    db, employee, device, _ = attendance_context
+    session = _session(
+        db,
+        employee,
+        device,
+        datetime(2026, 7, 21, 9, 0, tzinfo=UTC),
+        datetime(2026, 7, 21, 12, 0, tzinfo=UTC),
+    )
+    db.add_all(
+        [
+            ActivityEvent(
+                company_id=employee.company_id,
+                employee_id=employee.id,
+                device_id=device.id,
+                session_id=session.id,
+                event_type="heartbeat",
+                event_timestamp=datetime(2026, 7, 21, 9, 30, tzinfo=UTC),
+                payload={"status": "active", "active_seconds": 1_800},
+                idempotency_key="network-gap-before",
+            ),
+            ActivityEvent(
+                company_id=employee.company_id,
+                employee_id=employee.id,
+                device_id=device.id,
+                session_id=session.id,
+                event_type="heartbeat",
+                event_timestamp=datetime(2026, 7, 21, 11, 30, tzinfo=UTC),
+                payload={"status": "active", "active_seconds": 9_000},
+                idempotency_key="network-gap-after",
+            ),
+            ActivityEvent(
+                company_id=employee.company_id,
+                employee_id=employee.id,
+                device_id=device.id,
+                session_id=session.id,
+                event_type="heartbeat",
+                event_timestamp=datetime(2026, 7, 21, 12, 0, tzinfo=UTC),
+                payload={"status": "active", "active_seconds": 10_800},
+                idempotency_key="network-gap-last",
+            ),
+        ]
+    )
+    db.commit()
+
+    timeline = build_workday_timeline(
+        db,
+        company_id=employee.company_id,
+        employee_id=employee.id,
+        timezone_name="UTC",
+        target_date=date(2026, 7, 21),
+        now=datetime(2026, 7, 21, 12, 0, tzinfo=UTC),
+    )
+
+    assert timeline["worked_seconds"] == 3 * 3600
+    assert len(timeline["intervals"]) == 1
+
+
+def test_active_reconnected_session_clears_an_earlier_sign_out(
+    attendance_context,
+):
+    db, employee, device, _ = attendance_context
+    work_date = date(2026, 7, 21)
+    _session(
+        db,
+        employee,
+        device,
+        datetime(2026, 7, 21, 9, 0, tzinfo=UTC),
+        datetime(2026, 7, 21, 10, 0, tzinfo=UTC),
+    )
+    active = WorkSession(
+        company_id=employee.company_id,
+        employee_id=employee.id,
+        device_id=device.id,
+        started_at=datetime(2026, 7, 21, 10, 5, tzinfo=UTC),
+        status="active",
+        active_seconds=55 * 60,
+        idle_seconds=0,
+    )
+    db.add(active)
+    db.flush()
+    db.add_all(
+        [
+            ActivityEvent(
+                company_id=employee.company_id,
+                employee_id=employee.id,
+                device_id=device.id,
+                session_id=active.id,
+                event_type="session_started",
+                event_timestamp=datetime(2026, 7, 21, 10, 5, tzinfo=UTC),
+                idempotency_key="reconnected-session-started",
+            ),
+            ActivityEvent(
+                company_id=employee.company_id,
+                employee_id=employee.id,
+                device_id=device.id,
+                session_id=active.id,
+                event_type="heartbeat",
+                event_timestamp=datetime(2026, 7, 21, 11, 0, tzinfo=UTC),
+                idempotency_key="reconnected-session-heartbeat",
+            ),
+        ]
+    )
+    db.commit()
+
+    row, timeline = calculate_daily_attendance(
+        db,
+        employee=employee,
+        work_date=work_date,
+        now=datetime(2026, 7, 21, 11, 0, tzinfo=UTC),
+    )
+
+    assert timeline["is_running"] is True
+    assert row.actual_sign_out_at is None
+    assert row.early_leave_seconds == 0
+    assert row.status == "present"
+    assert serialize_daily_attendance(row, timeline=timeline)["is_running"] is True
+    assert serialize_daily_attendance(row)["is_running"] is True
+
+
+def test_closed_session_does_not_show_early_leave_before_shift_ends(
+    attendance_context,
+):
+    db, employee, device, _ = attendance_context
+    work_date = date(2026, 7, 21)
+    _session(
+        db,
+        employee,
+        device,
+        datetime(2026, 7, 21, 9, 0, tzinfo=UTC),
+        datetime(2026, 7, 21, 14, 0, tzinfo=UTC),
+    )
+    db.commit()
+
+    row, timeline = calculate_daily_attendance(
+        db,
+        employee=employee,
+        work_date=work_date,
+        now=datetime(2026, 7, 21, 14, 30, tzinfo=UTC),
+    )
+
+    assert timeline["is_running"] is False
+    assert row.early_leave_seconds == 0
+    assert row.status == "present"
+
+
+def test_session_continued_from_previous_day_keeps_daily_boundary_and_real_start(
+    attendance_context,
+):
+    db, employee, device, _ = attendance_context
+    work_date = date(2026, 7, 21)
+    session_start = datetime(2026, 7, 20, 23, 30, tzinfo=UTC)
+    now = datetime(2026, 7, 21, 10, 0, tzinfo=UTC)
+    active = WorkSession(
+        company_id=employee.company_id,
+        employee_id=employee.id,
+        device_id=device.id,
+        started_at=session_start,
+        status="active",
+        active_seconds=10 * 3600 + 30 * 60,
+        idle_seconds=0,
+    )
+    db.add(active)
+    db.flush()
+    db.add_all(
+        [
+            ActivityEvent(
+                company_id=employee.company_id,
+                employee_id=employee.id,
+                device_id=device.id,
+                session_id=active.id,
+                event_type="session_started",
+                event_timestamp=session_start,
+                idempotency_key="continued-session-started",
+            ),
+            ActivityEvent(
+                company_id=employee.company_id,
+                employee_id=employee.id,
+                device_id=device.id,
+                session_id=active.id,
+                event_type="heartbeat",
+                event_timestamp=now,
+                idempotency_key="continued-session-heartbeat",
+            ),
+        ]
+    )
+    db.commit()
+
+    row, timeline = calculate_daily_attendance(
+        db,
+        employee=employee,
+        work_date=work_date,
+        now=now,
+    )
+
+    assert row.actual_first_activity_at.replace(tzinfo=UTC) == datetime(
+        2026, 7, 21, 0, 0, tzinfo=UTC
+    )
+    assert timeline["continued_from_previous_day"] is True
+    assert timeline["continued_session_started_at"] == session_start.isoformat()
+
+    live_payload = serialize_daily_attendance(row, timeline=timeline)
+    assert live_payload["continued_from_previous_day"] is True
+    assert live_payload["continued_session_started_at"] == session_start.isoformat()
+
+    cached_payload = serialize_daily_attendance(row)
+    assert cached_payload["continued_from_previous_day"] is True
+    assert cached_payload["continued_session_started_at"] == session_start.isoformat()
+
+
+def test_late_grace_only_counts_time_after_the_first_fifteen_minutes(
+    attendance_context,
+):
+    db, employee, device, _ = attendance_context
+    profile = db.scalar(
+        select(EmployeeWorkProfile).where(EmployeeWorkProfile.employee_id == employee.id)
+    )
+    profile.shift_start = time(10, 0)
+    profile.shift_end = time(18, 0)
+    profile.late_grace_minutes = 15
+    _session(
+        db,
+        employee,
+        device,
+        datetime(2026, 7, 21, 10, 16, tzinfo=UTC),
+        datetime(2026, 7, 21, 18, 0, tzinfo=UTC),
+    )
+    db.commit()
+
+    row, _ = calculate_daily_attendance(
+        db,
+        employee=employee,
+        work_date=date(2026, 7, 21),
+        now=datetime(2026, 7, 22, tzinfo=UTC),
+    )
+
+    assert row.raw_late_seconds == 16 * 60
+    assert row.deductible_late_seconds == 60
+    assert row.status == "late"
 
 
 def test_shift_end_stops_normal_pay_even_when_late_employee_has_not_completed_target(
@@ -217,6 +856,8 @@ def test_shift_end_stops_normal_pay_even_when_late_employee_has_not_completed_ta
     assert recorded.paid_break_seconds == 30 * 60
     assert recorded.recorded_overtime_seconds == 3600
     assert recorded.approved_overtime_seconds == 0
+    assert {issue["code"] for issue in recorded.issues} >= {"overtime_recorded_only"}
+    assert not any(issue["code"] == "overtime_pending" for issue in recorded.issues)
     assert recorded.total_payable_seconds == 7 * 3600
 
     overtime.status = "approved"
@@ -232,6 +873,38 @@ def test_shift_end_stops_normal_pay_even_when_late_employee_has_not_completed_ta
     assert approved.paid_break_seconds == 30 * 60
     assert approved.approved_overtime_seconds == 3600
     assert approved.total_payable_seconds == 8 * 3600
+
+
+def test_attendance_uses_session_timezone_instead_of_stale_employee_profile(
+    attendance_context,
+):
+    db, employee, device, _ = attendance_context
+    employee.timezone = "Africa/Cairo"
+    profile = db.scalar(
+        select(EmployeeWorkProfile).where(EmployeeWorkProfile.employee_id == employee.id)
+    )
+    profile.shift_start = time(10, 0)
+    profile.shift_end = time(18, 0)
+    session = _session(
+        db,
+        employee,
+        device,
+        datetime(2026, 7, 21, 9, 0, tzinfo=UTC),
+        datetime(2026, 7, 21, 17, 0, tzinfo=UTC),
+    )
+    session.timezone = "Europe/London"
+    db.commit()
+
+    row, _ = calculate_daily_attendance(
+        db,
+        employee=employee,
+        work_date=date(2026, 7, 21),
+        now=datetime(2026, 7, 22, tzinfo=UTC),
+    )
+
+    assert row.timezone == "Europe/London"
+    assert row.scheduled_start_at.replace(tzinfo=UTC) == datetime(2026, 7, 21, 9, 0, tzinfo=UTC)
+    assert row.scheduled_end_at.replace(tzinfo=UTC) == datetime(2026, 7, 21, 17, 0, tzinfo=UTC)
 
 
 def test_approved_leave_counts_real_work_as_overtime_and_other_time_as_leave(
@@ -277,6 +950,7 @@ def test_approved_leave_counts_real_work_as_overtime_and_other_time_as_leave(
     assert timeline["leave_seconds"] == 0
     assert timeline["intervals"][0]["work_category"] == "extra"
 
+
 def test_paid_break_is_not_idle_or_double_counted(attendance_context):
     db, employee, device, _ = attendance_context
     work_date = date(2026, 7, 21)
@@ -311,7 +985,7 @@ def test_paid_break_is_not_idle_or_double_counted(attendance_context):
     )
     db.commit()
 
-    row, _ = calculate_daily_attendance(
+    row, timeline = calculate_daily_attendance(
         db,
         employee=employee,
         work_date=work_date,
@@ -323,7 +997,298 @@ def test_paid_break_is_not_idle_or_double_counted(attendance_context):
     assert row.normal_worked_seconds == 7 * 3600 + 10 * 60
     assert row.total_payable_seconds == 7 * 3600 + 55 * 60
     assert row.calculation_sources["raw_idle_seconds"] == 20 * 60
+    assert row.calculation_sources["observed_idle_seconds"] == 20 * 60
     assert row.calculation_sources["paid_idle_grace_seconds"] == 15 * 60
+    serialized = serialize_daily_attendance(row, timeline=timeline)
+    assert serialized["recorded_idle_seconds"] == 20 * 60
+    assert serialized["paid_idle_grace_seconds"] == 15 * 60
+    assert serialized["idle_seconds"] == 5 * 60
+    assert timeline["break_seconds"] == 30 * 60
+    assert timeline["idle_seconds"] == 20 * 60
+    assert [item["type"] for item in timeline["intervals"]].count("break") == 1
+
+
+def test_approved_idle_request_moves_time_from_idle_to_manual(attendance_context):
+    db, employee, device, admin = attendance_context
+    work_date = date(2026, 7, 21)
+    session = _session(
+        db,
+        employee,
+        device,
+        datetime(2026, 7, 21, 9, 0, tzinfo=UTC),
+        datetime(2026, 7, 21, 17, 0, tzinfo=UTC),
+    )
+    idle_start = datetime(2026, 7, 21, 10, 0, tzinfo=UTC)
+    idle_end = datetime(2026, 7, 21, 10, 30, tzinfo=UTC)
+    db.add_all(
+        [
+            ActivityEvent(
+                company_id=employee.company_id,
+                employee_id=employee.id,
+                device_id=device.id,
+                session_id=session.id,
+                event_type="idle_started",
+                event_timestamp=idle_start,
+                idempotency_key="approved-idle-start",
+            ),
+            ActivityEvent(
+                company_id=employee.company_id,
+                employee_id=employee.id,
+                device_id=device.id,
+                session_id=session.id,
+                event_type="idle_ended",
+                event_timestamp=idle_end,
+                idempotency_key="approved-idle-end",
+            ),
+            TimeAdjustmentRequest(
+                company_id=employee.company_id,
+                employee_id=employee.id,
+                device_id=device.id,
+                work_session_id=session.id,
+                request_type="idle_time",
+                requested_date=work_date,
+                source_start_at=idle_start,
+                source_end_at=idle_end,
+                requested_seconds=20 * 60,
+                approved_seconds=15 * 60,
+                reason="Approved customer meeting during the detected idle period.",
+                status="approved",
+                reviewed_by_admin_user_id=admin.id,
+            ),
+        ]
+    )
+    db.commit()
+
+    row, timeline = calculate_daily_attendance(
+        db,
+        employee=employee,
+        work_date=work_date,
+        now=datetime(2026, 7, 22, tzinfo=UTC),
+    )
+
+    assert timeline["idle_seconds"] == 15 * 60
+    assert timeline["manual_seconds"] == 15 * 60
+    assert any(item["type"] == "manual" for item in timeline["intervals"])
+    assert row.approved_manual_seconds == 15 * 60
+    assert row.calculation_sources["raw_idle_seconds"] == 15 * 60
+    assert row.calculation_sources["approved_idle_seconds_removed"] == 15 * 60
+    assert row.idle_seconds == 0
+    assert row.total_payable_seconds == 8 * 3600
+
+
+def test_live_idle_during_scheduled_break_is_on_break(attendance_context):
+    db, employee, device, _ = attendance_context
+    session = WorkSession(
+        company_id=employee.company_id,
+        employee_id=employee.id,
+        device_id=device.id,
+        started_at=datetime(2026, 7, 21, 9, 0, tzinfo=UTC),
+        status="idle",
+        active_seconds=0,
+        idle_seconds=0,
+    )
+    db.add(session)
+    db.flush()
+    db.add_all(
+        [
+            ActivityEvent(
+                company_id=employee.company_id,
+                employee_id=employee.id,
+                device_id=device.id,
+                session_id=session.id,
+                event_type="idle_started",
+                event_timestamp=datetime(2026, 7, 21, 11, 40, tzinfo=UTC),
+                idempotency_key="live-break-idle-start",
+            ),
+            ActivityEvent(
+                company_id=employee.company_id,
+                employee_id=employee.id,
+                device_id=device.id,
+                session_id=session.id,
+                event_type="heartbeat",
+                event_timestamp=datetime(2026, 7, 21, 12, 9, tzinfo=UTC),
+                idempotency_key="live-break-heartbeat",
+            ),
+        ]
+    )
+    db.commit()
+
+    assert (
+        current_idle_context(
+            db,
+            employee=employee,
+            now=datetime(2026, 7, 21, 12, 10, tzinfo=UTC),
+        )
+        == "on_break"
+    )
+
+
+def test_work_during_part_of_a_scheduled_break_is_distinguished(
+    attendance_context,
+):
+    db, employee, device, _ = attendance_context
+    work_date = date(2026, 7, 21)
+    session = _session(
+        db,
+        employee,
+        device,
+        datetime(2026, 7, 21, 9, 0, tzinfo=UTC),
+        datetime(2026, 7, 21, 17, 0, tzinfo=UTC),
+    )
+    db.add_all(
+        [
+            ActivityEvent(
+                company_id=employee.company_id,
+                employee_id=employee.id,
+                device_id=device.id,
+                session_id=session.id,
+                event_type="idle_started",
+                event_timestamp=datetime(2026, 7, 21, 11, 50, tzinfo=UTC),
+                idempotency_key="partial-break-idle-start",
+            ),
+            ActivityEvent(
+                company_id=employee.company_id,
+                employee_id=employee.id,
+                device_id=device.id,
+                session_id=session.id,
+                event_type="idle_ended",
+                event_timestamp=datetime(2026, 7, 21, 12, 15, tzinfo=UTC),
+                idempotency_key="partial-break-idle-end",
+            ),
+        ]
+    )
+    db.commit()
+
+    row, timeline = calculate_daily_attendance(
+        db,
+        employee=employee,
+        work_date=work_date,
+        now=datetime(2026, 7, 22, tzinfo=UTC),
+    )
+
+    scheduled_break = next(item for item in timeline["intervals"] if item["type"] == "break")
+    worked_during_break = next(
+        item
+        for item in timeline["intervals"]
+        if item["type"] == "worked" and item.get("work_category") == "break_work"
+    )
+
+    assert scheduled_break["duration_seconds"] == 15 * 60
+    assert scheduled_break["source"] == "scheduled_break"
+    assert worked_during_break["duration_seconds"] == 15 * 60
+    assert worked_during_break["source"] == "activity"
+    assert worked_during_break["break_name"] == "Lunch"
+    assert worked_during_break["break_paid"] is True
+    assert timeline["break_seconds"] == 15 * 60
+    assert timeline["worked_seconds"] == 7 * 3600 + 35 * 60
+    assert row.normal_worked_seconds == 7 * 3600 + 20 * 60
+    assert row.paid_break_seconds == 30 * 60
+
+
+def test_idle_crossing_break_end_is_visible_immediately_after_break(
+    attendance_context,
+):
+    db, employee, device, _ = attendance_context
+    work_date = date(2026, 7, 21)
+    session = _session(
+        db,
+        employee,
+        device,
+        datetime(2026, 7, 21, 9, 0, tzinfo=UTC),
+        datetime(2026, 7, 21, 13, 0, tzinfo=UTC),
+    )
+    db.add_all(
+        [
+            ActivityEvent(
+                company_id=employee.company_id,
+                employee_id=employee.id,
+                device_id=device.id,
+                session_id=session.id,
+                event_type="idle_started",
+                event_timestamp=datetime(2026, 7, 21, 12, 3, tzinfo=UTC),
+                idempotency_key="break-end-idle-start",
+            ),
+            ActivityEvent(
+                company_id=employee.company_id,
+                employee_id=employee.id,
+                device_id=device.id,
+                session_id=session.id,
+                event_type="heartbeat",
+                event_timestamp=datetime(2026, 7, 21, 12, 3, tzinfo=UTC),
+                payload={
+                    "status": "idle",
+                    "active_seconds": 10_000,
+                    "idle_seconds": 0,
+                },
+                idempotency_key="break-end-idle-heartbeat-start",
+            ),
+            ActivityEvent(
+                company_id=employee.company_id,
+                employee_id=employee.id,
+                device_id=device.id,
+                session_id=session.id,
+                event_type="idle_ended",
+                event_timestamp=datetime(2026, 7, 21, 12, 36, tzinfo=UTC),
+                idempotency_key="break-end-idle-end",
+            ),
+            ActivityEvent(
+                company_id=employee.company_id,
+                employee_id=employee.id,
+                device_id=device.id,
+                session_id=session.id,
+                event_type="heartbeat",
+                event_timestamp=datetime(2026, 7, 21, 12, 36, tzinfo=UTC),
+                payload={
+                    "status": "active",
+                    "active_seconds": 10_000,
+                    "idle_seconds": 33 * 60,
+                },
+                idempotency_key="break-end-idle-heartbeat-end",
+            ),
+        ]
+    )
+    db.commit()
+
+    _, timeline = calculate_daily_attendance(
+        db,
+        employee=employee,
+        work_date=work_date,
+        now=datetime(2026, 7, 22, tzinfo=UTC),
+    )
+
+    crossing = [
+        (
+            item["type"],
+            item.get("work_category"),
+            item["started_at"],
+            item["ended_at"],
+        )
+        for item in timeline["intervals"]
+        if item["started_at"] < datetime(2026, 7, 21, 12, 36, tzinfo=UTC).isoformat()
+        and (item["ended_at"] or "") > datetime(2026, 7, 21, 12, 0, tzinfo=UTC).isoformat()
+    ]
+
+    assert crossing == [
+        (
+            "worked",
+            "break_work",
+            datetime(2026, 7, 21, 12, 0, tzinfo=UTC).isoformat(),
+            datetime(2026, 7, 21, 12, 3, tzinfo=UTC).isoformat(),
+        ),
+        (
+            "break",
+            None,
+            datetime(2026, 7, 21, 12, 3, tzinfo=UTC).isoformat(),
+            datetime(2026, 7, 21, 12, 30, tzinfo=UTC).isoformat(),
+        ),
+        (
+            "idle",
+            None,
+            datetime(2026, 7, 21, 12, 30, tzinfo=UTC).isoformat(),
+            datetime(2026, 7, 21, 12, 36, tzinfo=UTC).isoformat(),
+        ),
+    ]
+    assert timeline["idle_seconds"] == 6 * 60
 
 
 def test_idle_outside_shift_is_not_deductible_or_paid_idle(attendance_context):
@@ -360,7 +1325,7 @@ def test_idle_outside_shift_is_not_deductible_or_paid_idle(attendance_context):
     )
     db.commit()
 
-    row, _ = calculate_daily_attendance(
+    row, timeline = calculate_daily_attendance(
         db,
         employee=employee,
         work_date=work_date,
@@ -370,6 +1335,135 @@ def test_idle_outside_shift_is_not_deductible_or_paid_idle(attendance_context):
     assert row.idle_seconds == 0
     assert row.calculation_sources["raw_idle_seconds"] == 0
     assert row.recorded_overtime_seconds == 3 * 3600
+    assert row.raw_late_seconds == 0
+    assert row.early_leave_seconds == 0
+    assert timeline["idle_seconds"] == 0
+    assert timeline["worked_seconds"] == 3 * 3600
+    assert all(item["work_category"] == "extra" for item in timeline["intervals"])
+
+
+def test_only_outside_shift_idle_does_not_create_attendance_or_timeline(
+    attendance_context,
+):
+    db, employee, device, _ = attendance_context
+    work_date = date(2026, 7, 21)
+    session = _session(
+        db,
+        employee,
+        device,
+        datetime(2026, 7, 21, 0, 0, tzinfo=UTC),
+        datetime(2026, 7, 21, 0, 16, tzinfo=UTC),
+    )
+    db.add_all(
+        [
+            ActivityEvent(
+                company_id=employee.company_id,
+                employee_id=employee.id,
+                device_id=device.id,
+                session_id=session.id,
+                event_type="idle_started",
+                event_timestamp=datetime(2026, 7, 21, 0, 0, tzinfo=UTC),
+                idempotency_key="before-shift-idle-start",
+            ),
+            ActivityEvent(
+                company_id=employee.company_id,
+                employee_id=employee.id,
+                device_id=device.id,
+                session_id=session.id,
+                event_type="idle_ended",
+                event_timestamp=datetime(2026, 7, 21, 0, 16, tzinfo=UTC),
+                idempotency_key="before-shift-idle-end",
+            ),
+        ]
+    )
+    db.commit()
+
+    row, timeline = calculate_daily_attendance(
+        db,
+        employee=employee,
+        work_date=work_date,
+        now=datetime(2026, 7, 22, tzinfo=UTC),
+    )
+
+    assert row.status == "absent"
+    assert row.idle_seconds == 0
+    assert row.raw_late_seconds == 0
+    assert row.early_leave_seconds == 0
+    assert row.recorded_overtime_seconds == 0
+    assert row.actual_first_activity_at is None
+    assert row.actual_last_activity_at is None
+    assert timeline["worked_seconds"] == 0
+    assert timeline["idle_seconds"] == 0
+    assert timeline["intervals"] == []
+
+
+def test_idle_only_device_liveness_does_not_create_shift_attendance(
+    attendance_context,
+):
+    db, employee, device, _ = attendance_context
+    work_date = date(2026, 7, 21)
+    started_at = datetime(2026, 7, 21, 10, 0, tzinfo=UTC)
+    ended_at = started_at + timedelta(hours=1)
+    session = _session(db, employee, device, started_at, ended_at)
+    db.add(
+        ActivityEvent(
+            company_id=employee.company_id,
+            employee_id=employee.id,
+            device_id=device.id,
+            session_id=session.id,
+            event_type="idle_started",
+            event_timestamp=started_at,
+            idempotency_key="inside-shift-idle-only",
+        )
+    )
+    db.commit()
+
+    row, timeline = calculate_daily_attendance(
+        db,
+        employee=employee,
+        work_date=work_date,
+        now=datetime(2026, 7, 22, tzinfo=UTC),
+    )
+
+    assert row.status == "absent"
+    assert row.actual_first_activity_at is None
+    assert row.actual_last_activity_at is None
+    assert timeline["worked_seconds"] == 0
+    assert timeline["idle_seconds"] == 60 * 60
+
+
+def test_only_outside_shift_work_is_overtime_not_shift_attendance(
+    attendance_context,
+):
+    db, employee, device, _ = attendance_context
+    work_date = date(2026, 7, 21)
+    _session(
+        db,
+        employee,
+        device,
+        datetime(2026, 7, 21, 0, 0, tzinfo=UTC),
+        datetime(2026, 7, 21, 0, 16, tzinfo=UTC),
+    )
+    db.commit()
+
+    row, timeline = calculate_daily_attendance(
+        db,
+        employee=employee,
+        work_date=work_date,
+        now=datetime(2026, 7, 22, tzinfo=UTC),
+    )
+
+    assert row.status == "absent"
+    assert row.idle_seconds == 0
+    assert row.raw_late_seconds == 0
+    assert row.early_leave_seconds == 0
+    assert row.recorded_overtime_seconds == 16 * 60
+    assert row.pre_shift_extra_seconds == 16 * 60
+    assert row.post_shift_extra_seconds == 0
+    assert timeline["worked_seconds"] == 16 * 60
+    assert timeline["idle_seconds"] == 0
+    assert len(timeline["intervals"]) == 1
+    assert timeline["intervals"][0]["work_category"] == "extra"
 
 
 def test_manual_pause_does_not_consume_paid_idle_grace(attendance_context):
@@ -458,12 +1552,8 @@ def test_attendance_correction_preserves_raw_evidence_and_adjusts_payable_time(
         2026, 7, 21, 17, 0, tzinfo=UTC
     )
     assert row.total_payable_seconds == 8 * 3600
-    assert row.calculation_sources["raw_first_activity_at"].startswith(
-        "2026-07-21T09:30:00"
-    )
-    assert row.calculation_sources["raw_last_activity_at"].startswith(
-        "2026-07-21T16:30:00"
-    )
+    assert row.calculation_sources["raw_first_activity_at"].startswith("2026-07-21T09:30:00")
+    assert row.calculation_sources["raw_last_activity_at"].startswith("2026-07-21T16:30:00")
     assert row.calculation_sources["attendance_adjustment_seconds"] == 3600
 
 
@@ -531,6 +1621,8 @@ def test_early_leave_is_stored_and_approved_permission_excuses_it(attendance_con
         now=datetime(2026, 7, 22, tzinfo=UTC),
     )
     assert unexcused.early_leave_seconds == 3600
+    assert unexcused.status == "left_early"
+    assert {issue["code"] for issue in unexcused.issues} >= {"early_leave"}
 
     db.add(
         TimeAdjustmentRequest(
@@ -559,10 +1651,32 @@ def test_early_leave_is_stored_and_approved_permission_excuses_it(attendance_con
     )
     assert excused.early_leave_seconds == 0
     assert excused.total_payable_seconds == 8 * 3600
-    assert (
-        excused.calculation_sources["approved_early_leave_seconds"]
-        == 3600
+    assert excused.calculation_sources["approved_early_leave_seconds"] == 3600
+
+
+def test_late_arrival_and_early_leave_preserve_both_status_signals(attendance_context):
+    db, employee, device, _ = attendance_context
+    work_date = date(2026, 7, 21)
+    _session(
+        db,
+        employee,
+        device,
+        datetime(2026, 7, 21, 10, 0, tzinfo=UTC),
+        datetime(2026, 7, 21, 15, 0, tzinfo=UTC),
     )
+    db.commit()
+
+    row, _ = calculate_daily_attendance(
+        db,
+        employee=employee,
+        work_date=work_date,
+        now=datetime(2026, 7, 22, tzinfo=UTC),
+    )
+
+    assert row.status == "late"
+    assert row.deductible_late_seconds == 45 * 60
+    assert row.early_leave_seconds == 2 * 60 * 60
+    assert {issue["code"] for issue in row.issues} >= {"late", "early_leave"}
 
 
 def test_locked_windows_time_is_not_worked_or_idle(attendance_context):

@@ -122,7 +122,8 @@ import { listEmployees } from "@/api/employees";
 import { useAuth } from "@/lib/auth";
 import type { Task } from "@/types";
 import { toast } from "sonner";
-import { formatMinutes } from "@/lib/format";
+import { formatDateTime, formatMinutes } from "@/lib/format";
+import { projectWorkflowProgress } from "@/lib/project-progress";
 
 export const Route = createFileRoute("/_app/projects")({
   validateSearch: (search: Record<string, unknown>): { taskId?: string } =>
@@ -157,19 +158,28 @@ function ProjectsPage() {
   const navigate = useNavigate();
   const scope = scopedTeamIds();
   const queryClient = useQueryClient();
-  const teams = useQuery({ queryKey: ["teams", scope], queryFn: () => listTeams(scope) });
+  const teams = useQuery({
+    queryKey: ["teams", scope],
+    queryFn: ({ signal }) => listTeams(scope, signal),
+    staleTime: 10 * 60_000,
+    gcTime: 30 * 60_000,
+  });
   const projects = useQuery({
     queryKey: ["projects", scope],
-    queryFn: () => listProjects(scope),
+    queryFn: ({ signal }) => listProjects(scope, signal),
   });
   const tasks = useQuery({
     queryKey: ["tasks", scope],
-    queryFn: () => listTasks({ scopedTeamIds: scope }),
+    queryFn: ({ signal }) => listTasks({ scopedTeamIds: scope }, signal),
   });
-  const taskMetrics = useQuery({ queryKey: ["task-metrics"], queryFn: () => listTaskMetrics() });
+  const taskMetrics = useQuery({
+    queryKey: ["task-metrics", scope],
+    queryFn: ({ signal }) =>
+      listTaskMetrics(scope?.length === 1 ? scope[0] : undefined, signal),
+  });
   const employees = useQuery({
     queryKey: ["employees", scope],
-    queryFn: () => listEmployees(scope),
+    queryFn: ({ signal }) => listEmployees(scope, signal),
   });
 
   const [q, setQ] = useState("");
@@ -443,6 +453,13 @@ function ProjectsPage() {
     setTaskOpen(true);
   }
 
+  function openProjectInKanban(selectedProjectId: string) {
+    setProjectId(selectedProjectId);
+    setAssigneeId("all");
+    setQ("");
+    setView("kanban");
+  }
+
   function submitProject(event: FormEvent) {
     event.preventDefault();
     createProjectMutation.mutate({
@@ -459,7 +476,7 @@ function ProjectsPage() {
       Boolean(user.employeeId && newTaskAssigneeId === user.employeeId) &&
       ["completed", "rejected", "cancelled"].includes(newTaskStage)
     ) {
-      toast.error("A General admin or another team manager must close your task.");
+      toast.error("A company admin must close your own task.");
       return;
     }
     createTaskMutation.mutate({
@@ -507,7 +524,7 @@ function ProjectsPage() {
       return;
     }
     if (isTeamManagerOwnTask(task) && ["completed", "rejected", "cancelled"].includes(stage)) {
-      toast.error("A General admin or another team manager must review your task.");
+      toast.error("Submit the task for review; a company admin must decide it.");
       return;
     }
     const notes = await stageChangeNotes(task, stage);
@@ -544,7 +561,7 @@ function ProjectsPage() {
       isTeamManagerOwnTask(source) &&
       ["completed", "rejected", "cancelled"].includes(targetStage)
     ) {
-      toast.error("A General admin or another team manager must review your task.");
+      toast.error("Submit the task for review; a company admin must decide it.");
       return;
     }
     const targetPosition = targetTask
@@ -1149,12 +1166,7 @@ function ProjectsPage() {
                         [task.assigneeEmployeeId, ...task.collaboratorEmployeeIds].filter(Boolean),
                       ),
                     );
-                    const completedCount = projectTasks.filter(
-                      (task) => task.stage === "completed",
-                    ).length;
-                    const progress = projectTasks.length
-                      ? Math.round((completedCount / projectTasks.length) * 100)
-                      : 0;
+                    const progress = projectWorkflowProgress(projectTasks);
                     const tracked = (taskMetrics.data ?? [])
                       .filter((metric) => projectTasks.some((task) => task.id === metric.taskId))
                       .reduce((sum, metric) => sum + metric.activeMinutes + metric.idleMinutes, 0);
@@ -1162,15 +1174,32 @@ function ProjectsPage() {
                       b.updatedAt.localeCompare(a.updatedAt),
                     )[0]?.updatedAt;
                     return (
-                      <TableRow key={project.id} className="cursor-pointer">
+                      <TableRow
+                        key={project.id}
+                        role="link"
+                        tabIndex={0}
+                        aria-label={`Open ${project.name} tasks in Kanban`}
+                        className="cursor-pointer transition hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                        onClick={() => openProjectInKanban(project.id)}
+                        onKeyDown={(event) => {
+                          if (event.target !== event.currentTarget) return;
+                          if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault();
+                            openProjectInKanban(project.id);
+                          }
+                        }}
+                      >
                         <TableCell>
-                          <Link
-                            to="/projects/$projectId"
-                            params={{ projectId: project.id }}
-                            className="font-medium hover:text-primary"
+                          <button
+                            type="button"
+                            className="font-medium hover:text-primary hover:underline"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              openProjectInKanban(project.id);
+                            }}
                           >
                             {project.name}
-                          </Link>
+                          </button>
                           <div className="text-xs text-muted-foreground line-clamp-1">
                             {project.description || "-"}
                           </div>
@@ -1217,7 +1246,10 @@ function ProjectsPage() {
                         <TableCell>
                           {lastActive ? new Date(lastActive).toLocaleDateString() : "—"}
                         </TableCell>
-                        <TableCell className="text-right">
+                        <TableCell
+                          className="text-right"
+                          onClick={(event) => event.stopPropagation()}
+                        >
                           <div className="flex justify-end gap-1">
                             <Button
                               variant="ghost"
@@ -1318,8 +1350,8 @@ function ProjectsPage() {
                       </div>
                       {isSelfReview ? (
                         <p className="max-w-sm text-xs font-medium text-amber-900 dark:text-amber-200">
-                          You cannot review your own task. A General admin or another team manager
-                          must decide this request.
+                          Your own Team Leader task activates automatically. Refresh notifications
+                          if this is an older pending request.
                         </p>
                       ) : (
                         <>
@@ -1368,8 +1400,8 @@ function ProjectsPage() {
                       </div>
                       {isSelfReview ? (
                         <p className="max-w-sm text-xs font-medium text-sky-900 dark:text-sky-200">
-                          You cannot review your own work. A General admin or another team manager
-                          must approve or return it.
+                          A company admin reviews completion of your own task. You only review tasks
+                          submitted by members of your team.
                         </p>
                       ) : (
                         <>
@@ -2130,20 +2162,35 @@ function TaskTimeline({
     value.setDate(start.getDate() + index);
     return value;
   });
-  const rows = [
-    ...employees
-      .filter((employee) =>
-        tasks.some(
-          (task) =>
-            task.assigneeEmployeeId === employee.id ||
-            task.collaboratorEmployeeIds.includes(employee.id),
-        ),
-      )
-      .map((employee) => ({ id: employee.id, name: employee.name })),
-    ...(tasks.some((task) => !task.assigneeEmployeeId)
-      ? [{ id: "unassigned", name: "Unassigned" }]
-      : []),
-  ];
+  const monthGroups = days.reduce<Array<{ key: string; label: string; dayCount: number }>>(
+    (groups, day) => {
+      const key = `${day.getFullYear()}-${day.getMonth()}`;
+      const current = groups[groups.length - 1];
+      if (current?.key === key) {
+        current.dayCount += 1;
+      } else {
+        groups.push({
+          key,
+          label: day.toLocaleDateString([], { month: "long", year: "numeric" }),
+          dayCount: 1,
+        });
+      }
+      return groups;
+    },
+    [],
+  );
+  const unassignedTasks = tasks.filter(
+    (task) => task.status === "active" && !task.assigneeEmployeeId,
+  );
+  const rows = employees
+    .filter((employee) =>
+      tasks.some(
+        (task) =>
+          task.assigneeEmployeeId === employee.id ||
+          task.collaboratorEmployeeIds.includes(employee.id),
+      ),
+    )
+    .map((employee) => ({ id: employee.id, name: employee.name }));
   const dayIndex = (value: string) => {
     const date = new Date(`${value.slice(0, 10)}T00:00:00`);
     return Math.floor((date.getTime() - start.getTime()) / 86400000);
@@ -2153,7 +2200,14 @@ function TaskTimeline({
       <div className="flex items-center justify-between border-b p-3">
         <div>
           <p className="font-medium">Schedule by assignee</p>
-          <p className="text-xs text-muted-foreground">Start dates and deadlines at a glance</p>
+          <p className="text-xs text-muted-foreground">
+            {days[0].toLocaleDateString([], { month: "short", day: "numeric" })} –{" "}
+            {days[days.length - 1].toLocaleDateString([], {
+              month: "short",
+              day: "numeric",
+              year: "numeric",
+            })}
+          </p>
         </div>
         <Select value={String(weeks)} onValueChange={(value) => setWeeks(Number(value))}>
           <SelectTrigger className="w-32">
@@ -2166,8 +2220,61 @@ function TaskTimeline({
           </SelectContent>
         </Select>
       </div>
+      {unassignedTasks.length > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-amber-300/60 bg-amber-500/10 px-4 py-3">
+          <div className="flex items-center gap-3">
+            <span className="grid h-9 w-9 place-items-center rounded-full bg-amber-500/15 text-amber-700 dark:text-amber-300">
+              <UserPlus className="h-4 w-4" />
+            </span>
+            <div>
+              <p className="text-sm font-semibold">
+                {unassignedTasks.length} task{unassignedTasks.length === 1 ? "" : "s"} need
+                assignment
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Assign an employee before placing the task on an assignee schedule.
+              </p>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {unassignedTasks.slice(0, 3).map((task) => (
+              <Button
+                key={task.id}
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => onOpenTask(task.id)}
+              >
+                Assign {task.name}
+              </Button>
+            ))}
+            {unassignedTasks.length > 3 && (
+              <span className="self-center text-xs font-medium text-muted-foreground">
+                +{unassignedTasks.length - 3} more
+              </span>
+            )}
+          </div>
+        </div>
+      )}
       <div className="overflow-x-auto">
         <div style={{ minWidth: `${220 + days.length * 58}px` }}>
+          <div
+            className="grid border-b bg-muted/50"
+            style={{ gridTemplateColumns: `220px repeat(${days.length}, 58px)` }}
+          >
+            <div className="sticky left-0 z-20 border-r bg-muted/70 px-3 py-2 text-xs font-semibold">
+              Calendar
+            </div>
+            {monthGroups.map((month) => (
+              <div
+                key={month.key}
+                className="border-r px-3 py-2 text-center text-xs font-semibold"
+                style={{ gridColumn: `span ${month.dayCount}` }}
+              >
+                {month.label}
+              </div>
+            ))}
+          </div>
           <div
             className="grid border-b bg-muted/30"
             style={{ gridTemplateColumns: `220px repeat(${days.length}, 58px)` }}
@@ -2189,11 +2296,9 @@ function TaskTimeline({
             })}
           </div>
           {rows.map((row) => {
-            const rowTasks = tasks.filter((task) =>
-              row.id === "unassigned"
-                ? !task.assigneeEmployeeId
-                : task.assigneeEmployeeId === row.id ||
-                  task.collaboratorEmployeeIds.includes(row.id),
+            const rowTasks = tasks.filter(
+              (task) =>
+                task.assigneeEmployeeId === row.id || task.collaboratorEmployeeIds.includes(row.id),
             );
             return (
               <div
@@ -2283,7 +2388,7 @@ function TaskWorkspacePanel({
   const [label, setLabel] = useState("");
   const workspace = useQuery({
     queryKey: ["task-workspace", task.id],
-    queryFn: () => getTaskWorkspace(task.id),
+    queryFn: ({ signal }) => getTaskWorkspace(task.id, signal),
   });
   const refresh = () => queryClient.invalidateQueries({ queryKey: ["task-workspace", task.id] });
   const commentMutation = useMutation({
@@ -2518,7 +2623,7 @@ function TaskWorkspacePanel({
                 <div className="mb-1 flex items-center justify-between gap-2">
                   <span className="text-xs font-semibold">{item.authorName}</span>
                   <span className="text-[10px] text-muted-foreground">
-                    {new Date(item.createdAt).toLocaleString()}
+                    {formatDateTime(item.createdAt)}
                   </span>
                 </div>
                 <p className="whitespace-pre-wrap text-sm">{item.body}</p>
@@ -2550,7 +2655,7 @@ function TaskWorkspacePanel({
                   <span className="font-medium">{item.actorName}</span> {item.action}
                 </p>
                 <p className="text-[10px] text-muted-foreground">
-                  {new Date(item.createdAt).toLocaleString()}
+                  {formatDateTime(item.createdAt)}
                 </p>
               </div>
             ))}

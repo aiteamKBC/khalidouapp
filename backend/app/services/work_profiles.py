@@ -1,14 +1,24 @@
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from uuid import UUID
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import ApiError
-from app.models import Employee, EmployeeWorkProfile, WorkScheduleOverride, WorkSession
+from app.models import (
+    Employee,
+    EmployeeWorkProfile,
+    LeaveRequest,
+    TimeAdjustmentRequest,
+    WorkScheduleOverride,
+    WorkSession,
+)
 
 STANDARD_MONTH_DAYS = 30
+DEFAULT_WORKING_DAYS = [0, 1, 2, 3, 5, 6]
+DEFAULT_WEEKLY_OFF_DAYS = [4]
 
 REQUIRED_PROFILE_FIELDS = (
     "shift_start",
@@ -32,15 +42,15 @@ DEFAULT_BREAK_RULES = [
         "name": "Lunch",
         "minutes": 30,
         "paid": False,
-        "start_time": "12:30",
-        "end_time": "13:00",
+        "start_time": "13:00",
+        "end_time": "13:30",
     },
     {
         "name": "Short break",
         "minutes": 15,
         "paid": False,
-        "start_time": "15:30",
-        "end_time": "15:45",
+        "start_time": "16:30",
+        "end_time": "16:45",
     },
 ]
 DEFAULT_DEDUCTION_POLICY = {
@@ -87,15 +97,15 @@ def get_or_create_work_profile(db: Session, employee: Employee) -> EmployeeWorkP
             shift_start=(
                 company_shift_default.shift_start
                 if company_shift_default and company_shift_default.shift_start
-                else datetime.strptime("09:00", "%H:%M").time()
+                else datetime.strptime("10:00", "%H:%M").time()
             ),
             shift_end=(
                 company_shift_default.shift_end
                 if company_shift_default and company_shift_default.shift_end
-                else datetime.strptime("17:00", "%H:%M").time()
+                else datetime.strptime("18:00", "%H:%M").time()
             ),
-            working_days=[0, 1, 2, 3, 4],
-            weekly_off_days=[5, 6],
+            working_days=DEFAULT_WORKING_DAYS.copy(),
+            weekly_off_days=DEFAULT_WEEKLY_OFF_DAYS.copy(),
             required_daily_minutes=(
                 company_shift_default.shift_end.hour * 60
                 + company_shift_default.shift_end.minute
@@ -126,6 +136,83 @@ def get_or_create_work_profile(db: Session, employee: Employee) -> EmployeeWorkP
     return profile
 
 
+def _latest_day_override(
+    db: Session,
+    employee: Employee,
+    work_date: date,
+    override_types: list[str],
+) -> WorkScheduleOverride | None:
+    common = (
+        WorkScheduleOverride.company_id == employee.company_id,
+        WorkScheduleOverride.permanent.is_(False),
+        WorkScheduleOverride.effective_date == work_date,
+        WorkScheduleOverride.override_type.in_(override_types),
+    )
+    employee_override = db.scalar(
+        select(WorkScheduleOverride)
+        .where(*common, WorkScheduleOverride.employee_id == employee.id)
+        .order_by(WorkScheduleOverride.created_at.desc())
+    )
+    if employee_override:
+        return employee_override
+    return db.scalar(
+        select(WorkScheduleOverride)
+        .where(*common, WorkScheduleOverride.employee_id.is_(None))
+        .order_by(WorkScheduleOverride.created_at.desc())
+    )
+
+
+def resolve_day_policy(
+    db: Session,
+    employee: Employee,
+    profile: EmployeeWorkProfile,
+    work_date: date,
+) -> dict:
+    shift_override = _latest_day_override(db, employee, work_date, ["shift", "both"])
+    break_override = _latest_day_override(db, employee, work_date, ["breaks", "both"])
+    approved_leave = db.scalar(
+        select(LeaveRequest.id).where(
+            LeaveRequest.company_id == employee.company_id,
+            LeaveRequest.employee_id == employee.id,
+            LeaveRequest.status == "approved",
+            LeaveRequest.start_date <= work_date,
+            LeaveRequest.end_date >= work_date,
+        )
+    )
+    approved_early_leave = db.scalar(
+        select(TimeAdjustmentRequest)
+        .where(
+            TimeAdjustmentRequest.company_id == employee.company_id,
+            TimeAdjustmentRequest.employee_id == employee.id,
+            TimeAdjustmentRequest.request_type == "early_leave",
+            TimeAdjustmentRequest.requested_date == work_date,
+            TimeAdjustmentRequest.status == "approved",
+        )
+        .order_by(TimeAdjustmentRequest.created_at.desc())
+    )
+    return {
+        "shift_start": (
+            shift_override.shift_start
+            if shift_override and shift_override.shift_start
+            else profile.shift_start
+        ),
+        "shift_end": (
+            shift_override.shift_end
+            if shift_override and shift_override.shift_end
+            else profile.shift_end
+        ),
+        "break_rules": (
+            break_override.break_rules
+            if break_override and break_override.break_rules is not None
+            else profile.break_rules or []
+        ),
+        "approved_leave": bool(approved_leave),
+        "approved_early_leave_from": (
+            approved_early_leave.source_start_at if approved_early_leave else None
+        ),
+    }
+
+
 def _missing_fields(profile: EmployeeWorkProfile) -> list[str]:
     missing = []
     for field in REQUIRED_PROFILE_FIELDS:
@@ -150,6 +237,48 @@ def profile_completeness(profile: EmployeeWorkProfile) -> dict:
     }
 
 
+def validate_break_rules(
+    break_rules: list[dict] | None,
+    *,
+    shift_start: time | None = None,
+    shift_end: time | None = None,
+) -> None:
+    parsed_breaks: list[tuple[time, time]] = []
+    for rule in break_rules or []:
+        start = rule.get("start_time")
+        end = rule.get("end_time")
+        if not start or not end:
+            raise ApiError("INVALID_BREAK", "Every break needs a start and end time.", 400)
+        try:
+            start_time = (
+                start
+                if isinstance(start, time)
+                else datetime.strptime(str(start)[:5], "%H:%M").time()
+            )
+            end_time = (
+                end if isinstance(end, time) else datetime.strptime(str(end)[:5], "%H:%M").time()
+            )
+        except (TypeError, ValueError) as exc:
+            raise ApiError("INVALID_BREAK", "Break time must use HH:MM.", 400) from exc
+        if end_time <= start_time:
+            raise ApiError("INVALID_BREAK", "Break end must be later than break start.", 400)
+        actual_minutes = (
+            end_time.hour * 60 + end_time.minute - start_time.hour * 60 - start_time.minute
+        )
+        if int(rule.get("minutes", 0)) != actual_minutes:
+            raise ApiError(
+                "INVALID_BREAK_DURATION", "Break duration must match its start and end time.", 400
+            )
+        if shift_start and shift_end and not (shift_start <= start_time < end_time <= shift_end):
+            raise ApiError(
+                "BREAK_OUTSIDE_SHIFT", "Every break must be fully inside the employee shift.", 400
+            )
+        parsed_breaks.append((start_time, end_time))
+    parsed_breaks.sort(key=lambda item: item[0])
+    if any(previous[1] > current[0] for previous, current in zip(parsed_breaks, parsed_breaks[1:])):
+        raise ApiError("OVERLAPPING_BREAKS", "Break periods cannot overlap.", 400)
+
+
 def validate_work_profile(profile: EmployeeWorkProfile) -> None:
     for values_name in ("working_days", "weekly_off_days"):
         values = getattr(profile, values_name)
@@ -167,35 +296,11 @@ def validate_work_profile(profile: EmployeeWorkProfile) -> None:
         raise ApiError(
             "INVALID_SHIFT", "Shift end must be later than shift start on the same day.", 400
         )
-    parsed_breaks = []
-    for rule in profile.break_rules or []:
-        start = rule.get("start_time")
-        end = rule.get("end_time")
-        if not start or not end:
-            raise ApiError("INVALID_BREAK", "Every break needs a start and end time.", 400)
-        start_time = datetime.strptime(str(start)[:5], "%H:%M").time()
-        end_time = datetime.strptime(str(end)[:5], "%H:%M").time()
-        if end_time <= start_time:
-            raise ApiError("INVALID_BREAK", "Break end must be later than break start.", 400)
-        actual_minutes = (
-            end_time.hour * 60 + end_time.minute - start_time.hour * 60 - start_time.minute
-        )
-        if int(rule.get("minutes", 0)) != actual_minutes:
-            raise ApiError(
-                "INVALID_BREAK_DURATION", "Break duration must match its start and end time.", 400
-            )
-        if (
-            profile.shift_start
-            and profile.shift_end
-            and not (profile.shift_start <= start_time < end_time <= profile.shift_end)
-        ):
-            raise ApiError(
-                "BREAK_OUTSIDE_SHIFT", "Every break must be fully inside the employee shift.", 400
-            )
-        parsed_breaks.append((start_time, end_time))
-    parsed_breaks.sort(key=lambda item: item[0])
-    if any(previous[1] > current[0] for previous, current in zip(parsed_breaks, parsed_breaks[1:])):
-        raise ApiError("OVERLAPPING_BREAKS", "Break periods cannot overlap.", 400)
+    validate_break_rules(
+        profile.break_rules,
+        shift_start=profile.shift_start,
+        shift_end=profile.shift_end,
+    )
 
 
 def schedule_minutes(profile: EmployeeWorkProfile) -> dict[str, int]:
@@ -288,12 +393,44 @@ def payroll_preview(
     active_seconds = sum(
         max(0, session.active_seconds - session.deducted_seconds) for session in sessions
     )
-    idle_seconds = sum(session.idle_seconds for session in sessions)
+    from app.services.attendance import accountable_idle_seconds, calculate_daily_attendance
+
+    try:
+        employee_zone = ZoneInfo(employee.timezone or "UTC")
+    except (ZoneInfoNotFoundError, ValueError):
+        employee_zone = ZoneInfo("UTC")
+    now = datetime.now(UTC)
+    session_days = {
+        (
+            session.started_at.replace(tzinfo=UTC)
+            if session.started_at.tzinfo is None
+            else session.started_at
+        )
+        .astimezone(employee_zone)
+        .date()
+        for session in sessions
+    }
+    attendance_rows = [
+        calculate_daily_attendance(
+            db,
+            employee=employee,
+            work_date=work_date,
+            now=now,
+            persist=False,
+        )[0]
+        for work_date in sorted(session_days)
+    ]
+    if attendance_rows:
+        active_seconds = sum(
+            row.normal_worked_seconds + row.recorded_overtime_seconds
+            for row in attendance_rows
+        )
+    idle_seconds = sum(accountable_idle_seconds(row) for row in attendance_rows)
     required_daily = profile.required_daily_minutes or 480
     break_minutes = schedule_minutes(profile)
     if break_minutes["payable"]:
         required_daily = break_minutes["payable"]
-    working_days = profile.working_days or [0, 1, 2, 3, 4]
+    working_days = profile.working_days or DEFAULT_WORKING_DAYS
     days = (end_date - start_date).days + 1
     required_days = sum(
         1
@@ -303,7 +440,11 @@ def payroll_preview(
     required_seconds = required_days * required_daily * 60
     paid_break_seconds = required_days * break_minutes["paid_break"] * 60
     unpaid_break_seconds = required_days * break_minutes["unpaid_break"] * 60
-    overtime_seconds = max(0, active_seconds - required_seconds) if profile.overtime_enabled else 0
+    overtime_seconds = (
+        sum(row.recorded_overtime_seconds for row in attendance_rows)
+        if profile.overtime_enabled
+        else 0
+    )
     configured_salary = Decimal(profile.salary_amount or 0)
     # Keep salary/hourly conversion on a fixed 30-day payroll month. Calendar
     # months and custom payroll ranges must not change the monthly salary basis.

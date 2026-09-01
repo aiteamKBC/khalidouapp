@@ -9,7 +9,10 @@ type BackendEmployee = {
   employee_code: string;
   job_title?: string | null;
   timezone: string;
+  start_date?: string | null;
+  annual_leave_days?: number;
   status: string;
+  onboarding_status?: string;
   invitation?: {
     id: string;
     status: "pending" | "accepted" | "expired" | "revoked";
@@ -37,14 +40,21 @@ type BackendEmployeeStatus = {
     task_id?: string | null;
   } | null;
   session_start_time?: string | null;
-  worked_today_seconds: number;
-  active_seconds: number;
-  idle_seconds: number;
+  worked_today_seconds?: number;
+  active_seconds?: number;
+  idle_seconds?: number;
   last_heartbeat?: string | null;
   last_screenshot?: string | null;
   device?: BackendDevice | null;
   team_ids?: string[];
   team_role?: TeamMemberRole | null;
+  input_integrity?: {
+    state: "unknown" | "clear" | "review" | "suspicious" | "unavailable";
+    confidence: number;
+    injected_events: number;
+    suspicious_reports: number;
+    observed_at?: string | null;
+  };
   managers?: Array<{
     id: string;
     name: string;
@@ -64,6 +74,7 @@ export type EmployeeCreateInput = {
 export type EmployeeUpdateInput = Partial<EmployeeCreateInput> & {
   status?: "active" | "inactive";
   weeklyCapacityMinutes?: number;
+  startDate?: string;
 };
 
 export type WorkProfile = {
@@ -167,14 +178,30 @@ export type PayrollPreview = {
 };
 
 function normalizeEmployeeStatus(value?: string | null): EmployeeStatus {
-  if (value === "idle" || value === "locked" || value === "sleeping" || value === "offline")
+  if (
+    value === "idle" ||
+    value === "locked" ||
+    value === "sleeping" ||
+    value === "on_break" ||
+    value === "break_work" ||
+    value === "off_shift" ||
+    value === "offline"
+  )
     return value;
   return "active";
 }
 
 function normalizeEmployeeAccountStatus(value?: string | null): EmployeeAccountStatus {
-  if (value === "invited" || value === "inactive") return value;
+  if (value === "invited" || value === "app_pending" || value === "inactive") return value;
   return "active";
+}
+
+export function employeeDisplayStatus(employee: Employee): EmployeeStatus | EmployeeAccountStatus {
+  return employee.accountStatus === "active" ? employee.status : employee.accountStatus;
+}
+
+export function employeeIsOnline(employee: Employee): boolean {
+  return employee.status !== "offline" && employee.status !== "off_shift";
 }
 
 function mapEmployee(status: BackendEmployeeStatus, teamIds: string[]): Employee {
@@ -186,6 +213,8 @@ function mapEmployee(status: BackendEmployeeStatus, teamIds: string[]): Employee
     email: employee.email,
     jobTitle: normalizeAiAcronym(employee.job_title ?? ""),
     timezone: employee.timezone || "Africa/Cairo",
+    startDate: employee.start_date ?? undefined,
+    annualLeaveDays: employee.annual_leave_days ?? 21,
     teamRole: status.team_role ?? undefined,
     teamIds,
     status: normalizeEmployeeStatus(status.activity_status),
@@ -200,8 +229,17 @@ function mapEmployee(status: BackendEmployeeStatus, teamIds: string[]): Employee
     currentTeamId: status.current_session?.team_id ?? undefined,
     currentProjectId: status.current_session?.project_id ?? undefined,
     currentTaskId: status.current_session?.task_id ?? undefined,
+    inputIntegrity: status.input_integrity
+      ? {
+          state: status.input_integrity.state,
+          confidence: status.input_integrity.confidence,
+          injectedEvents: status.input_integrity.injected_events,
+          suspiciousReports: status.input_integrity.suspicious_reports,
+          observedAt: status.input_integrity.observed_at ?? undefined,
+        }
+      : undefined,
     active: employee.status === "active",
-    accountStatus: normalizeEmployeeAccountStatus(employee.status),
+    accountStatus: normalizeEmployeeAccountStatus(employee.onboarding_status ?? employee.status),
     invitation: employee.invitation
       ? {
           id: employee.invitation.id,
@@ -245,17 +283,34 @@ function mapWorkProfile(row: BackendWorkProfile): WorkProfile {
   };
 }
 
-export async function listEmployees(scopedTeamIds?: string[]): Promise<Employee[]> {
+export async function listEmployees(
+  scopedTeamIds?: string[],
+  signal?: AbortSignal,
+): Promise<Employee[]> {
   const teamId = scopedTeamIds?.length === 1 ? scopedTeamIds[0] : undefined;
   const statuses = await apiFetch<BackendEmployeeStatus[]>(
     withQuery("/employees-overview", { team_id: teamId }),
+    { signal },
   );
   return statuses.map((status) => mapEmployee(status, status.team_ids ?? []));
 }
 
-export async function getEmployee(id: string): Promise<Employee | undefined> {
+export async function listMonitoringEmployees(
+  scopedTeamIds?: string[],
+  signal?: AbortSignal,
+): Promise<Employee[]> {
+  const teamId = scopedTeamIds?.length === 1 ? scopedTeamIds[0] : undefined;
+  const statuses = await apiFetch<BackendEmployeeStatus[]>(
+    withQuery("/employees-monitoring", { team_id: teamId }),
+    { signal },
+  );
+  return statuses.map((status) => mapEmployee(status, status.team_ids ?? []));
+}
+
+export async function getEmployee(id: string, signal?: AbortSignal): Promise<Employee | undefined> {
   const statuses = await apiFetch<BackendEmployeeStatus[]>(
     withQuery("/employees-overview", { employee_id: id }),
+    { signal },
   );
   const status = statuses[0];
   return status ? mapEmployee(status, status.team_ids ?? []) : undefined;
@@ -288,6 +343,7 @@ export async function updateEmployee(
       employee_code: input.employeeCode,
       job_title: input.jobTitle === undefined ? undefined : normalizeAiAcronym(input.jobTitle),
       timezone: input.timezone,
+      start_date: input.startDate,
       status: input.status,
       weekly_capacity_minutes: input.weeklyCapacityMinutes,
     }),
@@ -306,8 +362,15 @@ export async function updateEmployeePassword(
   return (await getEmployee(employeeId))!;
 }
 
-export async function getWorkProfile(employeeId: string): Promise<WorkProfile> {
-  return mapWorkProfile(await apiFetch(`/employees/${employeeId}/work-profile`));
+export async function getWorkProfile(
+  employeeId: string,
+  signal?: AbortSignal,
+): Promise<WorkProfile> {
+  return mapWorkProfile(
+    await apiFetch(`/employees/${employeeId}/work-profile`, {
+      signal,
+    }),
+  );
 }
 
 export type EmployeeBreakRules = {
@@ -332,6 +395,7 @@ export type EmployeeBreakRules = {
 
 export async function listEmployeeBreakRules(
   scopedTeamIds?: string[],
+  signal?: AbortSignal,
 ): Promise<EmployeeBreakRules[]> {
   const teamId = scopedTeamIds?.length === 1 ? scopedTeamIds[0] : undefined;
   const rows = await apiFetch<
@@ -354,7 +418,7 @@ export async function listEmployeeBreakRules(
       salary_currency?: WorkProfile["salaryCurrency"];
       salary_type?: WorkProfile["salaryType"];
     }>
-  >(withQuery("/employees/break-rules", { team_id: teamId }));
+  >(withQuery("/employees/break-rules", { team_id: teamId }), { signal });
   return rows.map((row) => ({
     employeeId: row.employee_id,
     name: row.name,
@@ -428,6 +492,7 @@ export type EmployeeChangeHistory = {
 
 export async function getEmployeeChangeHistory(
   employeeId: string,
+  signal?: AbortSignal,
 ): Promise<EmployeeChangeHistory[]> {
   const rows = await apiFetch<
     Array<{
@@ -439,7 +504,7 @@ export async function getEmployeeChangeHistory(
       actor_name: string;
       details: Record<string, unknown>;
     }>
-  >(`/employees/${employeeId}/change-history`);
+  >(`/employees/${employeeId}/change-history`, { signal });
   return rows.map((row) => ({
     id: row.id,
     at: row.at,

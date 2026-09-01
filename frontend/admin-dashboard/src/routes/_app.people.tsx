@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FocusEvent, type FormEvent } from "react";
 import {
   Plus,
   Search,
@@ -50,6 +50,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { PasswordInput } from "@/components/ui/password-input";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -107,6 +108,7 @@ import {
 } from "@/api/access";
 import { useAuth } from "@/lib/auth";
 import { permissions } from "@/lib/permissions";
+import { formatDateTime, formatTimeOfDay } from "@/lib/format";
 import { toast } from "sonner";
 import type {
   DataScope,
@@ -140,7 +142,7 @@ type PersonKind = "employee" | "team_owner" | "general_admin" | "hr";
 type EditableRole = PersonRole;
 type TypeFilter = "all" | "employees" | "admins";
 type RoleFilter = "all" | "employee" | Role;
-type StatusFilter = "all" | "active" | "invited" | "archived";
+type StatusFilter = "all" | "active" | "app_pending" | "invited" | "archived";
 type AccessPreset = EditableRole | "custom";
 
 const WORK_DAYS = [
@@ -152,13 +154,20 @@ const WORK_DAYS = [
   { value: 5, label: "Sat" },
   { value: 6, label: "Sun" },
 ];
+const DEFAULT_WORKING_DAYS = [0, 1, 2, 3, 5, 6];
+const DEFAULT_WEEKLY_OFF_DAYS = [4];
+
+function todayIsoDate() {
+  const now = new Date();
+  const local = new Date(now.getTime() - now.getTimezoneOffset() * 60_000);
+  return local.toISOString().slice(0, 10);
+}
 
 function shiftMinutes(start: string, end: string) {
   const [startHour = 0, startMinute = 0] = start.split(":").map(Number);
   const [endHour = 0, endMinute = 0] = end.split(":").map(Number);
   const startTotal = startHour * 60 + startMinute;
-  let endTotal = endHour * 60 + endMinute;
-  if (endTotal <= startTotal) endTotal += 24 * 60;
+  const endTotal = endHour * 60 + endMinute;
   return endTotal - startTotal;
 }
 
@@ -166,6 +175,13 @@ function addClockMinutes(value: string, minutes: number) {
   const [hour = 0, minute = 0] = value.split(":").map(Number);
   const total = (hour * 60 + minute + minutes) % (24 * 60);
   return `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
+}
+
+function selectZeroOnFocus(event: FocusEvent<HTMLInputElement>) {
+  if (event.currentTarget.value && Number(event.currentTarget.value) === 0) {
+    const input = event.currentTarget;
+    requestAnimationFrame(() => input.select());
+  }
 }
 
 type PersonRow = {
@@ -176,7 +192,9 @@ type PersonRow = {
   roleLabel: string;
   detail: string;
   managerNames: string[];
-  status: "active" | "invited" | "expired" | "archived";
+  /** Teams this person is the manager (team owner) of. */
+  managedTeamNames: string[];
+  status: "active" | "app_pending" | "invited" | "expired" | "archived";
   teamIds: string[];
   dashboardEmployeeId?: string;
   isCurrentUser: boolean;
@@ -219,6 +237,7 @@ function employeeDirectoryStatus(employee: Employee): PersonRow["status"] {
   if (employee.accountStatus === "invited") {
     return employee.invitation?.status === "expired" ? "expired" : "invited";
   }
+  if (employee.accountStatus === "app_pending") return "app_pending";
   return employee.active ? "active" : "archived";
 }
 
@@ -278,29 +297,31 @@ function PeopleDirectory({
   embedded?: boolean;
   archiveOnly?: boolean;
 }) {
-  const { can, user: currentUser, refreshUser } = useAuth();
+  const { can, user: currentUser, refreshUser, scopedTeamIds } = useAuth();
+  const scope = scopedTeamIds();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
 
   const users = useQuery({
-    queryKey: ["users"],
-    queryFn: listUsers,
+    queryKey: ["users", scope],
+    queryFn: ({ signal }) => listUsers(signal),
     enabled: can(permissions.accessManage),
     staleTime: 60_000,
     placeholderData: (previous) => previous,
   });
   const employees = useQuery({
-    queryKey: ["employees"],
-    queryFn: () => listEmployees(),
+    queryKey: ["employees", scope],
+    queryFn: ({ signal }) => listEmployees(scope, signal),
     staleTime: 20_000,
-    refetchInterval: 15_000,
+    refetchInterval: 30_000,
     refetchIntervalInBackground: false,
     placeholderData: (previous) => previous,
   });
   const teams = useQuery({
-    queryKey: ["teams"],
-    queryFn: () => listTeams(),
-    staleTime: 60_000,
+    queryKey: ["teams", scope],
+    queryFn: ({ signal }) => listTeams(scope, signal),
+    staleTime: 10 * 60_000,
+    gcTime: 30 * 60_000,
     placeholderData: (previous) => previous,
   });
   const [q, setQ] = useState("");
@@ -326,12 +347,12 @@ function PeopleDirectory({
   const [editTeamIds, setEditTeamIds] = useState<string[]>([]);
   const [editEmployeeTeamIds, setEditEmployeeTeamIds] = useState<string[]>([]);
   const [editEmployeeTeamRole, setEditEmployeeTeamRole] = useState<TeamMemberRole>("member");
-  const [editTrackAsEmployee, setEditTrackAsEmployee] = useState(false);
   const [editPermissions, setEditPermissions] = useState<string[]>([]);
-  const [editShiftStart, setEditShiftStart] = useState("09:00");
-  const [editShiftEnd, setEditShiftEnd] = useState("17:00");
+  const [editShiftStart, setEditShiftStart] = useState("10:00");
+  const [editShiftEnd, setEditShiftEnd] = useState("18:00");
+  const [editStartDate, setEditStartDate] = useState("");
   const [editTimezone, setEditTimezone] = useState("Africa/Cairo");
-  const [editWorkingDays, setEditWorkingDays] = useState<number[]>([0, 1, 2, 3, 4]);
+  const [editWorkingDays, setEditWorkingDays] = useState<number[]>(DEFAULT_WORKING_DAYS);
   const [editLateGraceMinutes, setEditLateGraceMinutes] = useState(15);
   const [editOvertimeEnabled, setEditOvertimeEnabled] = useState(false);
   const [editOvertimeMultiplier, setEditOvertimeMultiplier] = useState(1);
@@ -356,21 +377,22 @@ function PeopleDirectory({
   const canChangeRoles =
     canManageAccess && Boolean(editPersonRow) && !editingSelf && !isProtectedOwner;
   const allowedRoleOptions = useMemo(() => assignableRoles(currentUser), [currentUser]);
-  const managedEmployeeId =
-    editPersonRow?.dashboardEmployeeId ?? editPersonRow?.employee?.id ?? null;
+  const managedEmployeeId = isProtectedOwner
+    ? null
+    : (editPersonRow?.dashboardEmployeeId ?? editPersonRow?.employee?.id ?? null);
 
   const managedWorkProfile = useQuery({
-    queryKey: ["employee-work-profile", managedEmployeeId],
-    queryFn: () => getWorkProfile(managedEmployeeId!),
+    queryKey: ["employee-work-profile", scope, managedEmployeeId],
+    queryFn: ({ signal }) => getWorkProfile(managedEmployeeId!, signal),
     enabled: Boolean(managedEmployeeId && editPersonRow),
   });
 
   useEffect(() => {
     const profile = managedWorkProfile.data;
     if (!profile) return;
-    setEditShiftStart(profile.shiftStart ?? "09:00");
-    setEditShiftEnd(profile.shiftEnd ?? "17:00");
-    setEditWorkingDays(profile.workingDays ?? [0, 1, 2, 3, 4]);
+    setEditShiftStart(profile.shiftStart ?? "10:00");
+    setEditShiftEnd(profile.shiftEnd ?? "18:00");
+    setEditWorkingDays(profile.workingDays ?? DEFAULT_WORKING_DAYS);
     setEditLateGraceMinutes(profile.lateGraceMinutes ?? 15);
     setEditOvertimeEnabled(profile.overtimeEnabled);
     setEditOvertimeMultiplier(profile.overtimeRateMultiplier ?? 1);
@@ -383,14 +405,14 @@ function PeopleDirectory({
 
   const catalog = useQuery({
     queryKey: ["permission-catalog"],
-    queryFn: getPermissionCatalog,
+    queryFn: ({ signal }) => getPermissionCatalog(signal),
     enabled: Boolean(editUser) && canManageAccess,
     staleTime: 5 * 60_000,
   });
 
   const access = useQuery({
     queryKey: ["admin-access", editUser?.id],
-    queryFn: () => getAdminAccess(editUser!.id),
+    queryFn: ({ signal }) => getAdminAccess(editUser!.id, signal),
     enabled: Boolean(editUser) && can(permissions.accessManage),
   });
 
@@ -401,7 +423,6 @@ function PeopleDirectory({
     setEditPermissionMode(access.data.permissionMode);
     setEditDataScope(access.data.dataScope);
     setEditTeamIds(access.data.teamLeadTeamIds);
-    setEditTrackAsEmployee(access.data.trackAsEmployee);
     setEditPermissions(access.data.effectivePermissions);
   }, [access.data]);
 
@@ -413,6 +434,20 @@ function PeopleDirectory({
     () => (teams.data ?? []).filter((team) => team.status === "active"),
     [teams.data],
   );
+  // Teams each admin account manages, so the directory shows accountability the
+  // same way the team page does instead of only listing a person's own managers.
+  const managedTeamNamesByUserId = useMemo(() => {
+    const managed = new Map<string, string[]>();
+    for (const team of teams.data ?? []) {
+      if (team.status !== "active") continue;
+      for (const ownerId of team.ownerIds) {
+        const names = managed.get(ownerId);
+        if (names) names.push(team.name);
+        else managed.set(ownerId, [team.name]);
+      }
+    }
+    return managed;
+  }, [teams.data]);
   const directoryLoading =
     employees.isPending || teams.isPending || (canManageAccess && users.isPending);
   const directoryRefreshing =
@@ -428,6 +463,7 @@ function PeopleDirectory({
       roleLabel: "Employee",
       detail: employee.jobTitle || "—",
       managerNames: employee.managers.map((manager) => manager.name),
+      managedTeamNames: [],
       status: employeeDirectoryStatus(employee),
       teamIds: employee.teamIds,
       dashboardEmployeeId: employee.id,
@@ -468,12 +504,19 @@ function PeopleDirectory({
                 .filter(Boolean)
                 .join(", ") || "—"),
         managerNames: linkedEmployee?.managers.map((manager) => manager.name) ?? [],
-        status: user.status === "active" ? "active" : "archived",
+        managedTeamNames: managedTeamNamesByUserId.get(user.id) ?? [],
+        status:
+          linkedEmployee && user.status !== "archived" && user.status !== "inactive"
+            ? employeeDirectoryStatus(linkedEmployee)
+            : user.status === "active"
+              ? "active"
+              : "archived",
         teamIds:
           user.dataScope === "company" ? activeTeams.map((team) => team.id) : user.teamLeadTeamIds,
         dashboardEmployeeId: user.trackedEmployeeId,
         isCurrentUser: currentUser?.id === user.id,
         isSuperAdmin: user.isSuperAdmin,
+        employee: linkedEmployee,
         user,
       };
     });
@@ -496,6 +539,7 @@ function PeopleDirectory({
       if (teamFilter !== "all" && !row.teamIds.includes(teamFilter)) return false;
       if (!archiveOnly) {
         if (statusFilter === "active" && row.status !== "active") return false;
+        if (statusFilter === "app_pending" && row.status !== "app_pending") return false;
         if (statusFilter === "invited" && row.status !== "invited" && row.status !== "expired")
           return false;
         if (statusFilter === "archived" && row.status !== "archived") return false;
@@ -508,6 +552,7 @@ function PeopleDirectory({
     users.data,
     teamNames,
     activeTeams,
+    managedTeamNamesByUserId,
     currentUser?.id,
     currentUser?.employeeId,
     currentUser?.trackedEmployeeId,
@@ -519,9 +564,63 @@ function PeopleDirectory({
     q,
   ]);
 
+  const editScheduleProblems = useMemo(() => {
+    const messages: string[] = [];
+    const breakIndexes = new Set<number>();
+    if (!managedEmployeeId || !managedWorkProfile.data) {
+      return { messages, breakIndexes };
+    }
+
+    const scheduledMinutes = shiftMinutes(editShiftStart, editShiftEnd);
+    const validShift = Boolean(editShiftStart && editShiftEnd && scheduledMinutes > 0);
+    if (!validShift) {
+      messages.push("Shift end must be later than shift start on the same day.");
+    }
+
+    editBreakRules.forEach((rule, index) => {
+      const label = rule.name?.trim() || `Break ${index + 1}`;
+      const start = rule.start_time?.slice(0, 5) ?? "";
+      const end = rule.end_time?.slice(0, 5) ?? "";
+      const duration = shiftMinutes(start, end);
+      if (!start || !end || duration <= 0) {
+        messages.push(`${label} must end after it starts.`);
+        breakIndexes.add(index);
+        return;
+      }
+      if (validShift && (start < editShiftStart || end > editShiftEnd)) {
+        messages.push(`${label} must stay inside the ${editShiftStart}–${editShiftEnd} shift.`);
+        breakIndexes.add(index);
+      }
+    });
+
+    const orderedBreaks = editBreakRules
+      .map((rule, index) => ({
+        index,
+        name: rule.name?.trim() || `Break ${index + 1}`,
+        start: rule.start_time?.slice(0, 5) ?? "",
+        end: rule.end_time?.slice(0, 5) ?? "",
+      }))
+      .filter((rule) => rule.start && rule.end && shiftMinutes(rule.start, rule.end) > 0)
+      .sort((left, right) => left.start.localeCompare(right.start));
+    for (let index = 1; index < orderedBreaks.length; index += 1) {
+      const previous = orderedBreaks[index - 1];
+      const current = orderedBreaks[index];
+      if (previous.end > current.start) {
+        messages.push(`${previous.name} overlaps with ${current.name}.`);
+        breakIndexes.add(previous.index);
+        breakIndexes.add(current.index);
+      }
+    }
+
+    return { messages: [...new Set(messages)], breakIndexes };
+  }, [editBreakRules, editShiftEnd, editShiftStart, managedEmployeeId, managedWorkProfile.data]);
+
   const updateMutation = useMutation({
     mutationFn: async () => {
       if (!editPersonRow) throw new Error("Choose a person to manage.");
+      if (editScheduleProblems.messages.length > 0) {
+        throw new Error(editScheduleProblems.messages[0]);
+      }
       const currentRole: EditableRole =
         editPersonRow.kind === "admin" ? editPersonRow.user!.role : "employee";
       if (editPersonRow.kind === "admin" && editUser) {
@@ -532,7 +631,10 @@ function PeopleDirectory({
           password: editPassword || undefined,
         });
         if (managedEmployeeId) {
-          await updateEmployee(managedEmployeeId, { timezone: editTimezone });
+          await updateEmployee(managedEmployeeId, {
+            timezone: editTimezone,
+            startDate: editStartDate || undefined,
+          });
         }
       } else if (editPersonRow.employee) {
         await updateEmployee(editPersonRow.employee.id, {
@@ -540,6 +642,7 @@ function PeopleDirectory({
           email: editEmail,
           jobTitle: editJobTitle,
           timezone: editTimezone,
+          startDate: editStartDate || undefined,
         });
       }
       if (managedEmployeeId && managedWorkProfile.data) {
@@ -618,7 +721,7 @@ function PeopleDirectory({
         dataScope: editRole === "team_owner" ? "assigned_teams" : "company",
         permissionOverrides: overrides,
         teamLeadTeamIds: editRole === "team_owner" ? editTeamIds : [],
-        trackAsEmployee: editTrackAsEmployee,
+        trackAsEmployee: true,
       });
     },
     onSuccess: async () => {
@@ -691,6 +794,7 @@ function PeopleDirectory({
     setEditEmail(row.email);
     setEditJobTitle(user?.jobTitle ?? row.employee?.jobTitle ?? "");
     setEditTimezone(trackedEmployee?.timezone ?? "Africa/Cairo");
+    setEditStartDate(trackedEmployee?.startDate ?? "");
     setEditPassword("");
     setEditRole(user?.role ?? "employee");
     setEditPreset(user ? (user.permissionMode === "custom" ? "custom" : user.role) : "employee");
@@ -699,7 +803,6 @@ function PeopleDirectory({
     setEditTeamIds(user?.teamLeadTeamIds ?? row.teamIds);
     setEditEmployeeTeamIds(trackedEmployee?.teamIds ?? []);
     setEditEmployeeTeamRole(trackedEmployee?.teamRole ?? "member");
-    setEditTrackAsEmployee(user?.trackAsEmployee ?? false);
     setEditPermissions(user?.permissions ?? []);
     setShowFullPermissions(false);
   }
@@ -898,11 +1001,12 @@ function PeopleDirectory({
               onValueChange={(value) => setStatusFilter(value as StatusFilter)}
             >
               <SelectTrigger>
-                <SelectValue placeholder="Status" />
+                <SelectValue placeholder="Account status" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All active/invited</SelectItem>
-                <SelectItem value="active">Active only</SelectItem>
+                <SelectItem value="all">All onboarding/active</SelectItem>
+                <SelectItem value="active">Active accounts</SelectItem>
+                <SelectItem value="app_pending">App pending</SelectItem>
                 <SelectItem value="invited">Invited / expired</SelectItem>
               </SelectContent>
             </Select>
@@ -944,7 +1048,7 @@ function PeopleDirectory({
               <TableHead>Type / role</TableHead>
               <TableHead>Teams / job title</TableHead>
               <TableHead>Sign-in</TableHead>
-              <TableHead>Status</TableHead>
+              <TableHead>Account status</TableHead>
               <TableHead className="text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
@@ -994,6 +1098,11 @@ function PeopleDirectory({
                     </TableCell>
                     <TableCell className="text-sm">
                       <div>{row.detail}</div>
+                      {row.managedTeamNames.length > 0 && (
+                        <div className="mt-1 text-xs font-semibold text-[#e5185d]">
+                          Manages: {row.managedTeamNames.join(", ")}
+                        </div>
+                      )}
                       <div className="mt-1 text-xs text-muted-foreground">
                         {row.managerNames.length
                           ? `Managers: ${row.managerNames.join(", ")}`
@@ -1001,34 +1110,40 @@ function PeopleDirectory({
                       </div>
                     </TableCell>
                     <TableCell className="text-xs text-muted-foreground">
-                      {row.kind === "employee"
-                        ? row.status === "invited" || row.status === "expired"
-                          ? "Email invitation"
-                          : "Password"
-                        : "Password"}
+                      {row.status === "invited" || row.status === "expired"
+                        ? "Email invitation"
+                        : row.status === "app_pending"
+                          ? "Invitation accepted"
+                          : "Password"}
                     </TableCell>
                     <TableCell>
-                      <StatusBadge status={row.status} />
+                      <StatusBadge
+                        status={row.status}
+                        label={row.status === "active" ? "Account active" : undefined}
+                      />
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-2">
-                        {row.dashboardEmployeeId &&
-                          (row.kind === "admin" || row.status === "active") && (
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              className="rounded-full border-[#e5185d]/25 bg-[#fce3ec]/55 text-[#e5185d] hover:bg-[#fce3ec]"
-                              onClick={() =>
-                                navigate({
-                                  to: "/employees/$employeeId",
-                                  params: { employeeId: row.dashboardEmployeeId! },
-                                })
-                              }
-                            >
-                              <Activity className="mr-1.5 h-3.5 w-3.5" />
-                              Employee profile
-                            </Button>
-                          )}
+                        {row.dashboardEmployeeId && row.status === "active" && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="rounded-full border-[#e5185d]/25 bg-[#fce3ec]/55 text-[#e5185d] hover:bg-[#fce3ec]"
+                            onClick={() =>
+                              navigate({
+                                to: "/monitoring",
+                                search: {
+                                  employeeId: row.dashboardEmployeeId!,
+                                  day: todayIsoDate(),
+                                  tab: "attendance",
+                                },
+                              })
+                            }
+                          >
+                            <Activity className="mr-1.5 h-3.5 w-3.5" />
+                            Monitor
+                          </Button>
+                        )}
                         {row.isCurrentUser && !row.dashboardEmployeeId ? (
                           <Button
                             variant="outline"
@@ -1047,6 +1162,19 @@ function PeopleDirectory({
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end" className="w-52">
+                            {row.dashboardEmployeeId && (
+                              <DropdownMenuItem
+                                onSelect={() =>
+                                  navigate({
+                                    to: "/employees/$employeeId",
+                                    params: { employeeId: row.dashboardEmployeeId! },
+                                  })
+                                }
+                              >
+                                <UserCircle className="h-4 w-4" />
+                                Employee profile
+                              </DropdownMenuItem>
+                            )}
                             {row.kind === "employee" ? (
                               <>
                                 {canManageAccess && row.status !== "archived" && (
@@ -1055,18 +1183,6 @@ function PeopleDirectory({
                                     Manage employee
                                   </DropdownMenuItem>
                                 )}
-                                {(row.status === "invited" || row.status === "expired") &&
-                                  row.employee?.invitation && (
-                                    <DropdownMenuItem
-                                      disabled={resendMutation.isPending}
-                                      onSelect={() =>
-                                        resendMutation.mutate(row.employee!.invitation!.id)
-                                      }
-                                    >
-                                      <RefreshCw className="h-4 w-4" />
-                                      Resend invitation
-                                    </DropdownMenuItem>
-                                  )}
                               </>
                             ) : (
                               <>
@@ -1081,6 +1197,18 @@ function PeopleDirectory({
                                   )}
                               </>
                             )}
+                            {(row.status === "invited" || row.status === "expired") &&
+                              row.employee?.invitation && (
+                                <DropdownMenuItem
+                                  disabled={resendMutation.isPending}
+                                  onSelect={() =>
+                                    resendMutation.mutate(row.employee!.invitation!.id)
+                                  }
+                                >
+                                  <RefreshCw className="h-4 w-4" />
+                                  Resend invitation
+                                </DropdownMenuItem>
+                              )}
                             {can(permissions.peopleArchive) &&
                               !row.isCurrentUser &&
                               !row.isSuperAdmin && (
@@ -1225,11 +1353,24 @@ function PeopleDirectory({
                     placeholder="e.g. Operations Manager"
                   />
                 </div>
+                {managedEmployeeId && (
+                  <div className="space-y-1.5">
+                    <Label htmlFor="edit-start-date">Employment start date</Label>
+                    <Input
+                      id="edit-start-date"
+                      type="date"
+                      value={editStartDate}
+                      onChange={(event) => setEditStartDate(event.target.value)}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Used to calculate annual leave eligibility and payroll periods.
+                    </p>
+                  </div>
+                )}
                 <div className="space-y-1.5">
                   <Label htmlFor="edit-password">Reset password</Label>
-                  <Input
+                  <PasswordInput
                     id="edit-password"
-                    type="password"
                     value={editPassword}
                     onChange={(event) => setEditPassword(event.target.value)}
                     minLength={editPassword ? 8 : undefined}
@@ -1367,7 +1508,9 @@ function PeopleDirectory({
                           <Input
                             id="manage-shift-start"
                             type="time"
+                            max={editShiftEnd}
                             value={editShiftStart}
+                            aria-invalid={shiftMinutes(editShiftStart, editShiftEnd) <= 0}
                             onChange={(event) => setEditShiftStart(event.target.value)}
                           />
                         </div>
@@ -1376,7 +1519,9 @@ function PeopleDirectory({
                           <Input
                             id="manage-shift-end"
                             type="time"
+                            min={editShiftStart}
                             value={editShiftEnd}
+                            aria-invalid={shiftMinutes(editShiftStart, editShiftEnd) <= 0}
                             onChange={(event) => setEditShiftEnd(event.target.value)}
                           />
                         </div>
@@ -1477,7 +1622,11 @@ function PeopleDirectory({
                         {editBreakRules.map((rule, index) => (
                           <div
                             key={`${rule.name}-${index}`}
-                            className="grid items-end gap-2 rounded-lg bg-muted/30 p-2 sm:grid-cols-[1fr_120px_120px_110px_auto]"
+                            className={cn(
+                              "grid items-end gap-2 rounded-lg border border-transparent bg-muted/30 p-2 sm:grid-cols-[1fr_120px_120px_110px_auto]",
+                              editScheduleProblems.breakIndexes.has(index) &&
+                                "border-destructive/60 bg-destructive/5",
+                            )}
                           >
                             <div className="space-y-1">
                               <Label>Break name</Label>
@@ -1498,23 +1647,38 @@ function PeopleDirectory({
                               <Label>Starts</Label>
                               <Input
                                 type="time"
+                                min={editShiftStart}
+                                max={rule.end_time?.slice(0, 5) || editShiftEnd}
                                 value={rule.start_time ?? ""}
-                                onChange={(event) =>
+                                aria-invalid={editScheduleProblems.breakIndexes.has(index)}
+                                onChange={(event) => {
+                                  const nextStart = event.target.value;
+                                  const nextMinutes = Math.max(
+                                    0,
+                                    shiftMinutes(nextStart, rule.end_time?.slice(0, 5) ?? ""),
+                                  );
                                   setEditBreakRules((current) =>
                                     current.map((item, itemIndex) =>
                                       itemIndex === index
-                                        ? { ...item, start_time: event.target.value }
+                                        ? {
+                                            ...item,
+                                            start_time: nextStart,
+                                            minutes: nextMinutes,
+                                          }
                                         : item,
                                     ),
-                                  )
-                                }
+                                  );
+                                }}
                               />
                             </div>
                             <div className="space-y-1">
                               <Label>Ends</Label>
                               <Input
                                 type="time"
+                                min={rule.start_time?.slice(0, 5) || editShiftStart}
+                                max={editShiftEnd}
                                 value={rule.end_time ?? ""}
+                                aria-invalid={editScheduleProblems.breakIndexes.has(index)}
                                 onChange={(event) => {
                                   const [startHour = 0, startMinute = 0] = String(
                                     rule.start_time ?? "00:00",
@@ -1566,6 +1730,16 @@ function PeopleDirectory({
                             </Button>
                           </div>
                         ))}
+                        {editScheduleProblems.messages.length > 0 && (
+                          <div
+                            role="alert"
+                            className="space-y-1 rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs font-semibold text-destructive"
+                          >
+                            {editScheduleProblems.messages.map((message) => (
+                              <p key={message}>{message}</p>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     </>
                   )}
@@ -1606,6 +1780,7 @@ function PeopleDirectory({
                           min={0}
                           step={0.01}
                           value={editSalaryAmount}
+                          onFocus={selectZeroOnFocus}
                           onChange={(event) => setEditSalaryAmount(Number(event.target.value) || 0)}
                         />
                         <Button
@@ -1749,16 +1924,13 @@ function PeopleDirectory({
                 onToggleFull={() => setShowFullPermissions((value) => !value)}
               />
 
-              {canChangeRoles && editRole === "team_owner" && (
-                <div className="flex items-center justify-between gap-3 rounded-xl border p-3">
-                  <div>
-                    <Label>Also track as employee</Label>
-                    <p className="text-xs text-muted-foreground">
-                      Use this when the team lead also works on tasks and needs their own employee
-                      dashboard.
-                    </p>
-                  </div>
-                  <Switch checked={editTrackAsEmployee} onCheckedChange={setEditTrackAsEmployee} />
+              {!isProtectedOwner && editRole !== "employee" && (
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50/70 p-3 text-sm dark:border-emerald-900 dark:bg-emerald-950/25">
+                  <Label>Employee tracking included</Label>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    This role also uses the desktop app and has attendance, shift, breaks, idle
+                    time, overtime, and payroll records. Only the protected Super admin is excluded.
+                  </p>
                 </div>
               )}
 
@@ -1796,7 +1968,10 @@ function PeopleDirectory({
               >
                 Cancel
               </Button>
-              <Button type="submit" disabled={updateMutation.isPending}>
+              <Button
+                type="submit"
+                disabled={updateMutation.isPending || editScheduleProblems.messages.length > 0}
+              >
                 {updateMutation.isPending ? "Saving..." : "Save employee"}
               </Button>
             </div>
@@ -1883,13 +2058,15 @@ function AddPersonWizard({
   const [kind, setKind] = useState<PersonKind>("employee");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
+  const [nameTouched, setNameTouched] = useState(false);
+  const [emailTouched, setEmailTouched] = useState(false);
   const [jobTitle, setJobTitle] = useState("");
   const [teamIds, setTeamIds] = useState<string[]>([]);
   const [startDate, setStartDate] = useState("");
   const [annualLeaveDays, setAnnualLeaveDays] = useState(21);
-  const [shiftStart, setShiftStart] = useState("09:00");
-  const [shiftEnd, setShiftEnd] = useState("17:00");
-  const [offDays, setOffDays] = useState<number[]>([5, 6]);
+  const [shiftStart, setShiftStart] = useState("10:00");
+  const [shiftEnd, setShiftEnd] = useState("18:00");
+  const [offDays, setOffDays] = useState<number[]>(DEFAULT_WEEKLY_OFF_DAYS);
   const [salaryType, setSalaryType] = useState<"monthly" | "hourly">("monthly");
   const [salaryAmount, setSalaryAmount] = useState("0");
   const [hourlyRate, setHourlyRate] = useState("0");
@@ -1897,13 +2074,13 @@ function AddPersonWizard({
   const [showSalary, setShowSalary] = useState(false);
   const [breaks, setBreaks] = useState([
     { name: "Lunch", start_time: "13:00", end_time: "13:30", minutes: 30, paid: true },
-    { name: "Short break", start_time: "15:30", end_time: "15:45", minutes: 15, paid: true },
+    { name: "Short break", start_time: "16:30", end_time: "16:45", minutes: 15, paid: true },
   ]);
   const canCreateTeamLeader = canAssignRole(currentUser, "team_owner");
   const canCreateHr = canAssignRole(currentUser, "hr");
   const canCreateGeneralAdmin = canAssignRole(currentUser, "general_admin");
 
-  // Invitation confirmation (employee only).
+  // Invitation confirmation for every tracked role that chooses its own password.
   const [createdEmployee, setCreatedEmployee] = useState<Employee | null>(null);
   const [createdInvitation, setCreatedInvitation] = useState<PersonInvitationSummary>();
   const [invitationEmailQueued, setInvitationEmailQueued] = useState(false);
@@ -1913,13 +2090,15 @@ function AddPersonWizard({
     setKind("employee");
     setName("");
     setEmail("");
+    setNameTouched(false);
+    setEmailTouched(false);
     setJobTitle("");
     setTeamIds([]);
     setStartDate("");
     setAnnualLeaveDays(21);
-    setShiftStart("09:00");
-    setShiftEnd("17:00");
-    setOffDays([5, 6]);
+    setShiftStart("10:00");
+    setShiftEnd("18:00");
+    setOffDays(DEFAULT_WEEKLY_OFF_DAYS);
     setSalaryType("monthly");
     setSalaryAmount("0");
     setHourlyRate("0");
@@ -1927,7 +2106,7 @@ function AddPersonWizard({
     setShowSalary(false);
     setBreaks([
       { name: "Lunch", start_time: "13:00", end_time: "13:30", minutes: 30, paid: true },
-      { name: "Short break", start_time: "15:30", end_time: "15:45", minutes: 15, paid: true },
+      { name: "Short break", start_time: "16:30", end_time: "16:45", minutes: 15, paid: true },
     ]);
     setCreatedEmployee(null);
     setCreatedInvitation(undefined);
@@ -1946,7 +2125,10 @@ function AddPersonWizard({
     setTimeout(reset, 200);
   }
 
+  const normalizedName = name.trim().replace(/\s+/g, " ");
   const normalizedEmail = email.trim().toLowerCase();
+  const emailIsValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail);
+  const identityIsValid = normalizedName.length > 0 && emailIsValid;
   const existingPerson = normalizedEmail
     ? (() => {
         const employee = employees.find((item) => item.email.toLowerCase() === normalizedEmail);
@@ -1976,56 +2158,55 @@ function AddPersonWizard({
 
   const createMutation = useMutation({
     mutationFn: async () => {
+      if (!identityIsValid) {
+        throw new Error("Enter the employee name and a valid work email.");
+      }
       if (existingPerson) {
         throw new Error(existingPersonMessage ?? "A person with this email already exists.");
       }
       const invitation = await invitePerson({
-        name,
-        email,
+        name: normalizedName,
+        email: normalizedEmail,
         kind: kind === "team_owner" ? "team_manager" : kind,
         teamIds,
         jobTitle,
         timezone: "Africa/Cairo",
-        startDate: kind === "employee" ? startDate : undefined,
-        annualLeaveDays: kind === "employee" ? annualLeaveDays : undefined,
-        workProfile:
-          kind === "employee"
+        startDate,
+        annualLeaveDays: effectiveAnnualLeaveDays,
+        workProfile: {
+          shiftStart,
+          shiftEnd,
+          workingDays: [0, 1, 2, 3, 4, 5, 6].filter((day) => !offDays.includes(day)),
+          weeklyOffDays: offDays,
+          requiredDailyMinutes: Math.max(60, requiredDailyMinutes),
+          breakRules: breaks,
+          lateGraceMinutes: 15,
+          ...(canManagePayroll
             ? {
-                shiftStart,
-                shiftEnd,
-                workingDays: [0, 1, 2, 3, 4, 5, 6].filter((day) => !offDays.includes(day)),
-                weeklyOffDays: offDays,
-                requiredDailyMinutes: Math.max(60, requiredDailyMinutes),
-                breakRules: breaks,
-                lateGraceMinutes: 15,
-                ...(canManagePayroll
-                  ? {
-                      overtimeEnabled: true,
-                      overtimeBasis: "outside_shift",
-                      overtimeRateMultiplier: 1,
-                      salaryAmount:
-                        salaryType === "monthly" ? Number(salaryAmount) : Number(hourlyRate),
-                      salaryCurrency,
-                      salaryType,
-                    }
-                  : {}),
+                overtimeEnabled: false,
+                overtimeBasis: undefined,
+                overtimeRateMultiplier: 1,
+                salaryAmount: salaryType === "monthly" ? Number(salaryAmount) : Number(hourlyRate),
+                salaryCurrency,
+                salaryType,
               }
-            : undefined,
+            : {}),
+        },
       });
       const employee = invitation.employeeId ? await getEmployee(invitation.employeeId) : undefined;
       return { kind, employee, invitation };
     },
     onSuccess: async (result) => {
       await onCreated();
-      if (result.kind === "employee" && result.employee) {
+      if (result.employee && result.invitation.invitation) {
         setCreatedEmployee(result.employee);
         setCreatedInvitation(result.invitation.invitation);
         setInvitationEmailQueued(result.invitation.emailQueued);
         setStep("invited");
         toast.success(
           result.invitation.emailQueued
-            ? "Employee invited"
-            : "Employee created, but the invitation email was not queued",
+            ? `${kindLabel(result.kind)} invited`
+            : `${kindLabel(result.kind)} created, but the invitation email was not queued`,
         );
       } else {
         toast.success(
@@ -2055,11 +2236,17 @@ function AddPersonWizard({
 
   function submitForm(event: FormEvent) {
     event.preventDefault();
+    setNameTouched(true);
+    setEmailTouched(true);
+    if (!identityIsValid) {
+      toast.error("Enter the employee name and a valid work email.");
+      return;
+    }
     if (existingPerson) {
       toast.error(existingPersonMessage ?? "A person with this email already exists.");
       return;
     }
-    setStep(kind === "employee" ? "work" : "review");
+    setStep("work");
   }
 
   const shiftTimeOptions = Array.from({ length: 96 }, (_, index) => {
@@ -2165,9 +2352,11 @@ function AddPersonWizard({
       return changed ? normalized : rows;
     });
   }, [breaks, shiftEndMinutes, shiftStartMinutes]);
-  const firstYearLeaveCredit = (() => {
+  const currentLeaveYear = new Date().getFullYear();
+  const currentYearLeaveCredit = (() => {
     if (!startDate) return null;
     const [startYear, startMonth, startDay] = startDate.split("-").map(Number);
+    const now = new Date();
     const targetMonthStart = new Date(startYear, startMonth - 1 + 6, 1, 12);
     const targetMonthLastDay = new Date(
       targetMonthStart.getFullYear(),
@@ -2180,22 +2369,48 @@ function AddPersonWizard({
       Math.min(startDay, targetMonthLastDay),
       12,
     );
-    const fullYearCredit = eligibleAt.getFullYear() > startYear;
-    const remainingFullMonths = fullYearCredit ? 12 : 12 - (eligibleAt.getMonth() + 1);
+    const tenYearMonthLastDay = new Date(startYear + 10, startMonth, 0).getDate();
+    const tenYearAnniversary = new Date(
+      startYear + 10,
+      startMonth - 1,
+      Math.min(startDay, tenYearMonthLastDay),
+      12,
+    );
+    const hasTenYearsService = now >= tenYearAnniversary;
+    const effectiveAnnualDays = Math.max(annualLeaveDays, hasTenYearsService ? 30 : 21);
+    const eligibleYear = eligibleAt.getFullYear();
+    const creditType =
+      currentLeaveYear < eligibleYear
+        ? "not_eligible"
+        : currentLeaveYear > eligibleYear || startYear < eligibleYear
+          ? "full"
+          : "prorated";
+    const remainingFullMonths = creditType === "prorated" ? 12 - (eligibleAt.getMonth() + 1) : 0;
     return {
       eligibleAt: eligibleAt.toLocaleDateString(),
+      year: currentLeaveYear,
       months: remainingFullMonths,
-      days: fullYearCredit
-        ? annualLeaveDays
-        : Number(((remainingFullMonths * annualLeaveDays) / 12).toFixed(2)),
-      fullYearCredit,
+      days:
+        creditType === "not_eligible"
+          ? 0
+          : creditType === "full"
+            ? effectiveAnnualDays
+            : Number(((remainingFullMonths * effectiveAnnualDays) / 12).toFixed(2)),
+      creditType,
+      hasTenYearsService,
+      effectiveAnnualDays,
     };
   })();
-  const displayedLeaveDays = firstYearLeaveCredit?.days ?? annualLeaveDays;
-  const leaveCreditHelp = firstYearLeaveCredit
-    ? firstYearLeaveCredit.fullYearCredit
-      ? `Eligible after 6 months on ${firstYearLeaveCredit.eligibleAt}. New calendar year, so full ${annualLeaveDays} days.`
-      : `Eligible after 6 months on ${firstYearLeaveCredit.eligibleAt}. Rest of year: (${firstYearLeaveCredit.months} months / 12) x ${annualLeaveDays} = ${firstYearLeaveCredit.days} days.`
+  const effectiveAnnualLeaveDays = currentYearLeaveCredit?.effectiveAnnualDays ?? annualLeaveDays;
+  const displayedLeaveDays = currentYearLeaveCredit?.days ?? annualLeaveDays;
+  const leaveCreditHelp = currentYearLeaveCredit
+    ? currentYearLeaveCredit.creditType === "not_eligible"
+      ? `No annual leave credit for ${currentYearLeaveCredit.year}. Eligible after 6 months on ${currentYearLeaveCredit.eligibleAt}.`
+      : currentYearLeaveCredit.creditType === "full"
+        ? currentYearLeaveCredit.hasTenYearsService
+          ? `Full ${currentYearLeaveCredit.effectiveAnnualDays}-day entitlement for ${currentYearLeaveCredit.year} after 10 completed years of service.`
+          : `Full ${currentYearLeaveCredit.effectiveAnnualDays}-day entitlement for ${currentYearLeaveCredit.year}. Eligible since ${currentYearLeaveCredit.eligibleAt}.`
+        : `First-year entitlement for ${currentYearLeaveCredit.year}: (${currentYearLeaveCredit.months} months / 12) x ${currentYearLeaveCredit.effectiveAnnualDays} = ${currentYearLeaveCredit.days} days. Eligible on ${currentYearLeaveCredit.eligibleAt}.`
     : `Default: ${annualLeaveDays} days per full calendar year.`;
   const shiftMinutes = Math.max(
     0,
@@ -2242,7 +2457,7 @@ function AddPersonWizard({
                 onClick={() => setKind("team_owner")}
                 icon={UserPlus}
                 title="Team leader"
-                subtitle="Manages assigned teams in the dashboard and has an Employee profile, so they can receive and track their own tasks."
+                subtitle="Tracked employee with a shift, breaks, attendance and desktop app, plus access to manage assigned teams."
               />
             )}
             {canCreateGeneralAdmin && (
@@ -2251,7 +2466,7 @@ function AddPersonWizard({
                 onClick={() => setKind("general_admin")}
                 icon={ShieldCheck}
                 title="General admin"
-                subtitle="Company-wide admin with access to every team and permission to review a team leader's own task."
+                subtitle="Tracked employee with the desktop app and attendance, plus company-wide administrative access."
               />
             )}
             {canCreateHr && (
@@ -2260,7 +2475,7 @@ function AddPersonWizard({
                 onClick={() => setKind("hr")}
                 icon={KeyRound}
                 title="HR"
-                subtitle="Manages employee profiles, schedules, payroll, deductions, overtime and invitations."
+                subtitle="Tracked employee with the desktop app and attendance, plus HR, schedules and payroll access."
               />
             )}
             <div className="flex justify-end gap-2 pt-1">
@@ -2276,23 +2491,43 @@ function AddPersonWizard({
           <form onSubmit={submitForm} className="space-y-4">
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-1.5">
-                <Label htmlFor="person-name">Name</Label>
+                <Label htmlFor="person-name">Name *</Label>
                 <Input
                   id="person-name"
                   value={name}
                   onChange={(event) => setName(event.target.value)}
+                  onBlur={() => setNameTouched(true)}
+                  aria-invalid={nameTouched && !normalizedName}
+                  aria-describedby={
+                    nameTouched && !normalizedName ? "person-name-error" : undefined
+                  }
                   required
                 />
+                {nameTouched && !normalizedName && (
+                  <p id="person-name-error" className="text-xs font-medium text-destructive">
+                    Name is required.
+                  </p>
+                )}
               </div>
               <div className="space-y-1.5">
-                <Label htmlFor="person-email">Work email</Label>
+                <Label htmlFor="person-email">Work email *</Label>
                 <Input
                   id="person-email"
                   type="email"
                   value={email}
                   onChange={(event) => setEmail(event.target.value)}
+                  onBlur={() => setEmailTouched(true)}
+                  aria-invalid={emailTouched && !emailIsValid}
+                  aria-describedby={
+                    emailTouched && !emailIsValid ? "person-email-error" : undefined
+                  }
                   required
                 />
+                {emailTouched && !emailIsValid && (
+                  <p id="person-email-error" className="text-xs font-medium text-destructive">
+                    Enter a valid work email.
+                  </p>
+                )}
                 {existingPersonMessage && (
                   <p className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs font-medium text-destructive">
                     {existingPersonMessage}
@@ -2360,6 +2595,7 @@ function AddPersonWizard({
                   type="submit"
                   disabled={
                     createMutation.isPending ||
+                    !identityIsValid ||
                     Boolean(existingPerson) ||
                     ((kind === "employee" || kind === "team_owner") && teamIds.length === 0)
                   }
@@ -2368,16 +2604,14 @@ function AddPersonWizard({
                     ? kind === "employee"
                       ? "Sending..."
                       : "Creating..."
-                    : kind === "employee"
-                      ? "Next"
-                      : `Create ${kindLabel(kind).toLowerCase()}`}
+                    : "Next"}
                 </Button>
               </div>
             </div>
           </form>
         )}
 
-        {step === "work" && kind === "employee" && (
+        {step === "work" && (
           <div className="space-y-5">
             <div className="grid gap-3 sm:grid-cols-2">
               <div>
@@ -2567,6 +2801,7 @@ function AddPersonWizard({
                   }
                   readOnly={salaryType === "hourly"}
                   className={salaryType === "hourly" ? "bg-muted" : undefined}
+                  onFocus={selectZeroOnFocus}
                   onKeyDown={(event) => {
                     if (salaryAmount === "0" && /^\d$/.test(event.key)) {
                       event.preventDefault();
@@ -2585,6 +2820,7 @@ function AddPersonWizard({
                   value={salaryType === "monthly" ? calculatedHourlyRate.toFixed(2) : hourlyRate}
                   readOnly={salaryType === "monthly"}
                   className={salaryType === "monthly" ? "bg-muted" : undefined}
+                  onFocus={selectZeroOnFocus}
                   onKeyDown={(event) => {
                     if (hourlyRate === "0" && /^\d$/.test(event.key)) {
                       event.preventDefault();
@@ -2633,9 +2869,9 @@ function AddPersonWizard({
               breaks are paid and included.
             </p>
             <p className="rounded-lg border bg-muted/40 p-3 text-xs text-muted-foreground">
-              Time outside {shiftStart}–{shiftEnd} is categorized as overtime, paid at the normal
-              hourly rate, and requires approval each time. Breaks are part of the shift hours and
-              are never counted as idle.
+              Time outside {formatTimeOfDay(shiftStart)}–{formatTimeOfDay(shiftEnd)} is categorized
+              as overtime, paid at the normal hourly rate, and requires approval each time. Breaks
+              are part of the shift hours and are never counted as idle.
             </p>
             <div className="flex justify-between">
               <Button variant="ghost" onClick={() => setStep("form")}>
@@ -2663,7 +2899,7 @@ function AddPersonWizard({
 
         {step === "review" && (
           <div className="space-y-4">
-            <div className="grid gap-3 rounded-xl border bg-muted/25 p-4 sm:grid-cols-2">
+            <div className="grid gap-3 rounded-xl border bg-muted/25 p-4 sm:grid-cols-2 [&>*]:min-w-0 [&_p]:break-words">
               <div>
                 <span className="text-xs text-muted-foreground">Name</span>
                 <p className="font-bold">{name}</p>
@@ -2685,50 +2921,46 @@ function AddPersonWizard({
                     .join(", ") || "Company-wide"}
                 </p>
               </div>
-              {kind === "employee" && (
-                <>
-                  <div>
-                    <span className="text-xs text-muted-foreground">Start / annual leave</span>
-                    <p className="font-bold">
-                      {startDate} · {displayedLeaveDays} days
-                    </p>
-                  </div>
-                  <div>
-                    <span className="text-xs text-muted-foreground">Shift</span>
-                    <p className="font-bold">
-                      {shiftStart}–{shiftEnd}
-                    </p>
-                  </div>
-                  {canManagePayroll && (
-                    <div>
-                      <span className="text-xs text-muted-foreground">Salary</span>
-                      <p className="font-bold">
-                        {showSalary
-                          ? `${salaryAmount} ${salaryCurrency} · ${salaryType}`
-                          : `•••••• ${salaryCurrency}`}
-                      </p>
-                    </div>
-                  )}
-                  <div>
-                    <span className="text-xs text-muted-foreground">Breaks</span>
-                    <p className="font-bold">
-                      {breaks
-                        .map((item) => `${item.name} ${item.start_time}–${item.end_time}`)
-                        .join(", ")}
-                    </p>
-                  </div>
-                </>
+              <div>
+                <span className="text-xs text-muted-foreground">Start / annual leave</span>
+                <p className="font-bold">
+                  {startDate} · {displayedLeaveDays} days
+                </p>
+              </div>
+              <div>
+                <span className="text-xs text-muted-foreground">Shift</span>
+                <p className="font-bold">
+                  {formatTimeOfDay(shiftStart)}–{formatTimeOfDay(shiftEnd)}
+                </p>
+              </div>
+              {canManagePayroll && (
+                <div>
+                  <span className="text-xs text-muted-foreground">Salary</span>
+                  <p className="font-bold">
+                    {showSalary
+                      ? `${salaryAmount} ${salaryCurrency} · ${salaryType}`
+                      : `•••••• ${salaryCurrency}`}
+                  </p>
+                </div>
               )}
+              <div>
+                <span className="text-xs text-muted-foreground">Breaks</span>
+                <p className="font-bold">
+                  {breaks
+                    .map(
+                      (item) =>
+                        `${item.name} ${formatTimeOfDay(item.start_time)}–${formatTimeOfDay(item.end_time)}`,
+                    )
+                    .join(", ")}
+                </p>
+              </div>
             </div>
             <p className="text-sm text-muted-foreground">
               {existingPersonMessage ??
                 "No account or invitation has been created yet. Confirm to save this profile and send the invitation."}
             </p>
             <div className="flex justify-between">
-              <Button
-                variant="ghost"
-                onClick={() => setStep(kind === "employee" ? "work" : "form")}
-              >
+              <Button variant="ghost" onClick={() => setStep("work")}>
                 <ArrowLeft className="mr-2 h-4 w-4" />
                 Back
               </Button>
@@ -2758,7 +2990,7 @@ function AddPersonWizard({
               {createdInvitation && (
                 <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
                   <span className="text-xs text-muted-foreground">
-                    Link expires {new Date(createdInvitation.expiresAt).toLocaleString()}.
+                    Link expires {formatDateTime(createdInvitation.expiresAt)}.
                   </span>
                   <Button
                     type="button"

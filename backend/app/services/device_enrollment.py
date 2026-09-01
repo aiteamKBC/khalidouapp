@@ -9,6 +9,9 @@ from app.core.exceptions import ApiError
 from app.core.security import create_device_token, hash_token
 from app.models import Device, DeviceToken, Employee, TrackingSettings
 from app.schemas.agent import AgentDeviceInfo
+from app.services.device_location import refresh_device_location
+
+IDLE_THRESHOLD_MINUTES = 10
 
 
 def serialize_tracking_settings(settings_row: TrackingSettings) -> dict[str, Any]:
@@ -16,7 +19,7 @@ def serialize_tracking_settings(settings_row: TrackingSettings) -> dict[str, Any
         "screenshot_enabled": settings_row.screenshot_enabled,
         "screenshot_interval_minutes": settings_row.screenshot_interval_minutes,
         "screenshots_per_interval": settings_row.screenshots_per_interval,
-        "idle_threshold_minutes": settings_row.idle_threshold_minutes,
+        "idle_threshold_minutes": IDLE_THRESHOLD_MINUTES,
         "capture_during_idle": settings_row.capture_during_idle,
         "offline_threshold_minutes": settings_row.offline_threshold_minutes,
         "screenshot_retention_days": settings_row.screenshot_retention_days,
@@ -34,7 +37,7 @@ def get_or_create_tracking_settings(db: Session, company_id) -> TrackingSettings
         company_id=company_id,
         screenshot_interval_minutes=settings.default_screenshot_interval_minutes,
         screenshots_per_interval=settings.default_screenshots_per_interval,
-        idle_threshold_minutes=settings.default_idle_threshold_minutes,
+        idle_threshold_minutes=IDLE_THRESHOLD_MINUTES,
         offline_threshold_minutes=settings.default_offline_threshold_minutes,
         screenshot_retention_days=settings.default_screenshot_retention_days,
     )
@@ -49,6 +52,8 @@ def issue_device_token(db: Session, device: Device) -> str:
         company_id=device.company_id,
         employee_id=device.employee_id,
     )
+    device.legacy_token_bootstrap_allowed = False
+    db.add(device)
     db.add(
         DeviceToken(
             company_id=device.company_id,
@@ -92,7 +97,14 @@ def enroll_employee_device(
         db.add(device)
         db.flush()
     elif device.revoked_at is not None or device.status == "revoked":
-        raise ApiError("DEVICE_REVOKED", "This device has been revoked.", 403)
+        raise ApiError(
+            "DEVICE_REVOKED",
+            (
+                "This device has been revoked. Ask a general admin to reactivate it "
+                "from Devices, then sign in again."
+            ),
+            403,
+        )
     elif device.employee_id != employee.id:
         raise ApiError(
             "DEVICE_ALREADY_ENROLLED",
@@ -110,6 +122,12 @@ def enroll_employee_device(
         device.status = "active"
         device.last_seen_at = datetime.now(UTC)
 
+    refresh_device_location(
+        device,
+        client_ip=ip_address,
+        reported_timezone=device_info.timezone,
+        employee_timezone=employee.timezone,
+    )
     token = issue_device_token(db, device)
     settings_row = get_or_create_tracking_settings(db, employee.company_id)
     db.commit()
@@ -127,6 +145,9 @@ def enroll_employee_device(
             "name": device.device_name,
             "installation_id": device.installation_id,
             "status": device.status,
+            "timezone": device.timezone,
+            "country_code": device.country_code,
+            "timezone_source": device.timezone_source,
         },
         "device_token": token,
         "token_type": "bearer",

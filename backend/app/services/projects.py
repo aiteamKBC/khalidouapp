@@ -1,7 +1,8 @@
 from typing import Any
 from uuid import UUID
 from calendar import monthrange
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy import exists, func, select
 from sqlalchemy.orm import Session
@@ -11,6 +12,7 @@ from app.core.exceptions import ApiError
 from app.models import (
     AdminUser,
     Device,
+    Employee,
     Project,
     Task,
     TaskCollaborator,
@@ -19,7 +21,10 @@ from app.models import (
     TeamMember,
     WorkSession,
 )
+from app.services.activity_timeline import build_workday_timeline, scope_timeline_to_schedule
+from app.services.schedules import effective_schedule
 from app.services.task_workflow import TRACKABLE_STAGES
+from app.services.work_profiles import get_or_create_work_profile
 
 
 def validate_task_dates(start_date, deadline) -> None:
@@ -252,14 +257,78 @@ def employee_task_time_totals(
         statement = statement.where(WorkSession.task_id.in_(task_ids))
 
     totals: dict[UUID, dict[str, int]] = {}
-    for task_id, raw_active, idle, deducted in db.execute(statement).all():
+    for task_id, raw_active, _raw_idle, deducted in db.execute(statement).all():
         active = max(0, int(raw_active or 0) - int(deducted or 0))
-        idle_seconds = max(0, int(idle or 0))
         totals[task_id] = {
             "active_seconds": active,
-            "idle_seconds": idle_seconds,
-            "tracked_seconds": active + idle_seconds,
+            "idle_seconds": 0,
+            "tracked_seconds": active,
         }
+
+    # Session idle is a device counter and older agents could include time
+    # outside the paid shift. Rebuild only days that contain idle and attribute
+    # the schedule-scoped intervals back to their task.
+    idle_session_statement = select(WorkSession).where(
+        WorkSession.company_id == company_id,
+        WorkSession.employee_id == employee_id,
+        WorkSession.task_id.is_not(None),
+        WorkSession.idle_seconds > 0,
+    )
+    if task_ids is not None:
+        idle_session_statement = idle_session_statement.where(WorkSession.task_id.in_(task_ids))
+    idle_sessions = db.scalars(idle_session_statement).all()
+    if not idle_sessions:
+        return totals
+
+    employee = db.get(Employee, employee_id)
+    if employee is None:
+        return totals
+    try:
+        zone = ZoneInfo(employee.timezone or "UTC")
+    except (ZoneInfoNotFoundError, ValueError):
+        zone = ZoneInfo("UTC")
+    idle_days = {
+        session.started_at.replace(tzinfo=UTC)
+        .astimezone(zone)
+        .date()
+        if session.started_at.tzinfo is None
+        else session.started_at.astimezone(zone).date()
+        for session in idle_sessions
+    }
+    profile = get_or_create_work_profile(db, employee)
+    now = datetime.now(UTC)
+    for work_date in idle_days:
+        schedule = effective_schedule(
+            db,
+            employee,
+            profile,
+            work_date,
+            timezone_name=employee.timezone,
+        )
+        raw_timeline = build_workday_timeline(
+            db,
+            company_id=company_id,
+            employee_id=employee_id,
+            timezone_name=schedule["timezone"],
+            target_date=work_date,
+            now=now,
+        )
+        timeline = scope_timeline_to_schedule(
+            raw_timeline,
+            shift_start=schedule["start_at"],
+            shift_end=schedule["end_at"],
+            scheduled_breaks=schedule["breaks"],
+            now=now,
+        )
+        for interval in timeline["intervals"]:
+            if interval["type"] != "idle" or not interval.get("task_id"):
+                continue
+            interval_task_id = UUID(interval["task_id"])
+            if interval_task_id not in totals:
+                continue
+            idle_seconds = int(interval["duration_seconds"])
+            totals[interval_task_id]["idle_seconds"] += idle_seconds
+            totals[interval_task_id]["tracked_seconds"] += idle_seconds
     return totals
 
 

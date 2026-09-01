@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from uuid import UUID
 
-from sqlalchemy import Date, DateTime, ForeignKey, Integer, String
+from sqlalchemy import Date, DateTime, ForeignKey, Index, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database.base import Base
@@ -10,6 +10,16 @@ from app.models.mixins import TimestampMixin, UUIDPrimaryKeyMixin
 
 class LeaveRequest(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "leave_requests"
+    __table_args__ = (
+        Index(
+            "ix_leave_requests_company_employee_status_dates",
+            "company_id",
+            "employee_id",
+            "status",
+            "start_date",
+            "end_date",
+        ),
+    )
 
     company_id: Mapped[UUID] = mapped_column(ForeignKey("companies.id"), nullable=False, index=True)
     employee_id: Mapped[UUID] = mapped_column(

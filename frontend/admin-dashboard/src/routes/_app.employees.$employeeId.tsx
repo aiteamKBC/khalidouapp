@@ -3,7 +3,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import {
   Activity,
-  ArrowLeft,
   Bell,
   Banknote,
   BriefcaseBusiness,
@@ -17,6 +16,7 @@ import {
   FileClock,
   FileSpreadsheet,
   History,
+  MonitorCheck,
   PencilLine,
   Plus,
   Save,
@@ -28,6 +28,8 @@ import {
 import { toast } from "sonner";
 import { PageHeader } from "@/components/ui/page-header";
 import { ProtectedImage } from "@/components/ProtectedImage";
+import { SCREENSHOT_REFRESH_INTERVAL_MS } from "@/lib/screenshot-display";
+import { BackButton } from "@/components/ui/back-button";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -42,6 +44,7 @@ import {
 } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { StatusBadge } from "@/components/ui/status-badge";
+import { AttendanceStatusBadges } from "@/components/attendance/attendance-status-badges";
 import { DatePicker } from "@/components/ui/date-picker";
 import {
   Table,
@@ -52,7 +55,9 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { WorkdayTimeline } from "@/components/workday-timeline";
+import { ApplicationHistoryPanel } from "@/components/application-history-panel";
 import {
+  employeeDisplayStatus,
   getEmployee,
   getEmployeeChangeHistory,
   getWorkProfile,
@@ -73,17 +78,25 @@ import {
   updatePayrollEntry,
   type PayrollEntry,
 } from "@/api/payroll";
-import { listLeaveRequests } from "@/api/leaveRequests";
+import { listEmployeeLeaveRequests } from "@/api/leaveRequests";
 import { listTimeAdjustmentRequests } from "@/api/timeAdjustments";
 import { getWorkdayTimeline, listSessions, listActivity } from "@/api/sessions";
 import { downloadScreenshot, listScreenshotPage } from "@/api/screenshots";
-import { listTimesheets } from "@/api/timesheets";
+import { listEmployeeTimesheets } from "@/api/timesheets";
 import { listDevices } from "@/api/devices";
 import { listTeams } from "@/api/teams";
 import { listTasks } from "@/api/projects";
-import { formatMinutes, formatRelative, formatDateTime } from "@/lib/format";
+import {
+  formatAttendanceStart,
+  formatClock,
+  formatDateTime,
+  formatMinutes,
+  formatRelative,
+  formatSessionStatus,
+} from "@/lib/format";
 import { useAuth } from "@/lib/auth";
 import { permissions } from "@/lib/permissions";
+import { retryTransientRequest } from "@/api/client";
 
 export const Route = createFileRoute("/_app/employees/$employeeId")({
   component: EmployeeDetailPage,
@@ -103,126 +116,170 @@ function EmployeeDetailPage() {
   const [payrollMonth, setPayrollMonth] = useState(() => toDateKey(new Date()).slice(0, 7));
   const [selectedAttendanceDay, setSelectedAttendanceDay] = useState<string | null>(null);
   const [screenshotDay, setScreenshotDay] = useState<string | null>(null);
+  const [applicationHistoryDay, setApplicationHistoryDay] = useState(() => toDateKey(new Date()));
   const [showAmounts, setShowAmounts] = useState(false);
   const canManageSchedule = can(permissions.breaksManage);
   const canManageAttendance = can(permissions.timesheetsManage);
   const canViewPayroll = can(permissions.payrollView);
   const canManagePayroll = can(permissions.payrollManage);
+  const scope = scopedTeamIds();
+  const todayKey = toDateKey(new Date());
   const emp = useQuery({
-    queryKey: ["employee", employeeId],
-    queryFn: () => getEmployee(employeeId),
+    queryKey: ["employee", scope, employeeId],
+    queryFn: ({ signal }) => getEmployee(employeeId, signal),
     staleTime: 30_000,
     placeholderData: (previous) => previous,
+    retry: retryTransientRequest,
   });
   const sessions = useQuery({
-    queryKey: ["sessions", employeeId],
-    queryFn: () => listSessions(employeeId),
+    queryKey: ["sessions", scope, employeeId],
+    queryFn: ({ signal }) => listSessions(employeeId, undefined, signal),
     enabled: activeTab === "sessions",
+    retry: retryTransientRequest,
   });
   const activity = useQuery({
-    queryKey: ["activity", employeeId],
-    queryFn: () => listActivity(employeeId),
+    queryKey: ["activity", scope, employeeId],
+    queryFn: ({ signal }) => listActivity(employeeId, undefined, signal),
     enabled: activeTab === "activity",
+    retry: retryTransientRequest,
   });
   const timeline = useQuery({
-    queryKey: ["workday-timeline", employeeId, timelineDay],
-    queryFn: () => getWorkdayTimeline(employeeId, timelineDay),
+    queryKey: ["workday-timeline", scope, employeeId, timelineDay],
+    queryFn: ({ signal }) => getWorkdayTimeline(employeeId, timelineDay, signal),
     enabled: activeTab === "profile" || activeTab === "workday",
-    refetchInterval: activeTab === "profile" || activeTab === "workday" ? 60_000 : false,
+    staleTime: timelineDay === todayKey ? 30_000 : 5 * 60_000,
+    refetchInterval:
+      (activeTab === "profile" || activeTab === "workday") && timelineDay === todayKey
+        ? 60_000
+        : false,
+    refetchIntervalInBackground: false,
+    placeholderData: (previous) => previous,
+    retry: retryTransientRequest,
   });
   const shots = useQuery({
-    queryKey: ["emp-shots", employeeId, screenshotDay],
-    queryFn: () =>
-      listScreenshotPage({
-        page: 1,
-        pageSize: 24,
-        employeeId,
-        day: screenshotDay ?? undefined,
-      }).then((page) => page.items),
+    queryKey: ["emp-shots", scope, employeeId, screenshotDay],
+    queryFn: ({ signal }) =>
+      listScreenshotPage(
+        {
+          page: 1,
+          pageSize: 24,
+          employeeId,
+          day: screenshotDay ?? undefined,
+        },
+        signal,
+      ).then((page) => page.items),
     enabled: activeTab === "screenshots",
-    staleTime: 45_000,
+    staleTime:
+      !screenshotDay || screenshotDay === todayKey ? SCREENSHOT_REFRESH_INTERVAL_MS : 5 * 60_000,
     placeholderData: (previous) => previous,
-    refetchInterval: activeTab === "screenshots" ? 30_000 : false,
-    refetchOnWindowFocus: true,
+    refetchInterval:
+      activeTab === "screenshots" && (!screenshotDay || screenshotDay === todayKey)
+        ? SCREENSHOT_REFRESH_INTERVAL_MS
+        : false,
+    refetchIntervalInBackground: false,
+    retry: retryTransientRequest,
   });
   const ts = useQuery({
-    queryKey: ["emp-ts", employeeId],
-    queryFn: () => listTimesheets(),
+    queryKey: ["emp-ts", scope, employeeId, todayKey],
+    queryFn: ({ signal }) => listEmployeeTimesheets(employeeId, todayKey, todayKey, signal),
     enabled: activeTab === "profile" || activeTab === "timesheets",
     staleTime: 60_000,
     placeholderData: (previous) => previous,
+    retry: retryTransientRequest,
   });
   const devs = useQuery({
-    queryKey: ["devices"],
-    queryFn: () => listDevices(),
+    queryKey: ["devices", scope],
+    queryFn: ({ signal }) => listDevices(scope, signal),
     enabled: activeTab === "devices",
     staleTime: 30_000,
     placeholderData: (previous) => previous,
+    retry: retryTransientRequest,
   });
   const teams = useQuery({
-    queryKey: ["teams"],
-    queryFn: () => listTeams(),
+    queryKey: ["teams", scope],
+    queryFn: ({ signal }) => listTeams(scope, signal),
     enabled: activeTab === "profile",
-    staleTime: 60_000,
+    staleTime: 10 * 60_000,
+    gcTime: 30 * 60_000,
     placeholderData: (previous) => previous,
+    retry: retryTransientRequest,
   });
   const tasks = useQuery({
-    queryKey: ["employee-detail-tasks", employeeId],
-    queryFn: () => listTasks(),
+    queryKey: ["employee-detail-tasks", scope, employeeId],
+    queryFn: ({ signal }) => listTasks({ scopedTeamIds: scope }, signal),
     enabled: activeTab === "profile",
-    staleTime: 30_000,
+    staleTime: 5 * 60_000,
     refetchOnWindowFocus: false,
+    retry: retryTransientRequest,
   });
   const profile = useQuery({
-    queryKey: ["employee-work-profile", employeeId],
-    queryFn: () => getWorkProfile(employeeId),
+    queryKey: ["employee-work-profile", scope, employeeId],
+    queryFn: ({ signal }) => getWorkProfile(employeeId, signal),
     enabled: activeTab === "schedule" || activeTab === "profile",
+    staleTime: 5 * 60_000,
+    retry: retryTransientRequest,
   });
   const attendanceBounds = monthBounds(attendanceMonth);
   const attendance = useQuery({
-    queryKey: ["employee-attendance-range", employeeId, attendanceMonth],
-    queryFn: () =>
-      getEmployeeAttendanceRange(employeeId, attendanceBounds.start, attendanceBounds.end),
+    queryKey: ["employee-attendance-range", scope, employeeId, attendanceMonth],
+    queryFn: ({ signal }) =>
+      getEmployeeAttendanceRange(employeeId, attendanceBounds.start, attendanceBounds.end, signal),
     enabled: activeTab === "attendance",
     staleTime: 30_000,
     placeholderData: (previous) => previous,
     refetchOnWindowFocus: false,
-    refetchInterval: activeTab === "attendance" ? 10_000 : false,
+    retry: retryTransientRequest,
   });
   const attendanceDetail = useQuery({
-    queryKey: ["employee-attendance-day", employeeId, selectedAttendanceDay],
-    queryFn: () => getDailyAttendance(employeeId, selectedAttendanceDay!),
-    enabled: Boolean(selectedAttendanceDay),
+    queryKey: ["employee-attendance-day", scope, employeeId, selectedAttendanceDay],
+    queryFn: ({ signal }) => getDailyAttendance(employeeId, selectedAttendanceDay!, signal),
+    enabled: activeTab === "attendance" && Boolean(selectedAttendanceDay),
+    staleTime: selectedAttendanceDay === todayKey ? 30_000 : 5 * 60_000,
+    retry: retryTransientRequest,
   });
   const payroll = useQuery({
-    queryKey: ["employee-payroll-sheet", employeeId, payrollMonth],
-    queryFn: () => getPayrollSheet({ month: payrollMonth, employee_id: employeeId }),
+    queryKey: ["employee-payroll-sheet", scope, employeeId, payrollMonth],
+    queryFn: ({ signal }) =>
+      getPayrollSheet({ month: payrollMonth, employee_id: employeeId }, signal),
     enabled: activeTab === "payroll" && canViewPayroll,
+    staleTime: 5 * 60_000,
+    retry: retryTransientRequest,
   });
   const payrollEntryId = payroll.data?.entries[0]?.id;
   const payrollDetail = useQuery({
-    queryKey: ["employee-payroll-entry", payrollEntryId],
-    queryFn: () => getPayrollEntry(payrollEntryId!),
+    queryKey: ["employee-payroll-entry", scope, employeeId, payrollEntryId],
+    queryFn: ({ signal }) => getPayrollEntry(payrollEntryId!, signal),
     enabled: activeTab === "payroll" && Boolean(payrollEntryId),
+    staleTime: 5 * 60_000,
+    retry: retryTransientRequest,
   });
   const leaveRequests = useQuery({
-    queryKey: ["employee-leave-requests", employeeId],
-    queryFn: () => listLeaveRequests(),
+    queryKey: ["employee-leave-requests", scope, employeeId],
+    queryFn: ({ signal }) => listEmployeeLeaveRequests(employeeId, signal),
     enabled: activeTab === "requests",
+    staleTime: 30_000,
+    retry: retryTransientRequest,
   });
   const timeRequests = useQuery({
-    queryKey: ["employee-time-requests", employeeId],
-    queryFn: () =>
-      listTimeAdjustmentRequests({
-        scopedTeamIds: scopedTeamIds(),
-        employeeId,
-      }),
+    queryKey: ["employee-time-requests", scope, employeeId],
+    queryFn: ({ signal }) =>
+      listTimeAdjustmentRequests(
+        {
+          scopedTeamIds: scope,
+          employeeId,
+        },
+        signal,
+      ),
     enabled: activeTab === "requests",
+    staleTime: 30_000,
+    retry: retryTransientRequest,
   });
   const history = useQuery({
-    queryKey: ["employee-change-history", employeeId],
-    queryFn: () => getEmployeeChangeHistory(employeeId),
+    queryKey: ["employee-change-history", scope, employeeId],
+    queryFn: ({ signal }) => getEmployeeChangeHistory(employeeId, signal),
     enabled: activeTab === "history",
+    staleTime: 5 * 60_000,
+    retry: retryTransientRequest,
   });
 
   useEffect(() => {
@@ -245,7 +302,6 @@ function EmployeeDetailPage() {
   const previewScreenshot =
     empShots.find((screenshot) => screenshot.id === previewScreenshotId) ?? null;
   const empTs = (ts.data ?? []).filter((timesheet) => timesheet.employeeId === e.id);
-  const todayKey = toDateKey(new Date());
   const weekStart = startOfWeek(new Date());
   const monthKey = todayKey.slice(0, 7);
   const todayTimesheet = empTs.find((timesheet) => timesheet.date === todayKey);
@@ -283,18 +339,27 @@ function EmployeeDetailPage() {
 
   return (
     <div>
-      <Button asChild variant="ghost" size="sm" className="mb-2 -ml-2">
-        <Link to="/people" search={{ tab: "directory" }}>
-          <ArrowLeft className="h-4 w-4 mr-1" />
-          Back to people
-        </Link>
-      </Button>
+      <BackButton
+        fallbackHref="/people?tab=directory"
+        variant="ghost"
+        size="sm"
+        className="mb-2 -ml-2"
+      />
       <PageHeader
         title={e.name}
         description={`Employee profile · ${e.code} · ${e.jobTitle || "No job title"}`}
         actions={
           <div className="flex items-center gap-2">
-            <StatusBadge status={e.accountStatus === "invited" ? "invited" : e.status} />
+            <StatusBadge status={employeeDisplayStatus(e)} />
+            <Button asChild variant="outline" size="sm">
+              <Link
+                to="/monitoring"
+                search={{ employeeId: e.id, day: todayKey, tab: "attendance" }}
+              >
+                <MonitorCheck className="mr-2 h-4 w-4" />
+                Monitor
+              </Link>
+            </Button>
           </div>
         }
       />
@@ -309,6 +374,7 @@ function EmployeeDetailPage() {
           {canViewPayroll && <TabsTrigger value="payroll">Monthly payroll</TabsTrigger>}
           <TabsTrigger value="sessions">Sessions</TabsTrigger>
           <TabsTrigger value="screenshots">Screenshots</TabsTrigger>
+          <TabsTrigger value="application-history">App & site history</TabsTrigger>
           <TabsTrigger value="timesheets">Timesheets</TabsTrigger>
           <TabsTrigger value="devices">Devices</TabsTrigger>
           <TabsTrigger value="activity">Activity</TabsTrigger>
@@ -431,14 +497,7 @@ function EmployeeDetailPage() {
                   <div className="rounded-xl border border-border p-3">
                     <div className="mb-2 font-semibold">Current status</div>
                     <div className="space-y-2">
-                      <Row
-                        k="Status"
-                        v={
-                          <StatusBadge
-                            status={e.accountStatus === "invited" ? "invited" : e.status}
-                          />
-                        }
-                      />
+                      <Row k="Status" v={<StatusBadge status={employeeDisplayStatus(e)} />} />
                       <Row k="Session start" v={formatDateTime(e.sessionStart)} />
                       <Row k="Last heartbeat" v={formatRelative(e.lastHeartbeat)} />
                       <Row k="Last screenshot" v={formatRelative(e.lastScreenshotAt)} />
@@ -583,8 +642,22 @@ function EmployeeDetailPage() {
                         {formatClock(row.scheduledEndAt, row.timezone)}
                       </TableCell>
                       <TableCell>
-                        {formatClock(row.actualFirstActivityAt, row.timezone)} –{" "}
-                        {formatClock(row.actualLastActivityAt, row.timezone)}
+                        {formatAttendanceStart(
+                          row.actualFirstActivityAt,
+                          row.timezone,
+                          row.continuedFromPreviousDay,
+                          row.continuedSessionStartedAt,
+                        )}{" "}
+                        – {formatClock(row.actualLastActivityAt, row.timezone)}
+                        <span
+                          className={`block text-xs ${
+                            row.isRunning
+                              ? "font-semibold text-emerald-700"
+                              : "text-muted-foreground"
+                          }`}
+                        >
+                          {formatSessionStatus(row.isRunning, row.actualSignOutAt, row.timezone)}
+                        </span>
                       </TableCell>
                       <TableCell>{formatSeconds(row.normalWorkedSeconds)}</TableCell>
                       <TableCell>{formatSeconds(row.idleSeconds)}</TableCell>
@@ -607,7 +680,11 @@ function EmployeeDetailPage() {
                         {formatSeconds(row.totalPayableSeconds)}
                       </TableCell>
                       <TableCell>
-                        <StatusBadge status={row.status} />
+                        <AttendanceStatusBadges
+                          status={row.status}
+                          deductibleLateSeconds={row.deductibleLateSeconds}
+                          earlyLeaveSeconds={row.earlyLeaveSeconds}
+                        />
                       </TableCell>
                       <TableCell>
                         <div className="flex justify-end gap-2">
@@ -630,6 +707,17 @@ function EmployeeDetailPage() {
                           >
                             <Camera className="mr-1 h-3.5 w-3.5" />
                             {row.screenshotCount}
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => {
+                              setApplicationHistoryDay(row.date);
+                              setActiveTab("application-history");
+                            }}
+                          >
+                            <History className="mr-1 h-3.5 w-3.5" />
+                            History
                           </Button>
                         </div>
                       </TableCell>
@@ -743,7 +831,9 @@ function EmployeeDetailPage() {
                   <div key={session.id} className="grid grid-cols-4 gap-2 px-4 py-3">
                     <div>{formatDateTime(session.startedAt)}</div>
                     <div className="text-muted-foreground">
-                      {session.endedAt ? formatDateTime(session.endedAt) : "In progress"}
+                      {session.endedAt
+                        ? formatDateTime(session.endedAt)
+                        : "Still running - no sign-out yet"}
                     </div>
                     <div>Active {formatMinutes(session.activeMinutes)}</div>
                     <div className="text-right">{session.screenshotCount} screenshots</div>
@@ -829,6 +919,14 @@ function EmployeeDetailPage() {
               <p className="text-sm text-muted-foreground col-span-full">No screenshots.</p>
             )}
           </div>
+        </TabsContent>
+
+        <TabsContent value="application-history">
+          <ApplicationHistoryPanel
+            employeeId={employeeId}
+            day={applicationHistoryDay}
+            onDayChange={setApplicationHistoryDay}
+          />
         </TabsContent>
 
         <TabsContent value="timesheets">
@@ -948,15 +1046,18 @@ function EmployeeDetailPage() {
                 />
                 <CompactMetric
                   label="Started"
-                  value={formatClock(
+                  value={formatAttendanceStart(
                     attendanceDetail.data.actualFirstActivityAt,
                     attendanceDetail.data.timezone,
+                    attendanceDetail.data.continuedFromPreviousDay,
+                    attendanceDetail.data.continuedSessionStartedAt,
                   )}
                 />
                 <CompactMetric
-                  label="Ended"
-                  value={formatClock(
-                    attendanceDetail.data.actualLastActivityAt,
+                  label="Session"
+                  value={formatSessionStatus(
+                    attendanceDetail.data.isRunning,
+                    attendanceDetail.data.actualSignOutAt,
                     attendanceDetail.data.timezone,
                   )}
                 />
@@ -994,17 +1095,33 @@ function EmployeeDetailPage() {
                 />
               )}
               <div className="flex justify-end">
-                <Button
-                  variant="outline"
-                  onClick={() => {
-                    setScreenshotDay(selectedAttendanceDay);
-                    setSelectedAttendanceDay(null);
-                    setActiveTab("screenshots");
-                  }}
-                >
-                  <Camera className="mr-2 h-4 w-4" />
-                  View this day's screenshots
-                </Button>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setScreenshotDay(selectedAttendanceDay);
+                      setSelectedAttendanceDay(null);
+                      setActiveTab("screenshots");
+                    }}
+                  >
+                    <Camera className="mr-2 h-4 w-4" />
+                    View this day's screenshots
+                  </Button>
+                  <Button
+                    variant="outline"
+                    disabled={!selectedAttendanceDay}
+                    onClick={() => {
+                      if (selectedAttendanceDay) {
+                        setApplicationHistoryDay(selectedAttendanceDay);
+                      }
+                      setSelectedAttendanceDay(null);
+                      setActiveTab("application-history");
+                    }}
+                  >
+                    <History className="mr-2 h-4 w-4" />
+                    View app & site history
+                  </Button>
+                </div>
               </div>
             </div>
           ) : (
@@ -1876,15 +1993,6 @@ function formatSeconds(value: number) {
   const hours = Math.floor(seconds / 3600);
   const minutes = Math.floor((seconds % 3600) / 60);
   return `${hours}h ${String(minutes).padStart(2, "0")}m`;
-}
-
-function formatClock(value?: string | null, timezone?: string | null) {
-  if (!value) return "—";
-  return new Intl.DateTimeFormat(undefined, {
-    hour: "2-digit",
-    minute: "2-digit",
-    timeZone: timezone || undefined,
-  }).format(new Date(value));
 }
 
 function toTimeInput(value?: string | null, timezone?: string | null) {

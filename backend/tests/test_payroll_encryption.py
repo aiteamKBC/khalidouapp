@@ -4,6 +4,7 @@ import pytest
 import sqlalchemy as sa
 
 from app.core.field_encryption import PREFIX, decrypt_text, encrypt_text
+from app.core.config import settings
 from app.database.encrypted_types import EncryptedDecimal, EncryptedJSON
 from app.services.audit import redact_financial_audit_details
 
@@ -18,6 +19,18 @@ def test_authenticated_encryption_round_trip_and_tamper_detection():
     replacement = "A" if encrypted[-1] != "A" else "B"
     with pytest.raises(RuntimeError, match="could not be decrypted"):
         decrypt_text(encrypted[:-1] + replacement)
+
+
+def test_dedicated_salary_key_can_read_legacy_jwt_derived_ciphertext(monkeypatch):
+    monkeypatch.setattr(settings, "salary_encryption_key", "")
+    legacy_ciphertext = encrypt_text("15000.00")
+
+    monkeypatch.setattr(settings, "salary_encryption_key", "new-dedicated-salary-key-" + "x" * 32)
+    assert decrypt_text(legacy_ciphertext) == "15000.00"
+
+    new_ciphertext = encrypt_text("16000.00")
+    assert decrypt_text(new_ciphertext) == "16000.00"
+    assert new_ciphertext != legacy_ciphertext
 
 
 def test_encrypted_sqlalchemy_types_never_store_plain_payroll_values():

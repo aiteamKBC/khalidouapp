@@ -44,6 +44,7 @@ export type PersonInvitationResult = {
 };
 
 export type PersonInvitationStatus = "pending" | "accepted" | "expired" | "revoked";
+export type PersonInvitationKind = PersonInvitationInput["kind"];
 
 export type PersonInvitationSummary = {
   id: string;
@@ -57,7 +58,7 @@ export type PublicPersonInvitation =
       status: "pending";
       name: string;
       email: string;
-      kind: "employee";
+      kind: PersonInvitationKind;
       expiresAt: string;
     }
   | {
@@ -96,7 +97,7 @@ export async function invitePerson(input: PersonInvitationInput): Promise<Person
       team_ids: input.teamIds,
       job_title: input.jobTitle ? normalizeAiAcronym(input.jobTitle) : null,
       timezone: input.timezone || "Africa/Cairo",
-      track_as_employee: input.trackAsEmployee ?? false,
+      track_as_employee: true,
       start_date: input.startDate,
       annual_leave_days: input.annualLeaveDays,
       work_profile: input.workProfile
@@ -216,19 +217,22 @@ export async function updatePersonRole(
   };
 }
 
-export async function getPersonInvitation(token: string): Promise<PublicPersonInvitation> {
+export async function getPersonInvitation(
+  token: string,
+  signal?: AbortSignal,
+): Promise<PublicPersonInvitation> {
   const row = await apiFetch<{
     valid: boolean;
     status: PersonInvitationStatus | "invalid";
     name?: string;
     email?: string;
-    kind?: "employee";
+    kind?: PersonInvitationKind;
     expires_at?: string;
-  }>(`/people/invitations/${encodeURIComponent(token)}`);
+  }>(`/people/invitations/${encodeURIComponent(token)}`, { signal });
   if (!row.valid || row.status !== "pending") {
     return { valid: false, status: row.status };
   }
-  if (!row.name || !row.email || row.kind !== "employee" || !row.expires_at) {
+  if (!row.name || !row.email || !row.kind || !row.expires_at) {
     return { valid: false, status: "invalid" };
   }
   return {
@@ -244,15 +248,20 @@ export async function getPersonInvitation(token: string): Promise<PublicPersonIn
 export async function acceptPersonInvitation(
   token: string,
   password: string,
-): Promise<{ status: "accepted"; employeeId: string }> {
-  const row = await apiFetch<{ status: "accepted"; employee_id: string }>(
-    `/people/invitations/${encodeURIComponent(token)}`,
-    {
-      method: "POST",
-      body: JSON.stringify({ password }),
-    },
-  );
-  return { status: row.status, employeeId: row.employee_id };
+): Promise<{ status: "accepted"; employeeId: string; adminUserId?: string }> {
+  const row = await apiFetch<{
+    status: "accepted";
+    employee_id: string;
+    admin_user_id?: string | null;
+  }>(`/people/invitations/${encodeURIComponent(token)}`, {
+    method: "POST",
+    body: JSON.stringify({ password }),
+  });
+  return {
+    status: row.status,
+    employeeId: row.employee_id,
+    adminUserId: row.admin_user_id ?? undefined,
+  };
 }
 
 export async function resendPersonInvitation(invitationId: string): Promise<{

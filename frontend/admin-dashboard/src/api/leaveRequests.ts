@@ -16,6 +16,22 @@ export type LeaveRequest = {
   createdAt: string;
 };
 
+export type LeaveBalanceOverview = {
+  employeeId: string;
+  employeeName: string;
+  employeeCode: string;
+  startDate?: string;
+  year: number;
+  creditDays: number;
+  usedDays: number;
+  remainingDays: number;
+  takenDates: Array<{
+    date: string;
+    leaveType: LeaveRequest["leaveType"];
+    requestId: string;
+  }>;
+};
+
 type BackendLeaveRequest = {
   id: string;
   employee_id: string;
@@ -48,14 +64,70 @@ const mapLeave = (row: BackendLeaveRequest): LeaveRequest => ({
   createdAt: row.created_at,
 });
 
-export async function listLeaveRequests(status?: string): Promise<LeaveRequest[]> {
+export async function listLeaveRequests(
+  status?: string,
+  signal?: AbortSignal,
+): Promise<LeaveRequest[]> {
   const rows = await apiFetch<BackendLeaveRequest[]>(
     withQuery("/leave-requests", {
       status: status && status !== "all" ? status : undefined,
       page_size: 100,
     }),
+    { signal },
   );
   return rows.map(mapLeave);
+}
+
+export async function listEmployeeLeaveRequests(
+  employeeId: string,
+  signal?: AbortSignal,
+): Promise<LeaveRequest[]> {
+  const rows = await apiFetch<BackendLeaveRequest[]>(
+    withQuery("/leave-requests", {
+      employee_id: employeeId,
+      page_size: 100,
+    }),
+    { signal },
+  );
+  return rows.map(mapLeave);
+}
+
+export async function listLeaveBalanceOverview(
+  year: number,
+  signal?: AbortSignal,
+): Promise<LeaveBalanceOverview[]> {
+  const rows = await apiFetch<
+    Array<{
+      employee_id: string;
+      employee_name: string;
+      employee_code: string;
+      start_date?: string | null;
+      year: number;
+      credit_days: number;
+      used_days: number;
+      remaining_days: number;
+      taken_dates: Array<{
+        date: string;
+        leave_type: LeaveRequest["leaveType"];
+        request_id: string;
+      }>;
+    }>
+  >(withQuery("/leave-requests/balances", { year }), { signal });
+  return rows.map((row) => ({
+    employeeId: row.employee_id,
+    employeeName: row.employee_name,
+    employeeCode: row.employee_code,
+    startDate: row.start_date ?? undefined,
+    year: row.year,
+    creditDays: row.credit_days,
+    usedDays: row.used_days,
+    remainingDays: row.remaining_days,
+    takenDates: row.taken_dates.map((item) => ({
+      date: item.date,
+      leaveType: item.leave_type,
+      requestId: item.request_id,
+    })),
+  }));
 }
 
 export async function reviewLeaveRequest(id: string, status: "approved" | "rejected") {

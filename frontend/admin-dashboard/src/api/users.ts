@@ -1,6 +1,6 @@
 import { apiFetch } from "./client";
 import { mapUser } from "./auth";
-import type { AuditLogEntry, Role, User } from "@/types";
+import type { AuditLogEntry, Role, User, UserStatus } from "@/types";
 
 type BackendUser = {
   id: string;
@@ -12,7 +12,7 @@ type BackendUser = {
   is_super_admin?: boolean;
   permissions?: string[];
   assigned_team_ids?: string[];
-  status: "active" | "inactive";
+  status: UserStatus;
   updated_at?: string;
 };
 
@@ -36,8 +36,8 @@ export type UserCreateInput = {
   role: Role;
 };
 
-export async function listUsers(): Promise<User[]> {
-  const users = await apiFetch<BackendUser[]>("/users");
+export async function listUsers(signal?: AbortSignal): Promise<User[]> {
+  const users = await apiFetch<BackendUser[]>("/users", { signal });
   return users.map(mapUser);
 }
 
@@ -59,8 +59,8 @@ export async function updateUser(
   return mapUser(user);
 }
 
-export async function listAuditLog(): Promise<AuditLogEntry[]> {
-  const rows = await apiFetch<BackendAuditLogEntry[]>("/audit-log");
+export async function listAuditLog(signal?: AbortSignal): Promise<AuditLogEntry[]> {
+  const rows = await apiFetch<BackendAuditLogEntry[]>("/audit-log", { signal });
   return rows.map((row) => ({
     id: row.id,
     at: row.at,

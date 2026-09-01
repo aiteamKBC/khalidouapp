@@ -15,6 +15,14 @@ function withSecurityHeaders(response: Response): Response {
   headers.set("x-frame-options", "DENY");
   headers.set("referrer-policy", "strict-origin-when-cross-origin");
   headers.set("permissions-policy", "camera=(), microphone=(), geolocation=(), payment=()");
+  if ((headers.get("content-type") ?? "").includes("text/html")) {
+    // HTML references hashed immutable assets, so browsers must revalidate the
+    // document after a deployment instead of reopening an old application
+    // bundle whose requests can remain stuck on a retired API process.
+    headers.set("cache-control", "no-store, max-age=0");
+    headers.set("pragma", "no-cache");
+    headers.set("expires", "0");
+  }
   return new Response(response.body, {
     status: response.status,
     statusText: response.statusText,

@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState, type FormEvent } from "react";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import {
   CalendarClock,
   Camera,
@@ -19,6 +19,7 @@ import { BrandLogo } from "@/components/ui/brand-logo";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { PasswordInput } from "@/components/ui/password-input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { StatusBadge } from "@/components/ui/status-badge";
@@ -56,6 +57,17 @@ import {
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { WorkdayTimeline } from "@/components/workday-timeline";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import { ProtectedImage } from "@/components/ProtectedImage";
+import { retryTransientRequest } from "@/api/client";
+import {
+  formatAttendanceStart,
+  formatClock,
+  formatDateTime,
+  formatSessionStatus,
+  formatTimeOfDay,
+} from "@/lib/format";
+import { SCREENSHOT_REFRESH_INTERVAL_MS } from "@/lib/screenshot-display";
+import { jwtSubjectScopeKey } from "@/lib/private-query-scope";
 
 export const Route = createFileRoute("/employee")({ component: EmployeePortalPage });
 
@@ -141,6 +153,7 @@ function EmployeeLogin({
     mutationFn: () => employeeLogin(emailValue, credentialValue),
     onSuccess: (result) => {
       queryClient.removeQueries({ queryKey: ["employee-portal"] });
+      queryClient.removeQueries({ queryKey: ["protected-image", "employee"] });
       saveEmployeeToken(result.access_token);
       onLoggedIn(result.access_token);
     },
@@ -161,6 +174,7 @@ function EmployeeLogin({
               event.preventDefault();
               clearEmployeeToken();
               queryClient.removeQueries({ queryKey: ["employee-portal"] });
+              queryClient.removeQueries({ queryKey: ["protected-image", "employee"] });
               if (!emailValue || !credentialValue) {
                 return;
               }
@@ -181,10 +195,9 @@ function EmployeeLogin({
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="employee-credential">Password</Label>
-              <Input
+              <PasswordInput
                 id="employee-credential"
                 name="khaliduo-employee-credential"
-                type="password"
                 autoCapitalize="none"
                 autoComplete="off"
                 spellCheck={false}
@@ -222,62 +235,109 @@ function EmployeeLogin({
 function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () => void }) {
   const { prompt, dialog: notePromptDialog } = useNotePrompt();
   const queryClient = useQueryClient();
-  const employeePortalQueryKey = ["employee-portal", token] as const;
+  const employeePortalQueryKey = useMemo(
+    () => ["employee-portal", jwtSubjectScopeKey(token)] as const,
+    [token],
+  );
   const handleLogout = () => {
     clearEmployeeToken();
     queryClient.removeQueries({ queryKey: ["employee-portal"] });
+    queryClient.removeQueries({ queryKey: ["protected-image", "employee"] });
     onLogout();
   };
   const [screenshotDay, setScreenshotDay] = useState(() => localDateKey());
+  const screenshotSectionRef = useRef<HTMLDivElement>(null);
+  const [screenshotsVisible, setScreenshotsVisible] = useState(
+    () =>
+      typeof window !== "undefined" &&
+      new URLSearchParams(window.location.search).get("view") === "screenshots",
+  );
   const me = useQuery({
     queryKey: [...employeePortalQueryKey, "me"],
-    queryFn: () => employeeMe(token),
+    queryFn: ({ signal }) => employeeMe(token, signal),
     retry: false,
   });
   const summary = useQuery({
     queryKey: [...employeePortalQueryKey, "summary"],
-    queryFn: () => employeeSummary(token),
+    queryFn: ({ signal }) => employeeSummary(token, signal),
+    staleTime: 10_000,
     refetchInterval: 15_000,
-    refetchOnWindowFocus: true,
+    refetchIntervalInBackground: false,
+    placeholderData: keepPreviousData,
+    retry: retryTransientRequest,
   });
+  useEffect(() => {
+    const section = screenshotSectionRef.current;
+    if (!section || screenshotsVisible) return;
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (!entry?.isIntersecting) return;
+        setScreenshotsVisible(true);
+        observer.disconnect();
+      },
+      { rootMargin: "300px" },
+    );
+    observer.observe(section);
+    return () => observer.disconnect();
+  }, [screenshotsVisible]);
   const workProfile = useQuery({
     queryKey: [...employeePortalQueryKey, "work-profile"],
-    queryFn: () => employeeWorkProfile(token),
+    queryFn: ({ signal }) => employeeWorkProfile(token, signal),
+    staleTime: 5 * 60_000,
+    retry: retryTransientRequest,
   });
   const tasks = useQuery({
     queryKey: [...employeePortalQueryKey, "tasks"],
-    queryFn: () => employeeTasks(token),
+    queryFn: ({ signal }) => employeeTasks(token, signal),
+    staleTime: 10_000,
     refetchInterval: 15_000,
-    refetchOnWindowFocus: true,
+    refetchIntervalInBackground: false,
+    placeholderData: keepPreviousData,
+    retry: retryTransientRequest,
   });
   const projects = useQuery({
     queryKey: [...employeePortalQueryKey, "projects"],
-    queryFn: () => employeeProjects(token),
+    queryFn: ({ signal }) => employeeProjects(token, signal),
+    staleTime: 5 * 60_000,
+    retry: retryTransientRequest,
   });
   const screenshots = useQuery({
     queryKey: [...employeePortalQueryKey, "screenshots", screenshotDay],
-    queryFn: () => employeeScreenshots(token, screenshotDay),
-    refetchInterval: 30_000,
-    refetchOnWindowFocus: true,
+    queryFn: ({ signal }) => employeeScreenshots(token, screenshotDay, signal),
+    enabled: screenshotsVisible,
+    staleTime: screenshotDay === localDateKey() ? SCREENSHOT_REFRESH_INTERVAL_MS : 5 * 60_000,
+    refetchInterval:
+      screenshotsVisible && screenshotDay === localDateKey()
+        ? SCREENSHOT_REFRESH_INTERVAL_MS
+        : false,
+    refetchIntervalInBackground: false,
+    placeholderData: keepPreviousData,
+    retry: retryTransientRequest,
   });
   useEffect(() => {
     if (new URLSearchParams(window.location.search).get("view") !== "screenshots") return;
-    window.setTimeout(() => {
-      document.getElementById("my-screenshots")?.scrollIntoView({ behavior: "smooth" });
-    }, 100);
-  }, [screenshots.isSuccess]);
+    document.getElementById("my-screenshots")?.scrollIntoView({ behavior: "smooth" });
+  }, []);
   const requests = useQuery({
     queryKey: [...employeePortalQueryKey, "requests"],
-    queryFn: () => employeeTimeRequests(token),
+    queryFn: ({ signal }) => employeeTimeRequests(token, signal),
+    staleTime: 30_000,
+    retry: retryTransientRequest,
   });
   const leaveRequests = useQuery({
     queryKey: [...employeePortalQueryKey, "leave-requests"],
-    queryFn: () => employeeLeaveRequests(token),
+    queryFn: ({ signal }) => employeeLeaveRequests(token, signal),
+    staleTime: 30_000,
+    retry: retryTransientRequest,
   });
   const notifications = useQuery({
     queryKey: [...employeePortalQueryKey, "notifications"],
-    queryFn: () => employeeNotifications(token),
+    queryFn: ({ signal }) => employeeNotifications(token, signal),
+    staleTime: 20_000,
     refetchInterval: 30_000,
+    refetchIntervalInBackground: false,
+    placeholderData: keepPreviousData,
+    retry: retryTransientRequest,
   });
   const [minutes, setMinutes] = useState(30);
   const [previewScreenshot, setPreviewScreenshot] = useState<PortalScreenshot | null>(null);
@@ -306,8 +366,9 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
   const [workspaceTaskId, setWorkspaceTaskId] = useState<string | null>(null);
   const taskWorkspace = useQuery({
     queryKey: [...employeePortalQueryKey, "task-workspace", workspaceTaskId],
-    queryFn: () => employeeTaskWorkspace(token, workspaceTaskId!),
+    queryFn: ({ signal }) => employeeTaskWorkspace(token, workspaceTaskId!, signal),
     enabled: Boolean(workspaceTaskId),
+    retry: retryTransientRequest,
   });
   const createTaskMutation = useMutation({
     mutationFn: () =>
@@ -420,12 +481,22 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
               <AvatarFallback>{me.data?.name.slice(0, 2).toUpperCase()}</AvatarFallback>
             </Avatar>
             <span className="hidden text-sm text-white/85 sm:block">{me.data?.name}</span>
-            <Button className="border-white/20 bg-white/10 text-white hover:bg-white/20" variant="outline" size="sm" asChild>
+            <Button
+              className="border-white/20 bg-white/10 text-white hover:bg-white/20"
+              variant="outline"
+              size="sm"
+              asChild
+            >
               <a href="/download">
                 <Download className="mr-2 h-4 w-4" /> Download app
               </a>
             </Button>
-            <Button className="border-white/20 bg-white/10 text-white hover:bg-white/20" variant="outline" size="sm" onClick={handleLogout}>
+            <Button
+              className="border-white/20 bg-white/10 text-white hover:bg-white/20"
+              variant="outline"
+              size="sm"
+              onClick={handleLogout}
+            >
               <LogOut className="mr-2 h-4 w-4" /> Logout
             </Button>
           </div>
@@ -435,14 +506,23 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
         <section className="overflow-hidden rounded-2xl border border-[#342862] bg-[#21194b] p-6 text-white shadow-[0_14px_32px_-24px_rgba(23,19,62,.9)]">
           <div className="flex flex-wrap items-end justify-between gap-5">
             <div>
-              <p className="text-[11px] font-black uppercase tracking-[0.24em] text-[#ff3f86]">Khaliduo workspace</p>
-              <h1 className="mt-2 text-3xl font-black tracking-tight">Welcome, {me.data?.name ?? "employee"}</h1>
-              <p className="mt-1 text-sm text-white/65">Your workday, tasks, requests, and screenshots in one place.</p>
+              <p className="text-[11px] font-black uppercase tracking-[0.24em] text-[#ff3f86]">
+                Khaliduo workspace
+              </p>
+              <h1 className="mt-2 text-3xl font-black tracking-tight">
+                Welcome, {me.data?.name ?? "employee"}
+              </h1>
+              <p className="mt-1 text-sm text-white/65">
+                Your workday, tasks, requests, and screenshots in one place.
+              </p>
             </div>
             <div className="rounded-xl border border-white/15 bg-white/10 px-4 py-3 text-right">
-              <p className="text-[10px] font-bold uppercase tracking-wider text-white/55">Today&apos;s shift</p>
+              <p className="text-[10px] font-bold uppercase tracking-wider text-white/55">
+                Today&apos;s shift
+              </p>
               <p className="mt-1 font-mono text-lg font-black">
-                {workProfile.data?.shift_start?.slice(0, 5) ?? "--:--"} – {workProfile.data?.shift_end?.slice(0, 5) ?? "--:--"}
+                {formatTimeOfDay(workProfile.data?.shift_start)} –{" "}
+                {formatTimeOfDay(workProfile.data?.shift_end)}
               </p>
             </div>
           </div>
@@ -496,64 +576,74 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
           <PeriodCard title="This month" period={summary.data?.month} icon={Star} />
         </div>
         <div className="grid gap-5 lg:grid-cols-[1.1fr_.9fr]">
-        <Card className="border-[#e7e1f1] bg-white shadow-[0_10px_28px_-24px_rgba(23,19,62,.7)] dark:border-[#3a3156] dark:bg-[#1e1832]">
-          <CardHeader className="pb-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <CardTitle>Today&apos;s schedule & attendance</CardTitle>
-              {summary.data?.daily_attendance && (
-                <StatusBadge status={summary.data.daily_attendance.status as never} />
-              )}
-            </div>
-          </CardHeader>
-          <CardContent>
-            <div className="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
-              <div className="rounded-lg border p-3">
-                <p className="text-xs text-muted-foreground">Scheduled shift</p>
-                <p className="mt-1 font-semibold">
-                  {workProfile.data?.shift_start?.slice(0, 5) ?? "—"} –{" "}
-                  {workProfile.data?.shift_end?.slice(0, 5) ?? "—"}
-                </p>
+          <Card className="border-[#e7e1f1] bg-white shadow-[0_10px_28px_-24px_rgba(23,19,62,.7)] dark:border-[#3a3156] dark:bg-[#1e1832]">
+            <CardHeader className="pb-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <CardTitle>Today&apos;s schedule & attendance</CardTitle>
+                {summary.data?.daily_attendance && (
+                  <StatusBadge status={summary.data.daily_attendance.status as never} />
+                )}
               </div>
-              <div className="rounded-lg border p-3">
-                <p className="text-xs text-muted-foreground">First / last activity</p>
-                <p className="mt-1 font-semibold">
-                  {summary.data?.daily_attendance.actual_first_activity_at
-                    ? new Date(
-                        summary.data.daily_attendance.actual_first_activity_at,
-                      ).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-                    : "—"}
-                  {" / "}
-                  {summary.data?.daily_attendance.actual_last_activity_at
-                    ? new Date(
-                        summary.data.daily_attendance.actual_last_activity_at,
-                      ).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-                    : "—"}
-                </p>
+            </CardHeader>
+            <CardContent>
+              <div className="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-5">
+                <div className="rounded-lg border p-3">
+                  <p className="text-xs text-muted-foreground">Scheduled shift</p>
+                  <p className="mt-1 font-semibold">
+                    {formatTimeOfDay(workProfile.data?.shift_start)} –{" "}
+                    {formatTimeOfDay(workProfile.data?.shift_end)}
+                  </p>
+                </div>
+                <div className="rounded-lg border p-3">
+                  <p className="text-xs text-muted-foreground">First / last activity</p>
+                  <p className="mt-1 font-semibold">
+                    {formatAttendanceStart(
+                      summary.data?.daily_attendance.actual_first_activity_at,
+                      summary.data?.daily_attendance.timezone,
+                      summary.data?.daily_attendance.continued_from_previous_day,
+                      summary.data?.daily_attendance.continued_session_started_at,
+                    )}
+                    {" / "}
+                    {formatClock(
+                      summary.data?.daily_attendance.actual_last_activity_at,
+                      summary.data?.daily_attendance.timezone,
+                    )}
+                  </p>
+                </div>
+                <div className="rounded-lg border p-3">
+                  <p className="text-xs text-muted-foreground">Session</p>
+                  <p className="mt-1 font-semibold">
+                    {formatSessionStatus(
+                      Boolean(summary.data?.daily_attendance.is_running),
+                      summary.data?.daily_attendance.actual_sign_out_at,
+                      summary.data?.daily_attendance.timezone,
+                    )}
+                  </p>
+                </div>
+                <div className="rounded-lg border p-3">
+                  <p className="text-xs text-muted-foreground">Payable today</p>
+                  <p className="mt-1 font-semibold">
+                    {formatDuration(summary.data?.daily_attendance.total_payable_seconds ?? 0)}
+                  </p>
+                </div>
+                <div className="rounded-lg border p-3">
+                  <p className="text-xs text-muted-foreground">Late after grace / overtime</p>
+                  <p className="mt-1 font-semibold">
+                    {formatDuration(summary.data?.daily_attendance.deductible_late_seconds ?? 0)} /{" "}
+                    {formatDuration(summary.data?.daily_attendance.recorded_overtime_seconds ?? 0)}
+                  </p>
+                </div>
               </div>
-              <div className="rounded-lg border p-3">
-                <p className="text-xs text-muted-foreground">Payable today</p>
-                <p className="mt-1 font-semibold">
-                  {formatDuration(summary.data?.daily_attendance.total_payable_seconds ?? 0)}
-                </p>
-              </div>
-              <div className="rounded-lg border p-3">
-                <p className="text-xs text-muted-foreground">Late / overtime</p>
-                <p className="mt-1 font-semibold">
-                  {formatDuration(summary.data?.daily_attendance.raw_late_seconds ?? 0)} /{" "}
-                  {formatDuration(summary.data?.daily_attendance.recorded_overtime_seconds ?? 0)}
-                </p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-        <Card className="border-[#e7e1f1] bg-white shadow-[0_10px_28px_-24px_rgba(23,19,62,.7)] dark:border-[#3a3156] dark:bg-[#1e1832]">
-          <CardHeader>
-            <CardTitle>Today's activity</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <WorkdayTimeline timeline={summary.data?.todayTimeline} />
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+          <Card className="border-[#e7e1f1] bg-white shadow-[0_10px_28px_-24px_rgba(23,19,62,.7)] dark:border-[#3a3156] dark:bg-[#1e1832]">
+            <CardHeader>
+              <CardTitle>Today's activity</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <WorkdayTimeline timeline={summary.data?.todayTimeline} />
+            </CardContent>
+          </Card>
         </div>
         <div className="grid gap-6 lg:grid-cols-2">
           <Card className="border-[#e7e1f1] bg-white shadow-[0_10px_28px_-24px_rgba(23,19,62,.7)] dark:border-[#3a3156] dark:bg-[#1e1832]">
@@ -705,7 +795,7 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
                     </span>
                     {task.stage === "new_requests" && (
                       <span className="rounded-full bg-amber-100 px-2 py-1 text-amber-800">
-                        Awaiting admin approval
+                        Awaiting manager approval
                       </span>
                     )}
                     {task.stage === "ready_for_review" && (
@@ -820,8 +910,7 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
                             >
                               <p>{comment.body}</p>
                               <p className="mt-1 text-[10px] text-muted-foreground">
-                                {comment.author_name} ·{" "}
-                                {new Date(comment.created_at).toLocaleString()}
+                                {comment.author_name} · {formatDateTime(comment.created_at)}
                               </p>
                             </div>
                           ))}
@@ -872,7 +961,7 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
                   onClick={async () => {
                     if (!item.read_at) await readEmployeeNotification(token, item.id);
                     await queryClient.invalidateQueries({
-                      queryKey: ["employee-portal", "notifications"],
+                      queryKey: [...employeePortalQueryKey, "notifications"],
                     });
                   }}
                 >
@@ -932,7 +1021,7 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
                   />
                 </div>
                 <Button disabled={createRequest.isPending}>
-                  {createRequest.isPending ? "Sending..." : "Send for admin approval"}
+                  {createRequest.isPending ? "Sending..." : "Send for manager approval"}
                 </Button>
                 {createRequest.isSuccess && <p className="text-sm text-success">Request sent.</p>}
                 {createRequest.error && (
@@ -1031,56 +1120,59 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
             ))}
           </CardContent>
         </Card>
-        <Card id="my-screenshots" className="border-[#e7e1f1] bg-white shadow-[0_10px_28px_-24px_rgba(23,19,62,.7)] dark:border-[#3a3156] dark:bg-[#1e1832]">
-          <CardHeader>
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-              <div>
-                <CardTitle>My screenshots</CardTitle>
-                <p className="text-sm text-muted-foreground">
-                  Only screenshots from the selected day are loaded.
-                </p>
+        <div ref={screenshotSectionRef} id="my-screenshots">
+          <Card className="border-[#e7e1f1] bg-white shadow-[0_10px_28px_-24px_rgba(23,19,62,.7)] dark:border-[#3a3156] dark:bg-[#1e1832]">
+            <CardHeader>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+                <div>
+                  <CardTitle>My screenshots</CardTitle>
+                  <p className="text-sm text-muted-foreground">
+                    Only screenshots from the selected day are loaded.
+                  </p>
+                </div>
+                <div className="w-full sm:w-48">
+                  <Label htmlFor="employee-screenshot-day">Day</Label>
+                  <Input
+                    id="employee-screenshot-day"
+                    type="date"
+                    value={screenshotDay}
+                    onChange={(event) => setScreenshotDay(event.target.value)}
+                  />
+                </div>
               </div>
-              <div className="w-full sm:w-48">
-                <Label htmlFor="employee-screenshot-day">Day</Label>
-                <Input
-                  id="employee-screenshot-day"
-                  type="date"
-                  value={screenshotDay}
-                  onChange={(event) => setScreenshotDay(event.target.value)}
-                />
+            </CardHeader>
+            <CardContent>
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {(screenshots.data ?? []).map((shot) => (
+                  <figure key={shot.id} className="overflow-hidden rounded-lg border">
+                    <button
+                      type="button"
+                      className="block w-full cursor-zoom-in"
+                      onClick={() => setPreviewScreenshot(shot)}
+                      aria-label="Preview screenshot"
+                    >
+                      <ProtectedImage
+                        src={shot.thumbnailUrl}
+                        authToken={token}
+                        alt="Work screenshot"
+                        className="aspect-video w-full object-cover transition hover:opacity-90"
+                      />
+                    </button>
+                    <figcaption className="p-2 text-xs text-muted-foreground">
+                      {formatDateTime(shot.captured_at)}
+                    </figcaption>
+                  </figure>
+                ))}
               </div>
-            </div>
-          </CardHeader>
-          <CardContent>
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {(screenshots.data ?? []).map((shot) => (
-                <figure key={shot.id} className="overflow-hidden rounded-lg border">
-                  <button
-                    type="button"
-                    className="block w-full cursor-zoom-in"
-                    onClick={() => setPreviewScreenshot(shot)}
-                    aria-label="Preview screenshot"
-                  >
-                    <img
-                      src={shot.imageUrl}
-                      alt="Work screenshot"
-                      className="aspect-video w-full object-cover transition hover:opacity-90"
-                    />
-                  </button>
-                  <figcaption className="p-2 text-xs text-muted-foreground">
-                    {new Date(shot.captured_at).toLocaleString()}
-                  </figcaption>
-                </figure>
-              ))}
-            </div>
-            {screenshots.isLoading && (
-              <p className="text-sm text-muted-foreground">Loading screenshots for this day...</p>
-            )}
-            {screenshots.data?.length === 0 && (
-              <p className="text-sm text-muted-foreground">No screenshots for this day.</p>
-            )}
-          </CardContent>
-        </Card>
+              {screenshots.isLoading && (
+                <p className="text-sm text-muted-foreground">Loading screenshots for this day...</p>
+              )}
+              {screenshots.data?.length === 0 && (
+                <p className="text-sm text-muted-foreground">No screenshots for this day.</p>
+              )}
+            </CardContent>
+          </Card>
+        </div>
       </div>
       <Dialog
         open={previewScreenshot !== null}
@@ -1090,13 +1182,15 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
           <DialogTitle className="sr-only">Screenshot preview</DialogTitle>
           {previewScreenshot && (
             <div className="space-y-3">
-              <img
-                src={previewScreenshot.imageUrl}
+              <ProtectedImage
+                src={previewScreenshot.fullUrl}
+                authToken={token}
+                eager
                 alt="Full work screenshot preview"
                 className="max-h-[78vh] w-full rounded-lg object-contain ring-1 ring-border"
               />
               <p className="text-xs text-muted-foreground">
-                {new Date(previewScreenshot.captured_at).toLocaleString()}
+                {formatDateTime(previewScreenshot.captured_at)}
               </p>
             </div>
           )}

@@ -1,10 +1,11 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
   Banknote,
   CalendarClock,
+  CalendarDays,
   Clock3,
   Download,
   Eye,
@@ -13,6 +14,7 @@ import {
   Filter,
   Lock,
   MoreHorizontal,
+  Images,
   Plus,
   RefreshCw,
   Settings2,
@@ -44,8 +46,20 @@ import {
   type PayrollEntry,
   type PayrollEntryUpdate,
 } from "@/api/payroll";
+import {
+  getDailyAttendance,
+  getEmployeeAttendanceRange,
+  type DailyAttendance,
+} from "@/api/attendance";
 import { useAuth } from "@/lib/auth";
-import { formatMinutes } from "@/lib/format";
+import {
+  formatAttendanceStart,
+  formatClock as attendanceClock,
+  formatMinutes,
+  formatSessionStatus,
+} from "@/lib/format";
+import { WorkdayTimeline } from "@/components/workday-timeline";
+import { AttendanceStatusBadges } from "@/components/attendance/attendance-status-badges";
 import { PageHeader } from "@/components/ui/page-header";
 import { StatCard } from "@/components/ui/stat-card";
 import { Button } from "@/components/ui/button";
@@ -87,20 +101,37 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 
-export const Route = createFileRoute("/_app/payroll")({ component: PayrollPage });
+export const Route = createFileRoute("/_app/payroll")({
+  validateSearch: (search: Record<string, unknown>): { employeeId?: string; month?: string } => ({
+    employeeId:
+      typeof search.employeeId === "string" && search.employeeId ? search.employeeId : undefined,
+    month:
+      typeof search.month === "string" && /^\d{4}-(0[1-9]|1[0-2])$/.test(search.month)
+        ? search.month
+        : undefined,
+  }),
+  component: PayrollPage,
+});
 
 const currentMonth = new Date().toISOString().slice(0, 7);
 
+function lastDayOfMonth(month: string) {
+  const [year, monthNumber] = month.split("-").map(Number);
+  return new Date(Date.UTC(year, monthNumber, 0)).toISOString().slice(0, 10);
+}
+
 function PayrollPage() {
+  const search = Route.useSearch();
   const { scopedTeamIds, can } = useAuth();
   const queryClient = useQueryClient();
-  const [month, setMonth] = useState(currentMonth);
+  const [month, setMonth] = useState(search.month ?? currentMonth);
   const [tab, setTab] = useState<"sheet" | "exceptions">("sheet");
   const [team, setTeam] = useState("all");
   const [status, setStatus] = useState("all");
   const [signal, setSignal] = useState("all");
-  const [employeeId, setEmployeeId] = useState("all");
+  const [employeeId, setEmployeeId] = useState(search.employeeId ?? "all");
   const [selectedEntryId, setSelectedEntryId] = useState<string | null>(null);
+  const [attendanceEmployeeId, setAttendanceEmployeeId] = useState<string | null>(null);
   const [overrideOpen, setOverrideOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [customRange, setCustomRange] = useState(false);
@@ -122,9 +153,10 @@ function PayrollPage() {
     };
   }, [showAmounts]);
 
+  const scope = scopedTeamIds();
   const employees = useQuery({
-    queryKey: ["employees", scopedTeamIds()],
-    queryFn: () => listEmployees(scopedTeamIds()),
+    queryKey: ["employees", scope],
+    queryFn: ({ signal }) => listEmployees(scope, signal),
   });
   const filters = useMemo(
     () => ({
@@ -143,17 +175,23 @@ function PayrollPage() {
     [month, team, employeeId, status, signal, customRange, customStart, customEnd],
   );
   const sheet = useQuery({
-    queryKey: ["payroll-sheet", filters],
-    queryFn: () => getPayrollSheet(filters),
+    queryKey: ["payroll-sheet", scope, filters],
+    queryFn: ({ signal }) => getPayrollSheet(filters, signal),
     refetchInterval: 60_000,
+    refetchIntervalInBackground: false,
+    placeholderData: (previous) => previous,
   });
   const exceptions = useQuery({
     queryKey: ["payroll-exceptions", month, filters.start_date, filters.end_date],
-    queryFn: () =>
-      getPayrollExceptions(month, {
-        start_date: filters.start_date,
-        end_date: filters.end_date,
-      }),
+    queryFn: ({ signal }) =>
+      getPayrollExceptions(
+        month,
+        {
+          start_date: filters.start_date,
+          end_date: filters.end_date,
+        },
+        signal,
+      ),
     enabled: tab === "exceptions",
   });
 
@@ -169,6 +207,14 @@ function PayrollPage() {
   const canManage = can("payroll.manage");
   const locked = ["locked", "paid"].includes(sheet.data?.run.status ?? "");
   const currencyTotals = Object.entries(sheet.data?.summary.currencies ?? {});
+  const sheetUnavailable = sheet.isError && !sheet.data;
+  const hasActiveEntryFilters =
+    employeeId !== "all" || team !== "all" || status !== "all" || signal !== "all";
+  const periodStart = sheet.data?.run.period_start ?? filters.start_date ?? `${month}-01`;
+  const periodEnd = sheet.data?.run.period_end ?? filters.end_date ?? lastDayOfMonth(month);
+  const attendanceEntry = (sheet.data?.entries ?? []).find(
+    (entry) => entry.employee_id === attendanceEmployeeId,
+  );
 
   return (
     <div className="studio-page-wide space-y-5">
@@ -202,27 +248,27 @@ function PayrollPage() {
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
         <StatCard
           label="Employees"
-          value={sheet.data?.summary.employees ?? 0}
+          value={sheetUnavailable ? "—" : (sheet.data?.summary.employees ?? 0)}
           icon={Users}
           hint="In this payroll"
         />
         <StatCard
           label="Needs review"
-          value={sheet.data?.summary.needs_review ?? 0}
+          value={sheetUnavailable ? "—" : (sheet.data?.summary.needs_review ?? 0)}
           icon={AlertTriangle}
           tone="warning"
           hint="Open decisions"
         />
         <StatCard
           label="Late"
-          value={sheet.data?.summary.late_employees ?? 0}
+          value={sheetUnavailable ? "—" : (sheet.data?.summary.late_employees ?? 0)}
           icon={Clock3}
           tone="destructive"
           hint="After grace period"
         />
         <StatCard
           label="Overtime"
-          value={sheet.data?.summary.overtime_employees ?? 0}
+          value={sheetUnavailable ? "—" : (sheet.data?.summary.overtime_employees ?? 0)}
           icon={CalendarClock}
           tone="info"
           hint="Recorded, not auto-paid"
@@ -371,6 +417,35 @@ function PayrollPage() {
         </CardContent>
       </Card>
 
+      {sheet.isError && (
+        <Card className="border-destructive/40 bg-destructive/5">
+          <CardContent className="flex flex-wrap items-center justify-between gap-3 p-4">
+            <div className="flex min-w-0 items-start gap-3">
+              <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-destructive" />
+              <div>
+                <p className="font-semibold text-destructive">
+                  {sheet.data ? "Payroll refresh failed" : "Payroll sheet could not be loaded"}
+                </p>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  {sheet.error instanceof Error
+                    ? sheet.error.message
+                    : "The server did not return payroll data."}
+                  {sheet.data ? " Previously loaded rows are still shown." : ""}
+                </p>
+              </div>
+            </div>
+            <Button
+              variant="outline"
+              onClick={() => void sheet.refetch()}
+              disabled={sheet.isFetching}
+            >
+              <RefreshCw className={`mr-2 h-4 w-4 ${sheet.isFetching ? "animate-spin" : ""}`} />
+              Retry payroll
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="inline-flex rounded-xl border bg-card p-1 shadow-sm">
           <Button
@@ -407,7 +482,12 @@ function PayrollPage() {
         <PayrollTable
           entries={sheet.data?.entries ?? []}
           loading={sheet.isLoading}
+          error={sheetUnavailable}
+          hasActiveFilters={hasActiveEntryFilters}
           onOpen={setSelectedEntryId}
+          onOpenAttendance={setAttendanceEmployeeId}
+          periodStart={periodStart}
+          periodEnd={periodEnd}
           showAmounts={showAmounts}
         />
       ) : (
@@ -426,6 +506,14 @@ function PayrollPage() {
         month={month}
         showAmounts={showAmounts}
         onToggleAmounts={() => setShowAmounts((current) => !current)}
+      />
+      <MonthlyAttendanceDialog
+        employeeId={attendanceEmployeeId}
+        employeeName={attendanceEntry?.employee_name}
+        startDate={periodStart}
+        endDate={periodEnd}
+        open={Boolean(attendanceEmployeeId)}
+        onOpenChange={(open) => !open && setAttendanceEmployeeId(null)}
       />
       <ScheduleOverrideDialog
         open={overrideOpen}
@@ -446,12 +534,22 @@ function PayrollPage() {
 function PayrollTable({
   entries,
   loading,
+  error,
+  hasActiveFilters,
   onOpen,
+  onOpenAttendance,
+  periodStart,
+  periodEnd,
   showAmounts,
 }: {
   entries: PayrollEntry[];
   loading: boolean;
+  error: boolean;
+  hasActiveFilters: boolean;
   onOpen: (id: string) => void;
+  onOpenAttendance: (employeeId: string) => void;
+  periodStart: string;
+  periodEnd: string;
   showAmounts: boolean;
 }) {
   return (
@@ -490,10 +588,18 @@ function PayrollTable({
                   Calculating payroll…
                 </TableCell>
               </TableRow>
+            ) : error ? (
+              <TableRow>
+                <TableCell colSpan={18} className="h-40 text-center text-destructive">
+                  Payroll data is unavailable. Review the error above and retry.
+                </TableCell>
+              </TableRow>
             ) : entries.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={18} className="h-40 text-center text-muted-foreground">
-                  No employees match these filters.
+                  {hasActiveFilters
+                    ? "No employees match the current employee, team, status, or signal filters."
+                    : "No payroll employees are available for this period. Verify employee start dates and your access scope."}
                 </TableCell>
               </TableRow>
             ) : (
@@ -591,9 +697,32 @@ function PayrollTable({
                     <StatusBadge status={entry.status as never} />
                   </TableCell>
                   <TableCell className="text-right">
-                    <Button size="sm" variant="outline" onClick={() => onOpen(entry.id)}>
-                      Review
-                    </Button>
+                    <div className="flex justify-end gap-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => onOpenAttendance(entry.employee_id)}
+                      >
+                        <CalendarDays className="mr-1 h-4 w-4" />
+                        Attendance
+                      </Button>
+                      <Button size="sm" variant="outline" asChild>
+                        <Link
+                          to="/screenshots"
+                          search={{
+                            employeeId: entry.employee_id,
+                            startDate: periodStart,
+                            endDate: periodEnd,
+                          }}
+                        >
+                          <Images className="mr-1 h-4 w-4" />
+                          Screenshots
+                        </Link>
+                      </Button>
+                      <Button size="sm" variant="outline" onClick={() => onOpen(entry.id)}>
+                        Review
+                      </Button>
+                    </div>
                   </TableCell>
                 </TableRow>
               ))
@@ -602,6 +731,311 @@ function PayrollTable({
         </Table>
       </CardContent>
     </Card>
+  );
+}
+
+function MonthlyAttendanceDialog({
+  employeeId,
+  employeeName,
+  startDate,
+  endDate,
+  open,
+  onOpenChange,
+}: {
+  employeeId: string | null;
+  employeeName?: string;
+  startDate: string;
+  endDate: string;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const [selectedDay, setSelectedDay] = useState<string | null>(null);
+  const history = useQuery({
+    queryKey: ["employee-attendance-range", employeeId, startDate, endDate],
+    queryFn: ({ signal }) => getEmployeeAttendanceRange(employeeId!, startDate, endDate, signal),
+    enabled: open && Boolean(employeeId),
+    staleTime: 5 * 60_000,
+    placeholderData: (previous) => previous,
+  });
+  const dayDetail = useQuery({
+    queryKey: ["employee-attendance-day", employeeId, selectedDay],
+    queryFn: ({ signal }) => getDailyAttendance(employeeId!, selectedDay!, signal),
+    enabled: open && Boolean(employeeId) && Boolean(selectedDay),
+    staleTime: 5 * 60_000,
+    placeholderData: (previous) => previous,
+  });
+  const rows = history.data?.rows ?? [];
+
+  return (
+    <>
+      <Dialog
+        open={open}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen) setSelectedDay(null);
+          onOpenChange(nextOpen);
+        }}
+      >
+        <DialogContent className="max-h-[90vh] max-w-7xl overflow-y-auto">
+          <DialogHeader>
+            <div className="flex flex-wrap items-start justify-between gap-3 pr-7">
+              <div>
+                <DialogTitle>
+                  {employeeName ?? history.data?.employeeName ?? "Attendance history"}
+                </DialogTitle>
+                <DialogDescription>
+                  Daily attendance from {startDate} through {endDate}. Select a date to inspect its
+                  full activity timeline.
+                </DialogDescription>
+              </div>
+              {employeeId && (
+                <Button type="button" variant="outline" size="sm" asChild>
+                  <Link to="/screenshots" search={{ employeeId, startDate, endDate }}>
+                    <Images className="mr-1 h-4 w-4" />
+                    View period screenshots
+                  </Link>
+                </Button>
+              )}
+            </div>
+          </DialogHeader>
+
+          {history.isLoading ? (
+            <div className="h-64 animate-pulse rounded-xl bg-muted" />
+          ) : history.isError ? (
+            <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-5 text-sm text-destructive">
+              Attendance history could not be loaded.
+            </div>
+          ) : history.data ? (
+            <div className="space-y-4">
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                <MiniMetric
+                  label="Scheduled days"
+                  value={String(history.data.summary.scheduledDays)}
+                />
+                <MiniMetric label="Worked days" value={String(history.data.summary.workedDays)} />
+                <MiniMetric
+                  label="Total late"
+                  value={shortTime(history.data.summary.lateSeconds)}
+                />
+                <MiniMetric label="Screenshots" value={String(history.data.summary.screenshots)} />
+              </div>
+
+              <div className="overflow-hidden rounded-xl border [&>div]:max-h-[54vh] [&>div]:overflow-auto">
+                <Table>
+                  <TableHeader className="sticky top-0 z-20 bg-card shadow-sm [&_th]:bg-card">
+                    <TableRow>
+                      <TableHead>Date</TableHead>
+                      <TableHead>Schedule</TableHead>
+                      <TableHead>First / last / sign-out</TableHead>
+                      <TableHead>Normal</TableHead>
+                      <TableHead>Idle</TableHead>
+                      <TableHead>Late</TableHead>
+                      <TableHead>Payable</TableHead>
+                      <TableHead>Extra / overtime</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead className="text-right">Evidence</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {rows.map((row) => (
+                      <MonthlyAttendanceRow key={row.id} row={row} onSelectDay={setSelectedDay} />
+                    ))}
+                    {rows.length === 0 && (
+                      <TableRow>
+                        <TableCell colSpan={10} className="py-10 text-center text-muted-foreground">
+                          No attendance days were found in this payroll period.
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+            </div>
+          ) : null}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={Boolean(selectedDay)}
+        onOpenChange={(nextOpen) => !nextOpen && setSelectedDay(null)}
+      >
+        <DialogContent className="max-h-[90vh] max-w-5xl overflow-y-auto">
+          <DialogHeader>
+            <div className="flex flex-wrap items-start justify-between gap-3 pr-7">
+              <div>
+                <DialogTitle>
+                  {employeeName ?? history.data?.employeeName ?? "Attendance detail"} ·{" "}
+                  {selectedDay}
+                </DialogTitle>
+                <DialogDescription>
+                  Full tracked activity, idle, breaks and overtime for this day.
+                </DialogDescription>
+              </div>
+              {employeeId && selectedDay && (
+                <Button type="button" variant="outline" size="sm" asChild>
+                  <Link to="/screenshots" search={{ employeeId, day: selectedDay }}>
+                    <Images className="mr-1 h-4 w-4" />
+                    View day screenshots
+                  </Link>
+                </Button>
+              )}
+            </div>
+          </DialogHeader>
+
+          {dayDetail.isLoading ? (
+            <div className="h-64 animate-pulse rounded-xl bg-muted" />
+          ) : dayDetail.isError ? (
+            <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-5 text-sm text-destructive">
+              Attendance detail could not be loaded.
+            </div>
+          ) : dayDetail.data ? (
+            <div className="space-y-5">
+              <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-5">
+                <MiniMetric
+                  label="Started"
+                  value={formatAttendanceStart(
+                    dayDetail.data.actualFirstActivityAt,
+                    dayDetail.data.timezone,
+                    dayDetail.data.continuedFromPreviousDay,
+                    dayDetail.data.continuedSessionStartedAt,
+                  )}
+                />
+                <MiniMetric
+                  label="Last activity"
+                  value={attendanceClock(
+                    dayDetail.data.actualLastActivityAt,
+                    dayDetail.data.timezone,
+                  )}
+                />
+                <MiniMetric
+                  label="Session"
+                  value={formatSessionStatus(
+                    dayDetail.data.isRunning,
+                    dayDetail.data.actualSignOutAt,
+                    dayDetail.data.timezone,
+                  )}
+                />
+                <MiniMetric label="Normal" value={shortTime(dayDetail.data.normalWorkedSeconds)} />
+                <MiniMetric label="Idle" value={shortTime(dayDetail.data.idleSeconds)} />
+                <MiniMetric
+                  label="Paid breaks"
+                  value={shortTime(dayDetail.data.paidBreakSeconds)}
+                />
+                <MiniMetric
+                  label="Unpaid breaks"
+                  value={shortTime(dayDetail.data.unpaidBreakSeconds)}
+                />
+                <MiniMetric
+                  label="Before shift"
+                  value={shortTime(dayDetail.data.preShiftExtraSeconds)}
+                />
+                <MiniMetric
+                  label="After shift"
+                  value={shortTime(dayDetail.data.postShiftExtraSeconds)}
+                />
+                <MiniMetric
+                  label="Overtime"
+                  value={shortTime(dayDetail.data.recordedOvertimeSeconds)}
+                />
+                <MiniMetric label="Payable" value={shortTime(dayDetail.data.totalPayableSeconds)} />
+              </div>
+              <WorkdayTimeline timeline={dayDetail.data.timeline} />
+            </div>
+          ) : null}
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
+function MonthlyAttendanceRow({
+  row,
+  onSelectDay,
+}: {
+  row: DailyAttendance;
+  onSelectDay: (day: string) => void;
+}) {
+  return (
+    <TableRow>
+      <TableCell className="whitespace-nowrap font-semibold">
+        <button
+          type="button"
+          className="rounded text-left text-info underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          onClick={() => onSelectDay(row.date)}
+        >
+          {row.date}
+        </button>
+      </TableCell>
+      <TableCell className="whitespace-nowrap text-xs">
+        {attendanceClock(row.scheduledStartAt, row.timezone)} –{" "}
+        {attendanceClock(row.scheduledEndAt, row.timezone)}
+      </TableCell>
+      <TableCell className="whitespace-nowrap text-xs">
+        {formatAttendanceStart(
+          row.actualFirstActivityAt,
+          row.timezone,
+          row.continuedFromPreviousDay,
+          row.continuedSessionStartedAt,
+        )}{" "}
+        – {attendanceClock(row.actualLastActivityAt, row.timezone)}
+        <span
+          className={`block text-[10px] ${
+            row.isRunning ? "font-semibold text-emerald-700" : "text-muted-foreground"
+          }`}
+        >
+          {formatSessionStatus(row.isRunning, row.actualSignOutAt, row.timezone)}
+        </span>
+      </TableCell>
+      <TableCell>{shortTime(row.normalWorkedSeconds)}</TableCell>
+      <TableCell>{shortTime(row.idleSeconds)}</TableCell>
+      <TableCell>
+        {shortTime(row.deductibleLateSeconds)}
+        <span className="block text-[10px] text-muted-foreground">
+          {shortTime(row.rawLateSeconds)} raw
+        </span>
+      </TableCell>
+      <TableCell className="font-semibold">{shortTime(row.totalPayableSeconds)}</TableCell>
+      <AttendanceOvertimeCell row={row} />
+      <TableCell>
+        <AttendanceStatusBadges
+          status={row.status}
+          deductibleLateSeconds={row.deductibleLateSeconds}
+          earlyLeaveSeconds={row.earlyLeaveSeconds}
+        />
+      </TableCell>
+      <TableCell className="text-right">
+        <Button type="button" size="sm" variant="outline" asChild>
+          <Link to="/screenshots" search={{ employeeId: row.employeeId, day: row.date }}>
+            <Images className="mr-1 h-4 w-4" />
+            {row.screenshotCount} screenshots
+          </Link>
+        </Button>
+      </TableCell>
+    </TableRow>
+  );
+}
+
+function AttendanceOvertimeCell({ row }: { row: DailyAttendance }) {
+  const notes = [
+    row.status === "worked_off_day" ? "Extra day" : null,
+    row.approvedOvertimeSeconds > 0 ? `${shortTime(row.approvedOvertimeSeconds)} approved` : null,
+    row.unapprovedOvertimeSeconds > 0
+      ? `${shortTime(row.unapprovedOvertimeSeconds)} pending`
+      : null,
+  ].filter(Boolean);
+
+  return (
+    <TableCell className="whitespace-nowrap">
+      <span
+        className={
+          row.recordedOvertimeSeconds > 0 ? "font-semibold text-info" : "text-muted-foreground"
+        }
+      >
+        {shortTime(row.recordedOvertimeSeconds)}
+      </span>
+      <span className="block text-[10px] text-muted-foreground">
+        {notes.length ? notes.join(" · ") : "No extra time"}
+      </span>
+    </TableCell>
   );
 }
 
@@ -628,7 +1062,7 @@ function PayrollReviewSheet({
   const [adjustmentOpen, setAdjustmentOpen] = useState(false);
   const detail = useQuery({
     queryKey: ["payroll-entry", entryId],
-    queryFn: () => getPayrollEntry(entryId!),
+    queryFn: ({ signal }) => getPayrollEntry(entryId!, signal),
     enabled: Boolean(entryId),
   });
   useEffect(() => {
@@ -1045,15 +1479,15 @@ function EmployeeProfileDialog({
   const queryClient = useQueryClient();
   const profile = useQuery({
     queryKey: ["employee-work-profile", employeeId],
-    queryFn: () => getWorkProfile(employeeId),
+    queryFn: ({ signal }) => getWorkProfile(employeeId, signal),
     enabled: open,
   });
   const [form, setForm] = useState<WorkProfileInput>({});
   useEffect(() => {
     if (profile.data)
       setForm({
-        shiftStart: profile.data.shiftStart ?? "09:00",
-        shiftEnd: profile.data.shiftEnd ?? "17:00",
+        shiftStart: profile.data.shiftStart ?? "10:00",
+        shiftEnd: profile.data.shiftEnd ?? "18:00",
         workingDays: profile.data.workingDays ?? undefined,
         weeklyOffDays: profile.data.weeklyOffDays ?? undefined,
         requiredDailyMinutes: profile.data.requiredDailyMinutes ?? undefined,
@@ -1118,6 +1552,12 @@ function EmployeeProfileDialog({
               step="0.01"
               value={form.salaryAmount ?? 0}
               disabled={!showAmounts}
+              onFocus={(event) => {
+                if (Number(event.currentTarget.value) === 0) {
+                  const input = event.currentTarget;
+                  requestAnimationFrame(() => input.select());
+                }
+              }}
               onChange={(event) => setForm({ ...form, salaryAmount: Number(event.target.value) })}
             />
           </Field>
@@ -1247,11 +1687,11 @@ function ScheduleOverrideDialog({
   const [type, setType] = useState<"shift" | "breaks" | "both">("shift");
   const [permanent, setPermanent] = useState(false);
   const [effectiveDate, setEffectiveDate] = useState(new Date().toISOString().slice(0, 10));
-  const [start, setStart] = useState("09:00");
-  const [end, setEnd] = useState("17:00");
+  const [start, setStart] = useState("10:00");
+  const [end, setEnd] = useState("18:00");
   const [breaks, setBreaks] = useState([
     { name: "Lunch", start_time: "13:00", end_time: "13:30", paid: true },
-    { name: "Short break", start_time: "15:30", end_time: "15:45", paid: true },
+    { name: "Short break", start_time: "16:30", end_time: "16:45", paid: true },
   ]);
   const [reason, setReason] = useState("");
   const breakRules = breaks.map((item) => ({
@@ -1714,7 +2154,7 @@ function PayrollCycleDialog({
 }) {
   const settings = useQuery({
     queryKey: ["payroll-settings"],
-    queryFn: getPayrollSettings,
+    queryFn: ({ signal }) => getPayrollSettings(signal),
     enabled: open,
   });
   const [form, setForm] = useState<PayrollSettings>({

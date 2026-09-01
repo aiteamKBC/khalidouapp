@@ -2,7 +2,7 @@ from datetime import UTC, date, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import select, update
+from sqlalchemy import and_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -190,6 +190,174 @@ def notify_project_admins(
         )
 
 
+def team_owner_admin_for_employee(
+    db: Session,
+    *,
+    company_id: UUID,
+    team_id: UUID,
+    employee_id: UUID,
+) -> AdminUser | None:
+    return db.scalar(
+        select(AdminUser)
+        .join(TeamOwner, TeamOwner.admin_user_id == AdminUser.id)
+        .where(
+            AdminUser.company_id == company_id,
+            AdminUser.employee_id == employee_id,
+            AdminUser.role == "team_owner",
+            AdminUser.status == "active",
+            TeamOwner.team_id == team_id,
+        )
+        .limit(1)
+    )
+
+
+def reconcile_team_leader_self_creation_requests(
+    db: Session,
+    company_id: UUID,
+) -> None:
+    """Activate legacy self-created Team Leader tasks without recording self-approval."""
+
+    statement = (
+        select(TaskWorkflowRequest, Task, Employee)
+        .join(Task, Task.id == TaskWorkflowRequest.task_id)
+        .join(Project, Project.id == Task.project_id)
+        .join(TeamOwner, TeamOwner.team_id == Project.team_id)
+        .join(
+            AdminUser,
+            and_(
+                AdminUser.id == TeamOwner.admin_user_id,
+                AdminUser.employee_id == Task.assignee_employee_id,
+            ),
+        )
+        .join(Employee, Employee.id == Task.assignee_employee_id)
+        .where(
+            TaskWorkflowRequest.company_id == company_id,
+            TaskWorkflowRequest.status == "pending",
+            TaskWorkflowRequest.request_type == "task_creation",
+            Task.status == "active",
+            Task.stage == "new_requests",
+            Task.created_by_employee_id == Task.assignee_employee_id,
+            Project.status == "active",
+            AdminUser.role == "team_owner",
+            AdminUser.status == "active",
+        )
+    )
+    now = datetime.now(UTC)
+    for workflow_request, task, employee in db.execute(statement).unique().all():
+        result = db.execute(
+            update(TaskWorkflowRequest)
+            .where(
+                TaskWorkflowRequest.id == workflow_request.id,
+                TaskWorkflowRequest.status == "pending",
+            )
+            .values(
+                status="approved",
+                decision_note="Activated automatically for a Team Leader.",
+                reviewed_by_admin_user_id=None,
+                reviewed_at=now,
+                updated_at=now,
+            )
+            .execution_options(synchronize_session=False)
+        )
+        if result.rowcount != 1:
+            continue
+        workflow_request.status = "approved"
+        workflow_request.decision_note = "Activated automatically for a Team Leader."
+        workflow_request.reviewed_by_admin_user_id = None
+        workflow_request.reviewed_at = now
+        workflow_request.updated_at = now
+        task.stage = "assigned"
+        task.reviewed_by_admin_user_id = None
+        task.reviewed_at = None
+        record_task_activity(
+            db,
+            task,
+            "team_leader_task_activated",
+            employee=employee,
+            details={
+                "workflow_request_id": str(workflow_request.id),
+                "reason": "team_leader_self_created",
+            },
+        )
+        notifications = db.scalars(
+            select(TaskNotification).where(
+                TaskNotification.workflow_request_id == workflow_request.id
+            )
+        ).all()
+        for notification in notifications:
+            notification.notification_type = "task_activated"
+            notification.title = "Team Leader task activated"
+            notification.message = (
+                f"{task.name} was activated automatically and does not need creation approval."
+            )
+
+
+def sync_pending_workflow_notifications_for_admin(
+    db: Session,
+    admin: AdminUser,
+) -> None:
+    """Backfill pending task decisions that became visible after role or policy changes."""
+
+    if not (
+        has_capability(admin, "tasks.review_all")
+        or has_capability(admin, "tasks.review_team")
+    ):
+        return
+    statement = (
+        select(TaskWorkflowRequest, Task, Project, Employee)
+        .join(Task, Task.id == TaskWorkflowRequest.task_id)
+        .join(Project, Project.id == Task.project_id)
+        .join(Employee, Employee.id == TaskWorkflowRequest.requested_by_employee_id)
+        .where(
+            TaskWorkflowRequest.company_id == admin.company_id,
+            TaskWorkflowRequest.status == "pending",
+            Task.status == "active",
+            Project.status == "active",
+        )
+    )
+    if not has_capability(admin, "tasks.review_all"):
+        statement = statement.where(
+            Project.team_id.in_(
+                select(TeamOwner.team_id).where(TeamOwner.admin_user_id == admin.id)
+            )
+        )
+    for workflow_request, task, _project, employee in db.execute(statement).all():
+        if (
+            admin.role == "team_owner"
+            and admin.employee_id is not None
+            and task.assignee_employee_id == admin.employee_id
+        ):
+            continue
+        exists_for_admin = db.scalar(
+            select(TaskNotification.id).where(
+                TaskNotification.admin_user_id == admin.id,
+                TaskNotification.workflow_request_id == workflow_request.id,
+            )
+        )
+        if exists_for_admin is not None:
+            continue
+        is_creation = workflow_request.request_type == "task_creation"
+        create_notification(
+            db,
+            company_id=task.company_id,
+            admin_user_id=admin.id,
+            task_id=task.id,
+            workflow_request_id=workflow_request.id,
+            notification_type=(
+                "task_approval_requested" if is_creation else "task_review_requested"
+            ),
+            title="New task needs approval" if is_creation else "Task ready for review",
+            message=(
+                f"{employee.name} requested: {task.name}"
+                if is_creation
+                else f"{employee.name} submitted {task.name} for review."
+            ),
+            dedupe_key=(
+                f"admin:{admin.id}:{task.id}:pending-workflow:{workflow_request.id}"
+            ),
+        )
+
+
 def create_workflow_request(
     db: Session,
     task: Task,
@@ -352,6 +520,16 @@ def ensure_workflow_decision_allowed(
     task: Task,
     project: Project,
 ) -> None:
+    if (
+        admin.role == "team_owner"
+        and admin.employee_id is not None
+        and task.assignee_employee_id == admin.employee_id
+    ):
+        raise ApiError(
+            "SELF_REVIEW_FORBIDDEN",
+            "Team Leaders cannot decide workflow requests for their own tasks.",
+            403,
+        )
     if has_capability(admin, "tasks.review_all"):
         return
     owns_team = db.scalar(
@@ -362,12 +540,6 @@ def ensure_workflow_decision_allowed(
     )
     if owns_team is None:
         raise ApiError("FORBIDDEN_TEAM", "You do not have access to this team.", 403)
-    if admin.employee_id is not None and task.assignee_employee_id == admin.employee_id:
-        raise ApiError(
-            "SELF_REVIEW_FORBIDDEN",
-            "Team owners cannot decide workflow requests for their own tasks.",
-            403,
-        )
 
 
 def ensure_admin_task_stage_change_allowed(
@@ -431,7 +603,11 @@ def validate_employee_stage_change(task: Task, next_stage: str, note: str | None
     if next_stage not in MAIN_STAGES:
         raise ApiError("INVALID_TASK_STAGE", "Task stage is not supported.", 400)
     if task.stage == "new_requests" and task.created_by_employee_id is not None:
-        raise ApiError("TASK_AWAITING_APPROVAL", "An admin must approve this task first.", 409)
+        raise ApiError(
+            "TASK_AWAITING_APPROVAL",
+            "A team manager or company admin must approve this task first.",
+            409,
+        )
     if task.stage in TERMINAL_STAGES:
         raise ApiError("TASK_STAGE_LOCKED", "This task is already closed.", 409)
     allowed: dict[str, set[str]] = {

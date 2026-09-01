@@ -2,7 +2,7 @@ from datetime import date, time
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 
 
 class EmployeeCreate(BaseModel):
@@ -20,6 +20,7 @@ class EmployeeUpdate(BaseModel):
     employee_code: str | None = Field(default=None, max_length=80)
     job_title: str | None = Field(default=None, max_length=255)
     timezone: str | None = Field(default=None, max_length=80)
+    start_date: date | None = None
     status: Literal["active", "inactive"] | None = None
     weekly_capacity_minutes: int | None = Field(default=None, ge=60, le=10080)
 
@@ -106,6 +107,11 @@ class TrackingSettingsUpdate(BaseModel):
     capture_during_idle: bool | None = None
     offline_threshold_minutes: int | None = Field(default=None, ge=1, le=60)
     screenshot_retention_days: int | None = Field(default=None, ge=1, le=3650)
+
+    @field_validator("idle_threshold_minutes")
+    @classmethod
+    def enforce_idle_threshold(cls, value: int | None) -> int | None:
+        return 10 if value is not None else None
 
 
 class TeamCreate(BaseModel):
@@ -261,6 +267,14 @@ class PersonInvitationCreate(BaseModel):
     annual_leave_days: int = Field(default=21, ge=0, le=365)
     work_profile: EmployeeWorkProfileUpdate | None = None
 
+    @field_validator("name")
+    @classmethod
+    def validate_person_name(cls, value: str) -> str:
+        clean_name = " ".join(value.split())
+        if not clean_name:
+            raise ValueError("Name is required.")
+        return clean_name
+
 
 class AdminAccessUpdate(BaseModel):
     role: Literal["general_admin", "team_owner", "hr"] | None = None
@@ -281,6 +295,22 @@ class TimeAdjustmentReview(BaseModel):
     status: str = Field(pattern="^(approved|rejected)$")
     approved_minutes: int | None = Field(default=None, ge=1, le=720)
     admin_note: str | None = Field(default=None, max_length=1000)
+
+
+class TimeAdjustmentBulkReview(BaseModel):
+    status: Literal["approved", "rejected"]
+    request_ids: list[UUID] = Field(default_factory=list, max_length=200)
+    all_filtered: bool = False
+    employee_id: UUID | None = None
+    team_id: UUID | None = None
+    request_group: Literal["time", "early_leave"] = "time"
+    admin_note: str | None = Field(default=None, max_length=1000)
+
+    @model_validator(mode="after")
+    def require_exactly_one_scope(self):
+        if self.all_filtered == bool(self.request_ids):
+            raise ValueError("Choose request_ids or all_filtered, but not both.")
+        return self
 
 
 class LeaveRequestReview(BaseModel):

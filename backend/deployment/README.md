@@ -29,6 +29,10 @@ DESKTOP_UPDATE_DIRECTORY=/app/downloads
 SCREENSHOT_MAX_FILE_SIZE_MB=10
 APP_PUBLIC_URL=https://app.khaliduo.example.com
 PASSWORD_RESET_EXPIRE_MINUTES=30
+TRUSTED_PROXY_IPS=127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
+IP_GEOLOCATION_URL=https://ipwho.is/{ip}
+IP_GEOLOCATION_TIMEOUT_SECONDS=2
+IP_GEOLOCATION_RETRY_MINUTES=15
 
 # Configure Microsoft Graph (preferred) or SMTP so invitations and resets send.
 GRAPH_TENANT_ID=
@@ -96,7 +100,7 @@ Upload these three files together to `frontend/desktop-agent/release-khaliduo/` 
 - `KhaliduoSetup.exe.blockmap`
 - `latest.yml`
 
-The installer embeds the production API and portal URLs. An enrolled installation starts silently with Windows. When a higher version is published, the app downloads it, shows a required-update message, safely closes active tracking, installs it, and restarts automatically.
+The installer embeds the production API and portal URLs. An enrolled installation starts silently with Windows. When a higher version is published, the app checks immediately after startup, downloads it in the background, preserves the active tracking state, starts installation automatically, and restarts. The manual **Check update** and **Install update** actions remain available as fallbacks.
 
 ## 5. Start or update the stack
 
@@ -118,6 +122,9 @@ Verify all of the following after deployment:
 - Employee/Team Manager invitation email.
 - Password-reset link opens the production dashboard.
 - Device enrollment with a one-time code.
+- A device on an Egyptian public IP receives `Africa/Cairo`, while a device on
+  a British public IP receives `Europe/London`, even if Windows has the other
+  timezone selected.
 - Khaliduo starts hidden after the next Windows login.
 - Screenshot upload and protected image display.
 - Installer download from `/download`.
@@ -138,3 +145,61 @@ docker run --rm -v khaliduo_screenshots:/data -v "$PWD:/backup" alpine tar czf /
 ```
 
 Back up both regularly. Nginx allows 20 MB uploads; keep this above `SCREENSHOT_MAX_FILE_SIZE_MB`.
+
+## Current systemd VPS release
+
+The current Khaliduo VPS uses the repository at
+`/var/www/khalidouapp` with the `khaliduo-api` and
+`khaliduo-dashboard` systemd services. From the trusted Windows build
+machine, deploy a tested and pushed `main` commit with:
+
+```powershell
+.\frontend\scripts\deploy-production.ps1
+```
+
+The command intentionally prompts for SSH authentication and never stores the
+password. It verifies the pushed commit and signed desktop artifacts before it
+changes the server, then:
+
+- creates a PostgreSQL backup when `pg_dump` is available;
+- migrates and restarts the API;
+- builds the dashboard into a staging directory and swaps it only after a
+  successful build;
+- enables one-minute API/database and dashboard health recovery;
+- writes a read-only session, attendance, and screenshot-storage audit under
+  `/var/backups/khaliduo/audits/`;
+- publishes the installer, blockmap, and `latest.yml` with `latest.yml` moved
+  last so clients never see metadata for an incomplete upload;
+- verifies the public database health, dashboard, and update feed.
+
+Validate all inputs without changing Production:
+
+```powershell
+.\frontend\scripts\deploy-production.ps1 -ValidateOnly
+```
+
+If the installer, blockmap, and `latest.yml` finished uploading but the final
+SSH publication step disconnected, resume only that atomic publication:
+
+```powershell
+.\frontend\scripts\deploy-production.ps1 -ResumeDesktopPublish
+```
+
+Recovery mode revalidates the local signed installer, uses the existing
+versioned staging directory on the server, verifies its size and SHA-512, and
+publishes it without redeploying the API/dashboard or uploading the installer
+again. Its remote script is passed without redirecting SSH stdin, so password
+authentication receives a clean console prompt.
+
+Run the production audit again without changing data:
+
+```bash
+cd /var/www/khalidouapp/backend
+/var/www/khalidouapp/venv/bin/python -m scripts.audit_production_state --days 7
+```
+
+Use `--employee "Employee Name"` to narrow the report. Missing screenshot
+originals require restoration from backup; missing thumbnails are regenerated
+on demand and are reported separately. Never apply attendance or payroll
+adjustments from this audit alone—confirm the last trusted heartbeat and the
+employee's real work evidence first.

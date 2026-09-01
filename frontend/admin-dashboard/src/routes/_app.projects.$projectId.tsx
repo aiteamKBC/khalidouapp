@@ -4,7 +4,6 @@ import { useMemo, useState, type ReactNode } from "react";
 import {
   Activity,
   Archive,
-  ArrowLeft,
   BriefcaseBusiness,
   CheckCircle2,
   Clock3,
@@ -23,6 +22,7 @@ import {
 } from "@/api/projects";
 import { listEmployees } from "@/api/employees";
 import { listTeams } from "@/api/teams";
+import { BackButton } from "@/components/ui/back-button";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -46,7 +46,8 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
-import { formatMinutes } from "@/lib/format";
+import { formatDateTime, formatMinutes } from "@/lib/format";
+import { projectProgressTasks, projectWorkflowProgress } from "@/lib/project-progress";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/_app/projects/$projectId")({
@@ -64,21 +65,27 @@ function ProjectDetailPage() {
   const [teamId, setTeamId] = useState("");
   const project = useQuery({
     queryKey: ["project", projectId],
-    queryFn: () => getProject(projectId),
+    queryFn: ({ signal }) => getProject(projectId, signal),
   });
   const tasks = useQuery({
     queryKey: ["tasks", "project", projectId],
-    queryFn: () => listTasks({ projectId }),
+    queryFn: ({ signal }) => listTasks({ projectId }, signal),
   });
-  const teams = useQuery({ queryKey: ["teams", "project-detail"], queryFn: () => listTeams() });
+  const teams = useQuery({
+    queryKey: ["teams", "project-detail"],
+    queryFn: ({ signal }) => listTeams(undefined, signal),
+    staleTime: 10 * 60_000,
+    gcTime: 30 * 60_000,
+  });
   const employees = useQuery({
     queryKey: ["employees", project.data?.teamId],
-    queryFn: () => listEmployees(project.data?.teamId ? [project.data.teamId] : undefined),
+    queryFn: ({ signal }) =>
+      listEmployees(project.data?.teamId ? [project.data.teamId] : undefined, signal),
     enabled: Boolean(project.data?.teamId),
   });
   const metrics = useQuery({
     queryKey: ["task-metrics", project.data?.teamId],
-    queryFn: () => listTaskMetrics(project.data?.teamId),
+    queryFn: ({ signal }) => listTaskMetrics(project.data?.teamId, signal),
     enabled: Boolean(project.data?.teamId),
   });
   const refresh = async () => {
@@ -111,7 +118,8 @@ function ProjectDetailPage() {
   });
   const projectTasks = useMemo(() => tasks.data ?? [], [tasks.data]);
   const completed = projectTasks.filter((task) => task.stage === "completed").length;
-  const progress = projectTasks.length ? Math.round((completed / projectTasks.length) * 100) : 0;
+  const progressTasks = projectProgressTasks(projectTasks);
+  const progress = projectWorkflowProgress(projectTasks);
   const projectMetrics = (metrics.data ?? []).filter((metric) =>
     projectTasks.some((task) => task.id === metric.taskId),
   );
@@ -140,11 +148,7 @@ function ProjectDetailPage() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <Button variant="ghost" size="sm" asChild className="mb-2 -ml-3">
-            <Link to="/projects">
-              <ArrowLeft className="mr-2 h-4 w-4" /> Projects & tasks
-            </Link>
-          </Button>
+          <BackButton fallbackHref="/projects" variant="ghost" size="sm" className="mb-2 -ml-3" />
           <div className="flex items-center gap-3">
             <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-primary/10 text-lg font-semibold text-primary">
               {project.data.name[0]?.toUpperCase()}
@@ -188,7 +192,7 @@ function ProjectDetailPage() {
         </MetricCard>
         <MetricCard icon={Users} label="Members" value={(employees.data ?? []).length} />
         <MetricCard icon={ListTodo} label="Tasks" value={projectTasks.length} />
-        <MetricCard icon={CheckCircle2} label="Completed" value={`${progress}%`} />
+        <MetricCard icon={CheckCircle2} label="Progress" value={`${progress}%`} />
         <MetricCard icon={Clock3} label="Tracked" value={formatMinutes(tracked)} />
       </div>
 
@@ -222,7 +226,8 @@ function ProjectDetailPage() {
               <div>
                 <div className="mb-2 flex justify-between text-sm">
                   <span>
-                    {completed} of {projectTasks.length} tasks completed
+                    Average stage across {progressTasks.length} active task
+                    {progressTasks.length === 1 ? "" : "s"} ({completed} completed)
                   </span>
                   <strong>{progress}%</strong>
                 </div>
@@ -244,7 +249,7 @@ function ProjectDetailPage() {
             <CardContent className="space-y-4 text-sm">
               <Summary label="Team" value={team?.name ?? "—"} />
               <Summary label="Description" value={project.data.description || "No description"} />
-              <Summary label="Updated" value={new Date(project.data.updatedAt).toLocaleString()} />
+              <Summary label="Updated" value={formatDateTime(project.data.updatedAt)} />
             </CardContent>
           </Card>
         </div>
@@ -275,7 +280,7 @@ function ProjectDetailPage() {
                     </p>
                   </div>
                   <span className="text-xs text-muted-foreground">
-                    {new Date(task.updatedAt).toLocaleString()}
+                    {formatDateTime(task.updatedAt)}
                   </span>
                 </div>
               ))}

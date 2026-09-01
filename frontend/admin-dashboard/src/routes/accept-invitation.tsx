@@ -7,8 +7,9 @@ import { ApiClientError } from "@/api/client";
 import { BrandLogo } from "@/components/ui/brand-logo";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { PasswordInput } from "@/components/ui/password-input";
+import { formatDateTime } from "@/lib/format";
 
 export const Route = createFileRoute("/accept-invitation")({
   validateSearch: (search: Record<string, unknown>) => ({
@@ -36,7 +37,7 @@ function AcceptInvitationPage() {
 
   const invitation = useQuery({
     queryKey: ["public-invitation", token],
-    queryFn: () => getPersonInvitation(token!),
+    queryFn: ({ signal }) => getPersonInvitation(token!, signal),
     enabled: Boolean(token),
     retry: false,
   });
@@ -66,6 +67,8 @@ function AcceptInvitationPage() {
     accept.mutate();
   }
 
+  const isAdminInvitation = Boolean(invitation.data?.valid && invitation.data.kind !== "employee");
+
   let content;
   if (!token) {
     content = <UnavailableInvitation reason="invalid" />;
@@ -84,11 +87,22 @@ function AcceptInvitationPage() {
       <StatePanel
         icon={<CheckCircle2 className="h-10 w-10 text-success" />}
         title="Your account is ready"
-        message="Your password has been saved. You can now sign in to the employee portal."
+        message={
+          isAdminInvitation
+            ? "Your password has been saved. You can now sign in to the dashboard and employee app."
+            : "Your password has been saved. You can now sign in to the employee portal."
+        }
       >
-        <Button asChild className="mt-5 w-full">
-          <a href="/employee">Open employee portal</a>
-        </Button>
+        <div className="mt-5 space-y-2">
+          {isAdminInvitation && (
+            <Button asChild className="w-full">
+              <a href="/login">Open dashboard sign in</a>
+            </Button>
+          )}
+          <Button asChild variant={isAdminInvitation ? "outline" : "default"} className="w-full">
+            <a href="/employee">Open employee portal</a>
+          </Button>
+        </div>
       </StatePanel>
     );
   } else if (!invitation.data.valid || invitation.data.status !== "pending") {
@@ -104,7 +118,7 @@ function AcceptInvitationPage() {
           <BrandLogo className="mb-3 h-20 w-20 rounded-2xl" />
           <CardTitle className="text-2xl">Welcome to Khaliduo</CardTitle>
           <p className="text-sm text-muted-foreground">
-            Hi {invitation.data.name}. Choose a password to finish setting up your employee account.
+            Hi {invitation.data.name}. Choose a password to finish setting up your account.
           </p>
         </CardHeader>
         <CardContent>
@@ -112,15 +126,14 @@ function AcceptInvitationPage() {
             <div className="font-medium">{invitation.data.email}</div>
             <div className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
               <Clock3 className="h-3.5 w-3.5" />
-              Link expires {new Date(invitation.data.expiresAt).toLocaleString()}.
+              Link expires {formatDateTime(invitation.data.expiresAt)}.
             </div>
           </div>
           <form className="space-y-4" onSubmit={submit}>
             <div className="space-y-1.5">
               <Label htmlFor="invitation-password">Password</Label>
-              <Input
+              <PasswordInput
                 id="invitation-password"
-                type="password"
                 autoComplete="new-password"
                 minLength={8}
                 value={password}
@@ -130,9 +143,8 @@ function AcceptInvitationPage() {
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="invitation-confirm-password">Confirm password</Label>
-              <Input
+              <PasswordInput
                 id="invitation-confirm-password"
-                type="password"
                 autoComplete="new-password"
                 minLength={8}
                 value={confirmPassword}

@@ -21,6 +21,7 @@ export type AgentStatus = {
   workedTodaySeconds: number;
   activeSeconds: number;
   idleSeconds: number;
+  currentIdleSeconds: number;
   eligibleIdleSeconds: number;
   connectionStatus: "online" | "offline";
   lastScreenshotAt: string | null;
@@ -53,13 +54,16 @@ export type AgentStatus = {
   paidPauseBalanceRemainingSeconds: number | null;
   recentTasks: AgentTask[];
   todayTimeline: WorkdayTimeline | null;
+  idleRequestPeriods: IdleRequestPeriod[];
   lastIdleAlert: IdleAlert | null;
+  locallyEndedIdleAt: string | null;
   updateStatus:
     | "idle"
     | "checking"
     | "available"
     | "downloading"
     | "ready"
+    | "installing"
     | "up-to-date"
     | "error";
   updateVersion: string | null;
@@ -70,6 +74,7 @@ export type AgentPeriodSummary = {
   active_seconds: number;
   tracked_active_seconds: number;
   idle_seconds: number;
+  eligible_idle_seconds?: number;
   tracked_seconds: number;
   adjustment_seconds: number;
   manual_approved_seconds: number;
@@ -87,23 +92,38 @@ export type WorkdayTimeline = {
   last_ended_at: string | null;
   last_activity_at: string | null;
   is_running: boolean;
+  continued_from_previous_day?: boolean;
+  continued_session_started_at?: string | null;
   worked_seconds: number;
   idle_seconds: number;
   locked_seconds: number;
   sleeping_seconds: number;
+  untracked_seconds?: number;
+  break_seconds?: number;
+  manual_seconds?: number;
   approved_leave?: boolean;
   leave_seconds?: number;
   intervals: Array<{
-    type: "worked" | "idle" | "locked" | "sleeping";
+    type: "worked" | "idle" | "locked" | "sleeping" | "untracked" | "break" | "manual";
     started_at: string;
     ended_at: string | null;
     duration_seconds: number;
-    session_id: string;
+    session_id: string | null;
     project_name: string | null;
     task_name: string | null;
     is_current: boolean;
-    work_category?: "extra" | null;
+    work_category?: "extra" | "break_work" | null;
   }>;
+};
+
+export type IdleRequestPeriod = {
+  work_session_id: string;
+  started_at: string;
+  ended_at: string;
+  duration_seconds: number;
+  available_seconds: number;
+  project_name: string | null;
+  task_name: string | null;
 };
 
 export type AgentTask = {
@@ -209,6 +229,7 @@ export type LeaveRequestsPayload = {
 
 export type IdleAlert = {
   id: string;
+  kind: "idle_return" | "tracking_start";
   lostSeconds: number;
   eligibleLostSeconds: number;
   outsideScheduledShift: boolean;
@@ -238,6 +259,14 @@ declare global {
       }) => Promise<{ success: boolean; message?: string }>;
       resumeTracking: () => Promise<{ success: boolean; message?: string }>;
       resumeAutomaticIdle: () => Promise<{
+        success: boolean;
+        message?: string;
+      }>;
+      confirmTrackingStart: () => Promise<{
+        success: boolean;
+        message?: string;
+      }>;
+      declineTrackingStart: () => Promise<{
         success: boolean;
         message?: string;
       }>;

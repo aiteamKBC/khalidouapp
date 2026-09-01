@@ -26,6 +26,7 @@ import { PageHeader } from "@/components/ui/page-header";
 import { ProtectedImage } from "@/components/ProtectedImage";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { BackButton } from "@/components/ui/back-button";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -65,7 +66,7 @@ import { updatePersonRole } from "@/api/people";
 import { listUsers } from "@/api/users";
 import { useAuth } from "@/lib/auth";
 import { permissions } from "@/lib/permissions";
-import { formatDate, formatMinutes, formatRelative } from "@/lib/format";
+import { formatDate, formatDateTime, formatMinutes, formatRelative } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type { Employee, Project, Screenshot, Task, TeamMemberRole, Timesheet, User } from "@/types";
 import { StatCard } from "@/components/ui/stat-card";
@@ -118,15 +119,18 @@ function TeamDetailPage() {
   const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
   const [editingTeamRole, setEditingTeamRole] = useState<TeamMemberRole>("member");
   const [ownerId, setOwnerId] = useState("");
-  const team = useQuery({ queryKey: ["team", teamId], queryFn: () => getTeam(teamId) });
+  const team = useQuery({
+    queryKey: ["team", teamId],
+    queryFn: ({ signal }) => getTeam(teamId, signal),
+  });
   const stats = useQuery({
     queryKey: ["team-stats", teamId],
-    queryFn: () => teamStats(teamId),
+    queryFn: ({ signal }) => teamStats(teamId, signal),
     enabled: activeTab === "overview",
   });
   const emps = useQuery({
     queryKey: ["team-emps", teamId],
-    queryFn: () => listEmployees([teamId]),
+    queryFn: ({ signal }) => listEmployees([teamId], signal),
     enabled:
       activeTab === "overview" ||
       activeTab === "members" ||
@@ -136,7 +140,7 @@ function TeamDetailPage() {
   });
   const allEmps = useQuery({
     queryKey: ["employees-all"],
-    queryFn: () => listEmployees(),
+    queryFn: ({ signal }) => listEmployees(undefined, signal),
     enabled:
       (canManage && activeTab === "members") ||
       activeTab === "devices" ||
@@ -144,42 +148,42 @@ function TeamDetailPage() {
   });
   const ownerUsers = useQuery({
     queryKey: ["team-owners", teamId],
-    queryFn: () => listTeamOwners(teamId),
+    queryFn: ({ signal }) => listTeamOwners(teamId, signal),
     enabled: activeTab === "overview" || activeTab === "members",
   });
   const adminUsers = useQuery({
     queryKey: ["users"],
-    queryFn: listUsers,
+    queryFn: ({ signal }) => listUsers(signal),
     enabled: canManage && (activeTab === "overview" || activeTab === "members"),
   });
   const shots = useQuery({
     queryKey: ["team-shots", teamId],
-    queryFn: () => listScreenshots([teamId]),
+    queryFn: ({ signal }) => listScreenshots([teamId], {}, signal),
     enabled: activeTab === "screenshots",
   });
   const ts = useQuery({
     queryKey: ["team-ts", teamId],
-    queryFn: () => listTimesheets([teamId], "monthly"),
+    queryFn: ({ signal }) => listTimesheets([teamId], "monthly", undefined, undefined, signal),
     enabled: activeTab === "timesheets",
   });
   const devs = useQuery({
     queryKey: ["team-devs", teamId],
-    queryFn: () => listDevices([teamId]),
+    queryFn: ({ signal }) => listDevices([teamId], signal),
     enabled: activeTab === "devices",
   });
   const workTasks = useQuery({
     queryKey: ["tasks", "team", teamId],
-    queryFn: () => listTasks({ teamId }),
+    queryFn: ({ signal }) => listTasks({ teamId }, signal),
     enabled: activeTab === "work",
   });
   const workProjects = useQuery({
     queryKey: ["projects", "team", teamId],
-    queryFn: () => listProjects([teamId]),
+    queryFn: ({ signal }) => listProjects([teamId], signal),
     enabled: activeTab === "work",
   });
   const workMetrics = useQuery({
     queryKey: ["task-metrics", teamId],
-    queryFn: () => listTaskMetrics(teamId),
+    queryFn: ({ signal }) => listTaskMetrics(teamId, signal),
     enabled: activeTab === "work",
   });
   const [memberId, setMemberId] = useState("");
@@ -285,12 +289,21 @@ function TeamDetailPage() {
   const ownerCandidates = useMemo(() => {
     const currentOwnerIds = new Set((ownerUsers.data ?? []).map((owner) => owner.id));
     return (adminUsers.data ?? [])
-      .filter((user) => user.status === "active")
+      .filter((user) => user.status === "active" || user.status === "invited")
       .filter(
         (user) => user.role === "team_owner" || user.role === "general_admin" || user.role === "hr",
       )
       .filter((user) => !currentOwnerIds.has(user.id));
   }, [adminUsers.data, ownerUsers.data]);
+  const adminUsersByEmployeeId = useMemo(
+    () =>
+      new Map(
+        (adminUsers.data ?? [])
+          .filter((user) => user.employeeId)
+          .map((user) => [user.employeeId!, user] as const),
+      ),
+    [adminUsers.data],
+  );
   const editingLinkedAdmin = useMemo(
     () =>
       editingEmployee
@@ -325,9 +338,7 @@ function TeamDetailPage() {
         description="The team may no longer exist, or the server is temporarily unavailable."
         action={
           <div className="flex gap-2">
-            <Button asChild variant="outline">
-              <Link to="/teams">Back to teams</Link>
-            </Button>
+            <BackButton fallbackHref="/teams" variant="outline" />
             <Button onClick={() => team.refetch()}>
               <RefreshCw className="mr-2 h-4 w-4" /> Retry
             </Button>
@@ -339,12 +350,7 @@ function TeamDetailPage() {
 
   return (
     <div>
-      <Button asChild variant="ghost" size="sm" className="mb-2 -ml-2">
-        <Link to="/teams">
-          <ArrowLeft className="h-4 w-4 mr-1" />
-          Back to teams
-        </Link>
-      </Button>
+      <BackButton fallbackHref="/teams" variant="ghost" size="sm" className="mb-2 -ml-2" />
       <PageHeader
         title={team.data.name}
         description={team.data.description || "Monitor this team's people, activity, and devices."}
@@ -432,12 +438,28 @@ function TeamDetailPage() {
                   tone="warning"
                 />
               </MetricLink>
+              <MetricLink label="View employees on break" onClick={() => setActiveTab("live")}>
+                <StatCard
+                  label="On break now"
+                  value={stats.data.onBreak}
+                  icon={Coffee}
+                  tone="info"
+                />
+              </MetricLink>
               <MetricLink label="View offline employees" onClick={() => setActiveTab("live")}>
                 <StatCard
                   label="Offline people"
                   value={stats.data.offline}
                   icon={PowerOff}
                   tone="destructive"
+                />
+              </MetricLink>
+              <MetricLink label="View off-shift employees" onClick={() => setActiveTab("live")}>
+                <StatCard
+                  label="Off shift now"
+                  value={stats.data.offShift}
+                  icon={Clock}
+                  tone="info"
                 />
               </MetricLink>
               <StatCard
@@ -518,6 +540,13 @@ function TeamDetailPage() {
                     {memberCandidates.map((employee) => (
                       <SelectItem key={employee.id} value={employee.id}>
                         {employee.name}
+                        {adminUsersByEmployeeId.has(employee.id)
+                          ? ` · ${roleLabel(adminUsersByEmployeeId.get(employee.id)!.role)}${
+                              adminUsersByEmployeeId.get(employee.id)!.status === "invited"
+                                ? " · Invited"
+                                : ""
+                            }`
+                          : ""}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -746,11 +775,11 @@ function TeamDetailPage() {
                         >
                           <ProtectedImage
                             src={shot.thumbnailUrl}
-                            alt={`Screenshot captured ${new Date(shot.capturedAt).toLocaleString()}`}
+                            alt={`Screenshot captured ${formatDateTime(shot.capturedAt)}`}
                             className="aspect-video w-full object-cover transition-transform group-hover:scale-[1.02]"
                           />
                           <span className="block px-2 py-1.5 text-xs text-muted-foreground">
-                            {new Date(shot.capturedAt).toLocaleString()}
+                            {formatDateTime(shot.capturedAt)}
                           </span>
                         </button>
                       ))}
@@ -779,11 +808,11 @@ function TeamDetailPage() {
                           >
                             <ProtectedImage
                               src={shot.thumbnailUrl}
-                              alt={`Screenshot captured ${new Date(shot.capturedAt).toLocaleString()}`}
+                              alt={`Screenshot captured ${formatDateTime(shot.capturedAt)}`}
                               className="aspect-video w-full object-cover transition-transform group-hover:scale-[1.02]"
                             />
                             <span className="block px-2 py-1.5 text-xs text-muted-foreground">
-                              {new Date(shot.capturedAt).toLocaleString()}
+                              {formatDateTime(shot.capturedAt)}
                             </span>
                           </button>
                         ))}
@@ -974,7 +1003,7 @@ function TeamDetailPage() {
                 className="max-h-[70vh] w-full rounded-md bg-muted object-contain"
               />
               <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-muted-foreground">
-                <span>{new Date(selectedShot.capturedAt).toLocaleString()}</span>
+                <span>{formatDateTime(selectedShot.capturedAt)}</span>
                 <span>{selectedShot.isIdle ? "Captured while idle" : "Captured while active"}</span>
               </div>
             </div>
@@ -1126,6 +1155,7 @@ function TeamStructure({
                           ownerCandidates.map((user) => (
                             <SelectItem key={user.id} value={user.id}>
                               {user.name} · {roleLabel(user.role)}
+                              {user.status === "invited" ? " · Invited" : ""}
                             </SelectItem>
                           ))
                         )}
@@ -1467,6 +1497,7 @@ function TeamTimesheetsPanel({
               <SelectItem value="all">All statuses</SelectItem>
               <SelectItem value="complete">Complete</SelectItem>
               <SelectItem value="in_progress">In progress</SelectItem>
+              <SelectItem value="approved_leave">Approved leave</SelectItem>
               <SelectItem value="missing">Missing</SelectItem>
             </SelectContent>
           </Select>

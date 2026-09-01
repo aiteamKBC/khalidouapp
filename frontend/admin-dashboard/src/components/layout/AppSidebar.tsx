@@ -18,6 +18,7 @@ import {
   Coffee,
   Palmtree,
   CalendarCheck2,
+  MonitorCheck,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { BrandLogo } from "@/components/ui/brand-logo";
@@ -41,16 +42,22 @@ const navGroups: { label: string; items: NavItem[] }[] = [
     label: "Monitor",
     items: [
       {
+        to: "/dashboard",
+        label: "Overview",
+        icon: LayoutDashboard,
+        permission: permissions.dashboardView,
+      },
+      {
         to: "/attendance",
         label: "Attendance",
         icon: CalendarCheck2,
         permission: permissions.timesheetsView,
       },
       {
-        to: "/dashboard",
-        label: "Overview",
-        icon: LayoutDashboard,
-        permission: permissions.dashboardView,
+        to: "/monitoring",
+        label: "Employee monitoring",
+        icon: MonitorCheck,
+        permission: permissions.timesheetsView,
       },
       { to: "/teams", label: "Teams", icon: Users, permission: permissions.teamsView },
       { to: "/people", label: "People", icon: UsersRound, permission: permissions.peopleView },
@@ -67,7 +74,7 @@ const navGroups: { label: string; items: NavItem[] }[] = [
     items: [
       {
         to: "/screenshots",
-        label: "Screenshots",
+        label: "Screenshot library",
         icon: Camera,
         permission: permissions.screenshotsView,
       },

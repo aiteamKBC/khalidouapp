@@ -1,3 +1,7 @@
+import { resolveApiUrl } from "@/lib/api-url";
+import { tokensRotatedByAnotherTab } from "@/lib/auth-refresh-coordination";
+export { retryTransientRequest } from "@/lib/query-retry-policy";
+
 export const API_BASE_URL = (
   import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000/api/v1"
 ).replace(/\/$/, "");
@@ -49,8 +53,82 @@ type RefreshedTokens = {
 const AUTH_STORAGE_KEY = "khaliduo.auth";
 const AUTH_REFRESHED_EVENT = "khaliduo:auth-refreshed";
 const AUTH_EXPIRED_EVENT = "khaliduo:auth-expired";
+const AUTH_REFRESH_LOCK = "khaliduo.auth.refresh";
 
 let refreshInFlight: Promise<RefreshedTokens> | null = null;
+const inFlightGetRequests = new Map<string, Promise<unknown>>();
+let runtimeAuth: PersistedAuthLocation | null = null;
+const MAX_CONCURRENT_IMAGE_REQUESTS = 4;
+let activeImageRequests = 0;
+
+type QueuedImageRequest = {
+  run: () => void;
+  signal?: AbortSignal;
+  reject: (reason?: unknown) => void;
+  abort: () => void;
+};
+
+const queuedImageRequests: QueuedImageRequest[] = [];
+
+function abortError(signal?: AbortSignal) {
+  if (signal?.reason instanceof Error) return signal.reason;
+  return new DOMException("The image request was cancelled.", "AbortError");
+}
+
+function drainImageQueue() {
+  while (activeImageRequests < MAX_CONCURRENT_IMAGE_REQUESTS && queuedImageRequests.length > 0) {
+    const request = queuedImageRequests.shift();
+    if (!request) return;
+    request.signal?.removeEventListener("abort", request.abort);
+    if (request.signal?.aborted) {
+      request.reject(abortError(request.signal));
+      continue;
+    }
+    activeImageRequests += 1;
+    request.run();
+  }
+}
+
+export function rememberAuthTokens(auth: PersistedAuth, storage: Storage) {
+  runtimeAuth = { auth, storage };
+}
+
+export function forgetAuthTokens() {
+  runtimeAuth = null;
+}
+
+function requestDedupeKey(
+  responseKind: "data" | "meta",
+  path: string,
+  init: RequestInit,
+  token?: string,
+) {
+  const method = (init.method ?? "GET").toUpperCase();
+  if (method !== "GET" || init.body || init.signal) return null;
+
+  const headerKey = [...new Headers(init.headers).entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, value]) => `${key}:${value}`)
+    .join("|");
+  return `${responseKind}\u0000${token ?? "anonymous"}\u0000${path}\u0000${headerKey}`;
+}
+
+async function coalesceInFlight<T>(key: string | null, execute: () => Promise<T>): Promise<T> {
+  if (!key) return execute();
+
+  const existing = inFlightGetRequests.get(key) as Promise<T> | undefined;
+  if (existing) return existing;
+
+  const pending = execute();
+  inFlightGetRequests.set(key, pending);
+  try {
+    return await pending;
+  } finally {
+    if (inFlightGetRequests.get(key) === pending) {
+      inFlightGetRequests.delete(key);
+    }
+  }
+}
 
 function accessTokenExpiresAt(token: string) {
   try {
@@ -87,6 +165,9 @@ async function fetchWithTimeout(
         0,
       );
     }
+    if (init.signal?.aborted && init.signal.reason instanceof Error) {
+      throw init.signal.reason;
+    }
     if (error instanceof TypeError) {
       throw new ApiClientError(
         "The server could not be reached. Check your connection and try again.",
@@ -110,16 +191,32 @@ function readAuth(): PersistedAuthLocation | null {
     try {
       const auth = JSON.parse(raw) as PersistedAuth;
       if (auth.accessToken && auth.refreshToken) {
-        return { auth, storage };
+        rememberAuthTokens(auth, storage);
+        return runtimeAuth;
       }
     } catch {
       storage.removeItem(AUTH_STORAGE_KEY);
     }
   }
-  return null;
+  // The authenticated React tree can stay mounted briefly while browser
+  // storage is being reconciled. Keep using the live in-memory token pair so
+  // a protected action never reaches the API without its bearer token.
+  return runtimeAuth;
+}
+
+function readAuthFromStorage(storage: Storage): PersistedAuth | null {
+  const raw = storage.getItem(AUTH_STORAGE_KEY);
+  if (!raw) return null;
+  try {
+    const auth = JSON.parse(raw) as PersistedAuth;
+    return auth.accessToken && auth.refreshToken ? auth : null;
+  } catch {
+    return null;
+  }
 }
 
 function clearAuth() {
+  forgetAuthTokens();
   if (typeof window === "undefined") return;
   localStorage.removeItem(AUTH_STORAGE_KEY);
   sessionStorage.removeItem(AUTH_STORAGE_KEY);
@@ -162,15 +259,36 @@ function apiErrorMessage<T>(res: Response, body: ApiEnvelope<T> | null): string 
 async function refreshAuthTokens(authLocation: PersistedAuthLocation): Promise<RefreshedTokens> {
   if (refreshInFlight) return refreshInFlight;
 
-  refreshInFlight = (async () => {
+  const refreshOnce = async () => {
+    const attemptedRefreshToken = authLocation.auth.refreshToken;
+    const alreadyRotated = tokensRotatedByAnotherTab(
+      readAuthFromStorage(authLocation.storage),
+      attemptedRefreshToken,
+    );
+    if (alreadyRotated) return alreadyRotated;
+
     const res = await fetchWithTimeout(apiUrl("/auth/refresh"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ refresh_token: authLocation.auth.refreshToken }),
+      body: JSON.stringify({ refresh_token: attemptedRefreshToken }),
     });
     const body = await parseBody<RefreshedTokens>(res);
     const tokens = body?.data;
     if (!res.ok || body?.success === false || !tokens?.access_token || !tokens.refresh_token) {
+      // Refresh tokens rotate once. If another tab won the race, its new pair
+      // is already in shared storage and this 401 must not sign every tab out.
+      let rotated = tokensRotatedByAnotherTab(
+        readAuthFromStorage(authLocation.storage),
+        attemptedRefreshToken,
+      );
+      if (!rotated && authLocation.storage === localStorage) {
+        await new Promise((resolve) => globalThis.setTimeout(resolve, 250));
+        rotated = tokensRotatedByAnotherTab(
+          readAuthFromStorage(authLocation.storage),
+          attemptedRefreshToken,
+        );
+      }
+      if (rotated) return rotated;
       clearAuth();
       throw new Error(body?.error?.message ?? "Your session has expired. Please sign in again.");
     }
@@ -192,16 +310,30 @@ async function refreshAuthTokens(authLocation: PersistedAuthLocation): Promise<R
         refreshToken: tokens.refresh_token,
       }),
     );
+    rememberAuthTokens(
+      {
+        accessToken: tokens.access_token,
+        refreshToken: tokens.refresh_token,
+      },
+      authLocation.storage,
+    );
     window.dispatchEvent(
       new CustomEvent(AUTH_REFRESHED_EVENT, {
         detail: { accessToken: tokens.access_token, refreshToken: tokens.refresh_token },
       }),
     );
     return tokens;
-  })();
+  };
+
+  const lockManager = typeof navigator !== "undefined" ? navigator.locks : undefined;
+  const pendingRefresh: Promise<RefreshedTokens> =
+    authLocation.storage === localStorage && lockManager
+      ? lockManager.request(AUTH_REFRESH_LOCK, refreshOnce).then((tokens) => tokens)
+      : refreshOnce();
+  refreshInFlight = pendingRefresh;
 
   try {
-    return await refreshInFlight;
+    return await pendingRefresh;
   } finally {
     refreshInFlight = null;
   }
@@ -241,13 +373,16 @@ function shouldRefresh(path: string, tokenOverride?: string) {
 }
 
 export function apiUrl(path: string) {
-  if (path.startsWith("http://") || path.startsWith("https://") || path.startsWith("blob:")) {
-    return path;
+  const runtimeOrigin = typeof window === "undefined" ? "http://localhost" : window.location.origin;
+  const url = resolveApiUrl(API_BASE_URL, path, runtimeOrigin);
+  if (!url) {
+    throw new ApiClientError(
+      "The requested URL is outside the configured Khaliduo API.",
+      "UNSAFE_API_URL",
+      400,
+    );
   }
-  if (path.startsWith("/api/v1/")) {
-    return `${API_BASE_URL}${path.slice("/api/v1".length)}`;
-  }
-  return `${API_BASE_URL}${path.startsWith("/") ? path : `/${path}`}`;
+  return url;
 }
 
 export async function apiFetch<T>(
@@ -257,21 +392,25 @@ export async function apiFetch<T>(
 ): Promise<T> {
   const authLocation = readAuth();
   const token = tokenOverride ?? authLocation?.auth.accessToken;
-  let { res, body } = await request<T>(path, init, token);
+  const execute = async () => {
+    let { res, body } = await request<T>(path, init, token);
 
-  if (res.status === 401 && authLocation && shouldRefresh(path, tokenOverride)) {
-    const tokens = await refreshAuthTokens(authLocation);
-    ({ res, body } = await request<T>(path, init, tokens.access_token));
-  }
+    if (res.status === 401 && authLocation && shouldRefresh(path, tokenOverride)) {
+      const tokens = await refreshAuthTokens(authLocation);
+      ({ res, body } = await request<T>(path, init, tokens.access_token));
+    }
 
-  if (!res.ok || body?.success === false) {
-    throw new ApiClientError(
-      apiErrorMessage(res, body),
-      body?.error?.code ?? "API_ERROR",
-      res.status,
-    );
-  }
-  return (body?.data ?? ({} as T)) as T;
+    if (!res.ok || body?.success === false) {
+      throw new ApiClientError(
+        apiErrorMessage(res, body),
+        body?.error?.code ?? "API_ERROR",
+        res.status,
+      );
+    }
+    return (body?.data ?? ({} as T)) as T;
+  };
+
+  return coalesceInFlight(requestDedupeKey("data", path, init, token), execute);
 }
 
 export async function apiFetchWithMeta<T>(
@@ -279,29 +418,40 @@ export async function apiFetchWithMeta<T>(
   init: RequestInit = {},
 ): Promise<{ data: T; meta: Record<string, unknown> }> {
   const authLocation = readAuth();
-  let { res, body } = await request<T>(path, init, authLocation?.auth.accessToken);
-  if (res.status === 401 && authLocation && shouldRefresh(path)) {
-    const tokens = await refreshAuthTokens(authLocation);
-    ({ res, body } = await request<T>(path, init, tokens.access_token));
-  }
-  if (!res.ok || body?.success === false) {
-    throw new ApiClientError(
-      apiErrorMessage(res, body),
-      body?.error?.code ?? "API_ERROR",
-      res.status,
-    );
-  }
-  return { data: (body?.data ?? ({} as T)) as T, meta: body?.meta ?? {} };
+  const token = authLocation?.auth.accessToken;
+  const execute = async () => {
+    let { res, body } = await request<T>(path, init, token);
+    if (res.status === 401 && authLocation && shouldRefresh(path)) {
+      const tokens = await refreshAuthTokens(authLocation);
+      ({ res, body } = await request<T>(path, init, tokens.access_token));
+    }
+    if (!res.ok || body?.success === false) {
+      throw new ApiClientError(
+        apiErrorMessage(res, body),
+        body?.error?.code ?? "API_ERROR",
+        res.status,
+      );
+    }
+    return { data: (body?.data ?? ({} as T)) as T, meta: body?.meta ?? {} };
+  };
+
+  return coalesceInFlight(requestDedupeKey("meta", path, init, token), execute);
 }
 
-export async function apiFile(path: string): Promise<Blob> {
-  const authLocation = readAuth();
+export async function apiFile(
+  path: string,
+  signal?: AbortSignal,
+  tokenOverride?: string,
+): Promise<Blob> {
+  const authLocation = tokenOverride ? null : readAuth();
+  const token = tokenOverride ?? authLocation?.auth.accessToken;
   const fetchFile = (token?: string) =>
     fetchWithTimeout(apiUrl(path), {
       headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      signal,
     });
 
-  let res = await fetchFile(authLocation?.auth.accessToken);
+  let res = await fetchFile(token);
   if (res.status === 401 && authLocation) {
     const tokens = await refreshAuthTokens(authLocation);
     res = await fetchFile(tokens.access_token);
@@ -315,6 +465,45 @@ export async function apiFile(path: string): Promise<Blob> {
     );
   }
   return res.blob();
+}
+
+/**
+ * Keep protected screenshot grids from opening dozens of authenticated file
+ * requests at once. Queued requests are cancelled after navigation or paging.
+ */
+export function apiImageFile(
+  path: string,
+  signal?: AbortSignal,
+  tokenOverride?: string,
+): Promise<Blob> {
+  return new Promise<Blob>((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(abortError(signal));
+      return;
+    }
+
+    const request: QueuedImageRequest = {
+      signal,
+      reject,
+      abort: () => {
+        const index = queuedImageRequests.indexOf(request);
+        if (index >= 0) queuedImageRequests.splice(index, 1);
+        reject(abortError(signal));
+      },
+      run: () => {
+        apiFile(path, signal, tokenOverride)
+          .then(resolve, reject)
+          .finally(() => {
+            activeImageRequests = Math.max(0, activeImageRequests - 1);
+            drainImageQueue();
+          });
+      },
+    };
+
+    signal?.addEventListener("abort", request.abort, { once: true });
+    queuedImageRequests.push(request);
+    drainImageQueue();
+  });
 }
 
 export function withQuery(

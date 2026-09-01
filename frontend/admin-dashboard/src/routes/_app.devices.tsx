@@ -23,7 +23,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { listDevices, revokeDevice } from "@/api/devices";
+import { listDevices, reactivateDevice, revokeDevice } from "@/api/devices";
 import { listEmployees } from "@/api/employees";
 import { useAuth } from "@/lib/auth";
 import { permissions } from "@/lib/permissions";
@@ -31,6 +31,7 @@ import { formatRelative, formatDate } from "@/lib/format";
 import { toast } from "sonner";
 import { Laptop, ShieldCheck, WifiOff } from "lucide-react";
 import { MetricTile } from "@/components/ui/metric-tile";
+import { findOtherOnlineDeviceForEmployee } from "@/lib/device-presence";
 
 export const Route = createFileRoute("/_app/devices")({
   component: DevicesPage,
@@ -46,9 +47,16 @@ function DevicesList() {
   const canManageDevices = can(permissions.devicesManage);
   const scope = scopedTeamIds();
   const queryClient = useQueryClient();
-  const devs = useQuery({ queryKey: ["devices", scope], queryFn: () => listDevices(scope) });
-  const emps = useQuery({ queryKey: ["employees", scope], queryFn: () => listEmployees(scope) });
+  const devs = useQuery({
+    queryKey: ["devices", scope],
+    queryFn: ({ signal }) => listDevices(scope, signal),
+  });
+  const emps = useQuery({
+    queryKey: ["employees", scope],
+    queryFn: ({ signal }) => listEmployees(scope, signal),
+  });
   const [revokeId, setRevokeId] = useState<string | null>(null);
+  const [reactivateId, setReactivateId] = useState<string | null>(null);
   const revokeMutation = useMutation({
     mutationFn: (id: string) => revokeDevice(id),
     onSuccess: async () => {
@@ -58,6 +66,16 @@ function DevicesList() {
     },
     onError: (error) =>
       toast.error(error instanceof Error ? error.message : "Failed to revoke device"),
+  });
+  const reactivateMutation = useMutation({
+    mutationFn: (id: string) => reactivateDevice(id),
+    onSuccess: async () => {
+      toast.success("Device reactivated. The employee can sign in again.");
+      setReactivateId(null);
+      await queryClient.invalidateQueries({ queryKey: ["devices"] });
+    },
+    onError: (error) =>
+      toast.error(error instanceof Error ? error.message : "Failed to reactivate device"),
   });
 
   return (
@@ -112,10 +130,18 @@ function DevicesList() {
           <TableBody>
             {(devs.data ?? []).map((device) => {
               const emp = (emps.data ?? []).find((employee) => employee.id === device.employeeId);
+              const otherOnlineDevice = findOtherOnlineDeviceForEmployee(devs.data ?? [], device);
               return (
                 <TableRow key={device.id}>
                   <TableCell className="font-medium">{device.name}</TableCell>
-                  <TableCell>{emp?.name ?? "-"}</TableCell>
+                  <TableCell>
+                    <div>{emp?.name ?? "-"}</div>
+                    {device.status === "offline" && otherOnlineDevice && (
+                      <div className="mt-0.5 text-xs font-semibold text-success">
+                        Online on {otherOnlineDevice.name}
+                      </div>
+                    )}
+                  </TableCell>
                   <TableCell className="text-sm">{device.os}</TableCell>
                   <TableCell className="font-mono text-xs">{device.lastIpAddress ?? "-"}</TableCell>
                   <TableCell className="font-mono text-xs">{device.macAddress ?? "-"}</TableCell>
@@ -146,6 +172,15 @@ function DevicesList() {
                         Revoke
                       </Button>
                     )}
+                    {canManageDevices && device.tokenStatus === "revoked" && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setReactivateId(device.id)}
+                      >
+                        Reactivate
+                      </Button>
+                    )}
                   </TableCell>
                 </TableRow>
               );
@@ -170,6 +205,30 @@ function DevicesList() {
               onClick={() => revokeId && revokeMutation.mutate(revokeId)}
             >
               Revoke
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={reactivateId !== null}
+        onOpenChange={(open) => !open && setReactivateId(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Reactivate device?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This allows the same Khaliduo installation to sign in and register again. Previously
+              revoked device tokens remain invalid.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={reactivateMutation.isPending}
+              onClick={() => reactivateId && reactivateMutation.mutate(reactivateId)}
+            >
+              Reactivate
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

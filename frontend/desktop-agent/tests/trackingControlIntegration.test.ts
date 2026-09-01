@@ -1,0 +1,119 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import test from "node:test";
+
+const mainSource = fs.readFileSync(
+  new URL("../electron/main.ts", import.meta.url),
+  "utf-8",
+);
+const rendererSource = fs.readFileSync(
+  new URL("../src/App.tsx", import.meta.url),
+  "utf-8",
+);
+
+function sourceBetween(start: string, end: string) {
+  const startAt = mainSource.indexOf(start);
+  const endAt = mainSource.indexOf(end, startAt + start.length);
+  assert.notEqual(startAt, -1, `${start} was not found`);
+  assert.notEqual(endAt, -1, `${end} was not found after ${start}`);
+  return mainSource.slice(startAt, endAt);
+}
+
+test("manual pause is local-first and does not wait for API delivery", () => {
+  const source = sourceBetween(
+    "async function pauseTracking(",
+    "async function resumeTracking()",
+  );
+  assert.match(source, /void dispatchManualPauseTransition/);
+  assert.doesNotMatch(source, /await sendStateEvent/);
+});
+
+test("manual resume starts local tracking without waiting for backlog sync", () => {
+  const source = sourceBetween(
+    "async function resumeTracking()",
+    "async function logoutDevice()",
+  );
+  assert.match(source, /void dispatchManualPauseTransition/);
+  assert.match(source, /void startTrackingAutomatically\(\)/);
+  assert.doesNotMatch(source, /await startTrackingAutomatically\(\)/);
+});
+
+test("renderer releases a tracking control that stops responding", () => {
+  assert.match(rendererSource, /TRACKING_CONTROL_TIMEOUT_MS = 20_000/);
+  assert.match(rendererSource, /withOperationTimeout\(/);
+  assert.match(rendererSource, /finally \{\s*setIsChangingTracking\(false\)/);
+});
+
+test("a fresh automatic start checks presence confirmation before opening a session", () => {
+  const source = sourceBetween(
+    "async function startTrackingAutomatically()",
+    "function clearPaidPauseTimer()",
+  );
+  const policyAt = source.indexOf("requiresExplicitFreshSessionStart({");
+  const sessionStartAt = source.indexOf("const started = await startSession()");
+  assert.ok(policyAt >= 0, "fresh-session start policy is missing");
+  assert.ok(
+    sessionStartAt > policyAt,
+    "session starts before the presence policy check",
+  );
+  assert.match(source, /showFreshSessionStartConfirmation\([^)]*\)/);
+});
+
+test("Windows startup does not create a local session before schedule checks", () => {
+  const source = sourceBetween(
+    "app.whenReady().then(async () => {",
+    'ipcMain.handle("agent:get-status"',
+  );
+  assert.doesNotMatch(source, /beginLocalTrackingSession\(\)/);
+  assert.match(source, /await startTrackingAutomatically\(\)/);
+});
+
+test("offline promotion checks ownership before clearing the live local session", () => {
+  const source = sourceBetween(
+    "async function promotePendingLocalTrackingSessions(",
+    "function resetDailyRuntimeCounters(",
+  );
+  const ownershipCheckAt = source.lastIndexOf(
+    "if (localTrackingSessionId !== pendingSession.sessionId)",
+  );
+  const clearAt = source.lastIndexOf("localTrackingSessionId = null");
+  assert.ok(ownershipCheckAt >= 0, "promotion ownership guard is missing");
+  assert.ok(
+    clearAt > ownershipCheckAt,
+    "a promoted historical session can clear a newer local session",
+  );
+});
+
+test("startup promotes a bounded local session before uploading queues or starting fresh", () => {
+  const source = sourceBetween(
+    "async function startTrackingAutomatically()",
+    "function clearPaidPauseTimer()",
+  );
+  const preflightAt = source.indexOf(
+    "const currentBeforeRecovery = await getCurrentSession()",
+  );
+  const promoteAt = source.indexOf(
+    "await promotePendingLocalTrackingSessions({",
+  );
+  const queuesAt = source.indexOf("await syncPendingQueues(true)");
+  const freshStartAt = source.indexOf("const started = await startSession()");
+  assert.ok(preflightAt >= 0, "server-session preflight is missing");
+  assert.ok(
+    promoteAt > preflightAt,
+    "local recovery must follow the server preflight",
+  );
+  assert.ok(
+    queuesAt > promoteAt,
+    "local work must recover before screenshot/event queues upload",
+  );
+  assert.ok(
+    freshStartAt > queuesAt,
+    "recovered time must exist before a fresh session starts",
+  );
+});
+
+test("the fresh-session prompt requires an explicit renderer action", () => {
+  assert.match(rendererSource, /Start work tracking\?/);
+  assert.match(rendererSource, /confirmTrackingStart\(\)/);
+  assert.match(rendererSource, /declineTrackingStart\(\)/);
+});

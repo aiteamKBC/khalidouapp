@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from uuid import UUID
 
-from sqlalchemy import Date, DateTime, ForeignKey, Integer, String
+from sqlalchemy import Date, DateTime, ForeignKey, Index, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database.base import Base
@@ -10,6 +10,15 @@ from app.models.mixins import TimestampMixin, UUIDPrimaryKeyMixin
 
 class TimeAdjustmentRequest(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "time_adjustment_requests"
+    __table_args__ = (
+        Index(
+            "ix_time_adjustments_company_employee_date_status",
+            "company_id",
+            "employee_id",
+            "requested_date",
+            "status",
+        ),
+    )
 
     company_id: Mapped[UUID] = mapped_column(ForeignKey("companies.id"), nullable=False, index=True)
     employee_id: Mapped[UUID] = mapped_column(

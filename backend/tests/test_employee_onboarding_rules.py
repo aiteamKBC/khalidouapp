@@ -7,7 +7,17 @@ from app.core.exceptions import ApiError
 from app.models import AdminPermissionOverride, AdminUser, Employee, EmployeeWorkProfile
 from app.services.leave_management import entitled_credit_days, requested_workdays
 from app.services.permissions import capabilities_for_admin, capabilities_for_role
-from app.services.work_profiles import schedule_minutes, validate_work_profile
+from app.services.work_profiles import (
+    DEFAULT_WEEKLY_OFF_DAYS,
+    DEFAULT_WORKING_DAYS,
+    schedule_minutes,
+    validate_work_profile,
+)
+
+
+def test_default_schedule_has_friday_as_the_only_weekly_day_off():
+    assert DEFAULT_WORKING_DAYS == [0, 1, 2, 3, 5, 6]
+    assert DEFAULT_WEEKLY_OFF_DAYS == [4]
 
 
 def test_first_leave_credit_is_prorated_after_six_months():
@@ -37,6 +47,43 @@ def test_leave_credit_is_full_when_six_months_lands_in_new_year():
     assert entitled_credit_days(employee, 2027) == Decimal("21.00")
 
 
+def test_long_serving_employee_gets_full_current_year_leave_credit():
+    employee = Employee(
+        name="Long-serving employee",
+        email="long-serving@example.com",
+        employee_code="EMP-LONG",
+        timezone="Africa/Cairo",
+        start_date=date(2016, 1, 1),
+        annual_leave_days=21,
+    )
+    assert entitled_credit_days(employee, 2026, as_of=date(2026, 7, 27)) == Decimal("30.00")
+
+
+def test_ten_year_leave_floor_does_not_reduce_a_better_company_entitlement():
+    employee = Employee(
+        name="Long-serving employee with enhanced leave",
+        email="enhanced@example.com",
+        employee_code="EMP-ENHANCED",
+        timezone="Africa/Cairo",
+        start_date=date(2016, 1, 1),
+        annual_leave_days=35,
+    )
+    assert entitled_credit_days(employee, 2026, as_of=date(2026, 7, 27)) == Decimal("35.00")
+
+
+def test_ten_year_leave_floor_starts_on_the_service_anniversary():
+    employee = Employee(
+        name="Nearly ten years",
+        email="nearly-ten@example.com",
+        employee_code="EMP-NEARLY-TEN",
+        timezone="Africa/Cairo",
+        start_date=date(2016, 8, 1),
+        annual_leave_days=21,
+    )
+    assert entitled_credit_days(employee, 2026, as_of=date(2026, 7, 27)) == Decimal("21.00")
+    assert entitled_credit_days(employee, 2026, as_of=date(2026, 8, 1)) == Decimal("30.00")
+
+
 def test_break_must_be_inside_same_day_shift():
     profile = EmployeeWorkProfile(
         shift_start=time(9, 0),
@@ -54,6 +101,34 @@ def test_break_must_be_inside_same_day_shift():
     with pytest.raises(ApiError) as error:
         validate_work_profile(profile)
     assert error.value.code == "BREAK_OUTSIDE_SHIFT"
+
+
+def test_breaks_cannot_overlap():
+    profile = EmployeeWorkProfile(
+        shift_start=time(9, 0),
+        shift_end=time(17, 0),
+        break_rules=[
+            {
+                "name": "Lunch",
+                "start_time": "13:00",
+                "end_time": "13:30",
+                "minutes": 30,
+                "paid": True,
+            },
+            {
+                "name": "Short break",
+                "start_time": "13:00",
+                "end_time": "13:30",
+                "minutes": 30,
+                "paid": True,
+            },
+        ],
+    )
+
+    with pytest.raises(ApiError) as error:
+        validate_work_profile(profile)
+
+    assert error.value.code == "OVERLAPPING_BREAKS"
 
 
 def test_team_manager_can_review_leave_without_inheriting_payroll():

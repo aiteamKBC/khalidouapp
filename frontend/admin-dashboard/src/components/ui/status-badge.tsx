@@ -14,6 +14,7 @@ export type AnyStatus =
   | UserStatus
   | TimeAdjustmentStatus
   | "invited"
+  | "app_pending"
   | "expired"
   | "revoked"
   | "complete"
@@ -39,6 +40,9 @@ const styles: Record<string, string> = {
   in_progress: "bg-info/15 text-info ring-info/30",
   locked: "bg-muted text-muted-foreground ring-border",
   sleeping: "bg-muted text-muted-foreground ring-border",
+  on_break: "bg-violet-500/15 text-violet-700 ring-violet-500/30 dark:text-violet-300",
+  break_work: "bg-fuchsia-500/15 text-fuchsia-700 ring-fuchsia-500/30 dark:text-fuchsia-300",
+  off_shift: "bg-info/15 text-info ring-info/30",
   inactive: "bg-muted text-muted-foreground ring-border",
   archived: "bg-muted text-muted-foreground ring-border",
   used: "bg-muted text-muted-foreground ring-border",
@@ -48,6 +52,7 @@ const styles: Record<string, string> = {
   needs_review: "bg-warning/15 text-warning-foreground ring-warning/40",
   draft: "bg-info/15 text-info ring-info/30",
   invited: "bg-info/15 text-info ring-info/30",
+  app_pending: "bg-warning/15 text-warning-foreground ring-warning/40",
   approved: "bg-success/15 text-success ring-success/30",
   present: "bg-success/15 text-success ring-success/30",
   approved_leave: "bg-success/15 text-success ring-success/30",
@@ -63,7 +68,15 @@ const styles: Record<string, string> = {
   revoked: "bg-destructive/25 text-destructive ring-destructive/40",
 };
 
-export function StatusBadge({ status, className }: { status: AnyStatus; className?: string }) {
+export function StatusBadge({
+  status,
+  className,
+  label,
+}: {
+  status: AnyStatus;
+  className?: string;
+  label?: string;
+}) {
   return (
     <span
       className={cn(
@@ -87,21 +100,29 @@ export function StatusBadge({ status, className }: { status: AnyStatus; classNam
             "idle",
             "missing",
             "pending",
+            "app_pending",
             "expired",
             "needs_review",
             "late",
             "left_early",
           ].includes(status),
-          "bg-info": ["in_progress", "invited", "draft", "off_day", "worked_off_day"].includes(
-            status,
-          ),
+          "bg-violet-500": status === "on_break",
+          "bg-fuchsia-500": status === "break_work",
+          "bg-info": [
+            "in_progress",
+            "invited",
+            "draft",
+            "off_day",
+            "worked_off_day",
+            "off_shift",
+          ].includes(status),
           "bg-muted-foreground": ["locked", "sleeping", "inactive", "archived", "used"].includes(
             status,
           ),
           "bg-destructive": ["offline", "revoked", "rejected", "absent"].includes(status),
         })}
       />
-      {status.replace("_", " ")}
+      {label ?? (status === "break_work" ? "Working during break" : status.replaceAll("_", " "))}
     </span>
   );
 }

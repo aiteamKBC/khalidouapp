@@ -30,11 +30,12 @@ import {
 import { useAuth } from "@/lib/auth";
 import { permissions } from "@/lib/permissions";
 import { addTeamMember, addTeamOwner, createTeam, listTeams } from "@/api/teams";
-import { listEmployees } from "@/api/employees";
+import { employeeIsOnline, listEmployees } from "@/api/employees";
 import { listUsers } from "@/api/users";
 import { formatMinutes, formatRelative } from "@/lib/format";
 import { toast } from "sonner";
 import { MetricTile } from "@/components/ui/metric-tile";
+import type { Team, User } from "@/types";
 
 export const Route = createFileRoute("/_app/teams")({
   component: TeamsPage,
@@ -45,6 +46,17 @@ function TeamsPage() {
   return pathname !== "/teams" ? <Outlet /> : <TeamsList />;
 }
 
+/**
+ * Owner names come from the team payload so they still render for admins who
+ * cannot read the user directory. The directory is only a fallback for teams
+ * served by a backend that returns owner ids alone.
+ */
+function teamOwnerNames(team: Team, directory: User[]): string[] {
+  return team.owners
+    .map((owner) => owner.name || directory.find((user) => user.id === owner.id)?.name)
+    .filter((name): name is string => Boolean(name));
+}
+
 function TeamsList() {
   const { scopedTeamIds, can } = useAuth();
   const canManageTeams = can(permissions.teamsManage);
@@ -52,15 +64,22 @@ function TeamsList() {
   const scope = scopedTeamIds();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
-  const teams = useQuery({ queryKey: ["teams", scope], queryFn: () => listTeams(scope) });
+  const teams = useQuery({
+    queryKey: ["teams", scope],
+    queryFn: ({ signal }) => listTeams(scope, signal),
+    staleTime: 10 * 60_000,
+    gcTime: 30 * 60_000,
+  });
   const emps = useQuery({
-    queryKey: ["employees-all"],
-    queryFn: () => listEmployees(),
+    queryKey: ["employees-all", scope],
+    queryFn: ({ signal }) => listEmployees(scope, signal),
+    staleTime: 20_000,
     refetchInterval: 30_000,
+    refetchIntervalInBackground: false,
   });
   const owners = useQuery({
     queryKey: ["users"],
-    queryFn: listUsers,
+    queryFn: ({ signal }) => listUsers(signal),
     enabled: canManageAccess,
   });
 
@@ -168,7 +187,7 @@ function TeamsList() {
         />
         <MetricTile
           icon={UsersRound}
-          value={(emps.data ?? []).filter((employee) => employee.status !== "offline").length}
+          value={(emps.data ?? []).filter(employeeIsOnline).length}
           label="People online"
           hint="Live right now"
           tone="blue"
@@ -271,7 +290,7 @@ function TeamsList() {
             const members = (emps.data ?? []).filter((employee) =>
               employee.teamIds.includes(team.id),
             );
-            const online = members.filter((employee) => employee.status !== "offline").length;
+            const online = members.filter(employeeIsOnline).length;
             const workedMinutes = members.reduce(
               (sum, employee) => sum + employee.workedTodayMinutes,
               0,
@@ -281,9 +300,7 @@ function TeamsList() {
               .filter(Boolean)
               .sort()
               .reverse()[0];
-            const ownerNames = team.ownerIds
-              .map((id) => (owners.data ?? []).find((user) => user.id === id)?.name)
-              .filter(Boolean);
+            const ownerNames = teamOwnerNames(team, owners.data ?? []);
             return (
               <Card
                 key={team.id}
@@ -379,7 +396,7 @@ function TeamsList() {
               const members = (emps.data ?? []).filter((employee) =>
                 employee.teamIds.includes(team.id),
               );
-              const online = members.filter((employee) => employee.status !== "offline").length;
+              const online = members.filter(employeeIsOnline).length;
               const workedMinutes = members.reduce(
                 (sum, employee) => sum + employee.workedTodayMinutes,
                 0,
@@ -389,10 +406,7 @@ function TeamsList() {
                 .filter(Boolean)
                 .sort()
                 .reverse()[0];
-              const ownerNames = team.ownerIds
-                .map((id) => (owners.data ?? []).find((user) => user.id === id)?.name)
-                .filter(Boolean)
-                .join(", ");
+              const ownerNames = teamOwnerNames(team, owners.data ?? []).join(", ");
               return (
                 <TableRow
                   key={team.id}

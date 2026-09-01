@@ -5,13 +5,16 @@ from uuid import UUID
 
 import jwt
 from fastapi import Depends, Header
-from sqlalchemy import select
+from sqlalchemy import and_, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import ApiError
 from app.core.security import decode_device_token, decode_jwt_token, hash_token
 from app.database.session import get_db
 from app.models import AdminUser, Device, DeviceToken, Employee
+
+DEVICE_REENROLLMENT_REQUIRED = "Device token identity does not match this device."
 
 
 @dataclass(frozen=True)
@@ -52,6 +55,10 @@ def get_current_admin(
     )
     if admin is None:
         raise ApiError("UNAUTHORIZED", "Admin user is not active.", 401)
+    # Authentication is a complete read boundary. Do not pin a database or
+    # transaction-pooler connection while the endpoint performs unrelated
+    # work, streams a response, or waits for file I/O.
+    db.commit()
     return admin
 
 
@@ -74,59 +81,152 @@ def get_current_device(
     except (KeyError, TypeError, ValueError):
         raise ApiError("UNAUTHORIZED", "Invalid device token claims.", 401) from None
 
-    token_record = db.scalar(
-        select(DeviceToken).where(
-            DeviceToken.token_hash == hash_token(token),
-            DeviceToken.company_id == company_id,
-            DeviceToken.device_id == device_id,
-            DeviceToken.revoked_at.is_(None),
+    token_hash = hash_token(token)
+    auth_row = db.execute(
+        select(Device, DeviceToken, Employee)
+        .select_from(Device)
+        .join(
+            Employee,
+            and_(
+                Employee.id == token_employee_id,
+                Employee.company_id == company_id,
+                Employee.status == "active",
+            ),
         )
-    )
-    if token_record is None:
-        raise ApiError("UNAUTHORIZED", "Device token has been revoked.", 401)
-    if token_record.expires_at is not None and token_record.expires_at <= datetime.now(UTC):
-        raise ApiError("UNAUTHORIZED", "Device token has expired.", 401)
-
-    device = db.scalar(
-        select(Device).where(
+        .outerjoin(
+            DeviceToken,
+            and_(
+                DeviceToken.token_hash == token_hash,
+                DeviceToken.company_id == company_id,
+                DeviceToken.device_id == device_id,
+                DeviceToken.revoked_at.is_(None),
+            ),
+        )
+        .where(
             Device.id == device_id,
             Device.company_id == company_id,
             Device.status == "active",
             Device.revoked_at.is_(None),
         )
-    )
-    if device is None:
-        raise ApiError("UNAUTHORIZED", "Device is not active.", 401)
+    ).one_or_none()
+    if auth_row is None:
+        raise ApiError("DEVICE_REENROLLMENT_REQUIRED", DEVICE_REENROLLMENT_REQUIRED, 401)
+    device, token_record, _employee = auth_row
+    if token_record is None:
+        token_history_exists = db.scalar(
+            select(DeviceToken.id).where(
+                DeviceToken.company_id == company_id,
+                DeviceToken.device_id == device_id,
+            )
+        )
+        if (
+            token_history_exists is not None
+            or not device.legacy_token_bootstrap_allowed
+            or device.employee_id != token_employee_id
+        ):
+            raise ApiError("DEVICE_REENROLLMENT_REQUIRED", DEVICE_REENROLLMENT_REQUIRED, 401)
+
+        bootstrap_claim = db.execute(
+            update(Device)
+            .where(
+                Device.id == device_id,
+                Device.company_id == company_id,
+                Device.employee_id == token_employee_id,
+                Device.status == "active",
+                Device.revoked_at.is_(None),
+                Device.legacy_token_bootstrap_allowed.is_(True),
+            )
+            .values(legacy_token_bootstrap_allowed=False)
+            .execution_options(synchronize_session="fetch")
+        )
+        if bootstrap_claim.rowcount != 1:
+            # Another request may have claimed the one-time migration window.
+            # Accept it only when that same token is now the registered token.
+            db.rollback()
+            token_record = db.scalar(
+                select(DeviceToken).where(
+                    DeviceToken.token_hash == token_hash,
+                    DeviceToken.company_id == company_id,
+                    DeviceToken.device_id == device_id,
+                    DeviceToken.revoked_at.is_(None),
+                )
+            )
+            device = db.scalar(
+                select(Device).where(
+                    Device.id == device_id,
+                    Device.company_id == company_id,
+                    Device.status == "active",
+                    Device.revoked_at.is_(None),
+                )
+            )
+            if token_record is None or device is None:
+                raise ApiError(
+                    "DEVICE_REENROLLMENT_REQUIRED",
+                    DEVICE_REENROLLMENT_REQUIRED,
+                    401,
+                )
+        else:
+            issued_at_claim = payload.get("iat")
+            try:
+                issued_at = datetime.fromtimestamp(int(issued_at_claim), UTC)
+            except (TypeError, ValueError, OSError):
+                db.rollback()
+                raise ApiError(
+                    "DEVICE_REENROLLMENT_REQUIRED",
+                    DEVICE_REENROLLMENT_REQUIRED,
+                    401,
+                ) from None
+            token_record = DeviceToken(
+                company_id=company_id,
+                device_id=device_id,
+                token_hash=token_hash,
+                issued_at=issued_at,
+            )
+            db.add(token_record)
+            try:
+                db.commit()
+            except IntegrityError:
+                # Two agent requests can arrive together after a network outage.
+                # The unique token hash makes the bootstrap idempotent.
+                db.rollback()
+                token_record = db.scalar(
+                    select(DeviceToken).where(
+                        DeviceToken.token_hash == token_hash,
+                        DeviceToken.company_id == company_id,
+                        DeviceToken.device_id == device_id,
+                        DeviceToken.revoked_at.is_(None),
+                    )
+                )
+                device = db.scalar(
+                    select(Device).where(
+                        Device.id == device_id,
+                        Device.company_id == company_id,
+                        Device.status == "active",
+                        Device.revoked_at.is_(None),
+                    )
+                )
+                if token_record is None or device is None:
+                    raise ApiError(
+                        "DEVICE_REENROLLMENT_REQUIRED",
+                        DEVICE_REENROLLMENT_REQUIRED,
+                        401,
+                    ) from None
+
+    if token_record.expires_at is not None and token_record.expires_at <= datetime.now(UTC):
+        raise ApiError("DEVICE_REENROLLMENT_REQUIRED", DEVICE_REENROLLMENT_REQUIRED, 401)
+
     if device.employee_id != token_employee_id:
         # A valid, non-revoked device token is the durable identity for the
         # installation. Repair a stale employee foreign key so an app update
         # or an old data repair does not force every employee to sign in again.
         # Reassignment flows revoke the old token before changing ownership,
         # so this branch only heals an inconsistent active record.
-        token_employee = db.scalar(
-            select(Employee).where(
-                Employee.id == token_employee_id,
-                Employee.company_id == company_id,
-                Employee.status == "active",
-            )
-        )
-        if token_employee is None:
-            raise ApiError("UNAUTHORIZED", "Device token identity does not match this device.", 401)
         device.employee_id = token_employee_id
         db.add(device)
         db.commit()
         db.refresh(device)
 
-    employee = db.scalar(
-        select(Employee).where(
-            Employee.id == device.employee_id,
-            Employee.company_id == company_id,
-            Employee.status == "active",
-        )
-    )
-    if employee is None:
-        raise ApiError("UNAUTHORIZED", "Employee account is not active.", 401)
-
+    db.commit()
     return DeviceAuthContext(device=device, token_record=token_record)
 
 
@@ -157,4 +257,5 @@ def get_current_employee(
     )
     if employee is None:
         raise ApiError("UNAUTHORIZED", "Employee account is not active.", 401)
+    db.commit()
     return employee

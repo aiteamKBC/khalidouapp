@@ -9,6 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { PageHeader } from "@/components/ui/page-header";
+import { PasswordInput } from "@/components/ui/password-input";
 
 export const Route = createFileRoute("/_app/profile")({ component: ProfilePage });
 
@@ -141,9 +142,8 @@ function ProfilePage() {
           <form className="space-y-4" onSubmit={savePassword}>
             <div className="space-y-1.5">
               <Label htmlFor="current-password">Current password</Label>
-              <Input
+              <PasswordInput
                 id="current-password"
-                type="password"
                 autoComplete="current-password"
                 value={currentPassword}
                 onChange={(event) => setCurrentPassword(event.target.value)}
@@ -152,9 +152,8 @@ function ProfilePage() {
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="new-password">New password</Label>
-              <Input
+              <PasswordInput
                 id="new-password"
-                type="password"
                 autoComplete="new-password"
                 minLength={8}
                 value={newPassword}
@@ -164,9 +163,8 @@ function ProfilePage() {
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="confirm-password">Confirm new password</Label>
-              <Input
+              <PasswordInput
                 id="confirm-password"
-                type="password"
                 autoComplete="new-password"
                 minLength={8}
                 value={confirmPassword}

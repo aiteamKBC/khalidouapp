@@ -17,6 +17,10 @@ contextBridge.exposeInMainWorld("khaliduo", {
     ipcRenderer.invoke("agent:pause-tracking", options),
   resumeTracking: () => ipcRenderer.invoke("agent:resume-tracking"),
   resumeAutomaticIdle: () => ipcRenderer.invoke("agent:resume-automatic-idle"),
+  confirmTrackingStart: () =>
+    ipcRenderer.invoke("agent:confirm-tracking-start"),
+  declineTrackingStart: () =>
+    ipcRenderer.invoke("agent:decline-tracking-start"),
   logout: () => ipcRenderer.invoke("agent:logout"),
   openEmployeeDashboard: (section?: "screenshots") =>
     ipcRenderer.invoke("agent:open-employee-dashboard", section),
@@ -88,6 +92,7 @@ contextBridge.exposeInMainWorld("khaliduo", {
   onIdleAlert: (
     callback: (alert: {
       id: string;
+      kind: "idle_return" | "tracking_start";
       lostSeconds: number;
       eligibleLostSeconds: number;
       outsideScheduledShift: boolean;
@@ -98,6 +103,7 @@ contextBridge.exposeInMainWorld("khaliduo", {
       _event: Electron.IpcRendererEvent,
       alert: {
         id: string;
+        kind: "idle_return" | "tracking_start";
         lostSeconds: number;
         eligibleLostSeconds: number;
         outsideScheduledShift: boolean;

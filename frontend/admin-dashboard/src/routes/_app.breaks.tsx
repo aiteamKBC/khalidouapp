@@ -9,6 +9,7 @@ import {
   Coffee,
   Eye,
   EyeOff,
+  TriangleAlert,
   Pencil,
   Plus,
   RotateCcw,
@@ -33,6 +34,7 @@ import {
 } from "@/api/payroll";
 import { useAuth } from "@/lib/auth";
 import { permissions } from "@/lib/permissions";
+import { formatTimeOfDay } from "@/lib/format";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -72,8 +74,9 @@ type EditorIntent =
 
 const FALLBACK_BREAKS: BreakDraft[] = [
   { name: "Lunch", startTime: "13:00", endTime: "13:30", paid: true },
-  { name: "Short break", startTime: "15:30", endTime: "15:45", paid: true },
+  { name: "Short break", startTime: "16:30", endTime: "16:45", paid: true },
 ];
+const DEFAULT_WORKING_DAYS = [0, 1, 2, 3, 5, 6];
 
 function todayIso() {
   const now = new Date();
@@ -129,15 +132,15 @@ function BreaksPage() {
 
   const rows = useQuery({
     queryKey: ["break-profiles", scope],
-    queryFn: () => listEmployeeBreakRules(scope),
+    queryFn: ({ signal }) => listEmployeeBreakRules(scope, signal),
   });
   const teams = useQuery({
     queryKey: ["teams", scope],
-    queryFn: () => listTeams(scope),
+    queryFn: ({ signal }) => listTeams(scope, signal),
   });
   const overrides = useQuery({
     queryKey: ["schedule-overrides", "upcoming"],
-    queryFn: () => listScheduleOverrides(true),
+    queryFn: ({ signal }) => listScheduleOverrides(true, signal),
     enabled: can(permissions.breaksView),
   });
   const cancelOverride = useMutation({
@@ -180,7 +183,7 @@ function BreaksPage() {
               </Button>
               {canUseCompanyScope && (
                 <Button onClick={() => setEditor({ kind: "company" })}>
-                  <Users /> Set schedule for everyone
+                  <Users /> Set work schedule
                 </Button>
               )}
             </>
@@ -228,7 +231,7 @@ function BreaksPage() {
                   <p className="text-xs text-muted-foreground">
                     {item.effective_date} ·{" "}
                     {item.shift_start && item.shift_end
-                      ? `${item.shift_start}–${item.shift_end}`
+                      ? `${formatTimeOfDay(item.shift_start)}–${formatTimeOfDay(item.shift_end)}`
                       : `${item.break_rules?.length ?? 0} break(s)`}{" "}
                     · {item.reason}
                   </p>
@@ -321,7 +324,7 @@ function BreaksPage() {
                       Scheduled shift
                     </p>
                     <p className="mt-0.5 font-mono text-lg font-extrabold tabular-nums">
-                      {shiftStart}–{shiftEnd}
+                      {formatTimeOfDay(shiftStart)}–{formatTimeOfDay(shiftEnd)}
                     </p>
                     <p className="mt-1 text-[11px] font-semibold text-muted-foreground">
                       Source: {scheduleSource}
@@ -425,18 +428,24 @@ function BreakEditorDialog({
   onSaved: () => void;
 }) {
   const [scope, setScope] = useState<"employee" | "employees" | "team" | "company">("company");
+  // Both questions - who the change covers and whether it is the normal policy
+  // or a single day - are answered inside the dialog, so a break edit can never
+  // silently overwrite the people who have a custom one.
+  const [isPermanent, setIsPermanent] = useState(true);
   const [employeeId, setEmployeeId] = useState("");
   const [employeeIds, setEmployeeIds] = useState<string[]>([]);
   const [teamId, setTeamId] = useState("");
   const [effectiveDate, setEffectiveDate] = useState(todayIso());
-  const [shiftStart, setShiftStart] = useState("09:00");
-  const [shiftEnd, setShiftEnd] = useState("17:00");
+  const [shiftStart, setShiftStart] = useState("10:00");
+  const [shiftEnd, setShiftEnd] = useState("18:00");
   const [breaks, setBreaks] = useState<BreakDraft[]>(FALLBACK_BREAKS);
+  const [updateShift, setUpdateShift] = useState(true);
+  const [updateBreaks, setUpdateBreaks] = useState(true);
   const [reason, setReason] = useState("");
   const [employeeName, setEmployeeName] = useState("");
   const [jobTitle, setJobTitle] = useState("");
   const [timezone, setTimezone] = useState("Africa/Cairo");
-  const [workingDays, setWorkingDays] = useState<number[]>([0, 1, 2, 3, 4]);
+  const [workingDays, setWorkingDays] = useState<number[]>(DEFAULT_WORKING_DAYS);
   const [lateGraceMinutes, setLateGraceMinutes] = useState(15);
   const [overtimeEnabled, setOvertimeEnabled] = useState(false);
   const [overtimeMultiplier, setOvertimeMultiplier] = useState(1.5);
@@ -446,36 +455,54 @@ function BreakEditorDialog({
   const [showSalary, setShowSalary] = useState(false);
 
   const selectedEmployee = people.find((person) => person.employeeId === employeeId);
-  const permanent = intent?.kind !== "day";
+  const permanent = intent?.kind === "employee" ? true : isPermanent;
+  // The employee card edits that one profile directly; the other entry points
+  // let the admin choose the target here.
+  const choosesTarget = Boolean(intent) && intent?.kind !== "employee";
+  const scopeLabel =
+    scope === "company"
+      ? "everyone"
+      : scope === "team"
+        ? "one team"
+        : scope === "employees"
+          ? `${employeeIds.length} employee(s)`
+          : selectedEmployee?.name || "one employee";
   const heading =
-    intent?.kind === "company"
-      ? "Set schedule for everyone"
-      : intent?.kind === "employee"
-        ? `Edit ${selectedEmployee?.name || "employee"} schedule`
-        : "Schedule a one-day exception";
+    intent?.kind === "employee"
+      ? `Edit ${selectedEmployee?.name || "employee"} schedule`
+      : permanent
+        ? `Set schedule for ${scopeLabel}`
+        : `One-day exception for ${scopeLabel}`;
 
   useEffect(() => {
     if (!intent) return;
     const nextScope =
       intent.kind === "employee"
         ? "employee"
-        : intent.kind === "company" || canUseCompanyScope
+        : canUseCompanyScope
           ? "company"
-          : "team";
+          : // Without company-wide scope the admin picks targets they can reach,
+            // and a team is only a valid target for a one-day exception.
+            intent.kind === "day"
+            ? "team"
+            : "employees";
     const nextEmployeeId = intent.kind === "employee" ? intent.employeeId : "";
     const source = people.find((person) => person.employeeId === nextEmployeeId) ?? people[0];
     setScope(nextScope);
+    setIsPermanent(intent.kind !== "day");
     setEmployeeId(nextEmployeeId);
     setEmployeeIds([]);
     setTeamId("");
     setEffectiveDate(todayIso());
-    setShiftStart(source?.shiftStart ?? "09:00");
-    setShiftEnd(source?.shiftEnd ?? "17:00");
+    setShiftStart(source?.shiftStart ?? "10:00");
+    setShiftEnd(source?.shiftEnd ?? "18:00");
     setBreaks(toDrafts(source?.breakRules));
+    setUpdateShift(true);
+    setUpdateBreaks(true);
     setEmployeeName(source?.name ?? "");
     setJobTitle(source?.jobTitle ?? "");
     setTimezone(source?.timezone ?? "Africa/Cairo");
-    setWorkingDays(source?.workingDays ?? [0, 1, 2, 3, 4]);
+    setWorkingDays(source?.workingDays ?? DEFAULT_WORKING_DAYS);
     setLateGraceMinutes(source?.lateGraceMinutes ?? 15);
     setOvertimeEnabled(source?.overtimeEnabled ?? false);
     setOvertimeMultiplier(source?.overtimeRateMultiplier ?? 1.5);
@@ -503,31 +530,93 @@ function BreakEditorDialog({
       })),
     [breaks],
   );
-  const invalid =
-    !shiftStart ||
-    !shiftEnd ||
-    minutesBetween(shiftStart, shiftEnd) <= 0 ||
-    rules.length === 0 ||
-    rules.some(
-      (rule) =>
-        !rule.name || rule.minutes <= 0 || rule.start_time < shiftStart || rule.end_time > shiftEnd,
-    ) ||
-    rules.some(
-      (rule, index) =>
-        index > 0 &&
-        [...rules].sort((a, b) => a.start_time.localeCompare(b.start_time))[index - 1].end_time >
-          [...rules].sort((a, b) => a.start_time.localeCompare(b.start_time))[index].start_time,
-    ) ||
-    !reason.trim() ||
-    (scope === "employee" && !employeeId) ||
-    (scope === "employees" && employeeIds.length === 0) ||
-    (scope === "team" && !teamId) ||
-    (!permanent && !effectiveDate);
+  const breakProblems = useMemo(() => {
+    const problems: Array<{ key: string; message: string; indexes: number[] }> = [];
+
+    rules.forEach((rule, index) => {
+      const label = rule.name || `Break ${index + 1}`;
+      if (!rule.name) {
+        problems.push({
+          key: `name-${index}`,
+          message: `Enter a name for break ${index + 1}.`,
+          indexes: [index],
+        });
+      }
+      if (
+        !rule.start_time ||
+        !rule.end_time ||
+        !Number.isFinite(rule.minutes) ||
+        rule.minutes <= 0
+      ) {
+        problems.push({
+          key: `duration-${index}`,
+          message: `${label} must end after it starts.`,
+          indexes: [index],
+        });
+      }
+      if (
+        shiftStart &&
+        shiftEnd &&
+        rule.start_time &&
+        rule.end_time &&
+        (rule.start_time < shiftStart || rule.end_time > shiftEnd)
+      ) {
+        problems.push({
+          key: `outside-${index}`,
+          message: `${label} must stay inside the ${formatTimeOfDay(shiftStart)}–${formatTimeOfDay(shiftEnd)} shift.`,
+          indexes: [index],
+        });
+      }
+    });
+
+    const sortedRules = rules
+      .map((rule, index) => ({ ...rule, index }))
+      .sort((a, b) => a.start_time.localeCompare(b.start_time));
+    for (let index = 1; index < sortedRules.length; index += 1) {
+      const previous = sortedRules[index - 1];
+      const current = sortedRules[index];
+      if (
+        previous.start_time &&
+        previous.end_time &&
+        current.start_time &&
+        current.end_time &&
+        previous.end_time > current.start_time
+      ) {
+        problems.push({
+          key: `overlap-${previous.index}-${current.index}`,
+          message: `${previous.name || `Break ${previous.index + 1}`} overlaps with ${
+            current.name || `break ${current.index + 1}`
+          }. Give each break a separate time.`,
+          indexes: [previous.index, current.index],
+        });
+      }
+    }
+
+    return problems;
+  }, [rules, shiftEnd, shiftStart]);
+  const invalidBreakIndexes = new Set(
+    updateBreaks ? breakProblems.flatMap((problem) => problem.indexes) : [],
+  );
+  const validationMessages = [
+    ...(!updateShift && !updateBreaks ? ["Choose working hours, break schedule, or both."] : []),
+    ...(updateShift && (!shiftStart || !shiftEnd || minutesBetween(shiftStart, shiftEnd) <= 0)
+      ? ["Shift end must be later than shift start."]
+      : []),
+    ...(updateBreaks && rules.length === 0 ? ["Add at least one break."] : []),
+    ...(updateBreaks ? breakProblems.map((problem) => problem.message) : []),
+    ...(!reason.trim() ? ["Enter a reason for this schedule change."] : []),
+    ...(scope === "employee" && !employeeId ? ["Select an employee."] : []),
+    ...(scope === "employees" && employeeIds.length === 0 ? ["Select at least one employee."] : []),
+    ...(scope === "team" && !teamId ? ["Select a team."] : []),
+    ...(!permanent && !effectiveDate ? ["Select the effective date."] : []),
+  ];
+  const invalid = validationMessages.length > 0;
+  const overrideType = updateShift ? (updateBreaks ? "both" : "shift") : "breaks";
 
   const save = useMutation({
     mutationFn: async () => {
       if (permanent && intent?.kind === "employee") {
-        if (canManagePeople) {
+        if (updateShift && canManagePeople) {
           await updateEmployee(employeeId, {
             name: employeeName.trim(),
             jobTitle: jobTitle.trim(),
@@ -535,23 +624,27 @@ function BreakEditorDialog({
           });
         }
         await updateWorkProfile(employeeId, {
-          shiftStart,
-          shiftEnd,
-          requiredDailyMinutes: minutesBetween(shiftStart, shiftEnd),
-          workingDays,
-          weeklyOffDays: [0, 1, 2, 3, 4, 5, 6].filter((day) => !workingDays.includes(day)),
-          breakRules: rules,
-          lateGraceMinutes,
-          ...(canManagePayroll
+          ...(updateShift
             ? {
-                overtimeEnabled,
-                overtimeBasis: "outside_shift" as const,
-                overtimeRateMultiplier: overtimeMultiplier,
-                salaryAmount,
-                salaryCurrency: salaryCurrency as WorkProfile["salaryCurrency"],
-                salaryType,
+                shiftStart,
+                shiftEnd,
+                requiredDailyMinutes: minutesBetween(shiftStart, shiftEnd),
+                workingDays,
+                weeklyOffDays: [0, 1, 2, 3, 4, 5, 6].filter((day) => !workingDays.includes(day)),
+                lateGraceMinutes,
+                ...(canManagePayroll
+                  ? {
+                      overtimeEnabled,
+                      overtimeBasis: "outside_shift" as const,
+                      overtimeRateMultiplier: overtimeMultiplier,
+                      salaryAmount,
+                      salaryCurrency: salaryCurrency as WorkProfile["salaryCurrency"],
+                      salaryType,
+                    }
+                  : {}),
               }
             : {}),
+          ...(updateBreaks ? { breakRules: rules } : {}),
         });
         return { affected_employees: 1 };
       }
@@ -560,12 +653,12 @@ function BreakEditorDialog({
         employee_id: scope === "employee" ? employeeId : undefined,
         employee_ids: scope === "employees" ? employeeIds : undefined,
         team_id: scope === "team" ? teamId : undefined,
-        override_type: "both",
+        override_type: overrideType,
         permanent,
         effective_date: permanent ? undefined : effectiveDate,
-        shift_start: shiftStart,
-        shift_end: shiftEnd,
-        break_rules: rules,
+        shift_start: updateShift ? shiftStart : undefined,
+        shift_end: updateShift ? shiftEnd : undefined,
+        break_rules: updateBreaks ? rules : undefined,
         reason: reason.trim(),
       });
     },
@@ -612,7 +705,7 @@ function BreakEditorDialog({
           </DialogDescription>
         </DialogHeader>
 
-        {intent?.kind === "day" && (
+        {choosesTarget && (
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="Apply to">
               <Select
@@ -623,8 +716,8 @@ function BreakEditorDialog({
                   if (nextScope === "company") {
                     setEmployeeId("");
                     setEmployeeIds([]);
-                    setShiftStart(people[0]?.shiftStart ?? "09:00");
-                    setShiftEnd(people[0]?.shiftEnd ?? "17:00");
+                    setShiftStart(people[0]?.shiftStart ?? "10:00");
+                    setShiftEnd(people[0]?.shiftEnd ?? "18:00");
                     setBreaks(toDrafts(people[0]?.breakRules));
                   }
                 }}
@@ -635,19 +728,44 @@ function BreakEditorDialog({
                 <SelectContent>
                   {canUseCompanyScope && <SelectItem value="company">All employees</SelectItem>}
                   <SelectItem value="employees">Selected employees</SelectItem>
-                  <SelectItem value="team">One team</SelectItem>
+                  {/* A permanent team policy is not supported by the server. */}
+                  {!permanent && <SelectItem value="team">One team</SelectItem>}
                   <SelectItem value="employee">One employee</SelectItem>
                 </SelectContent>
               </Select>
             </Field>
-            <Field label="Date">
-              <Input
-                type="date"
-                min={todayIso()}
-                value={effectiveDate}
-                onChange={(event) => setEffectiveDate(event.target.value)}
-              />
+            <Field label="Applies">
+              <Select
+                value={permanent ? "always" : "day"}
+                onValueChange={(value) => {
+                  const nextPermanent = value === "always";
+                  setIsPermanent(nextPermanent);
+                  // Team scope only exists for one-day exceptions.
+                  if (nextPermanent && scope === "team") {
+                    setScope(canUseCompanyScope ? "company" : "employees");
+                    setTeamId("");
+                  }
+                }}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="always">Every day, from now on</SelectItem>
+                  <SelectItem value="day">One day only</SelectItem>
+                </SelectContent>
+              </Select>
             </Field>
+            {!permanent && (
+              <Field label="Date">
+                <Input
+                  type="date"
+                  min={todayIso()}
+                  value={effectiveDate}
+                  onChange={(event) => setEffectiveDate(event.target.value)}
+                />
+              </Field>
+            )}
             {scope === "employee" && (
               <div className="sm:col-span-2">
                 <Field label="Employee">
@@ -718,7 +836,53 @@ function BreakEditorDialog({
           </div>
         )}
 
-        {permanent && intent?.kind === "employee" && (
+        <div className="space-y-3 rounded-2xl border bg-muted/10 p-4">
+          <div>
+            <Label className="text-sm font-extrabold">Choose what to update</Label>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Only selected sections will be saved. Unselected sections keep each employee&apos;s
+              current settings.
+            </p>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label
+              className={`flex cursor-pointer items-start gap-3 rounded-xl border p-3 transition ${
+                updateShift ? "border-primary/40 bg-primary/5" : "bg-card hover:border-primary/30"
+              }`}
+            >
+              <Checkbox
+                className="mt-0.5"
+                checked={updateShift}
+                onCheckedChange={(checked) => setUpdateShift(checked === true)}
+              />
+              <span>
+                <span className="block text-sm font-bold">Working hours</span>
+                <span className="mt-0.5 block text-xs text-muted-foreground">
+                  Shift times and related work settings.
+                </span>
+              </span>
+            </label>
+            <label
+              className={`flex cursor-pointer items-start gap-3 rounded-xl border p-3 transition ${
+                updateBreaks ? "border-primary/40 bg-primary/5" : "bg-card hover:border-primary/30"
+              }`}
+            >
+              <Checkbox
+                className="mt-0.5"
+                checked={updateBreaks}
+                onCheckedChange={(checked) => setUpdateBreaks(checked === true)}
+              />
+              <span>
+                <span className="block text-sm font-bold">Break schedule</span>
+                <span className="mt-0.5 block text-xs text-muted-foreground">
+                  Break names, times, and paid status.
+                </span>
+              </span>
+            </label>
+          </div>
+        </div>
+
+        {permanent && intent?.kind === "employee" && updateShift && (
           <div className="grid gap-3 rounded-2xl border bg-muted/10 p-4 sm:grid-cols-2">
             {canManagePeople && (
               <>
@@ -791,6 +955,12 @@ function BreakEditorDialog({
                       min="0"
                       step="0.01"
                       value={salaryAmount}
+                      onFocus={(event) => {
+                        if (Number(event.currentTarget.value) === 0) {
+                          const input = event.currentTarget;
+                          requestAnimationFrame(() => input.select());
+                        }
+                      }}
                       onChange={(event) => setSalaryAmount(Number(event.target.value))}
                       aria-label={showSalary ? "Salary amount" : "Salary amount hidden"}
                     />
@@ -857,7 +1027,12 @@ function BreakEditorDialog({
           </div>
         )}
 
-        <div className="rounded-2xl border bg-muted/10 p-4">
+        <div
+          aria-disabled={!updateShift}
+          className={`rounded-2xl border bg-muted/10 p-4 transition ${
+            updateShift ? "" : "opacity-55"
+          }`}
+        >
           <div className="mb-3 flex items-center justify-between gap-3">
             <div>
               <Label className="text-sm font-extrabold">Working hours</Label>
@@ -876,6 +1051,7 @@ function BreakEditorDialog({
             <Field label="Shift starts">
               <Input
                 type="time"
+                disabled={!updateShift}
                 value={shiftStart}
                 onChange={(event) => setShiftStart(event.target.value)}
               />
@@ -883,6 +1059,7 @@ function BreakEditorDialog({
             <Field label="Shift ends">
               <Input
                 type="time"
+                disabled={!updateShift}
                 value={shiftEnd}
                 onChange={(event) => setShiftEnd(event.target.value)}
               />
@@ -890,7 +1067,12 @@ function BreakEditorDialog({
           </div>
         </div>
 
-        <div className="space-y-3 rounded-2xl border bg-muted/10 p-4">
+        <div
+          aria-disabled={!updateBreaks}
+          className={`space-y-3 rounded-2xl border bg-muted/10 p-4 transition ${
+            updateBreaks ? "" : "opacity-55"
+          }`}
+        >
           <div className="flex items-center justify-between gap-3">
             <div>
               <Label className="text-sm font-extrabold">Break schedule</Label>
@@ -901,6 +1083,7 @@ function BreakEditorDialog({
             <Button
               size="sm"
               variant="outline"
+              disabled={!updateBreaks}
               onClick={() =>
                 setBreaks((current) => [
                   ...current,
@@ -915,10 +1098,13 @@ function BreakEditorDialog({
           {breaks.map((item, index) => (
             <div
               key={index}
-              className="grid items-end gap-2 rounded-xl border bg-card p-3 sm:grid-cols-[minmax(150px,1fr)_120px_120px_92px_auto]"
+              className={`grid items-end gap-2 rounded-xl border bg-card p-3 sm:grid-cols-[minmax(150px,1fr)_120px_120px_92px_auto] ${
+                invalidBreakIndexes.has(index) ? "border-destructive/60 bg-destructive/5" : ""
+              }`}
             >
               <Field label="Name">
                 <Input
+                  disabled={!updateBreaks}
                   value={item.name}
                   onChange={(event) =>
                     setBreaks((current) =>
@@ -932,6 +1118,7 @@ function BreakEditorDialog({
               <Field label="Starts">
                 <Input
                   type="time"
+                  disabled={!updateBreaks}
                   value={item.startTime}
                   onChange={(event) =>
                     setBreaks((current) =>
@@ -945,6 +1132,7 @@ function BreakEditorDialog({
               <Field label="Ends">
                 <Input
                   type="time"
+                  disabled={!updateBreaks}
                   value={item.endTime}
                   onChange={(event) =>
                     setBreaks((current) =>
@@ -959,6 +1147,7 @@ function BreakEditorDialog({
                 <Label className="mb-2 block text-xs">Paid</Label>
                 <div className="flex items-center gap-2">
                   <Switch
+                    disabled={!updateBreaks}
                     checked={item.paid}
                     onCheckedChange={(paid) =>
                       setBreaks((current) =>
@@ -974,6 +1163,7 @@ function BreakEditorDialog({
               <Button
                 size="icon"
                 variant="ghost"
+                disabled={!updateBreaks}
                 aria-label={`Remove ${item.name}`}
                 onClick={() => setBreaks((current) => current.filter((_, i) => i !== index))}
               >
@@ -997,6 +1187,24 @@ function BreakEditorDialog({
           to the employee's normal schedule on the next day.
         </div>
 
+        {validationMessages.length > 0 && (
+          <div
+            id="schedule-policy-validation"
+            role="alert"
+            className="flex items-start gap-2 rounded-xl border border-destructive/40 bg-destructive/10 px-3 py-2.5 text-sm text-destructive"
+          >
+            <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+            <div>
+              <p className="font-bold">Fix this before saving:</p>
+              <ul className="mt-1 list-disc space-y-0.5 pl-4">
+                {validationMessages.map((message) => (
+                  <li key={message}>{message}</li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        )}
+
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
@@ -1004,6 +1212,7 @@ function BreakEditorDialog({
           <Button
             loading={save.isPending}
             disabled={save.isPending || invalid}
+            aria-describedby={invalid ? "schedule-policy-validation" : undefined}
             onClick={() => save.mutate()}
           >
             {save.isPending ? "Saving…" : permanent ? "Save policy" : "Schedule change"}

@@ -9,11 +9,55 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_admin
 from app.api.v1.admin_utils import day_bounds, get_company_settings
 from app.api.v1.team_auth import accessible_employee_ids_statement
+from app.core.exceptions import ApiError
 from app.core.responses import success_response
 from app.database.session import get_db
-from app.models import AdminUser, Device, Employee, Screenshot, TimeAdjustmentRequest, WorkSession
+from app.models import AdminUser, Device, Employee, Screenshot, WorkSession
+from app.services.attendance import current_idle_contexts
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
+
+
+@router.get("/work-trend")
+def work_trend(
+    current_admin: Annotated[AdminUser, Depends(get_current_admin)],
+    db: Annotated[Session, Depends(get_db)],
+    start_date: date,
+    end_date: date,
+    team_id: UUID | None = None,
+):
+    if end_date < start_date:
+        raise ApiError("INVALID_DATE_RANGE", "End date must be on or after start date.", 400)
+    if (end_date - start_date).days > 30:
+        raise ApiError("DATE_RANGE_TOO_LARGE", "Dashboard trend is limited to 31 days.", 400)
+
+    from app.api.v1.timesheets import timesheet_rows
+
+    rows = timesheet_rows(
+        db,
+        current_admin.company_id,
+        start_date,
+        end_date,
+        team_id=team_id,
+        current_admin=current_admin,
+        refresh_current_attendance=False,
+        include_screenshot_counts=False,
+    )
+    return success_response(
+        data=[
+            {
+                "employee_id": row["employee_id"],
+                "team_id": row["team_id"],
+                "date": row["date"],
+                "total_tracked_seconds": row["total_tracked_seconds"],
+                "active_seconds": row["active_seconds"],
+                "idle_seconds": row["idle_seconds"],
+                "adjustment_seconds": row["adjustment_seconds"],
+                "deducted_seconds": row["deducted_seconds"],
+            }
+            for row in rows
+        ]
+    )
 
 
 @router.get("/summary")
@@ -49,30 +93,19 @@ def summary(
         ),
         Device.employee_id,
     )
-    idle_employees_query = scoped(
-        select(func.count(func.distinct(WorkSession.employee_id))).where(
+    idle_candidates_query = scoped(
+        select(Employee)
+        .join(WorkSession, WorkSession.employee_id == Employee.id)
+        .join(Device, Device.employee_id == Employee.id)
+        .where(
             WorkSession.company_id == current_admin.company_id,
-            WorkSession.status == "idle",
+            WorkSession.status.in_(["idle", "locked", "sleeping"]),
             WorkSession.ended_at.is_(None),
+            Device.company_id == current_admin.company_id,
+            Device.last_seen_at >= offline_cutoff,
+            Device.revoked_at.is_(None),
         ),
-        WorkSession.employee_id,
-    )
-    tracked_seconds_query = scoped(
-        select(
-            func.coalesce(func.sum(WorkSession.active_seconds + WorkSession.idle_seconds), 0)
-        ).where(
-            WorkSession.company_id == current_admin.company_id,
-            WorkSession.started_at.between(start, end),
-        ),
-        WorkSession.employee_id,
-    )
-    adjustment_seconds_query = scoped(
-        select(func.coalesce(func.sum(TimeAdjustmentRequest.approved_seconds), 0)).where(
-            TimeAdjustmentRequest.company_id == current_admin.company_id,
-            TimeAdjustmentRequest.status == "approved",
-            TimeAdjustmentRequest.requested_date == date.today(),
-        ),
-        TimeAdjustmentRequest.employee_id,
+        Employee.id,
     )
     screenshots_today_query = scoped(
         select(func.count()).where(
@@ -84,29 +117,47 @@ def summary(
     )
     (
         total_employees,
-        online_employees,
-        idle_employees,
-        tracked_seconds,
-        adjustment_seconds,
+        connected_employees,
         screenshots_today,
     ) = db.execute(
         select(
             total_employees_query.scalar_subquery(),
             online_employees_query.scalar_subquery(),
-            idle_employees_query.scalar_subquery(),
-            tracked_seconds_query.scalar_subquery(),
-            adjustment_seconds_query.scalar_subquery(),
             screenshots_today_query.scalar_subquery(),
         )
     ).one()
+    idle_candidates = db.scalars(idle_candidates_query).unique().all()
+    idle_contexts = list(
+        current_idle_contexts(db, employees=idle_candidates).values()
+    )
+    idle_employees = sum(context == "accountable" for context in idle_contexts)
+    on_break_employees = sum(context == "on_break" for context in idle_contexts)
+    off_shift_employees = max(
+        0,
+        len(idle_candidates) - idle_employees - on_break_employees,
+    )
+    online_employees = max(0, int(connected_employees or 0) - off_shift_employees)
+    from app.api.v1.timesheets import timesheet_rows
+
+    canonical_today = timesheet_rows(
+        db,
+        current_admin.company_id,
+        date.today(),
+        date.today(),
+        team_id=team_id,
+        current_admin=current_admin,
+    )
+    tracked_seconds = sum(int(item["total_tracked_seconds"]) for item in canonical_today)
 
     return success_response(
         data={
             "total_employees": total_employees,
             "online_employees": online_employees,
             "idle_employees": idle_employees,
-            "offline_employees": max(0, total_employees - online_employees),
-            "total_hours_today": round((tracked_seconds + adjustment_seconds) / 3600, 2),
+            "on_break_employees": on_break_employees,
+            "off_shift_employees": off_shift_employees,
+            "offline_employees": max(0, total_employees - int(connected_employees or 0)),
+            "total_hours_today": round(tracked_seconds / 3600, 2),
             "screenshots_today": screenshots_today,
         }
     )

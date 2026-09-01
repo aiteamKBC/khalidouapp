@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import DateTime, ForeignKey, JSON, String, UniqueConstraint
+from sqlalchemy import DateTime, ForeignKey, Index, JSON, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database.base import Base
@@ -12,6 +12,12 @@ class ActivityEvent(UUIDPrimaryKeyMixin, Base):
     __tablename__ = "activity_events"
     __table_args__ = (
         UniqueConstraint("company_id", "idempotency_key", name="uq_activity_events_idempotency"),
+        Index(
+            "ix_activity_events_company_employee_time",
+            "company_id",
+            "employee_id",
+            "event_timestamp",
+        ),
     )
 
     company_id: Mapped[UUID] = mapped_column(ForeignKey("companies.id"), nullable=False, index=True)

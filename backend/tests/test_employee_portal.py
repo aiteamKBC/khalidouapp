@@ -1,9 +1,13 @@
 from datetime import date
+from uuid import uuid4
 
 import pytest
+from sqlalchemy import select
+from sqlalchemy.dialects import postgresql
 
-from app.api.v1.employee_portal import period_summary
+from app.api.v1.employee_portal import employee_task_participation, period_summary
 from app.core.exceptions import ApiError
+from app.models import Project, Task, Team
 from app.schemas.agent import AgentTaskCreate
 from app.services.projects import validate_task_dates
 
@@ -49,3 +53,17 @@ def test_task_deadline_cannot_precede_start_date() -> None:
         validate_task_dates(date(2026, 7, 12), date(2026, 7, 11))
     assert exc_info.value.code == "INVALID_TASK_DATES"
     validate_task_dates(date(2026, 7, 11), date(2026, 7, 12))
+
+
+def test_employee_task_participation_uses_exists_instead_of_json_distinct() -> None:
+    statement = (
+        select(Task, Project, Team)
+        .join(Project, Project.id == Task.project_id)
+        .join(Team, Team.id == Project.team_id)
+        .where(employee_task_participation(uuid4()))
+    )
+
+    compiled = str(statement.compile(dialect=postgresql.dialect()))
+
+    assert "SELECT DISTINCT" not in compiled
+    assert "EXISTS (SELECT 1" in compiled

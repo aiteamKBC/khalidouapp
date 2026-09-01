@@ -7,6 +7,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import type { User, Role } from "@/types";
 import {
   changePassword as apiChangePassword,
@@ -15,7 +16,7 @@ import {
   me as apiMe,
   updateProfile as apiUpdateProfile,
 } from "@/api/auth";
-import { refreshAuthIfNeeded } from "@/api/client";
+import { forgetAuthTokens, refreshAuthIfNeeded, rememberAuthTokens } from "@/api/client";
 
 interface AuthState {
   user: User | null;
@@ -45,22 +46,31 @@ interface Persisted {
 function persistUser(user: User, accessToken: string, refreshToken: string) {
   const storage = localStorage.getItem(STORAGE_KEY) ? localStorage : sessionStorage;
   storage.setItem(STORAGE_KEY, JSON.stringify({ user, accessToken, refreshToken }));
+  rememberAuthTokens({ accessToken, refreshToken }, storage);
 }
 
 function readPersisted(): Persisted | null {
-  const raw = localStorage.getItem(STORAGE_KEY) ?? sessionStorage.getItem(STORAGE_KEY);
-  if (!raw) return null;
-  try {
-    const value = JSON.parse(raw) as Persisted;
-    return value.accessToken && value.refreshToken ? value : null;
-  } catch {
-    localStorage.removeItem(STORAGE_KEY);
-    sessionStorage.removeItem(STORAGE_KEY);
-    return null;
+  for (const storage of [localStorage, sessionStorage]) {
+    const raw = storage.getItem(STORAGE_KEY);
+    if (!raw) continue;
+    try {
+      const value = JSON.parse(raw) as Persisted;
+      if (value.accessToken && value.refreshToken) {
+        rememberAuthTokens(
+          { accessToken: value.accessToken, refreshToken: value.refreshToken },
+          storage,
+        );
+        return value;
+      }
+    } catch {
+      storage.removeItem(STORAGE_KEY);
+    }
   }
+  return null;
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
+  const queryClient = useQueryClient();
   const [state, setState] = useState<{
     user: User | null;
     accessToken: string | null;
@@ -93,9 +103,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           }
         }
       } catch {
+        forgetAuthTokens();
         localStorage.removeItem(STORAGE_KEY);
         sessionStorage.removeItem(STORAGE_KEY);
-        if (!cancelled) setState({ user: null, accessToken: null, refreshToken: null });
+        if (!cancelled) {
+          queryClient.getQueryCache().clear();
+          setState({ user: null, accessToken: null, refreshToken: null });
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -104,7 +118,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [queryClient]);
 
   useEffect(() => {
     if (!state.accessToken) return;
@@ -143,38 +157,78 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       });
     };
     const onSessionExpired = () => {
+      queryClient.getQueryCache().clear();
       setState({ user: null, accessToken: null, refreshToken: null });
+    };
+    const onAuthStorageChanged = (event: StorageEvent) => {
+      if (event.key !== STORAGE_KEY) return;
+      if (event.newValue === null) {
+        forgetAuthTokens();
+        queryClient.getQueryCache().clear();
+        setState({ user: null, accessToken: null, refreshToken: null });
+        return;
+      }
+      try {
+        const persisted = JSON.parse(event.newValue) as Persisted;
+        if (!persisted.user || !persisted.accessToken || !persisted.refreshToken) return;
+        const storage = event.storageArea ?? localStorage;
+        rememberAuthTokens(
+          { accessToken: persisted.accessToken, refreshToken: persisted.refreshToken },
+          storage,
+        );
+        setState({
+          user: persisted.user,
+          accessToken: persisted.accessToken,
+          refreshToken: persisted.refreshToken,
+        });
+      } catch {
+        // Ignore a transient or unrelated malformed storage write. The next
+        // authenticated request still validates the current server session.
+      }
     };
 
     window.addEventListener("khaliduo:auth-refreshed", onTokensRefreshed);
     window.addEventListener("khaliduo:auth-expired", onSessionExpired);
+    window.addEventListener("storage", onAuthStorageChanged);
     return () => {
       window.removeEventListener("khaliduo:auth-refreshed", onTokensRefreshed);
       window.removeEventListener("khaliduo:auth-expired", onSessionExpired);
+      window.removeEventListener("storage", onAuthStorageChanged);
     };
-  }, []);
+  }, [queryClient]);
 
-  const login = useCallback(async (email: string, password: string, remember = true) => {
-    const res = await apiLogin(email, password);
-    const payload: Persisted = {
-      user: res.user,
-      accessToken: res.accessToken,
-      refreshToken: res.refreshToken,
-    };
-    (remember ? localStorage : sessionStorage).setItem(STORAGE_KEY, JSON.stringify(payload));
-    setState({ user: res.user, accessToken: res.accessToken, refreshToken: res.refreshToken });
-    return res.user;
-  }, []);
+  const login = useCallback(
+    async (email: string, password: string, remember = true) => {
+      const res = await apiLogin(email, password);
+      queryClient.getQueryCache().clear();
+      const payload: Persisted = {
+        user: res.user,
+        accessToken: res.accessToken,
+        refreshToken: res.refreshToken,
+      };
+      const storage = remember ? localStorage : sessionStorage;
+      storage.setItem(STORAGE_KEY, JSON.stringify(payload));
+      rememberAuthTokens(
+        { accessToken: payload.accessToken, refreshToken: payload.refreshToken },
+        storage,
+      );
+      setState({ user: res.user, accessToken: res.accessToken, refreshToken: res.refreshToken });
+      return res.user;
+    },
+    [queryClient],
+  );
 
   const logout = useCallback(async () => {
     try {
       await apiLogout(state.refreshToken);
     } finally {
+      forgetAuthTokens();
       localStorage.removeItem(STORAGE_KEY);
       sessionStorage.removeItem(STORAGE_KEY);
+      queryClient.getQueryCache().clear();
       setState({ user: null, accessToken: null, refreshToken: null });
     }
-  }, [state.refreshToken]);
+  }, [queryClient, state.refreshToken]);
 
   const refreshUser = useCallback(async () => {
     const user = await apiMe();

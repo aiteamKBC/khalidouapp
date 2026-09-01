@@ -10,6 +10,20 @@ from app.models.mixins import UUIDPrimaryKeyMixin, utc_now
 
 class Screenshot(UUIDPrimaryKeyMixin, Base):
     __tablename__ = "screenshots"
+    __table_args__ = (
+        Index(
+            "ix_screenshots_company_employee_captured",
+            "company_id",
+            "employee_id",
+            "captured_at",
+        ),
+        Index(
+            "ix_screenshots_company_captured_deleted",
+            "company_id",
+            "captured_at",
+            "deleted_at",
+        ),
+    )
 
     company_id: Mapped[UUID] = mapped_column(ForeignKey("companies.id"), nullable=False, index=True)
     employee_id: Mapped[UUID] = mapped_column(

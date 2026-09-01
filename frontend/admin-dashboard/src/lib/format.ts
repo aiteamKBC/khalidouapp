@@ -5,6 +5,14 @@ export function formatMinutes(mins: number): string {
   return `${h}h ${m}m`;
 }
 
+export function formatDurationSeconds(totalSeconds: number): string {
+  const safeSeconds = Number.isFinite(totalSeconds) ? Math.max(0, Math.floor(totalSeconds)) : 0;
+  if (safeSeconds > 0 && safeSeconds < 60) return `${safeSeconds}s`;
+  const hours = Math.floor(safeSeconds / 3600);
+  const minutes = Math.floor((safeSeconds % 3600) / 60);
+  return hours ? `${hours}h ${minutes}m` : `${minutes}m`;
+}
+
 export function formatRelative(iso?: string): string {
   if (!iso) return "—";
   const diff = Date.now() - new Date(iso).getTime();
@@ -16,9 +24,78 @@ export function formatRelative(iso?: string): string {
   return `${Math.round(hrs / 24)}d ago`;
 }
 
-export function formatDateTime(iso?: string): string {
+export function formatClock(value?: string | null, timezone?: string | null): string {
+  if (!value) return "—";
+  if (isTimeOfDay(value)) return formatTimeOfDay(value);
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "—";
+  return new Intl.DateTimeFormat("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+    timeZone: timezone || undefined,
+  }).format(date);
+}
+
+export function formatSessionStatus(
+  isRunning: boolean,
+  signedOutAt?: string | null,
+  timezone?: string | null,
+): string {
+  if (isRunning) return "Still running - no sign-out yet";
+  if (!signedOutAt) return "No sign-out recorded";
+  return `Signed out ${formatClock(signedOutAt, timezone)}`;
+}
+
+export function formatAttendanceStart(
+  actualFirstActivityAt?: string | null,
+  timezone?: string | null,
+  continuedFromPreviousDay = false,
+  continuedSessionStartedAt?: string | null,
+): string {
+  if (!continuedFromPreviousDay) {
+    return formatClock(actualFirstActivityAt, timezone);
+  }
+  const originalStart = continuedSessionStartedAt || actualFirstActivityAt;
+  if (!originalStart) {
+    return "Continued from previous day";
+  }
+  const date = new Date(originalStart);
+  if (Number.isNaN(date.getTime())) {
+    return "Continued from previous day";
+  }
+  const day = new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    timeZone: timezone || undefined,
+  }).format(date);
+  return `Continued from ${day}, ${formatClock(originalStart, timezone)}`;
+}
+
+export function formatTimeOfDay(value?: string | null): string {
+  if (!value) return "—";
+  const match = /^(\d{1,2}):(\d{2})(?::\d{2}(?:\.\d+)?)?$/.exec(value.trim());
+  if (!match) return "—";
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) return "—";
+  const suffix = hours < 12 ? "AM" : "PM";
+  return `${hours % 12 || 12}:${String(minutes).padStart(2, "0")} ${suffix}`;
+}
+
+export function formatDateTime(iso?: string, timezone?: string | null): string {
   if (!iso) return "—";
-  return new Date(iso).toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "—";
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+    timeZone: timezone || undefined,
+  }).format(date);
 }
 
 export function formatDate(iso?: string): string {
@@ -44,4 +121,8 @@ export function downloadCSV(filename: string, rows: Record<string, unknown>[]) {
   a.download = filename;
   a.click();
   URL.revokeObjectURL(url);
+}
+
+function isTimeOfDay(value: string) {
+  return /^\d{1,2}:\d{2}(?::\d{2}(?:\.\d+)?)?$/.test(value.trim());
 }

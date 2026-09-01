@@ -47,6 +47,7 @@ from app.schemas.admin import (
     TeamUpdate,
 )
 from app.services.audit import record_audit_log
+from app.services.attendance import accountable_idle_totals, current_idle_contexts
 from app.services.projects import ensure_general_work_project
 from app.services.screenshots import serialize_screenshot
 
@@ -81,7 +82,7 @@ def list_teams(
 
     team_ids = [team.id for team in teams]
     members_by_team: dict[UUID, list[str]] = {team_id: [] for team_id in team_ids}
-    owners_by_team: dict[UUID, list[str]] = {team_id: [] for team_id in team_ids}
+    owners_by_team: dict[UUID, list[dict[str, str]]] = {team_id: [] for team_id in team_ids}
     if team_ids:
         for relation_team_id, employee_id in db.execute(
             select(TeamMember.team_id, TeamMember.employee_id).where(
@@ -90,18 +91,30 @@ def list_teams(
             )
         ).all():
             members_by_team[relation_team_id].append(str(employee_id))
-        for relation_team_id, admin_user_id in db.execute(
-            select(TeamOwner.team_id, TeamOwner.admin_user_id).where(
-                TeamOwner.team_id.in_(team_ids)
+        # Owner names travel with the team list so every admin - including team
+        # leads and HR who cannot read the full user directory - can see who
+        # manages a team without a second privileged request.
+        for relation_team_id, admin_user_id, owner_name, owner_email in db.execute(
+            select(
+                TeamOwner.team_id,
+                AdminUser.id,
+                AdminUser.name,
+                AdminUser.email,
             )
+            .join(AdminUser, AdminUser.id == TeamOwner.admin_user_id)
+            .where(TeamOwner.team_id.in_(team_ids))
+            .order_by(AdminUser.name)
         ).all():
-            owners_by_team[relation_team_id].append(str(admin_user_id))
+            owners_by_team[relation_team_id].append(
+                {"id": str(admin_user_id), "name": owner_name, "email": owner_email}
+            )
 
     data = []
     for team in teams:
         item = serialize_team(team)
         item["employee_ids"] = members_by_team[team.id]
-        item["owner_ids"] = owners_by_team[team.id]
+        item["owner_ids"] = [owner["id"] for owner in owners_by_team[team.id]]
+        item["owners"] = owners_by_team[team.id]
         data.append(item)
     return success_response(
         data=data,
@@ -397,6 +410,18 @@ def add_team_owner(
     )
     if owner is None:
         raise ApiError("ADMIN_NOT_FOUND", "Admin user was not found.", 404)
+    if owner.status not in {"active", "invited"}:
+        raise ApiError(
+            "TEAM_MANAGER_UNAVAILABLE",
+            "Only active or invited admin, HR, or team-manager accounts can manage a team.",
+            409,
+        )
+    if owner.role not in {"general_admin", "hr", "team_owner"}:
+        raise ApiError(
+            "TEAM_MANAGER_ROLE_REQUIRED",
+            "Only admin, HR, or team-manager accounts can manage a team.",
+            409,
+        )
     if (
         db.scalar(
             select(TeamOwner).where(
@@ -480,31 +505,19 @@ def team_summary(
         Device.last_seen_at >= offline_cutoff,
         Device.revoked_at.is_(None),
     )
-    idle_employees_query = select(func.count(func.distinct(WorkSession.employee_id))).where(
-        WorkSession.company_id == current_admin.company_id,
-        WorkSession.employee_id.in_(employee_ids),
-        WorkSession.status == "idle",
-        WorkSession.ended_at.is_(None),
-    )
-    active_seconds_query = select(
-        func.coalesce(func.sum(WorkSession.active_seconds - WorkSession.deducted_seconds), 0)
-    ).where(
-        WorkSession.company_id == current_admin.company_id,
-        WorkSession.employee_id.in_(employee_ids),
-        WorkSession.started_at.between(start, end),
-    )
-    idle_seconds_query = select(func.coalesce(func.sum(WorkSession.idle_seconds), 0)).where(
-        WorkSession.company_id == current_admin.company_id,
-        WorkSession.employee_id.in_(employee_ids),
-        WorkSession.started_at.between(start, end),
-    )
-    adjustment_seconds_query = select(
-        func.coalesce(func.sum(TimeAdjustmentRequest.approved_seconds), 0)
-    ).where(
-        TimeAdjustmentRequest.company_id == current_admin.company_id,
-        TimeAdjustmentRequest.employee_id.in_(employee_ids),
-        TimeAdjustmentRequest.status == "approved",
-        TimeAdjustmentRequest.requested_date == date.today(),
+    idle_candidates_query = (
+        select(Employee)
+        .join(WorkSession, WorkSession.employee_id == Employee.id)
+        .join(Device, Device.employee_id == Employee.id)
+        .where(
+            WorkSession.company_id == current_admin.company_id,
+            WorkSession.employee_id.in_(employee_ids),
+            WorkSession.status.in_(["idle", "locked", "sleeping"]),
+            WorkSession.ended_at.is_(None),
+            Device.company_id == current_admin.company_id,
+            Device.last_seen_at >= offline_cutoff,
+            Device.revoked_at.is_(None),
+        )
     )
     screenshots_today_query = select(func.count()).where(
         Screenshot.company_id == current_admin.company_id,
@@ -519,34 +532,50 @@ def team_summary(
     )
     (
         total_employees,
-        online_employees,
-        idle_employees,
-        active_seconds,
-        idle_seconds,
-        adjustment_seconds,
+        connected_employees,
         screenshots_today,
         screenshot_count,
     ) = db.execute(
         select(
             total_employees_query.scalar_subquery(),
             online_employees_query.scalar_subquery(),
-            idle_employees_query.scalar_subquery(),
-            active_seconds_query.scalar_subquery(),
-            idle_seconds_query.scalar_subquery(),
-            adjustment_seconds_query.scalar_subquery(),
             screenshots_today_query.scalar_subquery(),
             screenshot_count_query.scalar_subquery(),
         )
     ).one()
-    tracked_seconds = int(active_seconds or 0) + int(idle_seconds or 0)
+    idle_candidates = db.scalars(idle_candidates_query).unique().all()
+    idle_contexts = list(
+        current_idle_contexts(db, employees=idle_candidates).values()
+    )
+    idle_employees = sum(context == "accountable" for context in idle_contexts)
+    on_break_employees = sum(context == "on_break" for context in idle_contexts)
+    off_shift_employees = max(
+        0,
+        len(idle_candidates) - idle_employees - on_break_employees,
+    )
+    online_employees = max(0, int(connected_employees or 0) - off_shift_employees)
+    from app.api.v1.timesheets import timesheet_rows
+
+    canonical_today = timesheet_rows(
+        db,
+        current_admin.company_id,
+        date.today(),
+        date.today(),
+        team_id=team_id,
+        current_admin=current_admin,
+    )
+    active_seconds = sum(int(item["active_seconds"]) for item in canonical_today)
+    idle_seconds = sum(int(item["idle_seconds"]) for item in canonical_today)
     return success_response(
         data={
             "total_employees": int(total_employees or 0),
             "online_employees": int(online_employees or 0),
             "idle_employees": int(idle_employees or 0),
-            "active_seconds": int(active_seconds or 0) + int(adjustment_seconds or 0),
-            "idle_seconds": int(idle_seconds or 0),
-            "total_hours_today": round((tracked_seconds + int(adjustment_seconds or 0)) / 3600, 2),
+            "on_break_employees": int(on_break_employees or 0),
+            "off_shift_employees": off_shift_employees,
+            "active_seconds": active_seconds,
+            "idle_seconds": idle_seconds,
+            "total_hours_today": round(active_seconds / 3600, 2),
             "screenshots_today": int(screenshots_today or 0),
             "screenshot_count": int(screenshot_count or 0),
         }
@@ -624,14 +653,17 @@ def team_reports(
     db: Annotated[Session, Depends(get_db)],
 ):
     ensure_team_access(db, current_admin, team_id)
-    employee_ids = select(TeamMember.employee_id).where(
-        TeamMember.team_id == team_id, TeamMember.status == "active"
+    employee_ids = set(
+        db.scalars(
+            select(TeamMember.employee_id).where(
+                TeamMember.team_id == team_id,
+                TeamMember.status == "active",
+            )
+        ).all()
     )
-    tracked_seconds = (
+    tracked_active_seconds = (
         db.scalar(
-            select(
-                func.coalesce(func.sum(WorkSession.active_seconds + WorkSession.idle_seconds), 0)
-            ).where(
+            select(func.coalesce(func.sum(WorkSession.active_seconds), 0)).where(
                 WorkSession.company_id == current_admin.company_id,
                 WorkSession.employee_id.in_(employee_ids),
             )
@@ -648,6 +680,14 @@ def team_reports(
         )
         or 0
     )
+    idle_seconds = sum(
+        accountable_idle_totals(
+            db,
+            company_id=current_admin.company_id,
+            employee_ids=employee_ids,
+        ).values()
+    )
+    tracked_seconds = int(tracked_active_seconds) + int(adjustment_seconds) + idle_seconds
     screenshots = (
         db.scalar(
             select(func.count()).where(
@@ -660,7 +700,7 @@ def team_reports(
     )
     return success_response(
         data={
-            "total_tracked_seconds": int(tracked_seconds) + int(adjustment_seconds),
+            "total_tracked_seconds": tracked_seconds,
             "screenshots": int(screenshots),
         }
     )

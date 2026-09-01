@@ -1,4 +1,4 @@
-import { apiFetch } from "@/api/client";
+import { apiFetch, apiFetchWithMeta } from "@/api/client";
 import { mapWorkdayTimeline, type BackendWorkdayTimeline } from "@/api/workday";
 import type { WorkdayTimeline } from "@/types";
 import type { AnyStatus } from "@/components/ui/status-badge";
@@ -12,14 +12,20 @@ export type DailyAttendance = {
   teamNames: string[];
   date: string;
   timezone: string;
+  lateGraceMinutes: number;
   scheduledStartAt?: string | null;
   scheduledEndAt?: string | null;
   actualFirstActivityAt?: string | null;
   actualLastActivityAt?: string | null;
   actualSignOutAt?: string | null;
+  isRunning: boolean;
+  continuedFromPreviousDay: boolean;
+  continuedSessionStartedAt?: string | null;
   normalWorkedSeconds: number;
   paidBreakSeconds: number;
   unpaidBreakSeconds: number;
+  recordedIdleSeconds: number;
+  paidIdleGraceSeconds: number;
   idleSeconds: number;
   approvedManualSeconds: number;
   approvedEarlyLeaveSeconds: number;
@@ -45,6 +51,7 @@ export type DailyAttendance = {
   leaveStatus?: string | null;
   issues: Array<{ code: string; seconds?: number }>;
   screenshotCount: number;
+  refreshPending: boolean;
   timeline?: WorkdayTimeline;
 };
 
@@ -57,14 +64,20 @@ type BackendAttendance = {
   team_names?: string[];
   date: string;
   timezone: string;
+  late_grace_minutes?: number;
   scheduled_start_at?: string | null;
   scheduled_end_at?: string | null;
   actual_first_activity_at?: string | null;
   actual_last_activity_at?: string | null;
   actual_sign_out_at?: string | null;
+  is_running?: boolean;
+  continued_from_previous_day?: boolean;
+  continued_session_started_at?: string | null;
   normal_worked_seconds: number;
   paid_break_seconds: number;
   unpaid_break_seconds: number;
+  recorded_idle_seconds?: number;
+  paid_idle_grace_seconds?: number;
   idle_seconds: number;
   approved_manual_seconds: number;
   approved_early_leave_seconds?: number;
@@ -90,6 +103,7 @@ type BackendAttendance = {
   leave_status?: string | null;
   issues?: Array<{ code: string; seconds?: number }>;
   screenshot_count?: number;
+  refresh_pending?: boolean;
   timeline?: BackendWorkdayTimeline;
 };
 
@@ -103,14 +117,20 @@ function mapAttendance(row: BackendAttendance): DailyAttendance {
     teamNames: row.team_names ?? [],
     date: row.date,
     timezone: row.timezone,
+    lateGraceMinutes: row.late_grace_minutes ?? 15,
     scheduledStartAt: row.scheduled_start_at,
     scheduledEndAt: row.scheduled_end_at,
     actualFirstActivityAt: row.actual_first_activity_at,
     actualLastActivityAt: row.actual_last_activity_at,
     actualSignOutAt: row.actual_sign_out_at,
+    isRunning: row.is_running ?? false,
+    continuedFromPreviousDay: row.continued_from_previous_day ?? false,
+    continuedSessionStartedAt: row.continued_session_started_at,
     normalWorkedSeconds: row.normal_worked_seconds,
     paidBreakSeconds: row.paid_break_seconds,
     unpaidBreakSeconds: row.unpaid_break_seconds,
+    recordedIdleSeconds: row.recorded_idle_seconds ?? row.idle_seconds,
+    paidIdleGraceSeconds: row.paid_idle_grace_seconds ?? 0,
     idleSeconds: row.idle_seconds,
     approvedManualSeconds: row.approved_manual_seconds,
     approvedEarlyLeaveSeconds: row.approved_early_leave_seconds ?? 0,
@@ -138,17 +158,21 @@ function mapAttendance(row: BackendAttendance): DailyAttendance {
     leaveStatus: row.leave_status,
     issues: row.issues ?? [],
     screenshotCount: row.screenshot_count ?? 0,
+    refreshPending: row.refresh_pending ?? false,
     timeline: row.timeline ? mapWorkdayTimeline(row.timeline) : undefined,
   };
 }
 
-export async function listDailyAttendance(filters: {
-  day: string;
-  teamId?: string;
-  status?: string;
-  q?: string;
-  issue?: "late" | "missing_check_in" | "overtime" | "idle" | "leave" | "all";
-}) {
+export async function listDailyAttendanceWithMeta(
+  filters: {
+    day: string;
+    teamId?: string;
+    status?: string;
+    q?: string;
+    issue?: "late" | "missing_check_in" | "overtime" | "idle" | "leave" | "all";
+  },
+  signal?: AbortSignal,
+) {
   const params = new URLSearchParams({ day: filters.day });
   if (filters.teamId && filters.teamId !== "all") params.set("team_id", filters.teamId);
   if (filters.status && filters.status !== "all") params.set("status", filters.status);
@@ -158,15 +182,29 @@ export async function listDailyAttendance(filters: {
   if (filters.issue === "overtime") params.set("overtime_only", "true");
   if (filters.issue === "idle") params.set("unexplained_idle", "true");
   if (filters.issue === "leave") params.set("leave_only", "true");
-  const result = await apiFetch<{ date: string; rows: BackendAttendance[] }>(
+  const result = await apiFetchWithMeta<{ date: string; rows: BackendAttendance[] }>(
     `/attendance/daily?${params.toString()}`,
+    { signal },
   );
-  return result.rows.map(mapAttendance);
+  return {
+    rows: result.data.rows.map(mapAttendance),
+    pendingRefreshCount: Number(result.meta.pending_refresh_count ?? 0),
+  };
 }
 
-export async function getDailyAttendance(employeeId: string, day: string) {
+export async function listDailyAttendance(
+  filters: Parameters<typeof listDailyAttendanceWithMeta>[0],
+  signal?: AbortSignal,
+) {
+  const result = await listDailyAttendanceWithMeta(filters, signal);
+  return result.rows;
+}
+
+export async function getDailyAttendance(employeeId: string, day: string, signal?: AbortSignal) {
   return mapAttendance(
-    await apiFetch<BackendAttendance>(`/attendance/employee/${employeeId}/${day}`),
+    await apiFetch<BackendAttendance>(`/attendance/employee/${employeeId}/${day}`, {
+      signal,
+    }),
   );
 }
 
@@ -225,6 +263,7 @@ export async function getEmployeeAttendanceRange(
   employeeId: string,
   startDate: string,
   endDate: string,
+  signal?: AbortSignal,
 ): Promise<EmployeeAttendanceRange> {
   const result = await apiFetch<{
     employee_id: string;
@@ -248,6 +287,7 @@ export async function getEmployeeAttendanceRange(
       start_date: startDate,
       end_date: endDate,
     }).toString()}`,
+    { signal },
   );
   return {
     employeeId: result.employee_id,

@@ -146,10 +146,20 @@ def send_email(to: str, subject: str, body: str, html: str | None = None) -> boo
         return False
 
 
-def ensure_email_allowed(db: Session, *, to: str, category: str) -> None:
+def ensure_email_allowed(
+    db: Session,
+    *,
+    to: str,
+    category: str,
+    cooldown_seconds: int | None = None,
+) -> None:
     """Block rapid credential rotation before the old credential is invalidated."""
-    minutes = max(1, settings.email_cooldown_minutes)
-    cutoff = datetime.now(UTC) - timedelta(minutes=minutes)
+    cooldown = (
+        timedelta(seconds=max(1, cooldown_seconds))
+        if cooldown_seconds is not None
+        else timedelta(minutes=max(1, settings.email_cooldown_minutes))
+    )
+    cutoff = datetime.now(UTC) - cooldown
     recent = db.scalar(
         select(EmailDelivery)
         .where(
@@ -164,7 +174,7 @@ def ensure_email_allowed(db: Session, *, to: str, category: str) -> None:
         created_at = recent.created_at
         if created_at.tzinfo is None:
             created_at = created_at.replace(tzinfo=UTC)
-        retry_at = created_at + timedelta(minutes=minutes)
+        retry_at = created_at + cooldown
         raise ApiError(
             "EMAIL_COOLDOWN",
             "This email was already sent recently. Wait before sending it again.",

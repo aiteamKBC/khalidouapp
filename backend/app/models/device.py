@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import DateTime, ForeignKey, String, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, String, UniqueConstraint, false
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database.base import Base
@@ -12,6 +12,12 @@ class Device(UUIDPrimaryKeyMixin, Base):
     __tablename__ = "devices"
     __table_args__ = (
         UniqueConstraint("company_id", "installation_id", name="uq_devices_company_installation"),
+        Index(
+            "ix_devices_company_employee_last_seen",
+            "company_id",
+            "employee_id",
+            "last_seen_at",
+        ),
     )
 
     company_id: Mapped[UUID] = mapped_column(ForeignKey("companies.id"), nullable=False, index=True)
@@ -25,9 +31,22 @@ class Device(UUIDPrimaryKeyMixin, Base):
     windows_username: Mapped[str | None] = mapped_column(String(255), nullable=True)
     mac_address: Mapped[str | None] = mapped_column(String(32), nullable=True)
     last_ip_address: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    timezone: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    reported_timezone: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    country_code: Mapped[str | None] = mapped_column(String(2), nullable=True)
+    timezone_source: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    timezone_checked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="active")
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     registered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    legacy_token_bootstrap_allowed: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default=false(),
+    )
 
     employee = relationship("Employee", back_populates="devices")

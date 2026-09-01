@@ -1,5 +1,6 @@
 from functools import lru_cache
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -19,8 +20,15 @@ class Settings(BaseSettings):
     app_name: str = Field(default="Khaliduo", alias="APP_NAME")
     database_url: str = Field(default="", alias="DATABASE_URL")
     database_pool_size: int = Field(default=10, alias="DATABASE_POOL_SIZE")
-    database_max_overflow: int = Field(default=20, alias="DATABASE_MAX_OVERFLOW")
+    database_max_overflow: int = Field(default=2, alias="DATABASE_MAX_OVERFLOW")
     database_pool_timeout_seconds: int = Field(default=30, alias="DATABASE_POOL_TIMEOUT_SECONDS")
+    api_thread_pool_size: int = Field(default=12, ge=4, le=32, alias="API_THREAD_POOL_SIZE")
+    agent_ingestion_concurrency: int = Field(
+        default=8,
+        ge=1,
+        le=24,
+        alias="AGENT_INGESTION_CONCURRENCY",
+    )
     jwt_secret_key: str = Field(default=INSECURE_DEFAULT_SECRET, alias="JWT_SECRET_KEY")
     jwt_access_token_expire_minutes: int = Field(
         default=30, alias="JWT_ACCESS_TOKEN_EXPIRE_MINUTES"
@@ -50,6 +58,16 @@ class Settings(BaseSettings):
         alias="DESKTOP_UPDATE_DIRECTORY",
     )
     screenshot_max_file_size_mb: int = Field(default=10, alias="SCREENSHOT_MAX_FILE_SIZE_MB")
+    screenshot_max_pixels: int = Field(
+        default=80_000_000,
+        ge=1,
+        alias="SCREENSHOT_MAX_PIXELS",
+    )
+    screenshot_max_dimension: int = Field(
+        default=16_384,
+        ge=1,
+        alias="SCREENSHOT_MAX_DIMENSION",
+    )
     default_screenshot_interval_minutes: int = Field(
         default=10, alias="DEFAULT_SCREENSHOT_INTERVAL_MINUTES"
     )
@@ -85,6 +103,11 @@ class Settings(BaseSettings):
     smtp_from: str = Field(default="", alias="SMTP_FROM")
     smtp_use_tls: bool = Field(default=True, alias="SMTP_USE_TLS")
     email_cooldown_minutes: int = Field(default=15, alias="EMAIL_COOLDOWN_MINUTES")
+    password_reset_email_cooldown_seconds: int = Field(
+        default=30,
+        ge=1,
+        alias="PASSWORD_RESET_EMAIL_COOLDOWN_SECONDS",
+    )
     password_reset_expire_minutes: int = Field(default=30, alias="PASSWORD_RESET_EXPIRE_MINUTES")
     employee_invitation_expire_hours: int = Field(
         default=24, alias="EMPLOYEE_INVITATION_EXPIRE_HOURS"
@@ -94,6 +117,22 @@ class Settings(BaseSettings):
     email_support_address: str = Field(default="", alias="EMAIL_SUPPORT_ADDRESS")
     app_public_url: str = Field(default="http://localhost:5174", alias="APP_PUBLIC_URL")
     trusted_proxy_ips: list[str] = Field(default=["127.0.0.1", "::1"], alias="TRUSTED_PROXY_IPS")
+    ip_geolocation_url: str = Field(
+        default="https://ipwho.is/{ip}",
+        alias="IP_GEOLOCATION_URL",
+    )
+    ip_geolocation_timeout_seconds: float = Field(
+        default=2.0,
+        ge=0.25,
+        le=10.0,
+        alias="IP_GEOLOCATION_TIMEOUT_SECONDS",
+    )
+    ip_geolocation_retry_minutes: int = Field(
+        default=15,
+        ge=1,
+        le=1440,
+        alias="IP_GEOLOCATION_RETRY_MINUTES",
+    )
 
     @field_validator("cors_origins", mode="before")
     @classmethod
@@ -116,12 +155,45 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def reject_insecure_production_secrets(self) -> "Settings":
         if self.app_env.lower() == "production":
-            if self.jwt_secret_key == INSECURE_DEFAULT_SECRET:
-                raise ValueError("JWT_SECRET_KEY must be set to a real secret in production.")
-            if self.device_token_secret == INSECURE_DEFAULT_SECRET:
-                raise ValueError("DEVICE_TOKEN_SECRET must be set to a real secret in production.")
-            if not self.salary_encryption_key:
-                raise ValueError("SALARY_ENCRYPTION_KEY must be set in production.")
+            if (
+                self.jwt_secret_key == INSECURE_DEFAULT_SECRET
+                or len(self.jwt_secret_key) < 32
+            ):
+                raise ValueError(
+                    "JWT_SECRET_KEY must be a secret of at least 32 characters in production."
+                )
+            if (
+                self.device_token_secret == INSECURE_DEFAULT_SECRET
+                or len(self.device_token_secret) < 32
+            ):
+                raise ValueError(
+                    "DEVICE_TOKEN_SECRET must be a secret of at least 32 characters in production."
+                )
+            if len(self.salary_encryption_key) < 32:
+                raise ValueError(
+                    "SALARY_ENCRYPTION_KEY must be at least 32 characters in production."
+                )
+            if not self.database_url:
+                raise ValueError("DATABASE_URL must be configured in production.")
+            if not self.cors_origins or "*" in self.cors_origins:
+                raise ValueError(
+                    "CORS_ORIGINS must contain explicit HTTPS origins in production."
+                )
+            for origin in self.cors_origins:
+                parsed_origin = urlsplit(origin)
+                if (
+                    parsed_origin.scheme != "https"
+                    or not parsed_origin.netloc
+                    or parsed_origin.path not in {"", "/"}
+                    or parsed_origin.query
+                    or parsed_origin.fragment
+                ):
+                    raise ValueError(
+                        "CORS_ORIGINS must contain only explicit HTTPS origins in production."
+                    )
+            public_url = urlsplit(self.app_public_url)
+            if public_url.scheme != "https" or not public_url.netloc:
+                raise ValueError("APP_PUBLIC_URL must use HTTPS in production.")
         return self
 
 

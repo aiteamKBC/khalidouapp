@@ -143,7 +143,7 @@ def enqueue_request_review_emails(
 ) -> int:
     is_early_leave = request_type == "early_leave"
     request_label = "Early leave permission" if is_early_leave else "Annual leave request"
-    route = "time-adjustments" if is_early_leave else "holiday-requests"
+    route = "holiday-requests"
     review_url = f"{settings.app_public_url.rstrip('/')}/{route}?requestId={request_id}"
     category = "early_leave_submitted" if is_early_leave else "leave_request_submitted"
     queued = 0

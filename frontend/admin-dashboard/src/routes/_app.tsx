@@ -2,7 +2,7 @@ import { createFileRoute, Link, Outlet, Navigate, useRouterState } from "@tansta
 import { AppShell } from "@/components/layout/AppShell";
 import { useAuth } from "@/lib/auth";
 import { requiredPermissionForPath } from "@/lib/permissions";
-import { ShieldX } from "lucide-react";
+import { Loader2, ShieldX } from "lucide-react";
 
 export const Route = createFileRoute("/_app")({
   component: AppLayout,
@@ -11,12 +11,18 @@ export const Route = createFileRoute("/_app")({
 function AppLayout() {
   const { user, loading, can } = useAuth();
   const pathname = useRouterState({ select: (state) => state.location.pathname });
-  if (loading)
+  if (loading) {
     return (
-      <div className="grid min-h-screen place-items-center text-sm text-muted-foreground">
-        Loading…
+      <div className="grid min-h-screen place-items-center bg-background">
+        <div className="flex flex-col items-center gap-3 text-sm font-semibold text-muted-foreground">
+          <span className="grid h-12 w-12 place-items-center rounded-2xl bg-primary/10">
+            <Loader2 className="h-6 w-6 animate-spin text-primary" />
+          </span>
+          Loading your workspace...
+        </div>
       </div>
     );
+  }
   if (!user) return <Navigate to="/login" search={{ resetToken: undefined }} replace />;
   const requiredPermission = requiredPermissionForPath(pathname);
   if (requiredPermission && !can(requiredPermission)) {

@@ -29,6 +29,7 @@ import { useAuth } from "@/lib/auth";
 import type { Task } from "@/types";
 import { toast } from "sonner";
 import { MetricTile } from "@/components/ui/metric-tile";
+import { formatDateTime } from "@/lib/format";
 
 export const Route = createFileRoute("/_app/notifications")({ component: NotificationsPage });
 
@@ -50,13 +51,14 @@ function NotificationsPage() {
   const { scopedTeamIds, user } = useAuth();
   const scope = scopedTeamIds();
   const notifications = useQuery({
-    queryKey: ["task-notifications"],
-    queryFn: listTaskNotifications,
+    queryKey: ["task-notifications", scope],
+    queryFn: ({ signal }) => listTaskNotifications(signal),
     refetchInterval: 30_000,
+    refetchIntervalInBackground: false,
   });
   const tasks = useQuery({
     queryKey: ["tasks", scope],
-    queryFn: () => listTasks({ scopedTeamIds: scope }),
+    queryFn: ({ signal }) => listTasks({ scopedTeamIds: scope }, signal),
   });
   const refresh = () => queryClient.invalidateQueries({ queryKey: ["task-notifications"] });
   const readOne = useMutation({ mutationFn: readTaskNotification, onSuccess: refresh });
@@ -166,7 +168,7 @@ function NotificationsPage() {
                   <div className="flex items-center justify-between gap-3">
                     <p className="font-medium">{item.title}</p>
                     <time className="shrink-0 text-xs text-muted-foreground">
-                      {new Date(item.createdAt).toLocaleString()}
+                      {formatDateTime(item.createdAt)}
                     </time>
                   </div>
                   <p className="mt-1 text-sm text-muted-foreground">{item.message}</p>
@@ -233,7 +235,8 @@ function WorkflowActions({
   if (isSelfReview) {
     return (
       <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-900">
-        You cannot review your own task. A General admin or another team manager must decide it.
+        Your own task cannot be reviewed here. Creation is automatic; completion is reviewed by a
+        company admin.
       </p>
     );
   }

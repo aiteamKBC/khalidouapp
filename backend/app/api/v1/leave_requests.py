@@ -1,4 +1,5 @@
-from datetime import UTC, datetime
+from collections import defaultdict
+from datetime import UTC, date, datetime, timedelta
 from typing import Annotated
 from uuid import UUID
 
@@ -19,7 +20,7 @@ from app.services.leave_management import (
     serialize_balance,
     serialize_leave_request,
 )
-from app.services.work_profiles import get_or_create_work_profile
+from app.services.work_profiles import DEFAULT_WORKING_DAYS, get_or_create_work_profile
 from app.services.permissions import require_capability
 from app.services.attendance import refresh_daily_attendance_range
 
@@ -119,6 +120,76 @@ def list_leave_requests(
         data=[serialize_leave_request(row) for row in rows],
         meta=pagination_meta(total, page, page_size),
     )
+
+
+@router.get("/balances")
+def list_leave_balances(
+    current_admin: Annotated[AdminUser, Depends(get_current_admin)],
+    db: Annotated[Session, Depends(get_db)],
+    year: int = Query(default=datetime.now(UTC).year, ge=2000, le=2200),
+):
+    require_capability(current_admin, "leave_requests.view")
+    employee_statement = (
+        select(Employee)
+        .where(
+            Employee.company_id == current_admin.company_id,
+            Employee.status.in_(["active", "invited"]),
+        )
+        .order_by(Employee.name)
+    )
+    employee_statement = apply_employee_scope(
+        employee_statement,
+        db,
+        current_admin,
+        Employee.id,
+    )
+    employees = list(db.scalars(employee_statement).all())
+    if not employees:
+        return success_response(data=[])
+
+    requests = db.scalars(
+        select(LeaveRequest)
+        .where(
+            LeaveRequest.company_id == current_admin.company_id,
+            LeaveRequest.employee_id.in_([employee.id for employee in employees]),
+            LeaveRequest.status == "approved",
+            LeaveRequest.start_date >= date(year, 1, 1),
+            LeaveRequest.start_date <= date(year, 12, 31),
+        )
+        .order_by(LeaveRequest.start_date)
+    ).all()
+    requests_by_employee: dict[UUID, list[LeaveRequest]] = defaultdict(list)
+    for request in requests:
+        requests_by_employee[request.employee_id].append(request)
+
+    data = []
+    for employee in employees:
+        profile = get_or_create_work_profile(db, employee)
+        working_days = set(profile.working_days or DEFAULT_WORKING_DAYS)
+        taken_dates = []
+        for request in requests_by_employee[employee.id]:
+            current = request.start_date
+            while current <= request.end_date:
+                if current.weekday() in working_days:
+                    taken_dates.append(
+                        {
+                            "date": current.isoformat(),
+                            "leave_type": request.leave_type,
+                            "request_id": str(request.id),
+                        }
+                    )
+                current += timedelta(days=1)
+        data.append(
+            {
+                "employee_id": str(employee.id),
+                "employee_name": employee.name,
+                "employee_code": employee.employee_code,
+                "start_date": employee.start_date.isoformat() if employee.start_date else None,
+                **serialize_balance(db, employee, year),
+                "taken_dates": taken_dates,
+            }
+        )
+    return success_response(data=data)
 
 
 @router.patch("/{request_id}")

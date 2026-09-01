@@ -1,13 +1,16 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowLeft } from "lucide-react";
+import { BackButton } from "@/components/ui/back-button";
 import { PageHeader } from "@/components/ui/page-header";
-import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { StatusBadge } from "@/components/ui/status-badge";
-import { getDevice } from "@/api/devices";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { getDevice, listDevices } from "@/api/devices";
 import { listEmployees } from "@/api/employees";
 import { formatDate, formatRelative } from "@/lib/format";
+import { useAuth } from "@/lib/auth";
+import { retryTransientRequest } from "@/api/client";
+import { findOtherOnlineDeviceForEmployee } from "@/lib/device-presence";
 
 export const Route = createFileRoute("/_app/devices/$deviceId")({
   component: DeviceDetailPage,
@@ -15,25 +18,46 @@ export const Route = createFileRoute("/_app/devices/$deviceId")({
 
 function DeviceDetailPage() {
   const { deviceId } = Route.useParams();
-  const device = useQuery({ queryKey: ["device", deviceId], queryFn: () => getDevice(deviceId) });
-  const employees = useQuery({ queryKey: ["employees"], queryFn: () => listEmployees() });
+  const scope = useAuth().scopedTeamIds();
+  const device = useQuery({
+    queryKey: ["device", scope, deviceId],
+    queryFn: ({ signal }) => getDevice(deviceId, signal),
+    retry: retryTransientRequest,
+  });
+  const employees = useQuery({
+    queryKey: ["employees", scope],
+    queryFn: ({ signal }) => listEmployees(scope, signal),
+    staleTime: 30_000,
+    retry: retryTransientRequest,
+  });
+  const devices = useQuery({
+    queryKey: ["devices", scope],
+    queryFn: ({ signal }) => listDevices(scope, signal),
+    retry: retryTransientRequest,
+  });
 
   if (!device.data) return <div className="text-sm text-muted-foreground">Loading device...</div>;
   const employee = (employees.data ?? []).find((item) => item.id === device.data!.employeeId);
+  const otherOnlineDevice = findOtherOnlineDeviceForEmployee(devices.data ?? [], device.data);
 
   return (
     <div>
-      <Button asChild variant="ghost" size="sm" className="mb-2 -ml-2">
-        <Link to="/devices">
-          <ArrowLeft className="h-4 w-4 mr-1" />
-          Back
-        </Link>
-      </Button>
+      <BackButton fallbackHref="/devices" variant="ghost" size="sm" className="mb-2 -ml-2" />
       <PageHeader
         title={device.data.name}
         description={employee ? `Assigned to ${employee.name}` : undefined}
         actions={<StatusBadge status={device.data.status} />}
       />
+
+      {device.data.status === "offline" && otherOnlineDevice && (
+        <Alert className="mb-4 border-success/40 bg-success/5">
+          <AlertTitle>{employee?.name ?? "This employee"} is online on another device</AlertTitle>
+          <AlertDescription>
+            {device.data.name} is offline, but {otherOnlineDevice.name} is reporting now. Employee
+            timesheets combine activity from all of their registered devices.
+          </AlertDescription>
+        </Alert>
+      )}
 
       <Card>
         <CardHeader>

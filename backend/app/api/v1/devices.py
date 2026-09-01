@@ -84,7 +84,15 @@ def update_device(
     require_general_admin(current_admin)
     device = get_device_or_404(db, current_admin.company_id, device_id)
     if payload.status is not None:
+        if payload.status == "revoked":
+            raise ApiError(
+                "USE_DEVICE_REVOKE",
+                "Use the revoke action to revoke a device and invalidate its tokens.",
+                400,
+            )
         device.status = payload.status
+        if payload.status == "active":
+            device.revoked_at = None
     db.add(device)
     db.commit()
     db.refresh(device)
@@ -96,6 +104,36 @@ def update_device(
         entity_id=device.id,
         entity_name=device.device_name,
         details=payload.model_dump(exclude_unset=True),
+        request=request,
+    )
+    db.commit()
+    return success_response(data=serialize_device(device))
+
+
+@router.post("/{device_id}/reactivate")
+def reactivate_device(
+    device_id: UUID,
+    request: Request,
+    current_admin: Annotated[AdminUser, Depends(get_current_admin)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    from app.api.v1.team_auth import require_general_admin
+
+    require_general_admin(current_admin)
+    device = get_device_or_404(db, current_admin.company_id, device_id)
+    device.status = "active"
+    device.revoked_at = None
+    db.add(device)
+    db.commit()
+    db.refresh(device)
+    record_audit_log(
+        db,
+        current_admin,
+        "reactivated",
+        "device",
+        entity_id=device.id,
+        entity_name=device.device_name,
+        details={"old_tokens_remain_revoked": True},
         request=request,
     )
     db.commit()

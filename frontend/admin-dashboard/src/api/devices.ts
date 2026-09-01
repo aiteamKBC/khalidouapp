@@ -37,21 +37,31 @@ function mapDevice(device: BackendDevice): Device {
   };
 }
 
-export async function listDevices(scopedTeamIds?: string[]): Promise<Device[]> {
+export async function listDevices(
+  scopedTeamIds?: string[],
+  signal?: AbortSignal,
+): Promise<Device[]> {
   if (scopedTeamIds?.length === 1) {
     const devices = await apiFetch<BackendDevice[]>(
       withQuery("/devices", { page_size: 100, team_id: scopedTeamIds[0] }),
+      { signal },
     );
     return devices.map(mapDevice);
   }
-  const devices = await apiFetch<BackendDevice[]>(withQuery("/devices", { page_size: 100 }));
+  const devices = await apiFetch<BackendDevice[]>(withQuery("/devices", { page_size: 100 }), {
+    signal,
+  });
   return devices.map(mapDevice);
 }
 
-export async function getDevice(id: string): Promise<Device | undefined> {
-  return mapDevice(await apiFetch<BackendDevice>(`/devices/${id}`));
+export async function getDevice(id: string, signal?: AbortSignal): Promise<Device | undefined> {
+  return mapDevice(await apiFetch<BackendDevice>(`/devices/${id}`, { signal }));
 }
 
 export async function revokeDevice(id: string): Promise<void> {
   await apiFetch(`/devices/${id}/revoke`, { method: "POST" });
+}
+
+export async function reactivateDevice(id: string): Promise<Device> {
+  return mapDevice(await apiFetch<BackendDevice>(`/devices/${id}/reactivate`, { method: "POST" }));
 }

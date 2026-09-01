@@ -35,6 +35,7 @@ def ensure_team_owner_employee_membership(
             team_id=team_id,
             employee_id=owner.employee_id,
             status="active",
+            role="team_manager",
         )
         db.add(membership)
     elif membership.status != "active":

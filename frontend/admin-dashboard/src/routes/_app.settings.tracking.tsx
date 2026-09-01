@@ -31,10 +31,15 @@ function TrackingSettingsPage() {
   const { can } = useAuth();
   const canEdit = can(permissions.settingsManage);
   const qc = useQueryClient();
-  const query = useQuery({ queryKey: ["tracking-settings"], queryFn: getTrackingSettings });
+  const query = useQuery({
+    queryKey: ["tracking-settings"],
+    queryFn: ({ signal }) => getTrackingSettings(signal),
+    staleTime: 10 * 60_000,
+    gcTime: 30 * 60_000,
+  });
   const storage = useQuery({
     queryKey: ["screenshot-storage-status"],
-    queryFn: getScreenshotStorageStatus,
+    queryFn: ({ signal }) => getScreenshotStorageStatus(signal),
     enabled: canEdit,
     refetchInterval: 60_000,
   });
@@ -63,7 +68,6 @@ function TrackingSettingsPage() {
   };
 
   const invalid =
-    form.idleThresholdMinutes < 1 ||
     form.offlineThresholdMinutes < 1 ||
     form.screenshotsPerInterval < 1 ||
     form.screenshotsPerInterval > 2 ||
@@ -203,16 +207,12 @@ function TrackingSettingsPage() {
           <CardTitle>Activity thresholds</CardTitle>
         </CardHeader>
         <CardContent className="space-y-5">
-          <FieldRow label="Idle threshold (minutes)">
-            <Input
-              disabled={!canEdit}
-              type="number"
-              min={1}
-              className="w-32"
-              value={form.idleThresholdMinutes}
-              onChange={(e) => update("idleThresholdMinutes", Number(e.target.value))}
-            />
-          </FieldRow>
+          <ToggleRow
+            label="Idle threshold"
+            hint="Idle starts after 10 complete minutes without keyboard or mouse input."
+          >
+            <Input disabled type="number" className="w-32" value={10} readOnly />
+          </ToggleRow>
           <FieldRow label="Offline threshold (minutes)">
             <Input
               disabled={!canEdit}

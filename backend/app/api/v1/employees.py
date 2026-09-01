@@ -4,7 +4,7 @@ from uuid import UUID, uuid4
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request
 from sqlalchemy import func, or_, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, load_only
 
 from app.api.deps import get_current_admin
 from app.api.v1.admin_utils import (
@@ -28,8 +28,10 @@ from app.models import (
     ActivityEvent,
     AdminUser,
     AuditLog,
+    DailyAttendance,
     Device,
     Employee,
+    EmployeeInvitation,
     EmployeeWorkProfile,
     LeaveRequest,
     PayrollAdjustment,
@@ -47,11 +49,16 @@ from app.schemas.admin import (
 )
 from app.services.audit import record_audit_log
 from app.services.activity_timeline import local_today
-from app.services.attendance import refresh_daily_attendance_range
+from app.services.attendance import (
+    accountable_idle_seconds,
+    current_idle_contexts,
+    refresh_daily_attendance_range,
+)
 from app.services.email import (
     enqueue_employee_invitation_email,
 )
 from app.services.employee_invitations import (
+    employee_onboarding_status,
     issue_employee_invitation,
     latest_employee_invitations,
 )
@@ -59,8 +66,11 @@ from app.schemas.admin import EmployeeWorkProfileUpdate
 from app.services.permissions import has_capability, require_capability
 from app.services.person_access import disable_employee_tracking
 from app.services.request_notifications import employee_manager_summaries
+from app.services.input_integrity import summarize_input_integrity
 from app.services.work_profiles import (
     DEFAULT_BREAK_RULES,
+    DEFAULT_WEEKLY_OFF_DAYS,
+    DEFAULT_WORKING_DAYS,
     get_or_create_work_profile,
     payroll_preview,
     profile_completeness,
@@ -84,6 +94,12 @@ FINANCIAL_WORK_PROFILE_UPDATE_FIELDS = FINANCIAL_WORK_PROFILE_FIELDS | {
     "overtime_enabled",
     "overtime_basis",
 }
+
+
+def _as_utc(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
 
 
 def serialize_work_profile_for_admin(profile: EmployeeWorkProfile, admin: AdminUser) -> dict:
@@ -214,11 +230,11 @@ def list_employee_break_rules(
                 "break_rules": break_rules if break_rules is not None else DEFAULT_BREAK_RULES,
                 "shift_start": shift_start.isoformat(timespec="minutes")
                 if shift_start
-                else "09:00",
-                "shift_end": shift_end.isoformat(timespec="minutes") if shift_end else "17:00",
+                else "10:00",
+                "shift_end": shift_end.isoformat(timespec="minutes") if shift_end else "18:00",
                 "required_daily_minutes": required_daily_minutes or 480,
-                "working_days": working_days or [0, 1, 2, 3, 4],
-                "weekly_off_days": weekly_off_days or [5, 6],
+                "working_days": working_days or DEFAULT_WORKING_DAYS,
+                "weekly_off_days": weekly_off_days or DEFAULT_WEEKLY_OFF_DAYS,
                 "late_grace_minutes": late_grace_minutes or 15,
                 "overtime_enabled": bool(overtime_enabled),
         }
@@ -244,79 +260,127 @@ def list_employee_overviews(
 ):
     """Return the employee list and live status without per-employee API calls.
 
-    The correlated subqueries run inside PostgreSQL, so the remote database is
-    reached once for status data instead of several times for every employee.
+    Windowed and grouped subqueries load the latest device/session plus today's
+    totals in one database round trip instead of querying once per employee.
     """
 
     today_start, today_end = day_bounds(date.today())
     settings = get_company_settings(db, current_admin.company_id)
-    cutoff = datetime.now(UTC) - timedelta(minutes=settings.offline_threshold_minutes)
+    now = datetime.now(UTC)
+    cutoff = now - timedelta(minutes=settings.offline_threshold_minutes)
 
-    def latest_device(column):
-        return (
-            select(column)
-            .where(
-                Device.company_id == current_admin.company_id,
-                Device.employee_id == Employee.id,
+    device_ranked = (
+        select(
+            Device.employee_id.label("employee_id"),
+            Device.id.label("device_id"),
+            Device.device_name.label("device_name"),
+            Device.status.label("device_status"),
+            Device.last_seen_at.label("device_last_seen"),
+            func.row_number()
+            .over(
+                partition_by=Device.employee_id,
+                order_by=(
+                    Device.last_seen_at.desc().nullslast(),
+                    Device.registered_at.desc(),
+                ),
             )
-            .order_by(Device.last_seen_at.desc().nullslast(), Device.registered_at.desc())
-            .limit(1)
-            .correlate(Employee)
-            .scalar_subquery()
+            .label("rank"),
         )
-
-    def current_session(column):
-        return (
-            select(column)
-            .where(
-                WorkSession.company_id == current_admin.company_id,
-                WorkSession.employee_id == Employee.id,
-                WorkSession.ended_at.is_(None),
+        .where(Device.company_id == current_admin.company_id)
+        .subquery()
+    )
+    latest_device = (
+        select(device_ranked)
+        .where(device_ranked.c.rank == 1)
+        .subquery()
+    )
+    session_ranked = (
+        select(
+            WorkSession.employee_id.label("employee_id"),
+            WorkSession.id.label("session_id"),
+            WorkSession.team_id.label("session_team_id"),
+            WorkSession.project_id.label("session_project_id"),
+            WorkSession.task_id.label("session_task_id"),
+            WorkSession.status.label("session_status"),
+            WorkSession.started_at.label("session_started_at"),
+            func.row_number()
+            .over(
+                partition_by=WorkSession.employee_id,
+                order_by=WorkSession.started_at.desc(),
             )
-            .order_by(WorkSession.started_at.desc())
-            .limit(1)
-            .correlate(Employee)
-            .scalar_subquery()
+            .label("rank"),
         )
-
-    def today_total(column):
-        return (
-            select(func.coalesce(func.sum(column), 0))
-            .where(
-                WorkSession.company_id == current_admin.company_id,
-                WorkSession.employee_id == Employee.id,
-                WorkSession.started_at.between(today_start, today_end),
-            )
-            .correlate(Employee)
-            .scalar_subquery()
+        .where(
+            WorkSession.company_id == current_admin.company_id,
+            WorkSession.ended_at.is_(None),
         )
-
-    last_screenshot = (
-        select(func.max(Screenshot.captured_at))
+        .subquery()
+    )
+    latest_session = (
+        select(session_ranked)
+        .where(session_ranked.c.rank == 1)
+        .subquery()
+    )
+    today_totals = (
+        select(
+            WorkSession.employee_id.label("employee_id"),
+            func.coalesce(func.sum(WorkSession.active_seconds), 0).label(
+                "active_seconds"
+            ),
+            func.coalesce(func.sum(WorkSession.idle_seconds), 0).label(
+                "idle_seconds"
+            ),
+            func.coalesce(func.sum(WorkSession.deducted_seconds), 0).label(
+                "deducted_seconds"
+            ),
+        )
+        .where(
+            WorkSession.company_id == current_admin.company_id,
+            WorkSession.started_at.between(today_start, today_end),
+        )
+        .group_by(WorkSession.employee_id)
+        .subquery()
+    )
+    latest_screenshot = (
+        select(
+            Screenshot.employee_id.label("employee_id"),
+            func.max(Screenshot.captured_at).label("captured_at"),
+        )
         .where(
             Screenshot.company_id == current_admin.company_id,
-            Screenshot.employee_id == Employee.id,
             Screenshot.deleted_at.is_(None),
         )
-        .correlate(Employee)
-        .scalar_subquery()
+        .group_by(Screenshot.employee_id)
+        .subquery()
     )
     statement = select(
         Employee,
-        latest_device(Device.id),
-        latest_device(Device.device_name),
-        latest_device(Device.status),
-        latest_device(Device.last_seen_at),
-        current_session(WorkSession.id),
-        current_session(WorkSession.team_id),
-        current_session(WorkSession.project_id),
-        current_session(WorkSession.task_id),
-        current_session(WorkSession.status),
-        current_session(WorkSession.started_at),
-        today_total(WorkSession.active_seconds),
-        today_total(WorkSession.idle_seconds),
-        today_total(WorkSession.deducted_seconds),
-        last_screenshot,
+        latest_device.c.device_id,
+        latest_device.c.device_name,
+        latest_device.c.device_status,
+        latest_device.c.device_last_seen,
+        latest_session.c.session_id,
+        latest_session.c.session_team_id,
+        latest_session.c.session_project_id,
+        latest_session.c.session_task_id,
+        latest_session.c.session_status,
+        latest_session.c.session_started_at,
+        today_totals.c.active_seconds,
+        today_totals.c.idle_seconds,
+        today_totals.c.deducted_seconds,
+        latest_screenshot.c.captured_at,
+    ).outerjoin(
+        latest_device,
+        latest_device.c.employee_id == Employee.id,
+    ).outerjoin(
+        latest_session,
+        latest_session.c.employee_id == Employee.id,
+    ).outerjoin(
+        today_totals,
+        today_totals.c.employee_id == Employee.id,
+    ).outerjoin(
+        latest_screenshot,
+        latest_screenshot.c.employee_id == Employee.id,
     ).where(
         Employee.company_id == current_admin.company_id,
         Employee.status != "deleted",
@@ -326,12 +390,63 @@ def list_employee_overviews(
         statement = statement.where(Employee.id == employee_id)
     statement = statement.order_by(Employee.name)
     rows = db.execute(statement).all()
+    schedule_context_candidates = []
+    for row in rows:
+        employee = row[0]
+        device_id = row[1]
+        device_status = row[3]
+        normalized_last_seen = _as_utc(row[4])
+        session_id = row[5]
+        session_status = row[9]
+        if (
+            session_status in {"active", "idle", "locked", "sleeping"}
+            and session_id
+            and device_id
+            and device_status != "revoked"
+            and normalized_last_seen
+            and normalized_last_seen >= cutoff
+        ):
+            schedule_context_candidates.append(employee)
+    schedule_context_by_employee = current_idle_contexts(
+        db,
+        employees=schedule_context_candidates,
+        now=now,
+    )
 
     employee_ids = [row[0].id for row in rows]
+    attendance_today_by_employee: dict[UUID, DailyAttendance] = {}
+    if employee_ids:
+        # Heartbeats refresh DailyAttendance at most once per minute. Reading
+        # those materialized rows in one query keeps employee/team polling fast
+        # and avoids rebuilding every employee timeline on each page load.
+        expected_day_by_employee = {
+            employee.id: local_today(employee.timezone) for employee, *_rest in rows
+        }
+        local_days = set(expected_day_by_employee.values())
+        attendance_rows = db.scalars(
+            select(DailyAttendance).where(
+                DailyAttendance.company_id == current_admin.company_id,
+                DailyAttendance.employee_id.in_(employee_ids),
+                DailyAttendance.work_date >= min(local_days),
+                DailyAttendance.work_date <= max(local_days),
+            )
+        ).all()
+        attendance_today_by_employee = {
+            attendance.employee_id: attendance
+            for attendance in attendance_rows
+            if attendance.work_date == expected_day_by_employee.get(attendance.employee_id)
+        }
     invitations_by_employee = latest_employee_invitations(db, employee_ids)
     managers_by_employee = employee_manager_summaries(db, employee_ids)
     teams_by_employee: dict[UUID, list[str]] = {item: [] for item in employee_ids}
     team_role_by_employee: dict[UUID, str] = {}
+    team_role_priority = {
+        "trainee": 0,
+        "member": 1,
+        "senior": 2,
+        "team_lead": 3,
+        "team_manager": 4,
+    }
     if employee_ids:
         memberships = db.execute(
             select(TeamMember.employee_id, TeamMember.team_id, TeamMember.role).where(
@@ -341,8 +456,20 @@ def list_employee_overviews(
         ).all()
         for membership_employee_id, membership_team_id, membership_role in memberships:
             teams_by_employee.setdefault(membership_employee_id, []).append(str(membership_team_id))
-            if team_id is not None and membership_team_id == team_id:
-                team_role_by_employee[membership_employee_id] = membership_role or "member"
+            role = membership_role or "member"
+            if team_id is not None:
+                if membership_team_id == team_id:
+                    team_role_by_employee[membership_employee_id] = role
+                continue
+
+            # People management is normally loaded without a team filter. Return
+            # the employee's highest active team role so a refresh does not turn a
+            # persisted manager/lead back into the UI's default "member" value.
+            current_role = team_role_by_employee.get(membership_employee_id)
+            if current_role is None or team_role_priority.get(role, 0) > team_role_priority.get(
+                current_role, 0
+            ):
+                team_role_by_employee[membership_employee_id] = role
 
     data = []
     for row in rows:
@@ -363,19 +490,54 @@ def list_employee_overviews(
             deducted_seconds,
             screenshot_at,
         ) = row
+        invitation = invitations_by_employee.get(employee.id)
+        employee_data = serialize_employee(employee, invitation)
+        employee_data["onboarding_status"] = employee_onboarding_status(
+            employee,
+            invitation,
+            desktop_app_linked=device_id is not None,
+        )
+        normalized_last_seen = _as_utc(device_last_seen)
         online = bool(
             device_id
             and device_status != "revoked"
-            and device_last_seen
-            and device_last_seen >= cutoff
+            and normalized_last_seen
+            and normalized_last_seen >= cutoff
         )
-        active_seconds = max(0, int(raw_active_seconds or 0) - int(deducted_seconds or 0))
-        idle_seconds = int(idle_seconds or 0)
+        raw_worked_seconds = max(
+            0,
+            int(raw_active_seconds or 0) - int(deducted_seconds or 0),
+        )
+        attendance_today = attendance_today_by_employee.get(employee.id)
+        materialized_worked_seconds = (
+            int(attendance_today.normal_worked_seconds or 0)
+            + int(attendance_today.pre_shift_extra_seconds or 0)
+            + int(attendance_today.post_shift_extra_seconds or 0)
+            + int(attendance_today.approved_manual_seconds or 0)
+            if attendance_today
+            else 0
+        )
+        active_seconds = max(raw_worked_seconds, materialized_worked_seconds)
+        idle_seconds = (
+            accountable_idle_seconds(attendance_today) if attendance_today is not None else 0
+        )
+        activity_status = session_status if session_id and online else "offline"
+        schedule_context = schedule_context_by_employee.get(employee.id)
+        if schedule_context == "on_break":
+            if activity_status == "active":
+                activity_status = "break_work"
+            elif activity_status in {"idle", "locked", "sleeping"}:
+                activity_status = "on_break"
+        elif (
+            schedule_context == "off_shift"
+            and activity_status in {"idle", "locked", "sleeping"}
+        ):
+            activity_status = "off_shift"
         data.append(
             {
-                "employee": serialize_employee(employee, invitations_by_employee.get(employee.id)),
+                "employee": employee_data,
                 "online_status": "online" if online else "offline",
-                "activity_status": session_status if session_id and online else "offline",
+                "activity_status": activity_status,
                 "current_session": (
                     {
                         "id": str(session_id),
@@ -389,7 +551,7 @@ def list_employee_overviews(
                 "session_start_time": session_started_at.isoformat()
                 if session_started_at
                 else None,
-                "worked_today_seconds": active_seconds + idle_seconds,
+                "worked_today_seconds": active_seconds,
                 "active_seconds": active_seconds,
                 "idle_seconds": idle_seconds,
                 "last_heartbeat": device_last_seen.isoformat() if device_last_seen else None,
@@ -400,6 +562,252 @@ def list_employee_overviews(
                 "team_ids": teams_by_employee.get(employee.id, []),
                 "team_role": team_role_by_employee.get(employee.id),
                 "managers": managers_by_employee.get(employee.id, []),
+            }
+        )
+    return success_response(data=data)
+
+
+@router.get("/employees-monitoring")
+def list_monitoring_employees(
+    current_admin: Annotated[AdminUser, Depends(get_current_admin)],
+    db: Annotated[Session, Depends(get_db)],
+    team_id: UUID | None = None,
+):
+    """Return only the roster fields required by Employee Monitoring.
+
+    Attendance totals, screenshots, managers, payroll, and full employee
+    profiles deliberately stay out of this frequently-polled response.
+    """
+
+    company_settings = get_company_settings(db, current_admin.company_id)
+    now = datetime.now(UTC)
+    cutoff = now - timedelta(minutes=company_settings.offline_threshold_minutes)
+
+    device_ranked = (
+        select(
+            Device.employee_id.label("employee_id"),
+            Device.id.label("device_id"),
+            Device.device_name.label("device_name"),
+            Device.status.label("device_status"),
+            Device.last_seen_at.label("device_last_seen"),
+            func.row_number()
+            .over(
+                partition_by=Device.employee_id,
+                order_by=(
+                    Device.last_seen_at.desc().nullslast(),
+                    Device.registered_at.desc(),
+                ),
+            )
+            .label("rank"),
+        )
+        .where(Device.company_id == current_admin.company_id)
+        .subquery()
+    )
+    latest_device = select(device_ranked).where(device_ranked.c.rank == 1).subquery()
+    session_ranked = (
+        select(
+            WorkSession.employee_id.label("employee_id"),
+            WorkSession.id.label("session_id"),
+            WorkSession.status.label("session_status"),
+            func.row_number()
+            .over(
+                partition_by=WorkSession.employee_id,
+                order_by=WorkSession.started_at.desc(),
+            )
+            .label("rank"),
+        )
+        .where(
+            WorkSession.company_id == current_admin.company_id,
+            WorkSession.ended_at.is_(None),
+        )
+        .subquery()
+    )
+    latest_session = select(session_ranked).where(session_ranked.c.rank == 1).subquery()
+    invitation_ranked = (
+        select(
+            EmployeeInvitation.employee_id.label("employee_id"),
+            EmployeeInvitation.accepted_at.label("accepted_at"),
+            func.row_number()
+            .over(
+                partition_by=EmployeeInvitation.employee_id,
+                order_by=EmployeeInvitation.created_at.desc(),
+            )
+            .label("rank"),
+        )
+        .where(EmployeeInvitation.company_id == current_admin.company_id)
+        .subquery()
+    )
+    latest_invitation = (
+        select(invitation_ranked).where(invitation_ranked.c.rank == 1).subquery()
+    )
+
+    statement = (
+        select(
+            Employee,
+            latest_device.c.device_id,
+            latest_device.c.device_name,
+            latest_device.c.device_status,
+            latest_device.c.device_last_seen,
+            latest_session.c.session_id,
+            latest_session.c.session_status,
+            latest_invitation.c.accepted_at,
+        )
+        .options(
+            load_only(
+                Employee.id,
+                Employee.company_id,
+                Employee.name,
+                Employee.email,
+                Employee.employee_code,
+                Employee.job_title,
+                Employee.timezone,
+                Employee.status,
+            )
+        )
+        .outerjoin(latest_device, latest_device.c.employee_id == Employee.id)
+        .outerjoin(latest_session, latest_session.c.employee_id == Employee.id)
+        .outerjoin(latest_invitation, latest_invitation.c.employee_id == Employee.id)
+        .where(
+            Employee.company_id == current_admin.company_id,
+            Employee.status != "deleted",
+        )
+    )
+    statement = apply_employee_scope(statement, db, current_admin, Employee.id, team_id)
+    rows = db.execute(statement.order_by(Employee.name)).all()
+
+    employee_ids = [row[0].id for row in rows]
+    memberships_by_employee: dict[UUID, list[UUID]] = {
+        employee_id: [] for employee_id in employee_ids
+    }
+    if employee_ids:
+        memberships = db.execute(
+            select(TeamMember.employee_id, TeamMember.team_id).where(
+                TeamMember.employee_id.in_(employee_ids),
+                TeamMember.status == "active",
+            )
+        ).all()
+        for membership_employee_id, membership_team_id in memberships:
+            memberships_by_employee.setdefault(membership_employee_id, []).append(
+                membership_team_id
+            )
+
+    integrity_by_employee: dict[UUID, list[tuple[datetime, object]]] = {
+        employee_id: [] for employee_id in employee_ids
+    }
+    if employee_ids:
+        integrity_rows = db.execute(
+            select(
+                ActivityEvent.employee_id,
+                ActivityEvent.event_timestamp,
+                ActivityEvent.payload,
+            ).where(
+                ActivityEvent.company_id == current_admin.company_id,
+                ActivityEvent.employee_id.in_(employee_ids),
+                ActivityEvent.event_type == "heartbeat",
+                ActivityEvent.event_timestamp >= now - timedelta(minutes=10),
+            )
+        ).all()
+        for integrity_employee_id, observed_at, event_payload in integrity_rows:
+            observation = (
+                event_payload.get("input_integrity")
+                if isinstance(event_payload, dict)
+                else None
+            )
+            if observation is not None:
+                integrity_by_employee.setdefault(integrity_employee_id, []).append(
+                    (observed_at, observation)
+                )
+
+    schedule_candidates = []
+    for (
+        employee,
+        device_id,
+        _device_name,
+        device_status,
+        last_seen,
+        session_id,
+        status,
+        _invitation_accepted_at,
+    ) in rows:
+        normalized_last_seen = _as_utc(last_seen)
+        if (
+            status in {"active", "idle", "locked", "sleeping"}
+            and session_id
+            and device_id
+            and device_status != "revoked"
+            and normalized_last_seen
+            and normalized_last_seen >= cutoff
+        ):
+            schedule_candidates.append(employee)
+    schedule_context_by_employee = current_idle_contexts(
+        db,
+        employees=schedule_candidates,
+        now=now,
+        memberships_by_employee=memberships_by_employee,
+    )
+
+    data = []
+    for (
+        employee,
+        device_id,
+        device_name,
+        device_status,
+        last_seen,
+        session_id,
+        status,
+        invitation_accepted_at,
+    ) in rows:
+        normalized_last_seen = _as_utc(last_seen)
+        online = bool(
+            device_id
+            and device_status != "revoked"
+            and normalized_last_seen
+            and normalized_last_seen >= cutoff
+        )
+        activity_status = status if session_id and online else "offline"
+        schedule_context = schedule_context_by_employee.get(employee.id)
+        if schedule_context == "on_break":
+            if activity_status == "active":
+                activity_status = "break_work"
+            elif activity_status in {"idle", "locked", "sleeping"}:
+                activity_status = "on_break"
+        elif (
+            schedule_context == "off_shift"
+            and activity_status in {"idle", "locked", "sleeping"}
+        ):
+            activity_status = "off_shift"
+
+        onboarding_status = (
+            "app_pending"
+            if employee.status == "active"
+            and invitation_accepted_at is not None
+            and device_id is None
+            else employee.status
+        )
+        data.append(
+            {
+                "employee": {
+                    "id": str(employee.id),
+                    "name": employee.name,
+                    "email": employee.email,
+                    "employee_code": employee.employee_code,
+                    "job_title": employee.job_title,
+                    "timezone": employee.timezone,
+                    "status": employee.status,
+                    "onboarding_status": onboarding_status,
+                },
+                "activity_status": activity_status,
+                "last_heartbeat": last_seen.isoformat() if last_seen else None,
+                "device": (
+                    {"id": str(device_id), "device_name": device_name} if device_id else None
+                ),
+                "team_ids": [
+                    str(team_id)
+                    for team_id in memberships_by_employee.get(employee.id, [])
+                ],
+                "input_integrity": summarize_input_integrity(
+                    integrity_by_employee.get(employee.id, [])
+                ),
             }
         )
     return success_response(data=data)
@@ -752,7 +1160,7 @@ def update_employee(
         "employee",
         entity_id=employee.id,
         entity_name=employee.email,
-        details=payload.model_dump(exclude_unset=True),
+        details=payload.model_dump(exclude_unset=True, mode="json"),
         request=request,
     )
     db.commit()
@@ -834,18 +1242,18 @@ def employee_status(
         )
         .order_by(WorkSession.started_at.desc())
     )
-    today_start, today_end = day_bounds(date.today())
-    totals = db.execute(
-        select(
-            func.coalesce(func.sum(WorkSession.active_seconds), 0),
-            func.coalesce(func.sum(WorkSession.idle_seconds), 0),
-            func.coalesce(func.sum(WorkSession.deducted_seconds), 0),
-        ).where(
-            WorkSession.company_id == current_admin.company_id,
-            WorkSession.employee_id == employee.id,
-            WorkSession.started_at.between(today_start, today_end),
-        )
-    ).one_or_none()
+    employee_today = local_today(employee.timezone)
+    from app.api.v1.timesheets import timesheet_rows
+
+    canonical_rows = timesheet_rows(
+        db,
+        current_admin.company_id,
+        employee_today,
+        employee_today,
+        employee_id=employee.id,
+        current_admin=current_admin,
+    )
+    canonical_today = canonical_rows[0] if canonical_rows else None
     last_screenshot = db.scalar(
         select(Screenshot)
         .where(
@@ -856,16 +1264,43 @@ def employee_status(
         .order_by(Screenshot.captured_at.desc())
     )
     settings = get_company_settings(db, current_admin.company_id)
-    cutoff = datetime.now(UTC) - timedelta(minutes=settings.offline_threshold_minutes)
+    now = datetime.now(UTC)
+    cutoff = now - timedelta(minutes=settings.offline_threshold_minutes)
+    normalized_last_seen = _as_utc(device.last_seen_at if device else None)
     online = bool(
         device
         and device.status != "revoked"
-        and device.last_seen_at
-        and device.last_seen_at >= cutoff
+        and normalized_last_seen
+        and normalized_last_seen >= cutoff
     )
-    active_seconds = max(0, int(totals[0] if totals else 0) - int(totals[2] if totals else 0))
-    idle_seconds = int(totals[1] if totals else 0)
+    active_seconds = (
+        max(
+            0,
+            int(canonical_today["active_seconds"])
+            - int(canonical_today["adjustment_seconds"]),
+        )
+        if canonical_today
+        else 0
+    )
+    idle_seconds = max(0, int(canonical_today["idle_seconds"])) if canonical_today else 0
     activity_status = current.status if current and online else "offline"
+    schedule_context = None
+    if activity_status in {"active", "idle", "locked", "sleeping"}:
+        schedule_context = current_idle_contexts(
+            db,
+            employees=[employee],
+            now=now,
+        ).get(employee.id, "off_shift")
+    if schedule_context == "on_break":
+        if activity_status == "active":
+            activity_status = "break_work"
+        elif activity_status in {"idle", "locked", "sleeping"}:
+            activity_status = "on_break"
+    elif (
+        schedule_context == "off_shift"
+        and activity_status in {"idle", "locked", "sleeping"}
+    ):
+        activity_status = "off_shift"
     return success_response(
         data={
             "employee": serialize_employee(employee),

@@ -2,11 +2,12 @@ export type Role = "general_admin" | "team_owner" | "hr";
 export type PermissionMode = "role" | "custom";
 export type DataScope = "company" | "assigned_teams";
 
-export type EmployeeStatus = "active" | "idle" | "locked" | "sleeping" | "offline";
-export type EmployeeAccountStatus = "invited" | "active" | "inactive";
+export type EmployeeStatus =
+  "active" | "idle" | "locked" | "sleeping" | "on_break" | "break_work" | "off_shift" | "offline";
+export type EmployeeAccountStatus = "invited" | "app_pending" | "active" | "inactive";
 export type DeviceStatus = "online" | "offline" | "revoked";
 export type TeamStatus = "active" | "archived";
-export type UserStatus = "active" | "inactive";
+export type UserStatus = "invited" | "active" | "inactive" | "archived";
 export type TeamMemberRole = "team_manager" | "team_lead" | "senior" | "member" | "trainee";
 
 export interface User {
@@ -29,12 +30,20 @@ export interface User {
   avatarUrl?: string;
 }
 
+export interface TeamOwnerSummary {
+  id: string;
+  name: string;
+  email: string;
+}
+
 export interface Team {
   id: string;
   name: string;
   description?: string;
   status: TeamStatus;
   ownerIds: string[];
+  /** Owner names ship with the team so they render without the user directory. */
+  owners: TeamOwnerSummary[];
   employeeIds: string[];
   createdAt: string;
 }
@@ -99,6 +108,8 @@ export interface Employee {
   email: string;
   jobTitle: string;
   timezone: string;
+  startDate?: string;
+  annualLeaveDays: number;
   teamRole?: TeamMemberRole;
   teamIds: string[];
   status: EmployeeStatus;
@@ -113,6 +124,13 @@ export interface Employee {
   currentTeamId?: string;
   currentProjectId?: string;
   currentTaskId?: string;
+  inputIntegrity?: {
+    state: "unknown" | "clear" | "review" | "suspicious" | "unavailable";
+    confidence: number;
+    injectedEvents: number;
+    suspiciousReports: number;
+    observedAt?: string;
+  };
   active: boolean;
   accountStatus: EmployeeAccountStatus;
   invitation?: {
@@ -170,7 +188,8 @@ export interface ActivityEvent {
   meta?: Record<string, string>;
 }
 
-export type WorkdayIntervalType = "worked" | "idle" | "locked" | "sleeping";
+export type WorkdayIntervalType =
+  "worked" | "idle" | "locked" | "sleeping" | "untracked" | "break" | "manual";
 
 export interface WorkdayInterval {
   type: WorkdayIntervalType;
@@ -178,10 +197,12 @@ export interface WorkdayInterval {
   endedAt?: string;
   durationSeconds: number;
   sessionId?: string;
+  projectId?: string;
+  taskId?: string;
   projectName?: string;
   taskName?: string;
   isCurrent: boolean;
-  workCategory?: "extra" | null;
+  workCategory?: "extra" | "break_work" | null;
 }
 
 export interface WorkdayTimeline {
@@ -191,10 +212,15 @@ export interface WorkdayTimeline {
   lastEndedAt?: string;
   lastActivityAt?: string;
   isRunning: boolean;
+  continuedFromPreviousDay: boolean;
+  continuedSessionStartedAt?: string;
   workedSeconds: number;
   idleSeconds: number;
   lockedSeconds: number;
   sleepingSeconds: number;
+  untrackedSeconds: number;
+  breakSeconds: number;
+  manualSeconds: number;
   approvedLeave: boolean;
   leaveSeconds: number;
   intervals: WorkdayInterval[];
@@ -221,18 +247,28 @@ export interface Screenshot {
 export interface Timesheet {
   id: string;
   employeeId: string;
+  employeeName?: string;
   teamId: string;
   date: string;
   startTime?: string;
   endTime?: string;
+  lastSignalAt?: string;
+  leaveStatus?: "approved";
+  leaveType?: string;
+  sessionCount: number;
   totalMinutes: number;
+  observedSpanMinutes: number;
+  untrackedMinutes: number;
   activeMinutes: number;
   idleMinutes: number;
+  accountableIdleMinutes: number;
+  overtimeMinutes: number;
   adjustmentMinutes: number;
   deductedMinutes: number;
   points: number;
   screenshotCount: number;
-  status: "complete" | "in_progress" | "missing";
+  status:
+    "complete" | "in_progress" | "idle" | "locked" | "sleeping" | "missing" | "approved_leave";
 }
 
 export interface TrackingSettings {
@@ -250,6 +286,8 @@ export interface DashboardSummary {
   onlineEmployees: number;
   activeEmployees: number;
   idleEmployees: number;
+  onBreakEmployees: number;
+  offShiftEmployees: number;
   offlineEmployees: number;
   teams: number;
   hoursTrackedToday: number;
