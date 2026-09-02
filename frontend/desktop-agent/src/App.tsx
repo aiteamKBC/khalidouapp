@@ -95,7 +95,7 @@ const fallbackStatus: AgentStatus = {
 
 const TRACKABLE_TASK_STAGES = new Set(["backlog", "assigned", "in_progress"]);
 const THEME_STORAGE_KEY = "khaliduo-theme";
-const LIGHT_DEFAULT_RESET_KEY = "khaliduo-desktop-light-default-applied";
+const DARK_DEFAULT_RESET_KEY = "khaliduo-desktop-dark-default-applied";
 const TRACKING_CONTROL_TIMEOUT_MS = 20_000;
 
 type IdleRequestOption = {
@@ -110,14 +110,14 @@ type IdleRequestOption = {
 };
 
 function initialTheme(): "light" | "dark" {
-  if (window.localStorage.getItem(LIGHT_DEFAULT_RESET_KEY) !== "1") {
+  if (window.localStorage.getItem(DARK_DEFAULT_RESET_KEY) !== "1") {
     window.localStorage.removeItem(THEME_STORAGE_KEY);
-    window.localStorage.setItem(LIGHT_DEFAULT_RESET_KEY, "1");
-    return "light";
+    window.localStorage.setItem(DARK_DEFAULT_RESET_KEY, "1");
+    return "dark";
   }
-  return window.localStorage.getItem(THEME_STORAGE_KEY) === "dark"
-    ? "dark"
-    : "light";
+  return window.localStorage.getItem(THEME_STORAGE_KEY) === "light"
+    ? "light"
+    : "dark";
 }
 
 function formatDuration(totalSeconds: number) {
@@ -148,7 +148,10 @@ type KIconName =
   | "locked"
   | "sleeping"
   | "untracked"
-  | "settings";
+  | "settings"
+  | "update"
+  | "sun"
+  | "moon";
 
 function KIcon({
   name,
@@ -257,6 +260,21 @@ function KIcon({
         <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1a1.7 1.7 0 0 0 1.9.3A1.7 1.7 0 0 0 10 3v-.2h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z" />
       </>
     ),
+    update: (
+      <>
+        <path d="M20 7v5h-5" />
+        <path d="M4 17v-5h5" />
+        <path d="M6.1 8.2A7 7 0 0 1 18.7 7L20 12" />
+        <path d="M17.9 15.8A7 7 0 0 1 5.3 17L4 12" />
+      </>
+    ),
+    sun: (
+      <>
+        <circle cx="12" cy="12" r="3.5" />
+        <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" />
+      </>
+    ),
+    moon: <path d="M20 15.2A8 8 0 0 1 8.8 4a8 8 0 1 0 11.2 11.2Z" />,
   };
 
   return (
@@ -1443,6 +1461,55 @@ function App() {
           {status.enrolled ? formatDuration(displayedTimerSeconds) : ""}
         </span>
         <span className="k-spacer" />
+        <div className="k-header-actions">
+        {status.enrolled && (
+          <nav className="k-header-nav" aria-label="Primary navigation">
+            <button
+              type="button"
+              className={activeView === "home" ? "active" : ""}
+              onClick={() => setActiveView("home")}
+              title="Timer"
+              aria-label="Timer"
+            >
+              <KIcon name="timer" />
+            </button>
+            <button
+              type="button"
+              className={activeView === "tasks" ? "active" : ""}
+              onClick={() => setActiveView("tasks")}
+              title="Tasks"
+              aria-label="Tasks"
+            >
+              <KIcon name="tasks" />
+            </button>
+            <button
+              type="button"
+              className={activeView === "requests" ? "active" : ""}
+              onClick={() => setActiveView("requests")}
+              title="Requests"
+              aria-label="Requests"
+            >
+              <KIcon name="calendar" />
+            </button>
+            <button
+              type="button"
+              className={activeView === "settings" ? "active" : ""}
+              onClick={() => setActiveView("settings")}
+              title="Settings"
+              aria-label="Settings"
+            >
+              <KIcon name="settings" />
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleOpenDashboard()}
+              title="Dashboard"
+              aria-label="Dashboard"
+            >
+              <KIcon name="dashboard" />
+            </button>
+          </nav>
+        )}
         {status.screenshotMonitoringEnabled && (
           <span
             className={`k-capture-indicator ${
@@ -1502,13 +1569,15 @@ function App() {
           className="k-theme-button"
           onClick={() => void handleUpdateButton()}
           disabled={updateButtonDisabled}
+          aria-label={updateButtonLabel}
           title={
             status.updateStatus === "ready"
               ? "Install the downloaded Khaliduo update now"
               : "Check for Khaliduo updates now"
           }
         >
-          {updateButtonLabel}
+          <KIcon name="update" />
+          <span className="k-control-label">{updateButtonLabel}</span>
         </button>
         <button
           type="button"
@@ -1516,10 +1585,40 @@ function App() {
           onClick={() =>
             setTheme((current) => (current === "dark" ? "light" : "dark"))
           }
+          aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
           title={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
         >
-          {theme === "dark" ? "Light" : "Dark"}
+          <KIcon name={theme === "dark" ? "sun" : "moon"} />
+          <span className="k-control-label">
+            {theme === "dark" ? "Light" : "Dark"}
+          </span>
         </button>
+        </div>
+        {status.enrolled && (
+          <div className="k-header-user" aria-label="Current employee">
+            <span className="k-header-avatar">
+              {status.employeeAvatarUrl ? (
+                <img src={status.employeeAvatarUrl} alt="" />
+              ) : (
+                initials(status.employeeName)
+              )}
+            </span>
+            <span>
+              <strong>{status.employeeName}</strong>
+              <small
+                className={
+                  status.connectionStatus === "online" || isTracking
+                    ? "k-ok"
+                    : "k-danger"
+                }
+              >
+                {status.connectionStatus === "online" || isTracking
+                  ? "Active"
+                  : "Offline"}
+              </small>
+            </span>
+          </div>
+        )}
         <div className="k-window-controls" aria-label="Window controls">
           <button
             type="button"
@@ -1544,6 +1643,12 @@ function App() {
             ×
           </button>
         </div>
+        {status.enrolled && (
+          <h1 className="k-welcome-title">
+            Welcome back {status.employeeName.split(" ")[0] || "there"}
+          </h1>
+        )}
+        <span className="k-header-stripes" aria-hidden="true" />
       </header>
 
       {["available", "downloading", "ready", "installing"].includes(
@@ -2066,6 +2171,10 @@ function HomeView({
             } as CSSProperties
           }
         >
+          <span
+            className="k-hero-wireframe k-hero-wireframe-right"
+            aria-hidden="true"
+          />
           <span className="k-hero-icon">
             <KIcon name="briefcase" />
           </span>
@@ -2126,23 +2235,28 @@ function HomeView({
           </div>
           <div className="k-hero-meta">
             <div>
+              <KIcon name="tasks" />
               <span>Activity</span>
               <strong>{status.activityPercent}%</strong>
             </div>
             <div>
+              <KIcon name="timer" />
               <span>Current session</span>
               <strong>{formatDuration(status.activeSeconds)}</strong>
             </div>
             <div>
+              <KIcon name="worked" />
               <span>Normal</span>
               <strong>{formatDuration(normalSeconds)}</strong>
             </div>
             <div>
+              <KIcon name="dashboard" />
               <span>Overtime</span>
               <strong>{formatDuration(extraSeconds)}</strong>
               <small className="k-meta-note">{overtimeStatus}</small>
             </div>
             <div>
+              <KIcon name="idle" />
               <span>Idle</span>
               <strong>{formatDuration(todayIdleSeconds)}</strong>
               <small className="k-meta-note">
