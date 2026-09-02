@@ -32,13 +32,13 @@ test("idle duration starts at zero after the ten-minute grace period", () => {
   assert.equal(idleDurationAfterThreshold(900), 300);
 });
 
-test("a scheduled break uses a three-minute idle threshold", () => {
-  assert.equal(BREAK_IDLE_THRESHOLD_MINUTES, 3);
-  assert.equal(BREAK_IDLE_THRESHOLD_SECONDS, 180);
-  assert.equal(hasReachedIdleThreshold(179, true), false);
-  assert.equal(hasReachedIdleThreshold(180, true), true);
-  assert.equal(idleDurationAfterThreshold(180, true), 0);
-  assert.equal(idleDurationAfterThreshold(185, true), 5);
+test("a scheduled break uses the same ten-minute idle threshold", () => {
+  assert.equal(BREAK_IDLE_THRESHOLD_MINUTES, 10);
+  assert.equal(BREAK_IDLE_THRESHOLD_SECONDS, 600);
+  assert.equal(hasReachedIdleThreshold(599, true), false);
+  assert.equal(hasReachedIdleThreshold(600, true), true);
+  assert.equal(idleDurationAfterThreshold(600, true), 0);
+  assert.equal(idleDurationAfterThreshold(605, true), 5);
 });
 
 test("returning early from a break is detected from fresh input", () => {
