@@ -286,8 +286,9 @@ if ($ResumeDesktopPublish) {
     # Keep SSH stdin attached to the console so password authentication cannot
     # consume bytes from the remote Bash script. This also gives the user one
     # clean password prompt instead of mixing the prompt with pipeline input.
+    # Windows here-strings can contain CRLF; Bash requires LF line endings.
     $appDeployPayload = [Convert]::ToBase64String(
-        [Text.Encoding]::UTF8.GetBytes($appDeployScript)
+        [Text.Encoding]::UTF8.GetBytes($appDeployScript.Replace("`r`n", "`n").Replace("`r", "`n"))
     )
     & ssh -o ServerAliveInterval=15 -o ServerAliveCountMax=3 $Server (
         "printf '%s' '$appDeployPayload' | base64 -d | bash"
@@ -376,8 +377,9 @@ echo "DESKTOP_BACKUP=$BACKUP"
         Replace("__API_BASE_URL__", $ApiBaseUrl)
 
     Write-Host "Publishing signed Desktop $version..."
+    # Normalize this payload too, including the desktop-only recovery path.
     $desktopPublishPayload = [Convert]::ToBase64String(
-        [Text.Encoding]::UTF8.GetBytes($desktopPublishScript)
+        [Text.Encoding]::UTF8.GetBytes($desktopPublishScript.Replace("`r`n", "`n").Replace("`r", "`n"))
     )
     & ssh -o ServerAliveInterval=15 -o ServerAliveCountMax=3 $Server (
         "printf '%s' '$desktopPublishPayload' | base64 -d | bash"
