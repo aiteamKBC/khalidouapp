@@ -49,7 +49,11 @@ export function screenshotCaptureBlockReasonForState(options: {
   enrolled: boolean;
   screenshotsEnabled: boolean;
   hasActiveSession: boolean;
-  trackingPaused: boolean;
+  // Only the employee's manual "Pause" blocks capture. Sign-out/stop and paid
+  // pauses also mark tracking as paused, but workplace screenshot monitoring is
+  // an independent company policy and deliberately continues in those states,
+  // so this signal is intentionally narrower than a generic "trackingPaused".
+  manualPauseActive: boolean;
   onAcPower: boolean;
   trackingStatus: RuntimeTrackingStatus;
   systemIdleSeconds: number;
@@ -57,7 +61,7 @@ export function screenshotCaptureBlockReasonForState(options: {
   if (!options.enrolled) return "device_not_enrolled";
   if (!options.screenshotsEnabled) return "capture_disabled";
   if (!options.hasActiveSession) return "no_active_session";
-  if (options.trackingPaused) return "tracking_paused";
+  if (options.manualPauseActive) return "tracking_paused";
   if (!options.onAcPower) return "battery_power";
   if (options.trackingStatus === "locked") return "screen_locked";
   if (options.trackingStatus === "sleeping") return "system_sleeping";

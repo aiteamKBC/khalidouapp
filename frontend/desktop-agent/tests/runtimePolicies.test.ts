@@ -11,7 +11,7 @@ const activeScreenshotState = {
   enrolled: true,
   screenshotsEnabled: true,
   hasActiveSession: true,
-  trackingPaused: false,
+  manualPauseActive: false,
   onAcPower: true,
   trackingStatus: "active" as const,
   systemIdleSeconds: 0,
@@ -34,13 +34,38 @@ test("no screenshot is captured when the employee has no active session", () => 
   );
 });
 
-test("no screenshot is captured during a pause", () => {
+test("no screenshot is captured during a manual unpaid pause", () => {
   assert.equal(
     screenshotCaptureBlockReasonForState({
       ...activeScreenshotState,
-      trackingPaused: true,
+      manualPauseActive: true,
     }),
     "tracking_paused",
+  );
+});
+
+test("a paid pause keeps capturing (independent company policy)", () => {
+  // A paid pause marks tracking as paused but does not set manualPauseActive,
+  // so screenshot capture continues.
+  assert.equal(
+    screenshotCaptureBlockReasonForState({
+      ...activeScreenshotState,
+      manualPauseActive: false,
+    }),
+    null,
+  );
+});
+
+test("sign-out / stop keeps capturing (independent company policy)", () => {
+  // Stop/sign-out also pauses tracking but deliberately keeps screenshot
+  // monitoring active for an enrolled device; manualPauseActive stays false.
+  assert.equal(
+    screenshotCaptureBlockReasonForState({
+      ...activeScreenshotState,
+      manualPauseActive: false,
+      trackingStatus: "paused",
+    }),
+    null,
   );
 });
 

@@ -1,5 +1,6 @@
 import electronMain from 'electron/main';
 import initSqlJs, { type Database } from 'sql.js';
+import log from 'electron-log/main';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -60,7 +61,23 @@ function persist() {
     return;
   }
   fs.mkdirSync(app.getPath('userData'), { recursive: true });
-  fs.writeFileSync(dbPath(), Buffer.from(database.export()));
+  // Write to a temp file, flush it to disk, then atomically rename over the
+  // real database. fs.writeFileSync truncates the target first, so an
+  // interrupted write (power loss, forced kill) would leave offline.sqlite
+  // half-written and unreadable on next launch. Rename on the same volume is
+  // atomic, so the on-disk database is always a complete, previously-valid
+  // snapshot — never a partial one.
+  const target = dbPath();
+  const temporary = `${target}.tmp`;
+  const data = Buffer.from(database.export());
+  const handle = fs.openSync(temporary, 'w');
+  try {
+    fs.writeSync(handle, data);
+    fs.fsyncSync(handle);
+  } finally {
+    fs.closeSync(handle);
+  }
+  fs.renameSync(temporary, target);
 }
 
 function rows<T>(sql: string, params: SqlValue[] = []): T[] {
@@ -105,9 +122,52 @@ export async function initializeLocalDatabase() {
 
   const SQL = await initSqlJs({ locateFile: locateSqlWasm });
   const filePath = dbPath();
-  database = fs.existsSync(filePath)
-    ? new SQL.Database(fs.readFileSync(filePath))
-    : new SQL.Database();
+  // A crash during persist() can leave a stale temp file behind. It is never
+  // the source of truth, so discard it before loading the real database.
+  const temporaryPath = `${filePath}.tmp`;
+  if (fs.existsSync(temporaryPath)) {
+    try {
+      fs.rmSync(temporaryPath);
+    } catch (error) {
+      log.warn('Could not remove stale offline database temp file', error);
+    }
+  }
+  if (fs.existsSync(filePath)) {
+    try {
+      database = new SQL.Database(fs.readFileSync(filePath));
+      // sql.js does not validate the image on construction — a corrupt file
+      // (e.g. a half-written one from a pre-atomic build interrupted by power
+      // loss) only fails on first access. Force a read of the schema page now
+      // so corruption is detected and recovered here, instead of throwing a
+      // few lines below during table setup and bricking startup.
+      database.exec('select count(*) from sqlite_master');
+    } catch (error) {
+      // Discard the unreadable handle, quarantine the file for diagnostics,
+      // and start fresh so the agent still boots and can resume tracking.
+      try {
+        database?.close();
+      } catch {
+        // Nothing actionable if the corrupt handle cannot be closed.
+      }
+      database = null;
+      const quarantinePath = `${filePath}.corrupt-${Date.now()}`;
+      try {
+        fs.renameSync(filePath, quarantinePath);
+        log.error(
+          `Offline database was corrupt; quarantined to ${quarantinePath} and reinitialized.`,
+          error,
+        );
+      } catch (renameError) {
+        log.error(
+          'Offline database was corrupt and could not be quarantined; reinitializing.',
+          renameError,
+        );
+      }
+      database = new SQL.Database();
+    }
+  } else {
+    database = new SQL.Database();
+  }
 
   database.run(`
     create table if not exists device_identity (

@@ -94,6 +94,8 @@ import {
 } from "./services/idlePolicy.js";
 import { createCoalescedRefresh } from "./services/coalescedRefresh.js";
 import { getUserFacingError } from "./services/userFacingError.js";
+import { trackingTick } from "./services/trackingTick.js";
+import { reconcileTrackingStatusAfterSync } from "./services/trackingStatusReconcile.js";
 import {
   mergeRecoveredCounters,
   offsetRecoveredEventPayload,
@@ -109,8 +111,10 @@ import {
 } from "./services/runtimePolicies.js";
 import {
   canAdoptPromotedLocalSession,
+  isSessionCounterToday,
   promotableLocalSessionIds,
   reconcileWorkedToday,
+  resolveSessionCounterSeconds,
   shouldRolloverRestoredLocalSession,
   shouldResetDailyCountersForSession,
 } from "./services/dailyCounters.js";
@@ -1469,7 +1473,15 @@ function syncRuntimeFromSession(session: WorkSession) {
   ) {
     resetDailyRuntimeCounters(todayCounterDate);
   }
-  const sessionBelongsToToday = sessionCounterDate === todayCounterDate;
+  const belongsToToday = isSessionCounterToday({
+    sessionCounterDate,
+    todayCounterDate,
+  });
+  // Today's portion of the session. For a session continued from a previous day
+  // the server reports a multi-day total, so today's counters are only what we
+  // accrued locally since the midnight reset — not the server total, not 0.
+  const localActiveSeconds = changedSession ? 0 : runtimeStatus.activeSeconds;
+  const localIdleSeconds = changedSession ? 0 : runtimeStatus.idleSeconds;
   if (
     session.ended_at ||
     session.status === "ended" ||
@@ -1480,18 +1492,18 @@ function syncRuntimeFromSession(session: WorkSession) {
     }
     runtimeStatus.sessionStartedAt = null;
     runtimeStatus.trackingStatus = "offline";
-    runtimeStatus.activeSeconds = sessionBelongsToToday
+    runtimeStatus.activeSeconds = belongsToToday
       ? session.active_seconds
-      : 0;
-    runtimeStatus.idleSeconds = sessionBelongsToToday ? session.idle_seconds : 0;
+      : localActiveSeconds;
+    runtimeStatus.idleSeconds = belongsToToday
+      ? session.idle_seconds
+      : localIdleSeconds;
     runtimeStatus.workedTodaySeconds =
       workedTodayBaseSeconds + runtimeStatus.activeSeconds;
     lastDurationTickAt = null;
     return;
   }
   const wasIdle = runtimeStatus.trackingStatus === "idle";
-  const localActiveSeconds = changedSession ? 0 : runtimeStatus.activeSeconds;
-  const localIdleSeconds = changedSession ? 0 : runtimeStatus.idleSeconds;
   activeCounterDate = todayCounterDate;
   currentSessionId = session.id;
   runtimeStatus.sessionStartedAt = session.started_at;
@@ -1503,12 +1515,16 @@ function syncRuntimeFromSession(session: WorkSession) {
   } else if (session.status !== "idle") {
     automaticIdleStartedDuringBreak = false;
   }
-  runtimeStatus.activeSeconds = sessionBelongsToToday
-    ? Math.max(session.active_seconds, localActiveSeconds)
-    : 0;
-  runtimeStatus.idleSeconds = sessionBelongsToToday
-    ? Math.max(session.idle_seconds, localIdleSeconds)
-    : 0;
+  runtimeStatus.activeSeconds = resolveSessionCounterSeconds({
+    belongsToToday,
+    serverSeconds: session.active_seconds,
+    localSeconds: localActiveSeconds,
+  });
+  runtimeStatus.idleSeconds = resolveSessionCounterSeconds({
+    belongsToToday,
+    serverSeconds: session.idle_seconds,
+    localSeconds: localIdleSeconds,
+  });
   runtimeStatus.workedTodaySeconds =
     workedTodayBaseSeconds + runtimeStatus.activeSeconds;
   if (changedSession) {
@@ -1754,14 +1770,16 @@ function recalculateWorkedTime() {
     return;
   }
 
-  const elapsedSeconds = Math.max(
-    0,
-    Math.floor((now - lastDurationTickAt) / 1000),
-  );
+  // Discard oversized deltas: a gap far larger than the tick interval means the
+  // process was frozen (sleep/hibernate/stall), not that the user worked. This
+  // makes correctness independent of whether powerMonitor "suspend"/"resume"
+  // fire — hibernate often does not deliver "resume", which previously let the
+  // whole frozen span be banked as active time.
+  const { elapsedSeconds, nextTickMs } = trackingTick(lastDurationTickAt, now);
+  lastDurationTickAt = nextTickMs;
   if (elapsedSeconds === 0) {
     return;
   }
-  lastDurationTickAt += elapsedSeconds * 1000;
 
   if (runtimeStatus.paidPauseEndsAt) {
     runtimeStatus.paidPauseRemainingSeconds = Math.max(
@@ -2096,8 +2114,19 @@ async function sendStateEvent(
     const latestLocalStatus = runtimeStatus.trackingStatus;
     syncRuntimeFromSession(result.session);
     applyWorkdayState(result.workday);
-    if (latestLocalStatus !== status) {
-      runtimeStatus.trackingStatus = latestLocalStatus;
+    // Our posted transition is authoritative over a stale server echo of the
+    // pre-transition status; otherwise a lagging "idle" snapshot reverts the
+    // resume and the idle-return prompt loops forever.
+    const reconciledStatus = reconcileTrackingStatusAfterSync({
+      postedStatus: status,
+      localStatusBeforeSync: latestLocalStatus,
+      sessionEndedServerSide:
+        Boolean(result.session.ended_at) ||
+        result.session.status === "ended" ||
+        result.session.status === "offline",
+    });
+    if (reconciledStatus !== null) {
+      runtimeStatus.trackingStatus = reconciledStatus;
     }
     await refreshWorkedTodayTotal();
     runtimeStatus.connectionStatus = "online";
@@ -2824,8 +2853,21 @@ async function heartbeatTick(options: { refreshMetadata?: boolean } = {}) {
     applyWorkdayState(result.workday);
     if (serverClosedDuringNonWorking) {
       waitForInputAfterIdleSessionClose(status);
-    } else if (latestLocalStatus !== status) {
-      runtimeStatus.trackingStatus = latestLocalStatus;
+    } else {
+      // Keep the locally-known status authoritative over a stale server echo,
+      // so a heartbeat cannot bounce an active session back to idle while the
+      // server is still catching up to a just-sent transition.
+      const reconciledStatus = reconcileTrackingStatusAfterSync({
+        postedStatus: status,
+        localStatusBeforeSync: latestLocalStatus,
+        sessionEndedServerSide:
+          Boolean(result.session.ended_at) ||
+          result.session.status === "ended" ||
+          result.session.status === "offline",
+      });
+      if (reconciledStatus !== null) {
+        runtimeStatus.trackingStatus = reconciledStatus;
+      }
     }
     applyPauseState(result.pause);
     if (
@@ -2945,9 +2987,14 @@ function startTimers() {
     durationTimer = setInterval(recalculateWorkedTime, 1000);
   }
   if (!heartbeatTimer) {
-    const heartbeatSeconds = Number(
+    const parsedHeartbeatSeconds = Number(
       process.env.HEARTBEAT_INTERVAL_SECONDS ?? "60",
     );
+    // A malformed env value (NaN) would make Math.max(10, NaN) === NaN, and
+    // setInterval(fn, NaN) fires as fast as the loop allows, hammering the API.
+    const heartbeatSeconds = Number.isFinite(parsedHeartbeatSeconds)
+      ? parsedHeartbeatSeconds
+      : 60;
     heartbeatTimer = setInterval(
       () => void heartbeatTick(),
       Math.max(10, heartbeatSeconds) * 1000,
@@ -3007,6 +3054,11 @@ function screenshotCaptureBlockReason(): string | null {
   if (!runtimeStatus.enrolled) return "device_not_enrolled";
   if (!trackingConfig.screenshot_enabled) return "capture_disabled";
   if (freshSessionStartPromptActive) return "work_start_not_confirmed";
+  // The employee's manual unpaid Pause blocks capture. Sign-out/stop and paid
+  // pauses also set trackingPaused, but screenshot monitoring is an independent
+  // company policy and intentionally keeps capturing there, so this checks the
+  // narrow unpaid-pause flag rather than the generic paused state.
+  if (unpaidPauseActive) return "tracking_paused";
   if (!onAcPower) return "battery_power";
   if (
     runtimeStatus.trackingStatus === "locked" ||
@@ -3301,11 +3353,22 @@ async function syncPendingQueuesOnce(forcePendingQueues: boolean) {
   for (const screenshot of getDuePendingScreenshots(10, {
     force: forcePendingQueues,
   })) {
+    let metadata: ScreenshotMetadata;
+    let content: Buffer;
     try {
-      const metadata = JSON.parse(
-        screenshot.metadataJson,
-      ) as ScreenshotMetadata;
-      const content = fs.readFileSync(screenshot.filePath);
+      metadata = JSON.parse(screenshot.metadataJson) as ScreenshotMetadata;
+      content = fs.readFileSync(screenshot.filePath);
+    } catch (error) {
+      // The local image or its metadata is missing/unreadable (manual cleanup,
+      // antivirus, disk issue). The upload can never succeed, so drop the row
+      // permanently and remove any leftover file instead of retrying forever
+      // and stalling the head of the queue on every pass.
+      markPendingScreenshotFailed(screenshot.screenshotId, screenshot.attempts, true);
+      fs.rmSync(screenshot.filePath, { force: true });
+      log.warn("Dropped unreadable pending screenshot", safeErrorForLog(error));
+      continue;
+    }
+    try {
       await initiateScreenshot(metadata);
       await uploadScreenshot(
         screenshot.screenshotId,
@@ -3338,6 +3401,9 @@ async function syncPendingQueuesOnce(forcePendingQueues: boolean) {
       if (!permanentlyRejected) {
         break;
       }
+      // A server-rejected screenshot will never be accepted; remove its file so
+      // dead rows do not leak images on disk indefinitely.
+      fs.rmSync(screenshot.filePath, { force: true });
       continue;
     }
   }
@@ -3744,8 +3810,7 @@ async function pauseTracking(
   rebuildTrayMenu();
   return {
     success: true,
-    message:
-      "Paused. Resume when you return; screenshot monitoring remains active.",
+    message: "Paused. Tracking and screenshots stop until you resume.",
   };
 }
 
@@ -4634,6 +4699,20 @@ function wireSystemEvents() {
   });
 }
 
+// Last-resort visibility: without these, an unhandled rejection during startup
+// leaves the process alive but broken — no tray, no tracking — while still
+// holding the single-instance lock, so relaunching silently fails. Log it so
+// the failure is diagnosable instead of invisible.
+process.on("uncaughtException", (error) => {
+  log.error("Uncaught exception in the main process", safeErrorForLog(error));
+});
+process.on("unhandledRejection", (reason) => {
+  log.error(
+    "Unhandled promise rejection in the main process",
+    safeErrorForLog(reason),
+  );
+});
+
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
 if (!gotSingleInstanceLock) {
   app.quit();
@@ -4719,51 +4798,59 @@ app.whenReady().then(async () => {
   }
   log.initialize();
   log.info("Khaliduo agent starting");
-  const recoveryAttempt = crashRecoveryAttempt(process.argv);
-  const launchedForCrashRecovery = isCrashRecoveryLaunch(process.argv);
-  startCrashRecoveryWatchdog(recoveryAttempt);
-  await initializeLocalDatabase();
-  hydrateIdentityStatus();
-  if (
-    launchedForCrashRecovery &&
-    (!runtimeStatus.enrolled ||
-      !runtimeStatus.deviceId ||
-      !getOpenLocalTrackingSession(runtimeStatus.deviceId))
-  ) {
-    log.info("Crash recovery skipped because no interrupted tracking session exists");
-    stopCrashRecoveryWatchdog();
-    app.exit(0);
-    return;
-  }
-  const launchedByWindowsStartup =
-    process.argv.includes("--autostart") || process.argv.includes("--hidden");
-  const launchedAfterSilentUpdate =
-    process.argv.includes("--updated") || process.argv.includes("--force-run");
-  const launchedInBackground =
-    launchedByWindowsStartup || launchedAfterSilentUpdate || launchedForCrashRecovery;
-  loadTrackingPreferences(launchedByWindowsStartup || launchedForCrashRecovery);
-  configureAutoStart();
-  wireSystemEvents();
-
-  tray = new Tray(
-    createTrayImage(runtimeStatus.enrolled ? "#1f7a4d" : "#b7791f"),
-  );
-  tray.on("click", () => showMainWindow());
-  tray.on("double-click", () => showMainWindow());
-  rebuildTrayMenu();
-
-  await createMainWindow();
-  configureAutoUpdater();
-  if (!launchedInBackground) {
-    showMainWindow();
-  }
-  if (runtimeStatus.enrolled) {
-    startScreenshotMonitoring();
-    if (!trackingPausedByUser) {
-      await startTrackingAutomatically();
+  try {
+    const recoveryAttempt = crashRecoveryAttempt(process.argv);
+    const launchedForCrashRecovery = isCrashRecoveryLaunch(process.argv);
+    startCrashRecoveryWatchdog(recoveryAttempt);
+    await initializeLocalDatabase();
+    hydrateIdentityStatus();
+    if (
+      launchedForCrashRecovery &&
+      (!runtimeStatus.enrolled ||
+        !runtimeStatus.deviceId ||
+        !getOpenLocalTrackingSession(runtimeStatus.deviceId))
+    ) {
+      log.info("Crash recovery skipped because no interrupted tracking session exists");
+      stopCrashRecoveryWatchdog();
+      app.exit(0);
+      return;
     }
+    const launchedByWindowsStartup =
+      process.argv.includes("--autostart") || process.argv.includes("--hidden");
+    const launchedAfterSilentUpdate =
+      process.argv.includes("--updated") || process.argv.includes("--force-run");
+    const launchedInBackground =
+      launchedByWindowsStartup || launchedAfterSilentUpdate || launchedForCrashRecovery;
+    loadTrackingPreferences(launchedByWindowsStartup || launchedForCrashRecovery);
+    configureAutoStart();
+    wireSystemEvents();
+
+    tray = new Tray(
+      createTrayImage(runtimeStatus.enrolled ? "#1f7a4d" : "#b7791f"),
+    );
+    tray.on("click", () => showMainWindow());
+    tray.on("double-click", () => showMainWindow());
+    rebuildTrayMenu();
+
+    await createMainWindow();
+    configureAutoUpdater();
+    if (!launchedInBackground) {
+      showMainWindow();
+    }
+    if (runtimeStatus.enrolled) {
+      startScreenshotMonitoring();
+      if (!trackingPausedByUser) {
+        await startTrackingAutomatically();
+      }
+    }
+    rebuildTrayMenu();
+  } catch (error) {
+    // Never linger as an invisible, lock-holding zombie. Exit non-zero so the
+    // single-instance lock is released and the crash-recovery watchdog can
+    // relaunch the agent instead of the user seeing a silently dead process.
+    log.error("Khaliduo agent failed to start", safeErrorForLog(error));
+    app.exit(1);
   }
-  rebuildTrayMenu();
 });
 
 app.on("window-all-closed", () => undefined);
