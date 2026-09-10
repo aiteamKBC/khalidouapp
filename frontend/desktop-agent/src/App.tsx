@@ -29,6 +29,7 @@ import {
   totalRequestableIdleMinutes,
 } from "./idleRequests";
 import { OperationTimeoutError, withOperationTimeout } from "./promiseTimeout";
+import { toValidDate } from "./safeDate";
 import {
   screenshotSyncLabel,
   shouldReloadScreenshotsAfterRecovery,
@@ -290,7 +291,8 @@ function KIcon({
 }
 
 function formatTimestamp(value: string | null) {
-  if (!value) return "Not available";
+  const date = toValidDate(value);
+  if (!date) return "Not available";
   return new Intl.DateTimeFormat("en-US", {
     month: "short",
     day: "numeric",
@@ -298,17 +300,18 @@ function formatTimestamp(value: string | null) {
     hour: "numeric",
     minute: "2-digit",
     hour12: true,
-  }).format(new Date(value));
+  }).format(date);
 }
 
 function formatClock(value: string | null, timezone: string) {
-  if (!value) return "-";
+  const date = toValidDate(value);
+  if (!date) return "-";
   return new Intl.DateTimeFormat("en-US", {
     hour: "numeric",
     minute: "2-digit",
     hour12: true,
     timeZone: timezone,
-  }).format(new Date(value));
+  }).format(date);
 }
 
 function formatTimelineStart(timeline: WorkdayTimeline) {
@@ -317,10 +320,10 @@ function formatTimelineStart(timeline: WorkdayTimeline) {
   }
   const originalStart =
     timeline.continued_session_started_at ?? timeline.first_started_at;
-  if (!originalStart) {
+  const startedAt = toValidDate(originalStart);
+  if (!startedAt) {
     return "Continued from previous day";
   }
-  const startedAt = new Date(originalStart);
   const day = new Intl.DateTimeFormat("en-US", {
     month: "short",
     day: "numeric",
@@ -845,6 +848,15 @@ function App() {
 
       setEmployeeEmail("");
       await refreshStatusAfterEnrollment();
+    } catch (error) {
+      // The IPC can reject (main-process error) rather than resolving a
+      // {success:false}; without this the spinner clears with no feedback and
+      // the wiped password field leaves the user with a silent dead-stop.
+      setEnrollmentError(
+        error instanceof Error
+          ? error.message
+          : "Sign-in and setup failed. Please try again.",
+      );
     } finally {
       setIsSubmitting(false);
     }
@@ -1201,9 +1213,14 @@ function App() {
         result.message ??
           (shouldResume
             ? "Tracking resumed. Screenshots follow the company schedule."
-            : "Paused. Resume when you return; screenshot monitoring remains active."),
+            : "Paused. Tracking and screenshots stop until you resume."),
       );
-      setStatus(await window.khaliduo.getAgentStatus());
+      // Timeout-guard the success-path refresh too: if the main process hangs
+      // here (never resolves), the finally that releases the button would never
+      // run, wedging it on "Please wait…" forever.
+      setStatus(
+        await withOperationTimeout(window.khaliduo.getAgentStatus(), 2_000),
+      );
     } catch (error) {
       try {
         const nextStatus = await withOperationTimeout(
@@ -1365,36 +1382,48 @@ function App() {
       window.khaliduo?.setIdleAlertAttention(false);
     }
 
-    if (result.isConfirmed) {
-      const resumeResult = isTrackingStart
-        ? await window.khaliduo?.confirmTrackingStart()
-        : await window.khaliduo?.resumeAutomaticIdle();
-      if (resumeResult?.message)
-        setTrackingControlMessage(resumeResult.message);
-      const nextStatus = await window.khaliduo?.getAgentStatus();
-      if (nextStatus) setStatus(nextStatus);
-    } else if (result.isDenied) {
-      const pauseResult = isTrackingStart
-        ? await window.khaliduo?.declineTrackingStart()
-        : await window.khaliduo?.pauseTracking();
-      if (pauseResult?.message) setTrackingControlMessage(pauseResult.message);
-      const nextStatus = await window.khaliduo?.getAgentStatus();
-      if (nextStatus) setStatus(nextStatus);
-    } else if (
-      canRequestManualTime &&
-      result.dismiss === Swal.DismissReason.cancel
-    ) {
-      const resumeResult = await window.khaliduo?.resumeAutomaticIdle();
-      if (resumeResult?.message)
-        setTrackingControlMessage(resumeResult.message);
-      setExpandedRequest("idle");
-      setActiveView("requests");
-      setTimeRequestReason(
-        "Offline meeting or work completed while away from the computer.",
-      );
-      window.setTimeout(
-        () => document.getElementById("time-request-reason")?.focus(),
-        50,
+    try {
+      if (result.isConfirmed) {
+        const resumeResult = isTrackingStart
+          ? await window.khaliduo?.confirmTrackingStart()
+          : await window.khaliduo?.resumeAutomaticIdle();
+        if (resumeResult?.message)
+          setTrackingControlMessage(resumeResult.message);
+        const nextStatus = await window.khaliduo?.getAgentStatus();
+        if (nextStatus) setStatus(nextStatus);
+      } else if (result.isDenied) {
+        const pauseResult = isTrackingStart
+          ? await window.khaliduo?.declineTrackingStart()
+          : await window.khaliduo?.pauseTracking();
+        if (pauseResult?.message) setTrackingControlMessage(pauseResult.message);
+        const nextStatus = await window.khaliduo?.getAgentStatus();
+        if (nextStatus) setStatus(nextStatus);
+      } else if (
+        canRequestManualTime &&
+        result.dismiss === Swal.DismissReason.cancel
+      ) {
+        const resumeResult = await window.khaliduo?.resumeAutomaticIdle();
+        if (resumeResult?.message)
+          setTrackingControlMessage(resumeResult.message);
+        setExpandedRequest("idle");
+        setActiveView("requests");
+        setTimeRequestReason(
+          "Offline meeting or work completed while away from the computer.",
+        );
+        window.setTimeout(
+          () => document.getElementById("time-request-reason")?.focus(),
+          50,
+        );
+      }
+    } catch (error) {
+      // A follow-up IPC (resume/pause/status) rejected. Clear the shown-alert
+      // guard so this mandatory idle review can reappear instead of being
+      // suppressed forever, and surface a message to the employee.
+      shownIdleAlertId.current = null;
+      setTrackingControlMessage(
+        error instanceof Error
+          ? error.message
+          : "Could not update tracking. Please try again.",
       );
     }
   }
