@@ -1210,6 +1210,12 @@ def update_session_task(
     session_id: UUID,
     payload: SessionTaskUpdateRequest,
 ) -> dict[str, Any]:
+    # Serialize task switches — which end the current session and open a new one
+    # — against each other and against session start. Without this lock two
+    # concurrent requests can both open a second session and trip the
+    # single-open-session database guard, surfacing as a 500. This is the same
+    # device-row lock start_or_get_session takes.
+    db.execute(select(Device.id).where(Device.id == device.id).with_for_update())
     session = get_owned_session(db, device, session_id)
     if session.ended_at is not None:
         current = get_current_session(db, device)

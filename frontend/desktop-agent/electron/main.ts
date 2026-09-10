@@ -80,6 +80,7 @@ import {
   markPendingEventUploaded,
   markPendingScreenshotFailed,
   markPendingScreenshotUploaded,
+  purgeTerminalQueueEntries,
   type LocalTrackingSession,
 } from "./services/localDb.js";
 import {
@@ -3407,6 +3408,9 @@ async function syncPendingQueuesOnce(forcePendingQueues: boolean) {
       continue;
     }
   }
+  // Drop terminal rows (legacy 'uploaded', permanently-rejected 'dead') so the
+  // local database file stays bounded by in-flight work.
+  purgeTerminalQueueEntries();
   rebuildTrayMenu();
 }
 

@@ -290,6 +290,14 @@ function KIcon({
   );
 }
 
+// An IPC call can REJECT (main-process error / preload failure) rather than
+// resolving a {success:false} result. Handlers must surface that instead of
+// swallowing it in a catch-less try/finally, which would clear the spinner but
+// show no error and silently drop the user's action.
+function ipcErrorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error && error.message ? error.message : fallback;
+}
+
 function formatTimestamp(value: string | null) {
   const date = toValidDate(value);
   if (!date) return "Not available";
@@ -909,6 +917,10 @@ function App() {
       );
       setSelectedIdleRequestKey("");
       if (result.status) setStatus(result.status);
+    } catch (error) {
+      setTimeRequestError(
+        ipcErrorMessage(error, "The request could not be sent. Please try again."),
+      );
     } finally {
       setIsSubmittingTimeRequest(false);
     }
@@ -959,6 +971,10 @@ function App() {
       setEarlyLeaveReason("");
       setTimeRequestSuccess("Early leave request sent to HR/admin.");
       if (result.status) setStatus(result.status);
+    } catch (error) {
+      setTimeRequestError(
+        ipcErrorMessage(error, "The request could not be sent. Please try again."),
+      );
     } finally {
       setIsSubmittingTimeRequest(false);
     }
@@ -998,6 +1014,10 @@ function App() {
       setLeaveReason("");
       setLeaveRequestSuccess("Holiday request sent to HR/admin.");
       if (result.status) setStatus(result.status);
+    } catch (error) {
+      setLeaveRequestError(
+        ipcErrorMessage(error, "The holiday request could not be sent. Please try again."),
+      );
     } finally {
       setIsSubmittingLeaveRequest(false);
     }
@@ -1020,6 +1040,10 @@ function App() {
         return;
       }
       if (result.status) setStatus(result.status);
+    } catch (error) {
+      setTaskError(
+        ipcErrorMessage(error, "The action could not be completed. Please try again."),
+      );
     } finally {
       setIsSubmittingTask(false);
     }
@@ -1051,6 +1075,10 @@ function App() {
         result.message ?? "Task submitted for manager approval.",
       );
       if (result.status) setStatus(result.status);
+    } catch (error) {
+      setTaskError(
+        ipcErrorMessage(error, "The action could not be completed. Please try again."),
+      );
     } finally {
       setIsSubmittingTask(false);
     }
@@ -1088,27 +1116,34 @@ function App() {
       setIsSubmittingTask(false);
       return;
     }
-    const result = await window.khaliduo.updateTaskStage(
-      status.selectedTask.id,
-      stage,
-      note,
-    );
-    if (!result.success) {
-      setTaskError(result.message ?? "Task stage update failed.");
-    } else if (stage === "blocked") {
-      setTrackingControlMessage(
-        "Task reported blocked and removed from tracking. Use the employee dashboard to resume it after the obstacle is cleared.",
+    try {
+      const result = await window.khaliduo.updateTaskStage(
+        status.selectedTask.id,
+        stage,
+        note,
       );
-    } else if (stage === "ready_for_review") {
-      setTrackingControlMessage(
-        "Finished work submitted. Waiting for approval.",
+      if (!result.success) {
+        setTaskError(result.message ?? "Task stage update failed.");
+      } else if (stage === "blocked") {
+        setTrackingControlMessage(
+          "Task reported blocked and removed from tracking. Use the employee dashboard to resume it after the obstacle is cleared.",
+        );
+      } else if (stage === "ready_for_review") {
+        setTrackingControlMessage(
+          "Finished work submitted. Waiting for approval.",
+        );
+        setTaskCompletionNote("");
+      }
+      if (result.status) {
+        setStatus(result.status);
+      }
+    } catch (error) {
+      setTaskError(
+        ipcErrorMessage(error, "The task status could not be updated. Please try again."),
       );
-      setTaskCompletionNote("");
+    } finally {
+      setIsSubmittingTask(false);
     }
-    if (result.status) {
-      setStatus(result.status);
-    }
-    setIsSubmittingTask(false);
   }
 
   async function handleAddChecklistItem() {
@@ -1128,6 +1163,10 @@ function App() {
       }
       setNewChecklistTitle("");
       if (result.status) setStatus(result.status);
+    } catch (error) {
+      setTaskError(
+        ipcErrorMessage(error, "The action could not be completed. Please try again."),
+      );
     } finally {
       setIsSubmittingTask(false);
     }
@@ -1149,6 +1188,10 @@ function App() {
         return;
       }
       if (result.status) setStatus(result.status);
+    } catch (error) {
+      setTaskError(
+        ipcErrorMessage(error, "The action could not be completed. Please try again."),
+      );
     } finally {
       setIsSubmittingTask(false);
     }
@@ -1181,6 +1224,11 @@ function App() {
       }
       if (result.status) setStatus(result.status);
       return true;
+    } catch (error) {
+      setTaskError(
+        ipcErrorMessage(error, "The action could not be completed. Please try again."),
+      );
+      return false;
     } finally {
       setIsSubmittingTask(false);
     }
@@ -1272,6 +1320,10 @@ function App() {
         return;
       }
       setRecentScreenshots(result.screenshots);
+    } catch (error) {
+      setScreenshotError(
+        ipcErrorMessage(error, "Recent screenshots could not be loaded."),
+      );
     } finally {
       setIsLoadingScreenshots(false);
     }

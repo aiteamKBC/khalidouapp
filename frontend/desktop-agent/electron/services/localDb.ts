@@ -477,10 +477,11 @@ export function getDuePendingEvents(
 }
 
 export function markPendingEventUploaded(id: string) {
-  database?.run(`update pending_events set status = 'uploaded', updated_at = ? where id = ?`, [
-    new Date().toISOString(),
-    id,
-  ]);
+  // A synced event is never re-read, so delete it rather than leaving an
+  // 'uploaded' row behind. persist() rewrites the whole database file on every
+  // mutation, so retained terminal rows would make each write progressively
+  // more expensive without bound.
+  database?.run(`delete from pending_events where id = ?`, [id]);
   persist();
 }
 
@@ -539,11 +540,31 @@ export function getDuePendingScreenshots(
 }
 
 export function markPendingScreenshotUploaded(screenshotId: string) {
-  database?.run(`update pending_screenshots set status = 'uploaded', updated_at = ? where screenshot_id = ?`, [
-    new Date().toISOString(),
+  // Synced screenshots are never re-read; delete the row (its file is removed
+  // by the caller) so the queue cannot grow without bound.
+  database?.run(`delete from pending_screenshots where screenshot_id = ?`, [
     screenshotId,
   ]);
   persist();
+}
+
+export function purgeTerminalQueueEntries() {
+  // Remove any rows left in a terminal state: 'uploaded' rows written by older
+  // builds, and 'dead' rows for permanently-rejected items (their files are
+  // already removed). These are never re-read; deleting them keeps the on-disk
+  // database bounded by the amount of genuinely in-flight (pending/failed) work.
+  if (!database) {
+    return;
+  }
+  database.run(`delete from pending_events where status in ('uploaded', 'dead')`);
+  let changed = database.getRowsModified();
+  database.run(
+    `delete from pending_screenshots where status in ('uploaded', 'dead')`,
+  );
+  changed += database.getRowsModified();
+  if (changed > 0) {
+    persist();
+  }
 }
 
 export function markPendingScreenshotFailed(
