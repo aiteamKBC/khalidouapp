@@ -56,6 +56,7 @@ import {
 } from "./services/agentApi.js";
 import {
   clearEnrollmentIdentity,
+  getDeviceToken,
   isEnrolled,
   loadIdentity,
 } from "./services/identityStore.js";
@@ -73,13 +74,21 @@ import {
   getOpenLocalTrackingSession,
   getPendingLocalTrackingSession,
   getPendingLocalTrackingSessions,
+  getRecoveryBaseline,
+  getServerSessionIdForLocalSession,
+  hasPendingEventsForSession,
   initializeLocalDatabase,
+  listTerminalPendingScreenshots,
   markLocalTrackingSessionSynced,
+  setRecoveryBaseline,
   markPendingEventFailed,
+  markPendingEventIgnored,
   markPendingEventPermanentlyRejected,
   markPendingEventUploaded,
   markPendingScreenshotFailed,
   markPendingScreenshotUploaded,
+  purgeTerminalPendingEvents,
+  purgeTerminalScreenshotRows,
   type LocalTrackingSession,
 } from "./services/localDb.js";
 import {
@@ -94,11 +103,24 @@ import {
 } from "./services/idlePolicy.js";
 import { createCoalescedRefresh } from "./services/coalescedRefresh.js";
 import { getUserFacingError } from "./services/userFacingError.js";
+import { trackingTick } from "./services/trackingTick.js";
+import { reconcileTrackingStatusAfterSync } from "./services/trackingStatusReconcile.js";
+import {
+  physicalResumeShouldResumeWork,
+  shouldAccrueTrackedTime,
+} from "./services/powerTransitionPolicy.js";
+import { captureRemainsEligible } from "./services/screenshotCaptureGuard.js";
+import { sessionSnapshotIsApplicable } from "./services/sessionSnapshotGuard.js";
 import {
   mergeRecoveredCounters,
   offsetRecoveredEventPayload,
+  recoveryResponseCredited,
   restoreOpenLocalTrackingSnapshot,
 } from "./services/offlineTracking.js";
+import {
+  endOfPreviousLocalDayIso,
+  recoveryEndTimestampIso,
+} from "./services/localDayBoundary.js";
 import {
   InputIntegrityMonitor,
   type InputIntegrityObservation,
@@ -109,8 +131,10 @@ import {
 } from "./services/runtimePolicies.js";
 import {
   canAdoptPromotedLocalSession,
+  isSessionCounterToday,
   promotableLocalSessionIds,
   reconcileWorkedToday,
+  resolveSessionCounterSeconds,
   shouldRolloverRestoredLocalSession,
   shouldResetDailyCountersForSession,
 } from "./services/dailyCounters.js";
@@ -118,13 +142,17 @@ import { requiresExplicitFreshSessionStart } from "./services/trackingStartPolic
 import {
   CRASH_RECOVERY_STABLE_MS,
   crashRecoveryAttempt,
+  crashRecoveryShouldContinue,
   isCrashRecoveryLaunch,
 } from "./services/crashRecovery.js";
 import {
   isWhatsAppScreenshotActivity,
   privacyBlurSampleSize,
 } from "./services/screenshotPrivacy.js";
-import { isPermanentPendingEventSyncFailure } from "./services/pendingSyncPolicy.js";
+import {
+  isAuthPendingEventSyncFailure,
+  isPermanentPendingEventSyncFailure,
+} from "./services/pendingSyncPolicy.js";
 import {
   shouldClearInstallRecoveryOnBeforeQuit,
   UPDATE_INSTALL_RECOVERY_MS,
@@ -291,6 +319,10 @@ let crashRecoveryRestartTimer: ReturnType<typeof setTimeout> | null = null;
 let quitNotificationSent = false;
 let currentSessionId: string | null = null;
 let localTrackingSessionId: string | null = null;
+// Bumped whenever the device identity changes (logout / re-enrollment). An
+// in-flight session snapshot captured before the change is discarded so it
+// cannot contaminate a newly-enrolled identity's state.
+let enrollmentGeneration = 0;
 let isPromotingLocalTrackingSessions = false;
 let lastLocalTrackingCheckpointAt = 0;
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
@@ -298,6 +330,12 @@ let durationTimer: ReturnType<typeof setInterval> | null = null;
 let foregroundActivityTimer: ReturnType<typeof setInterval> | null = null;
 let foregroundActivityTickRunning = false;
 let foregroundActivitySegment: ForegroundActivitySegment | null = null;
+// The most recent foreground-activity flush kicked off by clearRuntimeTimers.
+// Its upload posts a foreground_activity event to the same /events endpoint as a
+// session End, so shutdown/sign-out finalization must be able to order End behind
+// it (and behind any durable row it enqueues on failure) rather than closing the
+// session first (F1).
+let pendingForegroundActivityFlush: Promise<void> | null = null;
 const inputIntegrityMonitor = new InputIntegrityMonitor();
 let lastInputProbeStartAttemptAt = 0;
 let inputProbeMissingWasLogged = false;
@@ -312,6 +350,11 @@ let updateAttentionActive = false;
 let screenshotTimer: ReturnType<typeof setTimeout> | null = null;
 let screenshotQueue: number[] = [];
 let screenshotWindowEndsAt: number | null = null;
+// Bumped whenever screenshot-capture eligibility is lost (pause, lock, sleep,
+// battery, logout, re-enrollment). An in-flight capture snapshots this value and
+// aborts if it changes across an await, so a Pause that lands mid-capture — even
+// a full pause→resume cycle within one await — cannot yield a new image.
+let screenshotCaptureGeneration = 0;
 let syncTimer: ReturnType<typeof setInterval> | null = null;
 let pendingQueueSyncPromise: Promise<void> | null = null;
 let automaticTrackingRetryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -352,6 +395,39 @@ let isRefreshingLeaveRequests = false;
 let paidPauseTimer: ReturnType<typeof setTimeout> | null = null;
 let displaySleepBlockerId: number | null = null;
 let onAcPower = true;
+// Physical screen-lock / system-sleep state, tracked independently of the
+// employee's work-intent status. A deliberately stopped or paused session leaves
+// trackingStatus at "paused" across a lock/unlock cycle, so screenshot
+// eligibility and displayed state must consult these physical flags — not the
+// work status — to know whether the machine is actually locked or asleep (D5).
+let screenLocked = false;
+let systemSleeping = false;
+// True from the synchronous start of sign-out until the runtime has been reset.
+// Sign-out is local-first: accrual and screenshot acquisition stop immediately,
+// before any network flush is awaited, and this gate keeps capture blocked while
+// the enrolled-but-stopped screenshot policy would otherwise still apply (D6).
+let isSigningOut = false;
+// Exclusive ownership of the credential-enrollment operation, kept DISTINCT from
+// the identity `enrollmentGeneration` (which activation itself increments). A
+// unique token is reserved synchronously at the IPC entry and released when the
+// operation completes; only the reserving operation may persist, activate and
+// report success, so two overlapping enrollments cannot both write credentials
+// before either activates (I1).
+let enrollmentOperationSeq = 0;
+let activeEnrollmentToken: number | null = null;
+// A durable finalization End is written to the pending-events outbox BEFORE its
+// in-flight predecessors are awaited, so it survives a process kill during that
+// wait (O1). Enqueuing it with this sentinel created_at makes it sort LAST within
+// its session group (delivery is ordered by created_at asc), so a kill-then-restart
+// still replays predecessor evidence first and closes the session with End last —
+// preserving causal order without the naive "insert End earlier" inversion.
+const FINALIZATION_ORDER_SENTINEL = "9999-12-31T23:59:59.999Z";
+// Upper bound on the ENTIRE shutdown finalization (all predecessor + foreground +
+// queue-flush waits together), not each request. Because the final End is made
+// durable BEFORE those waits (O1), exceeding this deadline is safe: the process
+// can exit and next-launch queue replay delivers End in causal order. Without the
+// bound, a hung predecessor or stalled sync could keep the app from ever quitting.
+const SHUTDOWN_FINALIZATION_DEADLINE_MS = 15_000;
 let trackingConfig: TrackingConfig = {
   screenshot_enabled: true,
   screenshot_interval_minutes: 10,
@@ -579,39 +655,15 @@ function isDeviceIdentityMismatch(error: unknown) {
   return message.includes("device token identity does not match");
 }
 
-function resetForDeviceReenrollment() {
-  // Keep pending local screenshots/events on disk. They can be retried after
-  // the employee signs in again; only the invalid local credential is cleared.
-  recalculateWorkedTime();
-  closeActiveLocalTrackingSession(
-    new Date().toISOString(),
-    "device_identity_mismatch",
-  );
-  clearRuntimeTimers();
-  inputIntegrityMonitor.stop();
-  clearEnrollmentIdentity();
-  configureAutoStart(false);
-  trackingPausedByUser = false;
-  unpaidPauseActive = false;
-  currentSessionId = null;
-  workedTodayBaseSeconds = 0;
-  activeCounterDate = null;
-  idleSecondsBeforeCurrentIdle = 0;
-  eligibleIdleSecondsBeforeCurrentIdle = 0;
-  idleWallClockStartedAt = null;
-  automaticIdleStartedDuringBreak = false;
-  automaticIdleStartPromise = null;
-  automaticIdleFinishPromise = null;
-  manualPauseTransitionPromise = null;
-  isFinishingAutomaticIdle = false;
-  lastObservedSystemIdleSeconds = null;
-  lastObservedOperatingSystemIdleSeconds = null;
-  lastHandledIdleReturnInputAt = 0;
-  clearIdleReturnVerification();
-  waitingForInputAfterIdleSessionClose = false;
-  freshSessionStartConfirmed = false;
-  freshSessionStartPromptActive = false;
-  Object.assign(runtimeStatus, {
+// Single source of truth for clearing every employee/session-specific field of
+// runtimeStatus back to its signed-out defaults. Both sign-out and re-enrollment
+// reset paths use it so no personal field (leave requests, recent tasks, request
+// policy, avatar, summary, counters, ...) can survive by being forgotten in one
+// hand-maintained object but not the other (D4). Deliberately device-global
+// settings (e.g. dailyTargetSeconds default, screenshot monitoring toggle) are
+// intentionally not cleared here.
+function clearedPersonalRuntimeStatus(): Partial<AgentRuntimeStatus> {
+  return {
     enrolled: false,
     employeeName: "Not enrolled",
     employeeEmail: null,
@@ -633,13 +685,62 @@ function resetForDeviceReenrollment() {
     tasks: [],
     projects: [],
     selectedTask: null,
+    recentTasks: [],
     timeAdjustmentRequests: [],
+    leaveRequests: null,
+    requestPolicy: null,
     timeSummary: null,
     todayTimeline: null,
     idleRequestPeriods: [],
     lastIdleAlert: null,
     locallyEndedIdleAt: null,
-  } satisfies Partial<AgentRuntimeStatus>);
+    activityPercent: 0,
+    normalSeconds: 0,
+    extraSeconds: 0,
+    overtimeEnabled: false,
+    extraTimeStatus: "none",
+    dailyTargetProgressPercent: 0,
+    paidPauseEndsAt: null,
+    paidPauseRemainingSeconds: 0,
+    paidPauseBalanceRemainingSeconds: null,
+  } satisfies Partial<AgentRuntimeStatus>;
+}
+
+function resetForDeviceReenrollment() {
+  // Keep pending local screenshots/events on disk. They can be retried after
+  // the employee signs in again; only the invalid local credential is cleared.
+  recalculateWorkedTime();
+  invalidateInFlightScreenshotCaptures();
+  closeActiveLocalTrackingSession(
+    new Date().toISOString(),
+    "device_identity_mismatch",
+  );
+  clearRuntimeTimers();
+  inputIntegrityMonitor.stop();
+  clearEnrollmentIdentity();
+  enrollmentGeneration += 1;
+  configureAutoStart(false);
+  trackingPausedByUser = false;
+  unpaidPauseActive = false;
+  currentSessionId = null;
+  workedTodayBaseSeconds = 0;
+  activeCounterDate = null;
+  idleSecondsBeforeCurrentIdle = 0;
+  eligibleIdleSecondsBeforeCurrentIdle = 0;
+  idleWallClockStartedAt = null;
+  automaticIdleStartedDuringBreak = false;
+  automaticIdleStartPromise = null;
+  automaticIdleFinishPromise = null;
+  manualPauseTransitionPromise = null;
+  isFinishingAutomaticIdle = false;
+  lastObservedSystemIdleSeconds = null;
+  lastObservedOperatingSystemIdleSeconds = null;
+  lastHandledIdleReturnInputAt = 0;
+  clearIdleReturnVerification();
+  waitingForInputAfterIdleSessionClose = false;
+  freshSessionStartConfirmed = false;
+  freshSessionStartPromptActive = false;
+  Object.assign(runtimeStatus, clearedPersonalRuntimeStatus());
   tray?.setImage(createTrayImage("#b7791f"));
   rebuildTrayMenu();
   showMainWindow({ forceForeground: true });
@@ -660,6 +761,18 @@ function hydrateIdentityStatus() {
 }
 
 async function activateEnrolledDevice(identity: StoredIdentity) {
+  // If a sign-out is still draining (e.g. an enrollment response that started
+  // before logout is only now resolving), adopting here would let that logout's
+  // teardown finally erase this identity — and clearing isSigningOut would
+  // reopen work/capture admission mid-teardown. Do not adopt over, or clear,
+  // another operation's teardown gate (G2). The IPC entry already rejects
+  // enrollments that begin during sign-out; this guards the in-flight response.
+  if (isSigningOut) {
+    return;
+  }
+  enrollmentGeneration += 1;
+  const activationGeneration = enrollmentGeneration;
+  isSigningOut = false;
   runtimeStatus.enrolled = true;
   runtimeStatus.employeeName = identity.employeeName ?? "Enrolled employee";
   runtimeStatus.employeeEmail = identity.employeeEmail ?? null;
@@ -677,8 +790,20 @@ async function activateEnrolledDevice(identity: StoredIdentity) {
   configureAutoStart(true);
   tray?.setImage(createTrayImage("#1f7a4d"));
   await startTrackingAutomatically();
+  // A logout / re-enrollment during any of these awaits invalidates this
+  // activation. Stop applying its refresh chain rather than repopulating a
+  // now-signed-out or newer identity's runtime (D2).
+  if (enrollmentGeneration !== activationGeneration || !runtimeStatus.enrolled) {
+    return;
+  }
   await refreshTasks();
+  if (enrollmentGeneration !== activationGeneration || !runtimeStatus.enrolled) {
+    return;
+  }
   await refreshTimeAdjustmentRequests();
+  if (enrollmentGeneration !== activationGeneration || !runtimeStatus.enrolled) {
+    return;
+  }
   await refreshLeaveRequests();
   rebuildTrayMenu();
 }
@@ -883,6 +1008,25 @@ function loadTrackingPreferences(resumeForWindowsStartup = false) {
   }
 }
 
+function loadLaunchTrackingPreferences(options: {
+  launchedByWindowsStartup: boolean;
+  launchedForCrashRecovery: boolean;
+}): boolean {
+  // Only a Windows-login (autostart) launch resets a saved Pause/Stop so the
+  // employee begins the day tracking. A crash-recovery relaunch must load the
+  // saved intent verbatim — passing crash recovery here would wipe an explicit
+  // Stop/Pause and let the watchdog silently resume work the employee had ended.
+  loadTrackingPreferences(options.launchedByWindowsStartup);
+  if (!options.launchedForCrashRecovery) {
+    return true;
+  }
+  return crashRecoveryShouldContinue({
+    enrolled: runtimeStatus.enrolled,
+    hasDeviceId: Boolean(runtimeStatus.deviceId),
+    trackingStoppedByUser: trackingPausedByUser,
+  });
+}
+
 function saveTrackingPreferences() {
   fs.mkdirSync(app.getPath("userData"), { recursive: true });
   fs.writeFileSync(
@@ -925,11 +1069,16 @@ function saveScreenshotSchedule(nextAt: number | null) {
   );
 }
 
-function localDateKey(at = new Date()) {
-  const timezone =
+function currentTimezone() {
+  return (
     runtimeStatus.requestPolicy?.timezone ||
     Intl.DateTimeFormat().resolvedOptions().timeZone ||
-    "UTC";
+    "UTC"
+  );
+}
+
+function localDateKey(at = new Date()) {
+  const timezone = currentTimezone();
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone: timezone,
     year: "numeric",
@@ -1220,13 +1369,31 @@ async function promotePendingLocalTrackingSessions(
       });
       const serverSessionId = started.session.id;
       if (pendingSession.endedAt && started.session.ended_at) {
-        markLocalTrackingSessionSynced(pendingSession.sessionId);
+        markLocalTrackingSessionSynced(
+          pendingSession.sessionId,
+          undefined,
+          serverSessionId,
+        );
         continue;
       }
-      const serverCounters = {
-        activeSeconds: started.session.active_seconds,
-        idleSeconds: started.session.idle_seconds,
-      };
+      // Idempotency: capture the server session's counters the FIRST time this
+      // local session is promoted and reuse that durable baseline on every
+      // retry. Re-reading the live server counters (which already include a
+      // previous attempt's heartbeat) and adding the full local record again was
+      // what doubled recovered work. The backend heartbeat is monotonic/absolute,
+      // so submitting `baseline + local` repeatedly converges to one total, while
+      // genuine pre-existing *server* work in the baseline is still preserved
+      // additively. If the baseline was persisted before but a later step failed,
+      // getRecoveryBaseline returns it; otherwise we capture and persist it now,
+      // before any heartbeat runs.
+      let serverCounters = getRecoveryBaseline(pendingSession.sessionId);
+      if (!serverCounters) {
+        serverCounters = {
+          activeSeconds: started.session.active_seconds,
+          idleSeconds: started.session.idle_seconds,
+        };
+        setRecoveryBaseline(pendingSession.sessionId, serverCounters);
+      }
       const deliveredLocalEventIds = await replayLocalTrackingEvents(
         pendingSession,
         serverSessionId,
@@ -1280,15 +1447,40 @@ async function promotePendingLocalTrackingSessions(
       });
 
       if (latestPendingSession.endedAt) {
+        if (
+          !recoveryResponseCredited(
+            heartbeat as { restarted?: boolean; ignored?: boolean },
+          )
+        ) {
+          // The server rolled this historical session over or ignored the
+          // evidence, so the counters were NOT credited to it. Do not end or
+          // retire the local row — leave it for a later pass rather than marking
+          // unverified work as synchronized (which is how midnight work was
+          // silently lost).
+          log.warn(
+            "Historical recovery was not credited to its session; will retry",
+            {
+              localSessionId: pendingSession.sessionId,
+              heartbeatAt,
+            },
+          );
+          continue;
+        }
         await endSession({
           sessionId: serverSessionId,
           activeSeconds: recovered.activeSeconds,
           idleSeconds: recovered.idleSeconds,
           reason: "Recovered from offline device storage",
-          endedAt: latestPendingSession.endedAt,
+          // The heartbeat above stayed inside the previous day; the END is bounded
+          // to the day boundary so a midnight-rollover session credits its final
+          // whole second instead of losing it to the integer wall-clock cap.
+          endedAt: recoveryEndTimestampIso(
+            latestPendingSession.endedAt,
+            currentTimezone(),
+          ),
           eventId: randomUUID(),
         });
-        markLocalTrackingSessionSynced(pendingSession.sessionId);
+        markLocalTrackingSessionSynced(pendingSession.sessionId, undefined, serverSessionId);
         continue;
       }
 
@@ -1339,10 +1531,13 @@ async function promotePendingLocalTrackingSessions(
           activeSeconds: detachedCounters.activeSeconds,
           idleSeconds: detachedCounters.idleSeconds,
           reason: "Recovered from offline device storage",
-          endedAt: detachedEndAt,
+          // The heartbeat above kept detachedEndAt inside its day; the END is
+          // bounded to the day boundary so a midnight rollover credits its final
+          // whole second (no-op for a mid-day checkpoint bound).
+          endedAt: recoveryEndTimestampIso(detachedEndAt, currentTimezone()),
           eventId: randomUUID(),
         });
-        markLocalTrackingSessionSynced(pendingSession.sessionId);
+        markLocalTrackingSessionSynced(pendingSession.sessionId, undefined, serverSessionId);
         continue;
       }
       const latestLocalActiveSeconds = runtimeStatus.activeSeconds;
@@ -1389,7 +1584,7 @@ async function promotePendingLocalTrackingSessions(
       runtimeStatus.trackingStatus = latestStatus;
       runtimeStatus.workedTodaySeconds =
         workedTodayBaseSeconds + runtimeStatus.activeSeconds;
-      markLocalTrackingSessionSynced(pendingSession.sessionId);
+      markLocalTrackingSessionSynced(pendingSession.sessionId, undefined, serverSessionId);
     }
     runtimeStatus.connectionStatus = "online";
     runtimeStatus.lastSuccessfulSyncAt = new Date().toISOString();
@@ -1435,7 +1630,15 @@ function ensureCurrentCounterDate(now = new Date()) {
   }
 
   const restartLocalTracking = Boolean(localTrackingSessionId);
-  closeActiveLocalTrackingSession(now.toISOString(), "daily_rollover");
+  // Close yesterday's local session at the last instant of the PREVIOUS local
+  // day, not at this next-day tick. Recovery replays its counters at this
+  // timestamp; using a next-day timestamp made the backend roll the session over
+  // and discard all of yesterday's offline work. Bounding it to the previous day
+  // keeps the work in yesterday's ledger.
+  closeActiveLocalTrackingSession(
+    endOfPreviousLocalDayIso(now, currentTimezone()),
+    "daily_rollover",
+  );
   resetDailyRuntimeCounters(nextCounterDate, now);
   if (restartLocalTracking && automaticTrackingIsExpected()) {
     beginLocalTrackingSession(now);
@@ -1446,6 +1649,54 @@ function ensureCurrentCounterDate(now = new Date()) {
 
 function getPendingScreenshotDirectory() {
   return path.join(app.getPath("userData"), "pending-screenshots");
+}
+
+type ScreenshotFileRemoval = "removed" | "refused" | "failed";
+
+function removeOwnedScreenshotFile(filePath: string): ScreenshotFileRemoval {
+  // Only ever delete files inside our own pending-screenshot directory. A queue
+  // row's persisted path must never be trusted to delete an arbitrary file.
+  // Returns an explicit outcome so the caller can decide whether the owning row
+  // is safe to retire: only when the owned file is gone.
+  if (!filePath) return "removed";
+  const directory = getPendingScreenshotDirectory();
+  const resolved = path.resolve(filePath);
+  const relative = path.relative(directory, resolved);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) {
+    log.warn("Refused to delete a screenshot file outside the owned directory", {
+      filePath,
+    });
+    // The path is not one of our files, so retiring the row orphans nothing of
+    // ours; treat it as safe to retire rather than looping on it forever.
+    return "refused";
+  }
+  try {
+    // force:true also succeeds when the file is already absent.
+    fs.rmSync(resolved, { force: true });
+    return "removed";
+  } catch (error) {
+    // The owned file is still on disk (e.g. EPERM / in use). Report failure so
+    // the caller keeps the row for a later retry instead of orphaning the JPEG.
+    log.warn("Could not remove a terminal screenshot file", safeErrorForLog(error));
+    return "failed";
+  }
+}
+
+function cleanupTerminalScreenshotFiles() {
+  // Remove owned files for screenshots in a terminal state before their rows are
+  // purged, so a permanently-rejected or already-synced image never lingers on
+  // disk. Only rows whose owned file was actually removed (or was never ours) are
+  // retired; a row whose file could not be deleted is kept so a later pass —
+  // including after a restart — retries the deletion instead of orphaning the
+  // file with no queue record.
+  const removableIds: string[] = [];
+  for (const terminal of listTerminalPendingScreenshots()) {
+    if (removeOwnedScreenshotFile(terminal.filePath) !== "failed") {
+      removableIds.push(terminal.screenshotId);
+    }
+  }
+  purgeTerminalScreenshotRows(removableIds);
+  purgeTerminalPendingEvents();
 }
 
 function syncRuntimeFromSession(session: WorkSession) {
@@ -1469,29 +1720,45 @@ function syncRuntimeFromSession(session: WorkSession) {
   ) {
     resetDailyRuntimeCounters(todayCounterDate);
   }
-  const sessionBelongsToToday = sessionCounterDate === todayCounterDate;
+  const belongsToToday = isSessionCounterToday({
+    sessionCounterDate,
+    todayCounterDate,
+  });
+  // Today's portion of the session. For a session continued from a previous day
+  // the server reports a multi-day total, so today's counters are only what we
+  // accrued locally since the midnight reset — not the server total, not 0.
+  const localActiveSeconds = changedSession ? 0 : runtimeStatus.activeSeconds;
+  const localIdleSeconds = changedSession ? 0 : runtimeStatus.idleSeconds;
   if (
     session.ended_at ||
     session.status === "ended" ||
     session.status === "offline"
   ) {
+    // A newer session was adopted (resume/start) while this ended snapshot was in
+    // flight. Applying its offline status and multi-day counters would clobber the
+    // live session's id, status, start time, and counters. Ignore the stale
+    // closed-session snapshot entirely — defense in depth for the caller-level
+    // ownership check in stopTrackingSession (D3).
+    if (currentSessionId !== null && currentSessionId !== session.id) {
+      return;
+    }
     if (currentSessionId === session.id) {
       currentSessionId = null;
     }
     runtimeStatus.sessionStartedAt = null;
     runtimeStatus.trackingStatus = "offline";
-    runtimeStatus.activeSeconds = sessionBelongsToToday
+    runtimeStatus.activeSeconds = belongsToToday
       ? session.active_seconds
-      : 0;
-    runtimeStatus.idleSeconds = sessionBelongsToToday ? session.idle_seconds : 0;
+      : localActiveSeconds;
+    runtimeStatus.idleSeconds = belongsToToday
+      ? session.idle_seconds
+      : localIdleSeconds;
     runtimeStatus.workedTodaySeconds =
       workedTodayBaseSeconds + runtimeStatus.activeSeconds;
     lastDurationTickAt = null;
     return;
   }
   const wasIdle = runtimeStatus.trackingStatus === "idle";
-  const localActiveSeconds = changedSession ? 0 : runtimeStatus.activeSeconds;
-  const localIdleSeconds = changedSession ? 0 : runtimeStatus.idleSeconds;
   activeCounterDate = todayCounterDate;
   currentSessionId = session.id;
   runtimeStatus.sessionStartedAt = session.started_at;
@@ -1503,12 +1770,16 @@ function syncRuntimeFromSession(session: WorkSession) {
   } else if (session.status !== "idle") {
     automaticIdleStartedDuringBreak = false;
   }
-  runtimeStatus.activeSeconds = sessionBelongsToToday
-    ? Math.max(session.active_seconds, localActiveSeconds)
-    : 0;
-  runtimeStatus.idleSeconds = sessionBelongsToToday
-    ? Math.max(session.idle_seconds, localIdleSeconds)
-    : 0;
+  runtimeStatus.activeSeconds = resolveSessionCounterSeconds({
+    belongsToToday,
+    serverSeconds: session.active_seconds,
+    localSeconds: localActiveSeconds,
+  });
+  runtimeStatus.idleSeconds = resolveSessionCounterSeconds({
+    belongsToToday,
+    serverSeconds: session.idle_seconds,
+    localSeconds: localIdleSeconds,
+  });
   runtimeStatus.workedTodaySeconds =
     workedTodayBaseSeconds + runtimeStatus.activeSeconds;
   if (changedSession) {
@@ -1736,13 +2007,32 @@ function activeTimeBucket(at: Date): "normal" | "extra" {
     : "extra";
 }
 
-function recalculateWorkedTime() {
+function recalculateWorkedTime(options?: { finalCheckpoint?: boolean }) {
+  // A teardown (Stop/sign-out/Quit) banks the interval that elapsed BEFORE the
+  // user requested it exactly once, at the synchronous intent boundary, then
+  // freezes further accrual. That single call passes finalCheckpoint so it is
+  // not swallowed by the sign-out/quit guard the periodic tick relies on (G3).
+  const finalCheckpoint = options?.finalCheckpoint === true;
   ensureCurrentCounterDate();
   if (
     !hasTrackingSession() ||
     !runtimeStatus.sessionStartedAt ||
     !runtimeStatus.enrolled ||
-    trackingPausedByUser
+    // A sign-out or quit in progress must never bank time via the periodic tick,
+    // independent of the pause flags — a raced Resume could clear those flags
+    // while teardown drains, so this defensive check does not rely on them (F3).
+    // The one exception is the final checkpoint above, which banks the pre-intent
+    // second once before the freeze takes hold.
+    (!finalCheckpoint && (isSigningOut || isQuitting)) ||
+    // Defensive accrual guard: never credit active/idle time while the employee
+    // has explicitly stopped (trackingPausedByUser) OR paused (unpaidPauseActive).
+    // A physical unlock/resume can flip status to "active" while a pause is still
+    // in effect; this guard is independent of that transition so a single missed
+    // transition cannot bank paid time for a paused employee.
+    !shouldAccrueTrackedTime({
+      trackingStoppedByUser: trackingPausedByUser,
+      manualPauseActive: unpaidPauseActive,
+    })
   ) {
     lastDurationTickAt = null;
     return;
@@ -1754,14 +2044,16 @@ function recalculateWorkedTime() {
     return;
   }
 
-  const elapsedSeconds = Math.max(
-    0,
-    Math.floor((now - lastDurationTickAt) / 1000),
-  );
+  // Discard oversized deltas: a gap far larger than the tick interval means the
+  // process was frozen (sleep/hibernate/stall), not that the user worked. This
+  // makes correctness independent of whether powerMonitor "suspend"/"resume"
+  // fire — hibernate often does not deliver "resume", which previously let the
+  // whole frozen span be banked as active time.
+  const { elapsedSeconds, nextTickMs } = trackingTick(lastDurationTickAt, now);
+  lastDurationTickAt = nextTickMs;
   if (elapsedSeconds === 0) {
     return;
   }
-  lastDurationTickAt += elapsedSeconds * 1000;
 
   if (runtimeStatus.paidPauseEndsAt) {
     runtimeStatus.paidPauseRemainingSeconds = Math.max(
@@ -1811,9 +2103,16 @@ async function refreshWorkedTodayTotalOnce() {
     runtimeStatus.workedTodaySeconds = 0;
     return;
   }
+  const requestGeneration = enrollmentGeneration;
   try {
     const previousTimelineDate = runtimeStatus.todayTimeline?.date ?? null;
     const summary = await getAgentSummary();
+    // Discard a summary that arrives after logout / re-enrollment; applying its
+    // employee name, avatar, timeline and counters would restore signed-out or
+    // cross-identity personal data (D4).
+    if (enrollmentGeneration !== requestGeneration || !runtimeStatus.enrolled) {
+      return;
+    }
     runtimeStatus.employeeName = summary.employee.name;
     runtimeStatus.employeeAvatarUrl = summary.employee.avatar_url;
     runtimeStatus.timeSummary = {
@@ -1953,8 +2252,15 @@ async function refreshTimeAdjustmentRequests() {
     return;
   }
   isRefreshingTimeAdjustments = true;
+  const requestGeneration = enrollmentGeneration;
   try {
-    runtimeStatus.timeAdjustmentRequests = await listTimeAdjustmentRequests();
+    const result = await listTimeAdjustmentRequests();
+    // Drop a response that arrives after logout / re-enrollment: it belongs to a
+    // prior identity and must not repopulate the signed-out or newer runtime (D4).
+    if (enrollmentGeneration !== requestGeneration || !runtimeStatus.enrolled) {
+      return;
+    }
+    runtimeStatus.timeAdjustmentRequests = result;
   } catch (error) {
     log.warn(
       "Failed to refresh time adjustment requests",
@@ -1974,8 +2280,15 @@ async function refreshLeaveRequests() {
     return;
   }
   isRefreshingLeaveRequests = true;
+  const requestGeneration = enrollmentGeneration;
   try {
-    runtimeStatus.leaveRequests = await listLeaveRequests();
+    const result = await listLeaveRequests();
+    // A late leave response must not restore personal data after sign-out or leak
+    // it into a newer enrollment (D4).
+    if (enrollmentGeneration !== requestGeneration || !runtimeStatus.enrolled) {
+      return;
+    }
+    runtimeStatus.leaveRequests = result;
   } catch (error) {
     log.warn("Failed to refresh leave requests", safeErrorForLog(error));
   } finally {
@@ -1994,11 +2307,17 @@ async function refreshTasks() {
     return;
   }
   isRefreshingTasks = true;
+  const requestGeneration = enrollmentGeneration;
   try {
     const [tasks, projects] = await Promise.all([
       listAgentTasks(),
       listAgentProjects(),
     ]);
+    // Ignore a task/project response that lands after logout / re-enrollment so a
+    // prior employee's tasks and recent-task list cannot repopulate the runtime (D4).
+    if (enrollmentGeneration !== requestGeneration || !runtimeStatus.enrolled) {
+      return;
+    }
     const runtimeTasks = tasks.map(mapTask);
     runtimeStatus.tasks = runtimeTasks;
     runtimeStatus.projects = projects;
@@ -2061,6 +2380,7 @@ async function sendStateEvent(
   if (!sessionId) {
     return false;
   }
+  const requestEnrollmentGeneration = enrollmentGeneration;
   const endpoint = `/agent/sessions/${sessionId}/events`;
   const payload = {
     event_id: eventId,
@@ -2069,18 +2389,29 @@ async function sendStateEvent(
     payload: eventPayload,
   };
 
+  // Durable BEFORE the network send: persist this transition to the outbox up
+  // front so it survives a process kill or a shutdown-deadline exit during the
+  // attempt, and so a concurrent finalization End — ordered last within the
+  // session group via FINALIZATION_ORDER_SENTINEL — is head-of-line blocked
+  // behind it instead of overtaking a predecessor that otherwise exists only as
+  // an in-memory promise (J1/J2). On direct-send success the row is removed; the
+  // event id is the idempotency key, so a concurrent queue replay of the same row
+  // is deduplicated server-side rather than double-applied.
+  enqueuePendingEvent({
+    id: eventId,
+    method: "POST",
+    endpoint,
+    payload,
+    idempotencyKey: eventId,
+  });
+
   try {
     const priorEventDelivered = options.waitForDelivery
       ? await options.waitForDelivery
       : true;
     if (!priorEventDelivered) {
-      enqueuePendingEvent({
-        id: eventId,
-        method: "POST",
-        endpoint,
-        payload,
-        idempotencyKey: eventId,
-      });
+      // The earlier offline transition is queued; this event stays durably queued
+      // behind it (it was persisted above) for ordered replay.
       log.info(
         `Queued ${eventType} behind an earlier offline state transition`,
       );
@@ -2093,11 +2424,40 @@ async function sendStateEvent(
       eventTimestamp,
       payload: payload.payload,
     });
+    // Delivered directly — drop the now-redundant durable row (a concurrent queue
+    // worker may have already removed it; markPendingEventUploaded is idempotent).
+    markPendingEventUploaded(eventId);
+    if (
+      !sessionSnapshotIsApplicable({
+        requestSessionId: sessionId,
+        currentSessionId,
+        requestEnrollmentGeneration,
+        currentEnrollmentGeneration: enrollmentGeneration,
+      })
+    ) {
+      // The current session changed (task switch, logout, re-enrollment) while
+      // this state event was in flight. Do not apply the stale snapshot over the
+      // newer session; the event itself was still accepted for its own session.
+      runtimeStatus.connectionStatus = "online";
+      runtimeStatus.lastSuccessfulSyncAt = new Date().toISOString();
+      return true;
+    }
     const latestLocalStatus = runtimeStatus.trackingStatus;
     syncRuntimeFromSession(result.session);
     applyWorkdayState(result.workday);
-    if (latestLocalStatus !== status) {
-      runtimeStatus.trackingStatus = latestLocalStatus;
+    // Our posted transition is authoritative over a stale server echo of the
+    // pre-transition status; otherwise a lagging "idle" snapshot reverts the
+    // resume and the idle-return prompt loops forever.
+    const reconciledStatus = reconcileTrackingStatusAfterSync({
+      postedStatus: status,
+      localStatusBeforeSync: latestLocalStatus,
+      sessionEndedServerSide:
+        Boolean(result.session.ended_at) ||
+        result.session.status === "ended" ||
+        result.session.status === "offline",
+    });
+    if (reconciledStatus !== null) {
+      runtimeStatus.trackingStatus = reconciledStatus;
     }
     await refreshWorkedTodayTotal();
     runtimeStatus.connectionStatus = "online";
@@ -2107,13 +2467,8 @@ async function sendStateEvent(
     runtimeStatus.connectionStatus = connectionStatusAfterApiFailure(
       apiResponseStatus(error),
     );
-    enqueuePendingEvent({
-      id: eventId,
-      method: "POST",
-      endpoint,
-      payload,
-      idempotencyKey: eventId,
-    });
+    // The event is already durably queued (persisted before the send above), so
+    // it is retained for ordered retry without re-enqueuing a duplicate row.
     log.warn(`Failed to send ${eventType}`, safeErrorForLog(error));
     return false;
   } finally {
@@ -2656,6 +3011,24 @@ async function uploadForegroundActivitySegment(
     ended_at: new Date(effectiveEnd).toISOString(),
     duration_seconds: durationSeconds,
   };
+  // Durable BEFORE the network send, like sendStateEvent (J1/J2): the foreground
+  // evidence survives a kill/deadline during the attempt and is ordered ahead of a
+  // finalization End. Removed on direct-send success; deduped by event id if a
+  // concurrent queue replay delivers the same row.
+  const queueEndpoint = `/agent/sessions/${segment.sessionId}/events`;
+  const queuePayload = {
+    event_id: eventId,
+    event_type: "foreground_activity",
+    event_timestamp: eventTimestamp,
+    payload,
+  };
+  enqueuePendingEvent({
+    id: eventId,
+    method: "POST",
+    endpoint: queueEndpoint,
+    payload: queuePayload,
+    idempotencyKey: eventId,
+  });
   try {
     await sendActivityEvent({
       sessionId: segment.sessionId,
@@ -2664,19 +3037,9 @@ async function uploadForegroundActivitySegment(
       eventTimestamp,
       payload,
     });
+    markPendingEventUploaded(eventId);
   } catch (error) {
-    enqueuePendingEvent({
-      id: eventId,
-      method: "POST",
-      endpoint: `/agent/sessions/${segment.sessionId}/events`,
-      payload: {
-        event_id: eventId,
-        event_type: "foreground_activity",
-        event_timestamp: eventTimestamp,
-        payload,
-      },
-      idempotencyKey: eventId,
-    });
+    // Already durably queued above; leave it for ordered retry.
     log.warn(
       "Foreground application segment was queued for sync",
       safeErrorForLog(error),
@@ -2688,12 +3051,48 @@ async function flushForegroundActivitySegment(endedAtMs = Date.now()) {
   const segment = foregroundActivitySegment;
   foregroundActivitySegment = null;
   if (!segment) {
+    // No buffered segment: leave any already-outstanding delivery tracked so a
+    // repeated cleanup cannot replace a pending predecessor with a resolved
+    // empty flush (G1). The finalization path still awaits it.
     return;
   }
-  await uploadForegroundActivitySegment(
+  const upload = uploadForegroundActivitySegment(
     segment,
     Math.max(segment.lastObservedAt, endedAtMs),
   );
+  // Register every foreground delivery — regardless of which caller (periodic
+  // tick, timer teardown, or max-segment rotation) started it — so a
+  // finalization path (Quit / Stop / sign-out) can order its session End behind
+  // ALL outstanding uploads, not just the most recent cleanup flush (G1). Chain
+  // onto any prior pending flush so concurrent deliveries are all awaited.
+  const predecessor = pendingForegroundActivityFlush;
+  const tracked = (async () => {
+    if (predecessor) {
+      try {
+        await predecessor;
+      } catch {
+        // A failed predecessor enqueues its own durable row; ignore here so the
+        // chain still resolves and End ordering can proceed.
+      }
+    }
+    await upload;
+  })();
+  pendingForegroundActivityFlush = tracked;
+  // Clear the shared tracker only when the ENTIRE chain (this upload AND every
+  // predecessor it waits on) has settled — never when just this newest upload
+  // finishes. Otherwise a newer, faster delivery completing first would null the
+  // tracker while an older upload is still in flight, letting End overtake it
+  // (H2). The identity comparison ensures an older completion cannot clear a
+  // tracker that a newer flush already replaced.
+  void tracked.finally(() => {
+    if (pendingForegroundActivityFlush === tracked) {
+      pendingForegroundActivityFlush = null;
+    }
+  });
+  // Resolve this call once THIS segment's own upload is done, so a periodic tick
+  // that flushed it is not blocked behind unrelated older predecessors; the
+  // finalization paths await the whole chain via the tracker instead.
+  await upload;
 }
 
 async function foregroundActivityTick() {
@@ -2783,6 +3182,7 @@ async function heartbeatTick(options: { refreshMetadata?: boolean } = {}) {
   }
 
   const sessionId = currentSessionId;
+  const requestEnrollmentGeneration = enrollmentGeneration;
   recalculateWorkedTime();
   const eventId = randomUUID();
   const status =
@@ -2813,6 +3213,25 @@ async function heartbeatTick(options: { refreshMetadata?: boolean } = {}) {
       agentVersion: runtimeStatus.agentVersion,
       inputIntegrity: integrityObservation,
     });
+    if (
+      !sessionSnapshotIsApplicable({
+        requestSessionId: sessionId,
+        currentSessionId,
+        requestEnrollmentGeneration,
+        currentEnrollmentGeneration: enrollmentGeneration,
+      })
+    ) {
+      // A task switch, logout, or re-enrollment changed the current session
+      // while this heartbeat was in flight. Discard the stale snapshot so it
+      // cannot revert the newer session's id, counters, start time, task, or
+      // pause state. Connectivity is still proven by the response.
+      runtimeStatus.connectionStatus = "online";
+      runtimeStatus.lastSuccessfulSyncAt = new Date().toISOString();
+      log.info("Discarded a heartbeat response for a superseded session", {
+        requestSessionId: sessionId,
+      });
+      return;
+    }
     const serverClosedDuringNonWorking = shouldWaitForInputBeforeRestart(
       status,
       Boolean(result.session.ended_at) ||
@@ -2824,8 +3243,21 @@ async function heartbeatTick(options: { refreshMetadata?: boolean } = {}) {
     applyWorkdayState(result.workday);
     if (serverClosedDuringNonWorking) {
       waitForInputAfterIdleSessionClose(status);
-    } else if (latestLocalStatus !== status) {
-      runtimeStatus.trackingStatus = latestLocalStatus;
+    } else {
+      // Keep the locally-known status authoritative over a stale server echo,
+      // so a heartbeat cannot bounce an active session back to idle while the
+      // server is still catching up to a just-sent transition.
+      const reconciledStatus = reconcileTrackingStatusAfterSync({
+        postedStatus: status,
+        localStatusBeforeSync: latestLocalStatus,
+        sessionEndedServerSide:
+          Boolean(result.session.ended_at) ||
+          result.session.status === "ended" ||
+          result.session.status === "offline",
+      });
+      if (reconciledStatus !== null) {
+        runtimeStatus.trackingStatus = reconciledStatus;
+      }
     }
     applyPauseState(result.pause);
     if (
@@ -2853,6 +3285,25 @@ async function heartbeatTick(options: { refreshMetadata?: boolean } = {}) {
     runtimeStatus.connectionStatus = connectionStatusAfterApiFailure(
       apiResponseStatus(error),
     );
+    if (
+      !sessionSnapshotIsApplicable({
+        requestSessionId: sessionId,
+        currentSessionId,
+        requestEnrollmentGeneration,
+        currentEnrollmentGeneration: enrollmentGeneration,
+      })
+    ) {
+      // A task switch, logout, or re-enrollment replaced the current session
+      // while this heartbeat was in flight. A stale error for the OLD session —
+      // a 404, or an identity mismatch — must never clear the newer session's
+      // identity/start time, reset enrollment, or schedule a spurious restart.
+      // The failed request still yielded a connection-status update above; the
+      // superseded snapshot is otherwise discarded, exactly like the success path.
+      log.info("Discarded a heartbeat error for a superseded session", {
+        requestSessionId: sessionId,
+      });
+      return;
+    }
     if (isDeviceIdentityMismatch(error)) {
       resetForDeviceReenrollment();
       log.warn(
@@ -2945,9 +3396,14 @@ function startTimers() {
     durationTimer = setInterval(recalculateWorkedTime, 1000);
   }
   if (!heartbeatTimer) {
-    const heartbeatSeconds = Number(
+    const parsedHeartbeatSeconds = Number(
       process.env.HEARTBEAT_INTERVAL_SECONDS ?? "60",
     );
+    // A malformed env value (NaN) would make Math.max(10, NaN) === NaN, and
+    // setInterval(fn, NaN) fires as fast as the loop allows, hammering the API.
+    const heartbeatSeconds = Number.isFinite(parsedHeartbeatSeconds)
+      ? parsedHeartbeatSeconds
+      : 60;
     heartbeatTimer = setInterval(
       () => void heartbeatTick(),
       Math.max(10, heartbeatSeconds) * 1000,
@@ -2972,6 +3428,11 @@ function clearRuntimeTimers() {
     clearInterval(foregroundActivityTimer);
     foregroundActivityTimer = null;
   }
+  // Flush any buffered foreground segment. flushForegroundActivitySegment now
+  // registers its own upload into pendingForegroundActivityFlush (chaining onto
+  // an already in-flight delivery started by the periodic tick), so a
+  // finalization path can order End behind every outstanding upload rather than
+  // this one cleanup flush overwriting an in-flight predecessor (G1).
   void flushForegroundActivitySegment();
   if (heartbeatTimer) {
     clearInterval(heartbeatTimer);
@@ -3003,19 +3464,32 @@ function clearRuntimeTimers() {
   }
 }
 
+function invalidateInFlightScreenshotCaptures() {
+  // Cancel any capture that is currently awaiting foreground detection or screen
+  // acquisition. Called the instant capture eligibility is lost.
+  screenshotCaptureGeneration += 1;
+}
+
 function screenshotCaptureBlockReason(): string | null {
+  // Device sign-out is a stronger gate than the enrolled-but-stopped screenshot
+  // policy: the instant sign-out begins, no new capture may be acquired even
+  // though enrollment is briefly still true while final delivery drains (D6).
+  if (isSigningOut) return "signing_out";
   if (!runtimeStatus.enrolled) return "device_not_enrolled";
   if (!trackingConfig.screenshot_enabled) return "capture_disabled";
   if (freshSessionStartPromptActive) return "work_start_not_confirmed";
+  // The employee's manual unpaid Pause blocks capture. Sign-out/stop and paid
+  // pauses also set trackingPaused, but screenshot monitoring is an independent
+  // company policy and intentionally keeps capturing there, so this checks the
+  // narrow unpaid-pause flag rather than the generic paused state.
+  if (unpaidPauseActive) return "tracking_paused";
   if (!onAcPower) return "battery_power";
-  if (
-    runtimeStatus.trackingStatus === "locked" ||
-    runtimeStatus.trackingStatus === "sleeping"
-  ) {
-    return runtimeStatus.trackingStatus === "locked"
-      ? "screen_locked"
-      : "system_sleeping";
-  }
+  // Physical lock/sleep is tracked independently of the work-intent status. A
+  // deliberately stopped session keeps trackingStatus at "paused" across a
+  // lock/unlock cycle, so eligibility must consult the physical flags — which
+  // unlock/resume always clear — rather than the stale work status (D5).
+  if (screenLocked) return "screen_locked";
+  if (systemSleeping) return "system_sleeping";
   const systemIdleSeconds = observedIdleSeconds();
   if (
     !trackingConfig.capture_during_idle &&
@@ -3032,11 +3506,17 @@ async function refreshTrackingConfig() {
     return;
   }
   isRefreshingTrackingConfig = true;
+  const requestGeneration = enrollmentGeneration;
   try {
     const previousPolicy = JSON.stringify(runtimeStatus.requestPolicy);
     const previousEmployeeName = runtimeStatus.employeeName;
     const previousEmployeeEmail = runtimeStatus.employeeEmail;
     const rawConfig = await getAgentConfig();
+    // A config/employee response that returns after logout / re-enrollment must
+    // not repopulate the signed-out or newer identity's policy and profile (D4).
+    if (enrollmentGeneration !== requestGeneration || !runtimeStatus.enrolled) {
+      return;
+    }
     const nextConfig = normalizeTrackingConfig(rawConfig);
     if (rawConfig.employee) {
       runtimeStatus.employeeName = rawConfig.employee.name;
@@ -3106,7 +3586,32 @@ async function captureAndUploadScreenshot() {
     return;
   }
 
+  // Freeze the capture-time identity and eligibility generation. Every async
+  // step below is re-validated against these so a Pause / lock / sleep / logout
+  // / power change that lands mid-capture cancels the image instead of
+  // uploading work captured after the employee stopped.
+  const captureGeneration = screenshotCaptureGeneration;
+  // Freeze the capture-time session identity so every display in this capture —
+  // and any later queued upload — references the session that was active when
+  // the pixels were taken, never whichever session becomes current later. When
+  // tracking is local-only (offline), record the local session id so the upload
+  // can resolve it to the recovered server session after promotion.
+  const captureSessionId = currentSessionId;
+  const captureLocalSessionId = currentSessionId ? null : localTrackingSessionId;
+  const captureRemainsAllowed = () =>
+    captureRemainsEligible({
+      blockReasonNow: screenshotCaptureBlockReason(),
+      generationAtStart: captureGeneration,
+      currentGeneration: screenshotCaptureGeneration,
+    });
+
   const activityAtCapture = await readForegroundActivity();
+  if (!captureRemainsAllowed()) {
+    log.info("Screenshot cancelled after foreground detection", {
+      reason: screenshotCaptureBlockReason() ?? "eligibility_changed",
+    });
+    return;
+  }
   const recentActivity =
     foregroundActivitySegment &&
     Date.now() - foregroundActivitySegment.lastObservedAt <= 15_000
@@ -3134,10 +3639,40 @@ async function captureAndUploadScreenshot() {
   if (sources.length === 0) {
     throw new Error("No screen sources were available.");
   }
+  if (!captureRemainsAllowed()) {
+    // Pixels were acquired, but eligibility was lost while acquiring them (e.g.
+    // the employee paused, or the screen locked). Discard rather than upload or
+    // queue an image captured after work stopped.
+    log.info("Screenshot discarded after screen acquisition", {
+      reason: screenshotCaptureBlockReason() ?? "eligibility_changed",
+    });
+    return;
+  }
 
   const capturedAt = new Date().toISOString();
   let uploaded = 0;
   let queued = 0;
+  let rejected = 0;
+  // Resolve the session this capture belongs to before any upload. When tracking
+  // is local-only (offline), the capture references a local session id; resolve
+  // it to the recovered server session via the durable mapping so the DIRECT
+  // upload path — not only queued replay — attaches the correct session. If the
+  // local session has not been promoted yet, defer the image to the queue instead
+  // of uploading it sessionless, which would permanently lose its association
+  // (localSessionId is client-only and never reaches the backend). A capture with
+  // no local session at all remains a legitimate sessionless enrolled-device
+  // policy capture and uploads as before.
+  let uploadSessionId = captureSessionId;
+  let deferForSessionPromotion = false;
+  if (!uploadSessionId && captureLocalSessionId) {
+    const resolvedSessionId =
+      getServerSessionIdForLocalSession(captureLocalSessionId);
+    if (resolvedSessionId) {
+      uploadSessionId = resolvedSessionId;
+    } else {
+      deferForSessionPromotion = true;
+    }
+  }
   for (const [index, source] of sources.entries()) {
     if (source.thumbnail.isEmpty()) {
       log.warn("Screen source was empty", {
@@ -3165,7 +3700,8 @@ async function captureAndUploadScreenshot() {
     const size = protectedThumbnail.getSize();
     const metadata: ScreenshotMetadata = {
       screenshotId,
-      sessionId: currentSessionId,
+      sessionId: uploadSessionId,
+      localSessionId: captureLocalSessionId,
       capturedAt,
       width: size.width,
       height: size.height,
@@ -3179,6 +3715,23 @@ async function captureAndUploadScreenshot() {
       trackingStatus: runtimeStatus.trackingStatus,
     };
 
+    if (deferForSessionPromotion) {
+      // The capture belongs to a local session that is not yet promoted. Persist
+      // it for later; the queued replay resolves the mapping once the session is
+      // promoted and never attaches it to whichever session is current then.
+      const pendingDirectory = getPendingScreenshotDirectory();
+      fs.mkdirSync(pendingDirectory, { recursive: true });
+      const filePath = path.join(pendingDirectory, `${screenshotId}.jpg`);
+      fs.writeFileSync(filePath, jpeg);
+      enqueuePendingScreenshot({ screenshotId, metadata, filePath });
+      queued += 1;
+      log.info("Deferred a screenshot for a not-yet-promoted local session", {
+        screenshotId,
+        localSessionId: captureLocalSessionId,
+      });
+      continue;
+    }
+
     try {
       await initiateScreenshot(metadata);
       await uploadScreenshot(screenshotId, jpeg, "image/jpeg");
@@ -3190,26 +3743,40 @@ async function captureAndUploadScreenshot() {
       uploaded += 1;
     } catch (error) {
       const responseStatus = apiResponseStatus(error);
+      const permanentlyRejected = isPermanentScreenshotSyncFailure({
+        responseStatus,
+        apiErrorCode: apiErrorCode(error),
+      });
       const pendingDirectory = getPendingScreenshotDirectory();
       fs.mkdirSync(pendingDirectory, { recursive: true });
       const filePath = path.join(pendingDirectory, `${screenshotId}.jpg`);
       fs.writeFileSync(filePath, jpeg);
       enqueuePendingScreenshot({ screenshotId, metadata, filePath });
-      if (
-        isPermanentScreenshotSyncFailure({
-          responseStatus,
-          apiErrorCode: apiErrorCode(error),
-        })
-      ) {
+      if (permanentlyRejected) {
+        // The very first upload was permanently rejected (e.g. company capture
+        // disabled). It will never be accepted, so retire the row and remove the
+        // owned file now instead of leaving an orphan JPEG that no retry or
+        // purge path would ever clean. It is NOT counted as "queued" so the
+        // notification does not claim a rejected image is waiting to sync.
         markPendingScreenshotFailed(screenshotId, 0, true);
+        removeOwnedScreenshotFile(filePath);
+        rejected += 1;
+      } else {
+        // A transient/authentication failure keeps the image and metadata for a
+        // later retry under the same identity.
+        queued += 1;
       }
-      queued += 1;
       runtimeStatus.connectionStatus =
         connectionStatusAfterApiFailure(responseStatus);
-      log.warn("Screen capture queued for retry", {
-        displayId: metadata.displayId,
-        error: safeErrorForLog(error),
-      });
+      log.warn(
+        permanentlyRejected
+          ? "Screen capture permanently rejected and discarded"
+          : "Screen capture queued for retry",
+        {
+          displayId: metadata.displayId,
+          error: safeErrorForLog(error),
+        },
+      );
     }
   }
 
@@ -3225,7 +3792,14 @@ async function captureAndUploadScreenshot() {
   ) {
     runtimeStatus.connectionStatus = "offline";
   }
+  // Remove owned files/rows for any capture that was just permanently rejected
+  // so a rejected JPEG never lingers on disk with no queue record.
+  if (rejected > 0) {
+    cleanupTerminalScreenshotFiles();
+  }
   rebuildTrayMenu();
+  // Only announce captures that actually uploaded or are genuinely waiting to
+  // sync. A permanently-rejected image is neither, so it is excluded here.
   if (uploaded + queued > 0) {
     showScreenshotCapturedNotification(uploaded, queued);
   }
@@ -3233,6 +3807,7 @@ async function captureAndUploadScreenshot() {
     displays: sources.length,
     uploaded,
     queued,
+    rejected,
   });
 }
 
@@ -3266,16 +3841,47 @@ function showScreenshotCapturedNotification(uploaded: number, queued: number) {
 async function syncPendingQueuesOnce(forcePendingQueues: boolean) {
   for (const event of getDuePendingEvents(25, { force: forcePendingQueues })) {
     try {
-      await sendQueuedRequest(
+      const response = (await sendQueuedRequest(
         event.method,
         event.endpoint,
         JSON.parse(event.payloadJson) as Record<string, unknown>,
-      );
-      markPendingEventUploaded(event.id);
+      )) as { ignored?: boolean } | null;
+      if (response?.ignored === true) {
+        // The server accepted the request but ignored it (e.g. an event that
+        // reached an already-closed session). Its payload may hold work that was
+        // never applied, so DO NOT delete it — retain it durably for reconciliation
+        // (markPendingEventIgnored moves it to a terminal, non-retried, non-purged
+        // state). A logged warning alone is not recoverable evidence. Correct
+        // causal ordering (see getDuePendingEvents / stopTrackingSession) is what
+        // prevents an event from reaching a closed session in the first place.
+        log.warn(
+          "A replayed event was ignored by the server; retained for reconciliation",
+          { endpoint: event.endpoint },
+        );
+        markPendingEventIgnored(event.id);
+      } else {
+        markPendingEventUploaded(event.id);
+      }
       runtimeStatus.connectionStatus = "online";
       runtimeStatus.lastSuccessfulSyncAt = new Date().toISOString();
     } catch (error) {
       const responseStatus = apiResponseStatus(error);
+      if (isAuthPendingEventSyncFailure(responseStatus)) {
+        // The device token was rejected (invalid/expired/revoked). Never delete
+        // recorded work for a repairable authentication failure — retain the row
+        // and suspend the whole replay pass. Retrying with the same bad token is
+        // futile and could storm the API; re-enrollment repairs delivery later,
+        // and the backend still enforces session ownership so a re-enrolled
+        // *different* identity cannot claim this backlog.
+        markPendingEventFailed(event.id, event.attempts);
+        runtimeStatus.connectionStatus =
+          connectionStatusAfterApiFailure(responseStatus);
+        log.warn(
+          "Pending event replay blocked by authentication; queue retained",
+          safeErrorForLog(error),
+        );
+        break;
+      }
       const permanentlyRejected =
         isPermanentPendingEventSyncFailure(responseStatus);
       if (permanentlyRejected) {
@@ -3301,11 +3907,45 @@ async function syncPendingQueuesOnce(forcePendingQueues: boolean) {
   for (const screenshot of getDuePendingScreenshots(10, {
     force: forcePendingQueues,
   })) {
+    let metadata: ScreenshotMetadata;
+    let content: Buffer;
     try {
-      const metadata = JSON.parse(
-        screenshot.metadataJson,
-      ) as ScreenshotMetadata;
-      const content = fs.readFileSync(screenshot.filePath);
+      metadata = JSON.parse(screenshot.metadataJson) as ScreenshotMetadata;
+      content = fs.readFileSync(screenshot.filePath);
+    } catch (error) {
+      // The local image or its metadata is missing/unreadable (manual cleanup,
+      // antivirus, disk issue). The upload can never succeed, so drop the row
+      // permanently and remove any leftover file instead of retrying forever
+      // and stalling the head of the queue on every pass.
+      markPendingScreenshotFailed(screenshot.screenshotId, screenshot.attempts, true);
+      log.warn("Dropped unreadable pending screenshot", safeErrorForLog(error));
+      continue;
+    }
+    if (!metadata.sessionId && metadata.localSessionId) {
+      // This screenshot was captured during local-only (offline) tracking.
+      // Resolve its local session to the recovered server session via the
+      // durable mapping written when the local session was promoted. Never
+      // attach it to whichever session happens to be current now.
+      const resolvedSessionId = getServerSessionIdForLocalSession(
+        metadata.localSessionId,
+      );
+      if (!resolvedSessionId) {
+        // The local session has not been promoted yet. Keep the screenshot
+        // queued (with backoff) rather than uploading it sessionless or against
+        // an unrelated session; a later pass resolves it after promotion.
+        markPendingScreenshotFailed(
+          screenshot.screenshotId,
+          screenshot.attempts,
+        );
+        log.info("Deferred offline screenshot awaiting session promotion", {
+          screenshotId: screenshot.screenshotId,
+          localSessionId: metadata.localSessionId,
+        });
+        continue;
+      }
+      metadata = { ...metadata, sessionId: resolvedSessionId };
+    }
+    try {
       await initiateScreenshot(metadata);
       await uploadScreenshot(
         screenshot.screenshotId,
@@ -3317,8 +3957,9 @@ async function syncPendingQueuesOnce(forcePendingQueues: boolean) {
         checksum: metadata.checksum,
         fileSize: metadata.fileSize,
       });
+      // Mark terminal; the trailing cleanup removes the owned file and only then
+      // retires the row, so a failed file delete never orphans the JPEG.
       markPendingScreenshotUploaded(screenshot.screenshotId);
-      fs.rmSync(screenshot.filePath, { force: true });
       runtimeStatus.connectionStatus = "online";
       runtimeStatus.lastSuccessfulSyncAt = new Date().toISOString();
     } catch (error) {
@@ -3338,9 +3979,15 @@ async function syncPendingQueuesOnce(forcePendingQueues: boolean) {
       if (!permanentlyRejected) {
         break;
       }
+      // A server-rejected screenshot will never be accepted. Its 'dead' row is
+      // retired below by the cleanup pass, which removes the owned file first.
       continue;
     }
   }
+  // Remove owned files for terminal screenshots, then drop terminal rows
+  // (legacy 'uploaded', permanently-rejected 'dead') so the local database file
+  // stays bounded by in-flight work and no rejected JPEG is left on disk.
+  cleanupTerminalScreenshotFiles();
   rebuildTrayMenu();
 }
 
@@ -3437,6 +4084,19 @@ async function startTrackingAutomatically() {
 
   const attemptedAt = new Date();
   isStartingTrackingAutomatically = true;
+  // Bind this startup to the enrollment identity that launched it. A logout or
+  // re-enrollment during any await below invalidates the continuation: applying
+  // its session/config snapshot or starting timers would revive a signed-out or
+  // supersede a newer identity's runtime (D2). Sign-out, explicit Stop, and Quit
+  // also invalidate it even though they do not change the identity generation, so
+  // the guard covers those transitions too (F2).
+  const startEnrollmentGeneration = enrollmentGeneration;
+  const startupLostOwnership = () =>
+    enrollmentGeneration !== startEnrollmentGeneration ||
+    !runtimeStatus.enrolled ||
+    isSigningOut ||
+    isQuitting ||
+    trackingPausedByUser;
   if (automaticTrackingRetryTimer) {
     clearTimeout(automaticTrackingRetryTimer);
     automaticTrackingRetryTimer = null;
@@ -3451,6 +4111,9 @@ async function startTrackingAutomatically() {
       beginLocalTrackingSession(attemptedAt);
     }
     const currentBeforeRecovery = await getCurrentSession();
+    if (startupLostOwnership()) {
+      return;
+    }
     const hasOpenServerSession = Boolean(
       currentBeforeRecovery.session &&
         !currentBeforeRecovery.session.ended_at &&
@@ -3466,6 +4129,9 @@ async function startTrackingAutomatically() {
     });
     await syncPendingQueues(true);
     const rawConfig = await getAgentConfig();
+    if (startupLostOwnership()) {
+      return;
+    }
     trackingConfig = normalizeTrackingConfig(rawConfig);
     if (rawConfig.employee) {
       runtimeStatus.employeeName = rawConfig.employee.name;
@@ -3478,6 +4144,9 @@ async function startTrackingAutomatically() {
       await refreshWorkedTodayTotal();
     }
     const current = await getCurrentSession();
+    if (startupLostOwnership()) {
+      return;
+    }
     if (
       current.session &&
       !current.session.ended_at &&
@@ -3493,6 +4162,11 @@ async function startTrackingAutomatically() {
       applyWorkdayState(current.workday);
       applyPauseState(current.pause);
       await refreshWorkedTodayTotal();
+      // A sign-out / Stop / Quit during the summary await must not start the
+      // background timers or mark the signed-out runtime online (F2).
+      if (startupLostOwnership()) {
+        return;
+      }
       runtimeStatus.connectionStatus = "online";
       runtimeStatus.lastSuccessfulSyncAt = new Date().toISOString();
       startTimers();
@@ -3528,13 +4202,34 @@ async function startTrackingAutomatically() {
       });
       return;
     }
+    // Capture the operation-bound device token BEFORE creating the session, so a
+    // later re-enrollment cannot make us clean up under a different identity's
+    // credentials (Gap 3).
+    const startupOperationToken = getDeviceToken();
     const started = await startSession();
+    if (startupLostOwnership()) {
+      // Signed out / re-enrolled while the new session was being created. Do not
+      // bind the just-opened session or start timers under the old identity (D2).
+      // Actively close the orphaned server session under its ORIGINAL identity
+      // instead of leaving it for the server heartbeat timeout; if that identity
+      // is no longer authorized we fall back to the timeout (Gap 3).
+      await endOrphanedStartupSession(
+        started.session.id,
+        startupOperationToken,
+      );
+      return;
+    }
     freshSessionStartConfirmed = false;
     freshSessionStartPromptActive = false;
     waitingForInputAfterIdleSessionClose = false;
     syncRuntimeFromSession(started.session);
     applyWorkdayState(started.workday);
     await refreshWorkedTodayTotal();
+    // As in the open-session branch: a sign-out / Stop / Quit during the summary
+    // await must not start timers or mark the signed-out runtime online (F2).
+    if (startupLostOwnership()) {
+      return;
+    }
     runtimeStatus.connectionStatus = "online";
     runtimeStatus.lastSuccessfulSyncAt = new Date().toISOString();
     startTimers();
@@ -3549,6 +4244,12 @@ async function startTrackingAutomatically() {
     void refreshTimeAdjustmentRequests();
     void refreshLeaveRequests();
   } catch (error) {
+    // A failed startup continuation that lost ownership (logout/re-enroll during
+    // an await) must not prompt, begin a local session, reschedule, or mark the
+    // signed-out runtime offline. Guard the failure path as well as success (D2).
+    if (startupLostOwnership()) {
+      return;
+    }
     runtimeStatus.connectionStatus = connectionStatusAfterApiFailure(
       apiResponseStatus(error),
     );
@@ -3640,6 +4341,47 @@ function applyPauseState(pause?: PauseState | null) {
   }
 }
 
+async function endOrphanedStartupSession(
+  sessionId: string,
+  operationToken: string | null,
+) {
+  // A session was created during automatic startup, then ownership was lost
+  // (Stop, sign-out, re-enrollment) before it could be bound. Close it under the
+  // identity that created it, using the token captured at creation time — NOT the
+  // global current token, which may now belong to a different device (Gap 3).
+  if (!operationToken) {
+    // No captured credential (should not happen for an enrolled startup); leave the
+    // session to the server-side heartbeat timeout.
+    return;
+  }
+  try {
+    await endSession({
+      sessionId,
+      activeSeconds: 0,
+      idleSeconds: 0,
+      reason: "Orphaned startup session cancelled",
+      endedAt: new Date().toISOString(),
+      eventId: randomUUID(),
+      authToken: operationToken,
+    });
+    log.info("Closed an orphaned startup session under its original identity", {
+      sessionId,
+    });
+  } catch (error) {
+    // 401 (token revoked) / 403 / 404 (foreign or already-cleaned device): the
+    // original identity can no longer authorize this close, so we must not retry
+    // under any other identity. Fall back to the server heartbeat timeout. A
+    // transient/offline failure likewise falls back rather than replaying under a
+    // possibly-newer identity via the shared queue (whose sends use the current
+    // token). Durable same-identity recovery metadata is a further enhancement.
+    const status = apiResponseStatus(error);
+    log.warn(
+      "Could not close an orphaned startup session under its original identity; leaving it to the server heartbeat timeout",
+      { sessionId, status: status ?? null },
+    );
+  }
+}
+
 async function stopTrackingSession(reason = "Stopped by employee") {
   recalculateWorkedTime();
   trackingPausedByUser = true;
@@ -3647,9 +4389,16 @@ async function stopTrackingSession(reason = "Stopped by employee") {
   freshSessionStartConfirmed = false;
   freshSessionStartPromptActive = false;
   runtimeStatus.trackingPaused = true;
+  invalidateInFlightScreenshotCaptures();
   saveTrackingPreferences();
   closeActiveLocalTrackingSession(new Date().toISOString(), "paused");
   clearRuntimeTimers();
+  // clearRuntimeTimers initiates the buffered foreground-activity flush (and
+  // leaves any tick-started upload tracked). Capture it so Stop/sign-out orders
+  // its End behind the foreground evidence: it posts to the same session, and a
+  // closed session would otherwise drop the event (G1b).
+  const foregroundFlush = pendingForegroundActivityFlush;
+  pendingForegroundActivityFlush = null;
   inputIntegrityMonitor.stop();
   // Task/work-time tracking may pause, but workplace screenshot monitoring is
   // an independent company policy and continues for an enrolled active device.
@@ -3669,53 +4418,124 @@ async function stopTrackingSession(reason = "Stopped by employee") {
     return { success: true };
   }
 
-  try {
-    const result = await endSession({
-      sessionId,
-      activeSeconds,
-      idleSeconds,
+  // Durability BEFORE the predecessor/foreground waits, and a bounded overall
+  // deadline — the same shared finalization contract Quit uses (J1/J2). End is
+  // persisted to the outbox now, sentinel-ordered to deliver LAST within its
+  // session group, so a kill or a deadline-triggered exit during the waits still
+  // closes the session on next launch and can never overtake a predecessor that
+  // only exists as an in-memory promise.
+  enqueuePendingEvent({
+    id: eventId,
+    method: "POST",
+    endpoint: `/agent/sessions/${sessionId}/end`,
+    payload: {
+      event_id: eventId,
+      ended_at: endedAt,
+      active_seconds: activeSeconds,
+      idle_seconds: idleSeconds,
       reason,
-      endedAt,
-      eventId,
-    });
-    syncRuntimeFromSession(result.session);
-    applyWorkdayState(result.workday);
-    await refreshWorkedTodayTotal();
-    runtimeStatus.connectionStatus = "online";
-    runtimeStatus.lastSuccessfulSyncAt = new Date().toISOString();
-    return { success: true };
-  } catch (error) {
-    enqueuePendingEvent({
-      id: eventId,
-      method: "POST",
-      endpoint: `/agent/sessions/${sessionId}/end`,
-      payload: {
-        event_id: eventId,
-        ended_at: endedAt,
-        active_seconds: activeSeconds,
-        idle_seconds: idleSeconds,
-        reason,
-      },
-      idempotencyKey: eventId,
-    });
-    if (!syncTimer) {
-      syncTimer = setInterval(() => void syncPendingQueues(), 30_000);
+    },
+    idempotencyKey: eventId,
+    createdAt: FINALIZATION_ORDER_SENTINEL,
+  });
+
+  const requestEnrollmentGeneration = enrollmentGeneration;
+  const deliverEnd = async () => {
+    // Order End behind every predecessor for this session — one still IN FLIGHT
+    // (tracked by manualPauseTransitionPromise) and one already durably queued.
+    const inFlightTransition = manualPauseTransitionPromise;
+    const predecessorDelivered = inFlightTransition
+      ? await inFlightTransition
+      : true;
+    // Await the in-flight foreground-activity upload before End (G1b).
+    if (foregroundFlush) {
+      try {
+        await foregroundFlush;
+      } catch (error) {
+        log.warn("Foreground flush during stop failed", safeErrorForLog(error));
+      }
     }
-    runtimeStatus.connectionStatus = connectionStatusAfterApiFailure(
-      apiResponseStatus(error),
+    // Exclude our own durable End row (above) when checking for real predecessors.
+    if (!predecessorDelivered || hasPendingEventsForSession(sessionId, eventId)) {
+      // A predecessor is queued: leave the durable, sentinel-ordered End and flush
+      // the queue in causal order.
+      try {
+        await syncPendingQueues(true);
+      } catch (error) {
+        log.warn(
+          "Ordered flush during stop failed; End remains durably queued",
+          safeErrorForLog(error),
+        );
+      }
+      return;
+    }
+    try {
+      const result = await endSession({
+        sessionId,
+        activeSeconds,
+        idleSeconds,
+        reason,
+        endedAt,
+        eventId,
+      });
+      // Delivered directly — drop the redundant durable row.
+      markPendingEventUploaded(eventId);
+      // While End(A) was on the network a concurrent Resume/start may have adopted
+      // a newer session B, or a logout/re-enrollment may have changed identity; do
+      // not apply A's ended snapshot over B (D3).
+      const newerSessionAdopted =
+        currentSessionId !== null && currentSessionId !== sessionId;
+      if (
+        newerSessionAdopted ||
+        enrollmentGeneration !== requestEnrollmentGeneration
+      ) {
+        runtimeStatus.connectionStatus = "online";
+        runtimeStatus.lastSuccessfulSyncAt = new Date().toISOString();
+        return;
+      }
+      syncRuntimeFromSession(result.session);
+      applyWorkdayState(result.workday);
+      await refreshWorkedTodayTotal();
+      runtimeStatus.connectionStatus = "online";
+      runtimeStatus.lastSuccessfulSyncAt = new Date().toISOString();
+    } catch (error) {
+      // End is already durably queued (above); leave it for ordered retry.
+      if (!syncTimer) {
+        syncTimer = setInterval(() => void syncPendingQueues(), 30_000);
+      }
+      runtimeStatus.connectionStatus = connectionStatusAfterApiFailure(
+        apiResponseStatus(error),
+      );
+      log.warn(
+        "Tracking paused locally, but session end could not be synced",
+        safeErrorForLog(error),
+      );
+    }
+  };
+
+  // Bound the whole finalization; End (and predecessors, made durable before their
+  // own send) are already persisted, so exceeding the deadline is safe — next
+  // launch replays them in causal order. A stale continuation that resolves after
+  // the deadline is neutralised by the D3 ownership guards inside deliverEnd.
+  let deadlineHandle: ReturnType<typeof setTimeout> | null = null;
+  const deadlineReached = new Promise<"deadline">((resolve) => {
+    deadlineHandle = setTimeout(
+      () => resolve("deadline"),
+      SHUTDOWN_FINALIZATION_DEADLINE_MS,
     );
+  });
+  const outcome = await Promise.race([
+    deliverEnd().then(() => "done" as const),
+    deadlineReached,
+  ]);
+  if (deadlineHandle) clearTimeout(deadlineHandle);
+  if (outcome === "deadline") {
     log.warn(
-      "Tracking paused locally, but session end could not be synced",
-      safeErrorForLog(error),
+      "Stop/sign-out finalization exceeded its deadline; End is durably queued for next-launch delivery",
     );
-    return {
-      success: true,
-      message:
-        "Tracking and screenshots are paused on this device. The server will update when the connection returns.",
-    };
-  } finally {
-    rebuildTrayMenu();
   }
+  rebuildTrayMenu();
+  return { success: true };
 }
 
 async function pauseTracking(
@@ -3734,6 +4554,7 @@ async function pauseTracking(
   recalculateWorkedTime();
   unpaidPauseActive = true;
   runtimeStatus.trackingPaused = true;
+  invalidateInFlightScreenshotCaptures();
   idleSecondsBeforeCurrentIdle = runtimeStatus.idleSeconds;
   eligibleIdleSecondsBeforeCurrentIdle = runtimeStatus.eligibleIdleSeconds;
   idleWallClockStartedAt = Date.now();
@@ -3744,8 +4565,7 @@ async function pauseTracking(
   rebuildTrayMenu();
   return {
     success: true,
-    message:
-      "Paused. Resume when you return; screenshot monitoring remains active.",
+    message: "Paused. Tracking and screenshots stop until you resume.",
   };
 }
 
@@ -3754,6 +4574,16 @@ async function resumeTracking() {
     return {
       success: false,
       message: "Enroll this device before starting tracking.",
+    };
+  }
+  // A sign-out or quit in progress owns the lifecycle. Admitting a Resume here
+  // would create a new local session and restart accrual while final delivery is
+  // still draining, orphaning work the teardown then clears (F3). Reject at this
+  // main-process entry point rather than relying on the UI to disable the control.
+  if (isSigningOut || isQuitting) {
+    return {
+      success: false,
+      message: "Signing out. Try again once sign-out finishes.",
     };
   }
   const isPaidPause =
@@ -3830,70 +4660,73 @@ async function resumeTracking() {
 }
 
 async function logoutDevice() {
-  if (runtimeStatus.enrolled) {
-    try {
-      await syncPendingQueues(true);
-    } catch (error) {
-      log.warn("Final sync before sign-out failed", safeErrorForLog(error));
-    }
-    await stopTrackingSession("Employee signed out from this device");
+  // Idempotent: a second sign-out request while one is already draining must not
+  // start another Stop or re-run the reset (D6).
+  if (isSigningOut) {
+    return { success: true };
   }
+  const wasEnrolled = runtimeStatus.enrolled;
 
-  clearRuntimeTimers();
-  inputIntegrityMonitor.stop();
-  clearEnrollmentIdentity();
-  configureAutoStart(false);
-  trackingPausedByUser = false;
+  // Local-first, synchronous intent change: before ANY network await, stop new
+  // accrual and screenshot acquisition. invalidateInFlightScreenshotCaptures()
+  // aborts an in-progress capture, and isSigningOut blocks scheduling a new one
+  // even though enrollment is briefly still true while final delivery drains.
+  // This is why screenshotCaptureBlockReason() short-circuits on isSigningOut:
+  // the enrolled-but-stopped screenshot policy must not keep capturing here (D6).
+  // Bank the pre-intent interval once before isSigningOut freezes accrual (G3).
+  recalculateWorkedTime({ finalCheckpoint: true });
+  isSigningOut = true;
+  invalidateInFlightScreenshotCaptures();
+  trackingPausedByUser = true;
   unpaidPauseActive = false;
-  manualPauseTransitionPromise = null;
-  saveTrackingPreferences();
-  currentSessionId = null;
-  waitingForInputAfterIdleSessionClose = false;
-  freshSessionStartConfirmed = false;
-  freshSessionStartPromptActive = false;
-  workedTodayBaseSeconds = 0;
-  activeCounterDate = null;
-  idleSecondsBeforeCurrentIdle = 0;
-  eligibleIdleSecondsBeforeCurrentIdle = 0;
-  idleWallClockStartedAt = null;
-  automaticIdleStartPromise = null;
-  automaticIdleFinishPromise = null;
-  isFinishingAutomaticIdle = false;
-  screenshotQueue = [];
-  screenshotWindowEndsAt = null;
-  saveScreenshotSchedule(null);
-  Object.assign(runtimeStatus, {
-    enrolled: false,
-    employeeName: "Not enrolled",
-    employeeEmail: null,
-    employeeAvatarUrl: null,
-    deviceName: process.env.COMPUTERNAME ?? "Windows device",
-    deviceId: null,
-    macAddress: null,
-    localIpAddress: null,
-    trackingStatus: "starting",
-    trackingPaused: false,
-    sessionStartedAt: null,
-    workedTodaySeconds: 0,
-    activeSeconds: 0,
-    idleSeconds: 0,
-    eligibleIdleSeconds: 0,
-    connectionStatus: "offline",
-    lastScreenshotAt: null,
-    lastSuccessfulSyncAt: null,
-    tasks: [],
-    projects: [],
-    selectedTask: null,
-    timeAdjustmentRequests: [],
-    timeSummary: null,
-    todayTimeline: null,
-    idleRequestPeriods: [],
-    lastIdleAlert: null,
-    locallyEndedIdleAt: null,
-  } satisfies Partial<AgentRuntimeStatus>);
-  tray?.setImage(createTrayImage("#b7791f"));
-  rebuildTrayMenu();
-  showMainWindow();
+  runtimeStatus.trackingPaused = true;
+
+  try {
+    if (wasEnrolled) {
+      // Stop the session locally and durably record its End first, then make a
+      // bounded best-effort attempt to flush already-durable evidence. The local
+      // teardown below runs regardless of whether the network flush succeeds, so
+      // sign-out never waits on network progress to take effect locally.
+      await stopTrackingSession("Employee signed out from this device");
+      try {
+        await syncPendingQueues(true);
+      } catch (error) {
+        log.warn("Final sync before sign-out failed", safeErrorForLog(error));
+      }
+    }
+  } finally {
+    clearRuntimeTimers();
+    inputIntegrityMonitor.stop();
+    clearEnrollmentIdentity();
+    enrollmentGeneration += 1;
+    configureAutoStart(false);
+    trackingPausedByUser = false;
+    unpaidPauseActive = false;
+    manualPauseTransitionPromise = null;
+    saveTrackingPreferences();
+    currentSessionId = null;
+    waitingForInputAfterIdleSessionClose = false;
+    freshSessionStartConfirmed = false;
+    freshSessionStartPromptActive = false;
+    workedTodayBaseSeconds = 0;
+    activeCounterDate = null;
+    idleSecondsBeforeCurrentIdle = 0;
+    eligibleIdleSecondsBeforeCurrentIdle = 0;
+    idleWallClockStartedAt = null;
+    automaticIdleStartPromise = null;
+    automaticIdleFinishPromise = null;
+    isFinishingAutomaticIdle = false;
+    screenshotQueue = [];
+    screenshotWindowEndsAt = null;
+    saveScreenshotSchedule(null);
+    Object.assign(runtimeStatus, clearedPersonalRuntimeStatus());
+    // Enrollment identity is now fully cleared, so the enrolled guard alone keeps
+    // capture blocked; release the sign-out gate for the next enrollment.
+    isSigningOut = false;
+    tray?.setImage(createTrayImage("#b7791f"));
+    rebuildTrayMenu();
+    showMainWindow();
+  }
   return { success: true };
 }
 
@@ -4593,10 +5426,14 @@ function wireSystemEvents() {
   });
   powerMonitor.on("on-battery", () => {
     onAcPower = false;
+    invalidateInFlightScreenshotCaptures();
     log.info("Battery power detected; screenshot capture is paused");
   });
   powerMonitor.on("lock-screen", () => {
+    // Physical lock state is always recorded, independent of work intent (D5).
+    screenLocked = true;
     recalculateWorkedTime();
+    invalidateInFlightScreenshotCaptures();
     if (waitingForInputAfterIdleSessionClose) {
       runtimeStatus.trackingStatus = "locked";
     } else {
@@ -4606,8 +5443,28 @@ function wireSystemEvents() {
   });
 
   powerMonitor.on("unlock-screen", () => {
+    // Always clear the physical lock flag first — even when work stays stopped —
+    // so screenshot eligibility and displayed state stop reporting "locked" after
+    // the machine is physically unlocked (D5).
+    screenLocked = false;
     lastDurationTickAt = Date.now();
     idleSecondsBeforeCurrentIdle = runtimeStatus.idleSeconds;
+    if (
+      !physicalResumeShouldResumeWork({
+        manualPauseActive: unpaidPauseActive,
+        trackingStoppedByUser: trackingPausedByUser,
+      })
+    ) {
+      // The employee explicitly paused/stopped. Unlocking the machine must not
+      // post an active transition or resume accrual — the pause intent outlives
+      // the physical lock state. Restore the resting work-intent status so the UI
+      // no longer shows "locked", then let the employee resume work from the UI.
+      runtimeStatus.trackingStatus = trackingPausedByUser ? "paused" : "idle";
+      notifyRendererStatus();
+      rebuildTrayMenu();
+      log.info("Windows unlock detected while paused; tracking stays paused");
+      return;
+    }
     if (!resumeAfterIdleSessionClose()) {
       void sendStateEvent("screen_unlocked", "active");
     }
@@ -4615,7 +5472,10 @@ function wireSystemEvents() {
   });
 
   powerMonitor.on("suspend", () => {
+    // Physical sleep state is always recorded, independent of work intent (D5).
+    systemSleeping = true;
     recalculateWorkedTime();
+    invalidateInFlightScreenshotCaptures();
     if (waitingForInputAfterIdleSessionClose) {
       runtimeStatus.trackingStatus = "sleeping";
     } else {
@@ -4625,14 +5485,46 @@ function wireSystemEvents() {
   });
 
   powerMonitor.on("resume", () => {
+    // Always clear the physical sleep flag first, even when work stays stopped, so
+    // eligibility and displayed state recover after the machine wakes (D5).
+    systemSleeping = false;
     lastDurationTickAt = Date.now();
     idleSecondsBeforeCurrentIdle = runtimeStatus.idleSeconds;
+    if (
+      !physicalResumeShouldResumeWork({
+        manualPauseActive: unpaidPauseActive,
+        trackingStoppedByUser: trackingPausedByUser,
+      })
+    ) {
+      // Resuming from sleep must not undo an explicit pause/stop; keep the
+      // paused intent but restore the resting status so the UI stops showing
+      // "sleeping", and let the employee resume work from the UI.
+      runtimeStatus.trackingStatus = trackingPausedByUser ? "paused" : "idle";
+      notifyRendererStatus();
+      rebuildTrayMenu();
+      log.info("System resume detected while paused; tracking stays paused");
+      return;
+    }
     if (!resumeAfterIdleSessionClose()) {
       void sendStateEvent("system_resumed", "active");
     }
     log.info("System resume detected");
   });
 }
+
+// Last-resort visibility: without these, an unhandled rejection during startup
+// leaves the process alive but broken — no tray, no tracking — while still
+// holding the single-instance lock, so relaunching silently fails. Log it so
+// the failure is diagnosable instead of invisible.
+process.on("uncaughtException", (error) => {
+  log.error("Uncaught exception in the main process", safeErrorForLog(error));
+});
+process.on("unhandledRejection", (reason) => {
+  log.error(
+    "Unhandled promise rejection in the main process",
+    safeErrorForLog(reason),
+  );
+});
 
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
 if (!gotSingleInstanceLock) {
@@ -4662,7 +5554,8 @@ app.on("before-quit", (event) => {
 
   event.preventDefault();
   quitNotificationSent = true;
-  recalculateWorkedTime();
+  // Bank the pre-intent interval once before isQuitting freezes accrual (G3).
+  recalculateWorkedTime({ finalCheckpoint: true });
   const sessionId = currentSessionId;
   const eventId = randomUUID();
   const endedAt = new Date().toISOString();
@@ -4670,47 +5563,145 @@ app.on("before-quit", (event) => {
   inputIntegrityMonitor.stop();
   const activeSeconds = runtimeStatus.activeSeconds;
   const idleSeconds = runtimeStatus.idleSeconds;
+  // Snapshot the in-flight transition predecessors BEFORE clearRuntimeTimers so
+  // Quit can serialize End behind them (clearRuntimeTimers does not touch these,
+  // but capturing first keeps the ordering intent explicit).
+  const quitPredecessors = [
+    manualPauseTransitionPromise,
+    automaticIdleStartPromise,
+    automaticIdleFinishPromise,
+  ].filter((promise): promise is Promise<boolean> => Boolean(promise));
   clearRuntimeTimers();
+  // clearRuntimeTimers initiates the buffered foreground-activity flush. That
+  // upload posts a foreground_activity event to the SAME /events endpoint as End,
+  // so End must be ordered behind it too — otherwise a closed session drops the
+  // foreground evidence. Capture the promise the teardown just started (F1).
+  const foregroundFlush = pendingForegroundActivityFlush;
+  pendingForegroundActivityFlush = null;
   currentSessionId = null;
   runtimeStatus.sessionStartedAt = null;
   runtimeStatus.trackingStatus = "offline";
 
-  const finishSession = sessionId
-    ? endSession({
-        sessionId,
-        activeSeconds,
-        idleSeconds,
+  // Durability BEFORE the predecessor/foreground waits: persist End to the
+  // durable outbox now, so a process kill during those awaits still closes the
+  // session on next launch (O1). The sentinel created_at makes it sort LAST in
+  // this session's group, so a predecessor's failure row (enqueued later, with a
+  // real timestamp) still delivers first — durability without order inversion.
+  if (sessionId) {
+    enqueuePendingEvent({
+      id: eventId,
+      method: "POST",
+      endpoint: `/agent/sessions/${sessionId}/end`,
+      payload: {
+        event_id: eventId,
+        ended_at: endedAt,
+        active_seconds: activeSeconds,
+        idle_seconds: idleSeconds,
         reason: "Khaliduo quit",
-        endedAt,
-        eventId,
-      })
+      },
+      idempotencyKey: eventId,
+      createdAt: FINALIZATION_ORDER_SENTINEL,
+    });
+  }
+
+  // Quit shares the ordered-finalization contract with Stop/sign-out: End must
+  // never reach the backend ahead of an earlier manual-pause / automatic-idle
+  // transition or a queued predecessor for this session. The End is already
+  // durable (above); after the predecessors and foreground upload settle, it is
+  // either sent directly (removing the now-redundant durable row) or left in the
+  // queue for ordered replay behind a still-pending predecessor (D1).
+  const deliverEnd = sessionId
+    ? (async () => {
+        let predecessorsDelivered = true;
+        for (const predecessor of quitPredecessors) {
+          if (!(await predecessor)) {
+            predecessorsDelivered = false;
+          }
+        }
+        // Await the in-flight foreground-activity upload before End. It resolves
+        // once the event is delivered (now durable server-side, ordered before
+        // End) or, on failure, once it has enqueued its own durable row — which
+        // hasPendingEventsForSession then detects so End is queued behind it.
+        if (foregroundFlush) {
+          try {
+            await foregroundFlush;
+          } catch (error) {
+            log.warn(
+              "Foreground flush during quit failed",
+              safeErrorForLog(error),
+            );
+          }
+        }
+        // `hasPendingEventsForSession(sessionId, eventId)` excludes our own
+        // durable End row, so it reports only genuine predecessors (e.g. a failed
+        // Pause that queued behind us).
+        if (
+          !predecessorsDelivered ||
+          hasPendingEventsForSession(sessionId, eventId)
+        ) {
+          // A predecessor is queued: leave the durable End in place — it is
+          // already ordered last — and flush the queue in causal order.
+          try {
+            await syncPendingQueues(true);
+          } catch (error) {
+            log.warn(
+              "Final ordered flush during quit failed; End remains durably queued",
+              safeErrorForLog(error),
+            );
+          }
+          return;
+        }
+        try {
+          await endSession({
+            sessionId,
+            activeSeconds,
+            idleSeconds,
+            reason: "Khaliduo quit",
+            endedAt,
+            eventId,
+          });
+          // Delivered directly; drop the now-redundant durable row so it is not
+          // re-sent on next launch (the server would dedupe by event_id anyway).
+          markPendingEventUploaded(eventId);
+        } catch (error) {
+          // Direct send failed, but End is already durably queued (with correct
+          // ordering) — leave it for retry rather than enqueuing a duplicate.
+          log.warn(
+            "Failed to close the work session before quitting; End remains durably queued",
+            safeErrorForLog(error),
+          );
+        }
+      })()
     : Promise.resolve();
 
-  void finishSession
-    .catch((error) => {
-      if (sessionId) {
-        enqueuePendingEvent({
-          id: eventId,
-          method: "POST",
-          endpoint: `/agent/sessions/${sessionId}/end`,
-          payload: {
-            event_id: eventId,
-            ended_at: endedAt,
-            active_seconds: activeSeconds,
-            idle_seconds: idleSeconds,
-            reason: "Khaliduo quit",
-          },
-          idempotencyKey: eventId,
-        });
-      }
-      log.warn(
-        "Failed to close the work session before quitting",
-        safeErrorForLog(error),
+  // Bound the whole finalization: the End is already durable, so if predecessors
+  // or the queue flush hang past the deadline we still exit and let next launch
+  // deliver in order, rather than blocking quit indefinitely. Promise.race cannot
+  // cancel the losing wait, but the process exits immediately after, so the
+  // abandoned continuation has no lasting effect.
+  const finishSession = (async () => {
+    let deadlineHandle: ReturnType<typeof setTimeout> | null = null;
+    const deadlineReached = new Promise<"deadline">((resolve) => {
+      deadlineHandle = setTimeout(
+        () => resolve("deadline"),
+        SHUTDOWN_FINALIZATION_DEADLINE_MS,
       );
-    })
-    .finally(() => {
-      app.quit();
     });
+    const outcome = await Promise.race([
+      deliverEnd.then(() => "done" as const),
+      deadlineReached,
+    ]);
+    if (deadlineHandle) clearTimeout(deadlineHandle);
+    if (outcome === "deadline") {
+      log.warn(
+        "Shutdown finalization exceeded its deadline; End is durably queued for next-launch delivery",
+      );
+    }
+  })();
+
+  void finishSession.finally(() => {
+    app.quit();
+  });
 });
 
 app.whenReady().then(async () => {
@@ -4719,51 +5710,75 @@ app.whenReady().then(async () => {
   }
   log.initialize();
   log.info("Khaliduo agent starting");
-  const recoveryAttempt = crashRecoveryAttempt(process.argv);
-  const launchedForCrashRecovery = isCrashRecoveryLaunch(process.argv);
-  startCrashRecoveryWatchdog(recoveryAttempt);
-  await initializeLocalDatabase();
-  hydrateIdentityStatus();
-  if (
-    launchedForCrashRecovery &&
-    (!runtimeStatus.enrolled ||
-      !runtimeStatus.deviceId ||
-      !getOpenLocalTrackingSession(runtimeStatus.deviceId))
-  ) {
-    log.info("Crash recovery skipped because no interrupted tracking session exists");
-    stopCrashRecoveryWatchdog();
-    app.exit(0);
-    return;
-  }
-  const launchedByWindowsStartup =
-    process.argv.includes("--autostart") || process.argv.includes("--hidden");
-  const launchedAfterSilentUpdate =
-    process.argv.includes("--updated") || process.argv.includes("--force-run");
-  const launchedInBackground =
-    launchedByWindowsStartup || launchedAfterSilentUpdate || launchedForCrashRecovery;
-  loadTrackingPreferences(launchedByWindowsStartup || launchedForCrashRecovery);
-  configureAutoStart();
-  wireSystemEvents();
-
-  tray = new Tray(
-    createTrayImage(runtimeStatus.enrolled ? "#1f7a4d" : "#b7791f"),
-  );
-  tray.on("click", () => showMainWindow());
-  tray.on("double-click", () => showMainWindow());
-  rebuildTrayMenu();
-
-  await createMainWindow();
-  configureAutoUpdater();
-  if (!launchedInBackground) {
-    showMainWindow();
-  }
-  if (runtimeStatus.enrolled) {
-    startScreenshotMonitoring();
-    if (!trackingPausedByUser) {
-      await startTrackingAutomatically();
+  try {
+    const recoveryAttempt = crashRecoveryAttempt(process.argv);
+    const launchedForCrashRecovery = isCrashRecoveryLaunch(process.argv);
+    startCrashRecoveryWatchdog(recoveryAttempt);
+    await initializeLocalDatabase();
+    hydrateIdentityStatus();
+    // Restart-safe cleanup: if a previous run crashed after marking a screenshot
+    // terminal but before deleting its file, remove the orphan now.
+    cleanupTerminalScreenshotFiles();
+    const launchedByWindowsStartup =
+      process.argv.includes("--autostart") || process.argv.includes("--hidden");
+    const launchedAfterSilentUpdate =
+      process.argv.includes("--updated") || process.argv.includes("--force-run");
+    const launchedInBackground =
+      launchedByWindowsStartup || launchedAfterSilentUpdate || launchedForCrashRecovery;
+    // Load persisted intent and decide whether a crash-recovery relaunch has
+    // anything to recover. A Windows-login launch resets a saved pause; a crash
+    // recovery relaunch preserves the employee's saved Stop/Pause so the watchdog
+    // never silently resumes work that was intentionally ended.
+    const crashRecoveryHasWork = loadLaunchTrackingPreferences({
+      launchedByWindowsStartup,
+      launchedForCrashRecovery,
+    });
+    if (launchedForCrashRecovery && !crashRecoveryHasWork) {
+      // Not enrolled (e.g. after logout) or explicitly stopped: nothing to
+      // recover, and resuming would be wrong. Exit so no hidden process lingers.
+      log.info(
+        "Crash recovery found nothing to recover (not enrolled or intentionally stopped)",
+      );
+      stopCrashRecoveryWatchdog();
+      app.exit(0);
+      return;
     }
+    // Otherwise continue into normal startup, which consults the server and
+    // recovers BOTH interrupted online sessions (no open local row) and offline
+    // local-only sessions — instead of exiting before the server is queried.
+    configureAutoStart();
+    wireSystemEvents();
+
+    tray = new Tray(
+      createTrayImage(runtimeStatus.enrolled ? "#1f7a4d" : "#b7791f"),
+    );
+    tray.on("click", () => showMainWindow());
+    tray.on("double-click", () => showMainWindow());
+    rebuildTrayMenu();
+
+    await createMainWindow();
+    configureAutoUpdater();
+    if (!launchedInBackground) {
+      showMainWindow();
+    }
+    if (runtimeStatus.enrolled) {
+      // Screenshot monitoring is an independent company policy and always runs
+      // for an enrolled device. Work tracking only auto-starts when it is
+      // genuinely expected — this respects a preserved Pause (unpaidPauseActive)
+      // on crash recovery, not just an explicit Stop.
+      startScreenshotMonitoring();
+      if (automaticTrackingIsExpected()) {
+        await startTrackingAutomatically();
+      }
+    }
+    rebuildTrayMenu();
+  } catch (error) {
+    // Never linger as an invisible, lock-holding zombie. Exit non-zero so the
+    // single-instance lock is released and the crash-recovery watchdog can
+    // relaunch the agent instead of the user seeing a silently dead process.
+    log.error("Khaliduo agent failed to start", safeErrorForLog(error));
+    app.exit(1);
   }
-  rebuildTrayMenu();
 });
 
 app.on("window-all-closed", () => undefined);
@@ -4812,24 +5827,101 @@ ipcMain.handle("agent:install-update", async () => {
 ipcMain.handle(
   "agent:enroll-with-credentials",
   async (_, email: string, password: string) => {
+    if (
+      typeof email !== "string" ||
+      typeof password !== "string" ||
+      !email.trim() ||
+      !password
+    ) {
+      return { success: false, message: "Email and password are required." };
+    }
+
+    // Admission control: a sign-out that is still draining its final End/queue
+    // owns the identity teardown. Persisting a NEW enrollment now would be
+    // erased by that logout's cleanup finally (G2). Reject before any network
+    // call can persist credentials; the user can retry once sign-out finishes.
+    if (isSigningOut) {
+      return {
+        success: false,
+        message:
+          "Signing out of the previous account. Try again once sign-out finishes.",
+      };
+    }
+
+    // Exclusive-ownership admission (I1): only one enrollment operation may be in
+    // flight. A second overlapping request is rejected here — before it makes any
+    // network call or can persist credentials — rather than being allowed to race
+    // the first to persistence. `enrollmentGeneration` alone is insufficient: it
+    // is shared by every request until activation, so two requests could both
+    // pass a generation-only check and both write. The reservation below is the
+    // exclusive gate; the generation check remains for identity-change detection.
+    if (activeEnrollmentToken !== null) {
+      return {
+        success: false,
+        message: "A sign-in is already in progress. Please wait for it to finish.",
+      };
+    }
+    const enrollmentToken = ++enrollmentOperationSeq;
+    activeEnrollmentToken = enrollmentToken;
+    const enrollmentIdentityGeneration = enrollmentGeneration;
+    // Ownership holds only while THIS operation is the reserved one, the identity
+    // generation it began under is unchanged, and no sign-out/quit has started.
+    // Enforced inside the API helper right before it writes credentials (H1),
+    // again before activation, and on every error path (I2).
+    const stillOwnsEnrollment = () =>
+      activeEnrollmentToken === enrollmentToken &&
+      enrollmentGeneration === enrollmentIdentityGeneration &&
+      !isSigningOut &&
+      !isQuitting;
+
     try {
-      if (
-        typeof email !== "string" ||
-        typeof password !== "string" ||
-        !email.trim() ||
-        !password
-      ) {
-        return { success: false, message: "Email and password are required." };
+      let identity: StoredIdentity;
+      try {
+        identity = await enrollDeviceWithCredentials(
+          email,
+          password,
+          app.getVersion(),
+          stillOwnsEnrollment,
+        );
+      } catch (error) {
+        if ((error as { code?: string })?.code === "ENROLLMENT_SUPERSEDED") {
+          // Not a failure of the enrollment itself — a concurrent sign-out or
+          // newer enrollment invalidated it. Report a benign, retryable result
+          // without flipping the tray/status into the error state.
+          return {
+            success: false,
+            message:
+              "Sign-in was interrupted by a sign-out. Try again once it finishes.",
+          };
+        }
+        throw error;
       }
 
-      const identity = await enrollDeviceWithCredentials(
-        email,
-        password,
-        app.getVersion(),
-      );
+      // Persistence happened, but a logout/quit may have started in the narrow
+      // window between the ownership check and here. Do not adopt a stale
+      // identity, and do not report success the teardown would then erase.
+      if (!stillOwnsEnrollment()) {
+        return {
+          success: false,
+          message:
+            "Sign-in was interrupted by a sign-out. Try again once it finishes.",
+        };
+      }
       await activateEnrolledDevice(identity);
       return { success: true };
     } catch (error) {
+      // Ownership check on the error path too (I2): an obsolete HTTP failure from
+      // a request a later logout/quit/enrollment invalidated must not mutate the
+      // current (e.g. signed-out) runtime/tray. Return a benign cancellation and
+      // leave current state untouched; only a failure of the operation that still
+      // owns enrollment surfaces the ordinary error UI.
+      if (!stillOwnsEnrollment()) {
+        return {
+          success: false,
+          message:
+            "Sign-in was interrupted before it completed. Try again.",
+        };
+      }
       runtimeStatus.trackingStatus = "error";
       tray?.setImage(createTrayImage("#b42318"));
       rebuildTrayMenu();
@@ -4847,6 +5939,13 @@ ipcMain.handle(
           ? "Automatic device linking is not enabled on the server yet. Ask an administrator to activate this device, then try again."
           : getUserFacingError(error, "Sign-in and device setup failed."),
       };
+    } finally {
+      // Release exclusive ownership so the next enrollment can proceed. Only the
+      // reserving operation clears it, so a superseding operation's token is left
+      // intact.
+      if (activeEnrollmentToken === enrollmentToken) {
+        activeEnrollmentToken = null;
+      }
     }
   },
 );

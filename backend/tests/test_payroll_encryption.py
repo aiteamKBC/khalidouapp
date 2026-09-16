@@ -33,6 +33,30 @@ def test_dedicated_salary_key_can_read_legacy_jwt_derived_ciphertext(monkeypatch
     assert new_ciphertext != legacy_ciphertext
 
 
+def test_existing_payroll_requires_original_salary_key(monkeypatch):
+    original_key = "original-test-only-salary-key-" + "a" * 32
+    monkeypatch.setattr(settings, "salary_encryption_key", original_key)
+    encrypted = encrypt_text("15000.00")
+    for unavailable_key in ("", "different-test-only-key-" + "b" * 32):
+        monkeypatch.setattr(settings, "salary_encryption_key", unavailable_key)
+        with pytest.raises(RuntimeError, match="could not be decrypted"):
+            decrypt_text(encrypted)
+    monkeypatch.setattr(settings, "salary_encryption_key", original_key)
+    assert decrypt_text(encrypted) == "15000.00"
+
+
+def test_overriding_jwt_secret_breaks_legacy_payroll_decryption(monkeypatch):
+    monkeypatch.setattr(settings, "salary_encryption_key", "")
+    original_jwt = "original-test-only-jwt-" + "j" * 32
+    monkeypatch.setattr(settings, "jwt_secret_key", original_jwt)
+    encrypted = encrypt_text("15000.00")
+    monkeypatch.setattr(settings, "jwt_secret_key", "your-dev-jwt-secret")
+    with pytest.raises(RuntimeError, match="could not be decrypted"):
+        decrypt_text(encrypted)
+    monkeypatch.setattr(settings, "jwt_secret_key", original_jwt)
+    assert decrypt_text(encrypted) == "15000.00"
+
+
 def test_encrypted_sqlalchemy_types_never_store_plain_payroll_values():
     metadata = sa.MetaData()
     records = sa.Table(

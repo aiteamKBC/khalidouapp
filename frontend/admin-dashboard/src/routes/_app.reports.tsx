@@ -26,10 +26,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { StatCard } from "@/components/ui/stat-card";
-import { buildReport, fetchReportTotals } from "@/api/reports";
+import { buildReport, fetchEmployeeReport, fetchReportTotals } from "@/api/reports";
 import { listTeams } from "@/api/teams";
 import { listEmployees } from "@/api/employees";
-import { listTimesheets } from "@/api/timesheets";
 import { useAuth } from "@/lib/auth";
 import { Clock, Camera, Activity, Coffee } from "lucide-react";
 import { downloadCSV } from "@/lib/format";
@@ -45,10 +44,24 @@ function ReportsPage() {
   const [to, setTo] = useState("");
   const [teamId, setTeamId] = useState("all");
   const [empId, setEmpId] = useState("all");
-  const selectedScope = teamId !== "all" ? [teamId] : scope;
+  // Every report query carries the same team/employee/date filters — in both the
+  // query key (so results refresh) and the request — so the summary cards, the
+  // charts, and the export all reflect the current selection consistently (W9).
+  const reportFilters = {
+    scopedTeamIds: scope,
+    selectedTeamId: teamId,
+    selectedEmployeeId: empId,
+    dateFrom: from || undefined,
+    dateTo: to || undefined,
+  };
+  const filterKey = { teamId, empId, from, to, scope };
   const totals = useQuery({
-    queryKey: ["report-totals", selectedScope],
-    queryFn: ({ signal }) => fetchReportTotals(scope, teamId, signal),
+    queryKey: ["report-totals", filterKey],
+    queryFn: ({ signal }) => fetchReportTotals(reportFilters, signal),
+  });
+  const employeeRows = useQuery({
+    queryKey: ["report-employees", filterKey],
+    queryFn: ({ signal }) => fetchEmployeeReport(reportFilters, signal),
   });
   const teams = useQuery({
     queryKey: ["teams", scope],
@@ -60,23 +73,16 @@ function ReportsPage() {
     queryKey: ["employees", scope],
     queryFn: ({ signal }) => listEmployees(scope, signal),
   });
-  const timesheets = useQuery({
-    queryKey: ["timesheets", "weekly", selectedScope],
-    queryFn: ({ signal }) =>
-      listTimesheets(selectedScope, "weekly", undefined, undefined, signal),
-  });
   const report = useMemo(
     () =>
       totals.data
         ? buildReport(
             totals.data,
             (teams.data ?? []).filter((team) => teamId === "all" || team.id === teamId),
-            emps.data ?? [],
-            timesheets.data ?? [],
-            empId,
+            employeeRows.data ?? [],
           )
         : undefined,
-    [totals.data, teams.data, emps.data, timesheets.data, teamId, empId],
+    [totals.data, teams.data, employeeRows.data, teamId],
   );
 
   return (

@@ -21,3 +21,25 @@ export function shouldRestartAfterCrash(attempt: number): boolean {
 export function nextCrashRecoveryArgument(attempt: number): string {
   return `${RECOVERY_ARGUMENT_PREFIX}${Math.max(0, attempt) + 1}`;
 }
+
+/**
+ * After a watchdog relaunch, decide whether to continue into normal startup (so
+ * the server is consulted and the interrupted session is recovered) or exit.
+ *
+ * The previous gate required an OPEN LOCAL-ONLY session and exited otherwise —
+ * but a normal online session has no such row (its local row is marked synced),
+ * so online tracking never recovered after a crash. Continue whenever the device
+ * is still enrolled and the employee had not explicitly stopped tracking; normal
+ * startup then reconciles both online and local-only interrupted work with the
+ * server. Only a not-enrolled device (e.g. after logout) or an explicit stop has
+ * genuinely nothing to recover.
+ */
+export function crashRecoveryShouldContinue(input: {
+  enrolled: boolean;
+  hasDeviceId: boolean;
+  trackingStoppedByUser: boolean;
+}): boolean {
+  if (!input.enrolled || !input.hasDeviceId) return false;
+  if (input.trackingStoppedByUser) return false;
+  return true;
+}

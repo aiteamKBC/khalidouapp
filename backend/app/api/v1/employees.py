@@ -63,7 +63,11 @@ from app.services.employee_invitations import (
     latest_employee_invitations,
 )
 from app.schemas.admin import EmployeeWorkProfileUpdate
-from app.services.permissions import has_capability, require_capability
+from app.services.permissions import (
+    has_capability,
+    require_any_capability,
+    require_capability,
+)
 from app.services.person_access import disable_employee_tracking
 from app.services.request_notifications import employee_manager_summaries
 from app.services.input_integrity import summarize_input_integrity
@@ -122,6 +126,10 @@ def list_employees(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=25, ge=1, le=100),
 ):
+    # Roster/management data requires the People viewing capability. A custom
+    # permission-mode admin with no grants previously received this list within
+    # scope; reading the directory is now gated (W8).
+    require_capability(current_admin, "people.view")
     statement = select(Employee).where(
         Employee.company_id == current_admin.company_id,
         Employee.status != "deleted",
@@ -264,6 +272,11 @@ def list_employee_overviews(
     totals in one database round trip instead of querying once per employee.
     """
 
+    # Shared selector used by payroll, devices, reports, teams, leave, etc.; each
+    # of those features carries its own capability. Deny only an admin with no
+    # effective capabilities so no-grant custom admins cannot read the roster
+    # while every legitimate selector keeps working (W8).
+    require_any_capability(current_admin)
     today_start, today_end = day_bounds(date.today())
     settings = get_company_settings(db, current_admin.company_id)
     now = datetime.now(UTC)
@@ -579,6 +592,11 @@ def list_monitoring_employees(
     profiles deliberately stay out of this frequently-polled response.
     """
 
+    # Shared monitoring selector (dashboard, live-activity, monitoring pages),
+    # each gated by its own capability. Deny an admin with no effective
+    # capabilities so a no-grant custom admin cannot read the roster here either
+    # (W8), while every legitimate consumer keeps working.
+    require_any_capability(current_admin)
     company_settings = get_company_settings(db, current_admin.company_id)
     now = datetime.now(UTC)
     cutoff = now - timedelta(minutes=company_settings.offline_threshold_minutes)

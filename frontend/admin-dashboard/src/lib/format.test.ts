@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { formatDurationSeconds, formatSessionStatus } from "./format.ts";
+import { csvCell, formatDurationSeconds, formatSessionStatus } from "./format.ts";
 
 test("short recorded intervals remain visible instead of rounding to zero minutes", () => {
   assert.equal(formatDurationSeconds(0), "0m");
@@ -15,4 +15,23 @@ test("an open session is never presented as a morning sign-out", () => {
   assert.equal(formatSessionStatus(true, null, "Africa/Cairo"), "Still running - no sign-out yet");
   assert.equal(formatSessionStatus(false, null, "Africa/Cairo"), "No sign-out recorded");
   assert.equal(formatSessionStatus(false, "2026-08-03T09:30:00Z", "UTC"), "Signed out 9:30 AM");
+});
+
+
+test("csvCell neutralizes spreadsheet formula injection (W10)", () => {
+  assert.equal(csvCell("=1+1"), "'=1+1");
+  assert.equal(csvCell("+1+1"), "'+1+1");
+  assert.equal(csvCell("@SUM(A1:A9)"), "'@SUM(A1:A9)");
+  assert.equal(csvCell("-1+1"), "'-1+1");
+  // Formula lead + embedded quote: prefix, then standard CSV quote-doubling.
+  assert.equal(csvCell('=HYPERLINK("x")'), `"'=HYPERLINK(""x"")"`);
+});
+
+test("csvCell preserves genuine numbers, negatives, and dates (W10)", () => {
+  assert.equal(csvCell(-100.5), "-100.5");
+  assert.equal(csvCell("-100.5"), "-100.5");
+  assert.equal(csvCell(1234), "1234");
+  assert.equal(csvCell("2026-09-14"), "2026-09-14");
+  assert.equal(csvCell("Acme, Inc"), '"Acme, Inc"');
+  assert.equal(csvCell(null), "");
 });

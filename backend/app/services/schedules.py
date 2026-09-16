@@ -191,11 +191,19 @@ def effective_schedules_for_employees(
     *,
     profiles: dict | None = None,
     memberships_by_employee: dict | None = None,
+    timezone_by_employee: dict | None = None,
 ) -> dict:
-    """Resolve one workday for many employees with two shared queries."""
+    """Resolve one workday for many employees with two shared queries.
+
+    ``timezone_by_employee`` optionally supplies the effective timezone per
+    employee (e.g. the timezone a work session snapshotted). When given, the
+    per-day gate and schedule construction use it exactly as the single-employee
+    ``effective_schedule`` would, so batched results are byte-identical.
+    """
     if not employees:
         return {}
 
+    timezone_by_employee = timezone_by_employee or {}
     employee_ids = [employee.id for employee in employees]
     if memberships_by_employee is None:
         memberships_by_employee = {employee_id: [] for employee_id in employee_ids}
@@ -216,7 +224,10 @@ def effective_schedules_for_employees(
     historical_employees = [
         employee
         for employee in employees
-        if work_date < datetime.now(UTC).astimezone(timezone_for(employee)).date()
+        if work_date
+        < datetime.now(UTC)
+        .astimezone(timezone_for(employee, timezone_by_employee.get(employee.id)))
+        .date()
     ]
     audits_by_employee = profile_schedule_audits_by_employee(db, historical_employees)
 
@@ -270,6 +281,7 @@ def effective_schedules_for_employees(
             or team_override
             or company_overrides.get(employee.company_id)
         )
+        timezone_name = timezone_by_employee.get(employee.id)
         schedules[employee.id] = _schedule_from_override(
             employee,
             profile,
@@ -280,7 +292,9 @@ def effective_schedules_for_employees(
                 profile,
                 work_date,
                 audits_by_employee.get(employee.id),
+                timezone_name=timezone_name,
             ),
+            timezone_name=timezone_name,
         )
     return schedules
 

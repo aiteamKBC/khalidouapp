@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/select";
 import { getTrackingSettings, updateTrackingSettings } from "@/api/settings";
 import { getScreenshotStorageStatus } from "@/api/screenshots";
+import { resolveInitialLoadState } from "@/lib/async-load-state";
 import { Progress } from "@/components/ui/progress";
 import type { TrackingSettings } from "@/types";
 import { useAuth } from "@/lib/auth";
@@ -60,7 +61,36 @@ function TrackingSettingsPage() {
     onError: () => toast.error("Failed to save settings"),
   });
 
-  if (!form) return <div className="text-sm text-muted-foreground">Loading settings…</div>;
+  if (!form) {
+    const loadState = resolveInitialLoadState({
+      hasData: Boolean(query.data),
+      isError: query.isError,
+      errorStatus: (query.error as { status?: number } | null)?.status,
+    });
+    if (loadState === "denied") {
+      return (
+        <div className="text-sm text-destructive">
+          You do not have permission to view tracking settings.
+        </div>
+      );
+    }
+    if (loadState === "error") {
+      return (
+        <div className="flex items-center gap-3 text-sm">
+          <span className="text-destructive">Couldn&apos;t load tracking settings.</span>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => void query.refetch()}
+            disabled={query.isFetching}
+          >
+            Retry
+          </Button>
+        </div>
+      );
+    }
+    return <div className="text-sm text-muted-foreground">Loading settings…</div>;
+  }
 
   const update = <K extends keyof TrackingSettings>(k: K, v: TrackingSettings[K]) => {
     setForm({ ...form, [k]: v });

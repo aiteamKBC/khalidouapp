@@ -1,6 +1,6 @@
 import { createFileRoute, Navigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card } from "@/components/ui/card";
 import {
@@ -29,42 +29,74 @@ export const Route = createFileRoute("/_app/audit-log")({
   component: AuditLogPage,
 });
 
+const PAGE_SIZE = 100;
+
 function AuditLogPage() {
   const { can } = useAuth();
   const canViewAudit = can(permissions.auditView);
+  const [userId, setUserId] = useState("all");
+  const [action, setAction] = useState("all");
+  const [entity, setEntity] = useState("all");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const [page, setPage] = useState(1);
+
+  // Filters are sent to the backend so search reaches the full history rather
+  // than only the loaded page; results are paginated honestly (W11).
   const log = useQuery({
-    queryKey: ["audit"],
-    queryFn: ({ signal }) => listAuditLog(signal),
+    queryKey: ["audit", { userId, action, entity, from, to, page }],
+    queryFn: ({ signal }) =>
+      listAuditLog(
+        {
+          page,
+          pageSize: PAGE_SIZE,
+          userId: userId === "all" ? undefined : userId,
+          action: action === "all" ? undefined : action,
+          entityType: entity === "all" ? undefined : entity,
+          dateFrom: from || undefined,
+          dateTo: to || undefined,
+          // The displayed timestamps use the browser timezone; filter by the
+          // same zone so a From/To day matches what the viewer sees (W12).
+          tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        },
+        signal,
+      ),
     enabled: canViewAudit,
+    placeholderData: (previous) => previous,
   });
   const users = useQuery({
     queryKey: ["users"],
     queryFn: ({ signal }) => listUsers(signal),
     enabled: canViewAudit,
   });
-  const [userId, setUserId] = useState("all");
-  const [action, setAction] = useState("all");
-  const [entity, setEntity] = useState("all");
-  const [from, setFrom] = useState("");
-  const [to, setTo] = useState("");
 
-  const actions = useMemo(
-    () => Array.from(new Set((log.data ?? []).map((e) => e.action))),
-    [log.data],
-  );
-  const entities = useMemo(
-    () => Array.from(new Set((log.data ?? []).map((e) => e.entityType))),
-    [log.data],
-  );
+  const resetToFirstPage = () => setPage(1);
+  const onUserChange = (value: string) => {
+    setUserId(value);
+    resetToFirstPage();
+  };
+  const onActionChange = (value: string) => {
+    setAction(value);
+    resetToFirstPage();
+  };
+  const onEntityChange = (value: string) => {
+    setEntity(value);
+    resetToFirstPage();
+  };
+  const onFromChange = (value: string) => {
+    setFrom(value);
+    resetToFirstPage();
+  };
+  const onToChange = (value: string) => {
+    setTo(value);
+    resetToFirstPage();
+  };
 
-  const rows = (log.data ?? []).filter((e) => {
-    if (userId !== "all" && e.userId !== userId) return false;
-    if (action !== "all" && e.action !== action) return false;
-    if (entity !== "all" && e.entityType !== entity) return false;
-    if (from && e.at < from) return false;
-    if (to && e.at > to) return false;
-    return true;
-  });
+  const actions = log.data?.availableActions ?? [];
+  const entities = log.data?.availableEntityTypes ?? [];
+  const rows = log.data?.rows ?? [];
+  const total = log.data?.total ?? 0;
+  const totalPages = log.data?.totalPages ?? 1;
 
   if (!canViewAudit) return <Navigate to="/dashboard" replace />;
 
@@ -77,7 +109,7 @@ function AuditLogPage() {
 
       <Card className="p-4 mb-4">
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
-          <Select value={userId} onValueChange={setUserId}>
+          <Select value={userId} onValueChange={onUserChange}>
             <SelectTrigger>
               <SelectValue placeholder="User" />
             </SelectTrigger>
@@ -90,7 +122,7 @@ function AuditLogPage() {
               ))}
             </SelectContent>
           </Select>
-          <Select value={action} onValueChange={setAction}>
+          <Select value={action} onValueChange={onActionChange}>
             <SelectTrigger>
               <SelectValue placeholder="Action" />
             </SelectTrigger>
@@ -103,7 +135,7 @@ function AuditLogPage() {
               ))}
             </SelectContent>
           </Select>
-          <Select value={entity} onValueChange={setEntity}>
+          <Select value={entity} onValueChange={onEntityChange}>
             <SelectTrigger>
               <SelectValue placeholder="Entity" />
             </SelectTrigger>
@@ -116,8 +148,8 @@ function AuditLogPage() {
               ))}
             </SelectContent>
           </Select>
-          <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
-          <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+          <Input type="date" value={from} onChange={(e) => onFromChange(e.target.value)} />
+          <Input type="date" value={to} onChange={(e) => onToChange(e.target.value)} />
           <Button
             variant="outline"
             onClick={() => {
@@ -126,6 +158,7 @@ function AuditLogPage() {
               setEntity("all");
               setFrom("");
               setTo("");
+              setPage(1);
             }}
           >
             Reset
@@ -163,6 +196,32 @@ function AuditLogPage() {
           </TableBody>
         </Table>
       </Card>
+
+      <div className="mt-3 flex items-center justify-between text-sm text-muted-foreground">
+        <span>
+          {total === 0
+            ? "No matching events"
+            : `Page ${page} of ${totalPages} • ${total} event${total === 1 ? "" : "s"}`}
+        </span>
+        <div className="flex gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={page <= 1 || log.isFetching}
+            onClick={() => setPage((current) => Math.max(1, current - 1))}
+          >
+            Previous
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={page >= totalPages || log.isFetching}
+            onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
+          >
+            Next
+          </Button>
+        </div>
+      </div>
     </div>
   );
 }

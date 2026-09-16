@@ -69,6 +69,20 @@ export function mergeRecoveredCounters(
   };
 }
 
+/**
+ * A recovery heartbeat/end only credited the intended historical session if the
+ * server neither rolled it into a new session (`restarted`) nor refused the
+ * evidence (`ignored`). When either is set, the local counters were NOT applied
+ * to the session we meant to recover, so the local row must not be retired —
+ * it is retried on a later pass instead of being silently marked synchronized.
+ */
+export function recoveryResponseCredited(response: {
+  restarted?: boolean;
+  ignored?: boolean;
+}): boolean {
+  return response.restarted !== true && response.ignored !== true;
+}
+
 export function offsetRecoveredEventPayload(
   payload: Record<string, unknown>,
   serverIdleSeconds: number,

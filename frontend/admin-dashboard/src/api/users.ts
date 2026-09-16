@@ -1,4 +1,4 @@
-import { apiFetch } from "./client";
+import { apiFetch, apiFetchWithMeta, withQuery } from "./client";
 import { mapUser } from "./auth";
 import type { AuditLogEntry, Role, User, UserStatus } from "@/types";
 
@@ -59,9 +59,29 @@ export async function updateUser(
   return mapUser(user);
 }
 
-export async function listAuditLog(signal?: AbortSignal): Promise<AuditLogEntry[]> {
-  const rows = await apiFetch<BackendAuditLogEntry[]>("/audit-log", { signal });
-  return rows.map((row) => ({
+export type AuditLogFilters = {
+  page?: number;
+  pageSize?: number;
+  userId?: string;
+  action?: string;
+  entityType?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  tz?: string;
+};
+
+export type AuditLogPage = {
+  rows: AuditLogEntry[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+  availableActions: string[];
+  availableEntityTypes: string[];
+};
+
+function mapAuditRow(row: BackendAuditLogEntry): AuditLogEntry {
+  return {
     id: row.id,
     at: row.at,
     userId: row.user_id,
@@ -71,5 +91,44 @@ export async function listAuditLog(signal?: AbortSignal): Promise<AuditLogEntry[
     entityName: row.entity_name,
     ip: row.ip,
     details: row.details,
-  }));
+  };
+}
+
+export async function listAuditLog(
+  filters: AuditLogFilters = {},
+  signal?: AbortSignal,
+): Promise<AuditLogPage> {
+  const page = filters.page ?? 1;
+  const pageSize = filters.pageSize ?? 100;
+  const { data, meta } = await apiFetchWithMeta<BackendAuditLogEntry[]>(
+    withQuery("/audit-log", {
+      page,
+      page_size: pageSize,
+      user_id: filters.userId,
+      action: filters.action,
+      entity_type: filters.entityType,
+      date_from: filters.dateFrom,
+      date_to: filters.dateTo,
+      // Match date filtering to the timezone the timestamps are displayed in (W12).
+      tz: filters.tz,
+    }),
+    { signal },
+  );
+  const total = typeof meta.total === "number" ? meta.total : data.length;
+  return {
+    rows: data.map(mapAuditRow),
+    total,
+    page: typeof meta.page === "number" ? meta.page : page,
+    pageSize: typeof meta.page_size === "number" ? meta.page_size : pageSize,
+    totalPages:
+      typeof meta.total_pages === "number"
+        ? meta.total_pages
+        : Math.max(1, Math.ceil(total / pageSize)),
+    availableActions: Array.isArray(meta.available_actions)
+      ? (meta.available_actions as string[])
+      : [],
+    availableEntityTypes: Array.isArray(meta.available_entity_types)
+      ? (meta.available_entity_types as string[])
+      : [],
+  };
 }

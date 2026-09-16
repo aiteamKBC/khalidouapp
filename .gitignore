@@ -43,3 +43,17 @@ lovable-dashboard/
 Thumbs.db
 .idea/
 .vscode/
+
+# Audit / review scaffolding (throwaway process artifacts — the durable record is
+# the committed source + regression tests, not these). Scoped to docs/ so real
+# design docs like docs/hr-payroll-task-workflow-plan.md stay tracked.
+docs/*.log
+docs/*.mjs
+docs/*.py
+docs/*.json
+docs/DESKTOP-*.md
+docs/WEB-*.md
+docs/CLAUDE-*.md
+docs/desktop-*.md
+docs/web-*.md
+HANDOVER.md

@@ -1,6 +1,17 @@
 import { resolveApiUrl } from "@/lib/api-url";
-import { tokensRotatedByAnotherTab } from "@/lib/auth-refresh-coordination";
+import {
+  advanceAuthGeneration,
+  currentAuthGeneration,
+  isAuthGenerationStale,
+} from "@/lib/auth-lifecycle";
+import {
+  classifyRefreshOwnership,
+  type RefreshOwnership,
+} from "@/lib/auth-refresh-coordination";
+import { refreshFailureClears } from "@/lib/auth-restore-policy";
+import { jwtSubjectScopeKey } from "@/lib/private-query-scope";
 export { retryTransientRequest } from "@/lib/query-retry-policy";
+export { currentAuthGeneration, isAuthGenerationStale } from "@/lib/auth-lifecycle";
 
 export const API_BASE_URL = (
   import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000/api/v1"
@@ -43,6 +54,11 @@ type PersistedAuth = {
 type PersistedAuthLocation = {
   auth: PersistedAuth;
   storage: Storage;
+  // The account identity captured at the moment this location was read (request
+  // start). Bound here so a cross-tab account replacement that lands *before*
+  // the original request's 401 cannot be mistaken for a same-account rotation
+  // when the refresh later classifies the store (W6).
+  identity: string | null;
 };
 
 type RefreshedTokens = {
@@ -55,7 +71,10 @@ const AUTH_REFRESHED_EVENT = "khaliduo:auth-refreshed";
 const AUTH_EXPIRED_EVENT = "khaliduo:auth-expired";
 const AUTH_REFRESH_LOCK = "khaliduo.auth.refresh";
 
-let refreshInFlight: Promise<RefreshedTokens> | null = null;
+// The shared single-flight refresh is tagged with the identity that started it.
+// A pooled refresh may only be joined by requests from the SAME account, so a
+// refresh started by B never hands its fresh tokens to A's obsolete request (W6).
+let refreshInFlight: { identity: string | null; promise: Promise<RefreshedTokens> } | null = null;
 const inFlightGetRequests = new Map<string, Promise<unknown>>();
 let runtimeAuth: PersistedAuthLocation | null = null;
 const MAX_CONCURRENT_IMAGE_REQUESTS = 4;
@@ -90,11 +109,18 @@ function drainImageQueue() {
 }
 
 export function rememberAuthTokens(auth: PersistedAuth, storage: Storage) {
-  runtimeAuth = { auth, storage };
+  // The in-memory fallback has no persisted `user` record to read, so anchor its
+  // identity on the access token's JWT subject (company:sub). Real logins/restores
+  // additionally refresh this via readAuth, which prefers the persisted user id.
+  runtimeAuth = { auth, storage, identity: jwtSubjectScopeKey(auth.accessToken, "") || null };
 }
 
 export function forgetAuthTokens() {
   runtimeAuth = null;
+  // Every path that forgets tokens is a logout/session-clear. Advance the auth
+  // generation so any in-flight refresh or /auth/me restore started under the
+  // old identity refuses to commit its result afterwards (W6).
+  advanceAuthGeneration();
 }
 
 function requestDedupeKey(
@@ -192,7 +218,14 @@ function readAuth(): PersistedAuthLocation | null {
       const auth = JSON.parse(raw) as PersistedAuth;
       if (auth.accessToken && auth.refreshToken) {
         rememberAuthTokens(auth, storage);
-        return runtimeAuth;
+        // Return a per-read snapshot whose identity is captured now, from the
+        // persisted user record, so it stays A's identity even if another tab
+        // replaces the store with B before this request's response arrives (W6).
+        return {
+          auth: { accessToken: auth.accessToken, refreshToken: auth.refreshToken },
+          storage,
+          identity: identityFromRecord(raw),
+        };
       }
     } catch {
       storage.removeItem(AUTH_STORAGE_KEY);
@@ -215,11 +248,44 @@ function readAuthFromStorage(storage: Storage): PersistedAuth | null {
   }
 }
 
-function clearAuth() {
+/**
+ * A stable identity for a persisted session record, used to tell a same-account
+ * token rotation apart from a different account replacing the session (W6). The
+ * persisted record carries the signed-in `user` (the storage-event handler
+ * requires it), so the user id is the authoritative anchor; fall back to the
+ * access token's JWT subject, then null when neither is available (which
+ * classifies as a replacement — the safe default).
+ */
+function identityFromRecord(raw: string): string | null {
+  try {
+    const record = JSON.parse(raw) as {
+      user?: { id?: string; email?: string };
+      accessToken?: string;
+    };
+    if (record.user?.id) return `user:${record.user.id}`;
+    if (record.user?.email) return `email:${record.user.email}`;
+    if (record.accessToken) return jwtSubjectScopeKey(record.accessToken, "") || null;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function readSessionIdentity(storage: Storage): string | null {
+  const raw = storage.getItem(AUTH_STORAGE_KEY);
+  return raw ? identityFromRecord(raw) : null;
+}
+
+function clearAuthStorage(storage: Storage) {
+  // Clear only the store whose session actually expired. A refresh failure on
+  // one session (e.g. a sessionStorage tab) must never delete a different,
+  // still-valid login living in the other store — that cross-store wipe is
+  // exactly how a stale A-refresh 401 used to sign out a newer B login (W6).
+  // forgetAuthTokens advances the auth generation, invalidating any in-flight
+  // refresh/restore started under the old identity in this tab (W6).
   forgetAuthTokens();
   if (typeof window === "undefined") return;
-  localStorage.removeItem(AUTH_STORAGE_KEY);
-  sessionStorage.removeItem(AUTH_STORAGE_KEY);
+  storage.removeItem(AUTH_STORAGE_KEY);
   window.dispatchEvent(new Event(AUTH_EXPIRED_EVENT));
 }
 
@@ -257,15 +323,61 @@ function apiErrorMessage<T>(res: Response, body: ApiEnvelope<T> | null): string 
 }
 
 async function refreshAuthTokens(authLocation: PersistedAuthLocation): Promise<RefreshedTokens> {
-  if (refreshInFlight) return refreshInFlight;
+  const startedGeneration = currentAuthGeneration();
+  const attemptedRefreshToken = authLocation.auth.refreshToken;
+  // The identity this refresh belongs to. Prefer the identity captured when the
+  // triggering request STARTED (authLocation.identity): a cross-tab replacement
+  // (B) can land before the original request's 401 returns, so re-reading the
+  // store here would wrongly capture B and mis-classify the replacement as a
+  // same-account rotation. Fall back to the store, then the JWT subject (W6).
+  const attemptedIdentity =
+    authLocation.identity ??
+    readSessionIdentity(authLocation.storage) ??
+    (jwtSubjectScopeKey(authLocation.auth.accessToken, "") || null);
+
+  // Join an already-running refresh only when it belongs to the SAME account.
+  // Otherwise A's stale request would ride B's in-flight refresh and retry under
+  // B's fresh token. When identities can't be matched (unknown), don't pool —
+  // run an own refresh whose ownership check then classifies and aborts (W6).
+  if (
+    refreshInFlight &&
+    refreshInFlight.identity !== null &&
+    attemptedIdentity !== null &&
+    refreshInFlight.identity === attemptedIdentity
+  ) {
+    return refreshInFlight.promise;
+  }
+
+  // Read the store once and classify how it now relates to this refresh. Every
+  // continuation branches on this instead of a bare token-equality check.
+  const ownershipNow = (): { pair: PersistedAuth | null; ownership: RefreshOwnership } => {
+    const pair = readAuthFromStorage(authLocation.storage);
+    const ownership = classifyRefreshOwnership({
+      stored: pair,
+      attemptedRefreshToken,
+      storedIdentity: readSessionIdentity(authLocation.storage),
+      attemptedIdentity,
+    });
+    return { pair, ownership };
+  };
+  const adopt = (pair: PersistedAuth): RefreshedTokens => ({
+    access_token: pair.accessToken,
+    refresh_token: pair.refreshToken,
+  });
+  const sessionEnded = () =>
+    new ApiClientError(
+      "Your session has ended. Please sign in again.",
+      "AUTH_SESSION_ENDED",
+      401,
+    );
 
   const refreshOnce = async () => {
-    const attemptedRefreshToken = authLocation.auth.refreshToken;
-    const alreadyRotated = tokensRotatedByAnotherTab(
-      readAuthFromStorage(authLocation.storage),
-      attemptedRefreshToken,
-    );
-    if (alreadyRotated) return alreadyRotated;
+    // Before spending a network round-trip: if the same account already rotated
+    // its pair in another tab, adopt it; if a different account has replaced the
+    // session, this refresh is obsolete and must not run under the new identity.
+    const before = ownershipNow();
+    if (before.ownership === "rotated" && before.pair) return adopt(before.pair);
+    if (before.ownership === "replaced") throw sessionEnded();
 
     const res = await fetchWithTimeout(apiUrl("/auth/refresh"), {
       method: "POST",
@@ -275,22 +387,61 @@ async function refreshAuthTokens(authLocation: PersistedAuthLocation): Promise<R
     const body = await parseBody<RefreshedTokens>(res);
     const tokens = body?.data;
     if (!res.ok || body?.success === false || !tokens?.access_token || !tokens.refresh_token) {
-      // Refresh tokens rotate once. If another tab won the race, its new pair
-      // is already in shared storage and this 401 must not sign every tab out.
-      let rotated = tokensRotatedByAnotherTab(
-        readAuthFromStorage(authLocation.storage),
-        attemptedRefreshToken,
-      );
-      if (!rotated && authLocation.storage === localStorage) {
+      // Refresh tokens rotate once. If another tab won the race, its new pair is
+      // already in shared storage and this 401 must not sign every tab out.
+      let after = ownershipNow();
+      if (after.ownership !== "rotated" && authLocation.storage === localStorage) {
         await new Promise((resolve) => globalThis.setTimeout(resolve, 250));
-        rotated = tokensRotatedByAnotherTab(
-          readAuthFromStorage(authLocation.storage),
-          attemptedRefreshToken,
+        after = ownershipNow();
+      }
+      if (after.ownership === "rotated" && after.pair) return adopt(after.pair);
+      // A different account now owns the store, or it was logged out entirely:
+      // never clear their login or resurrect a dead one — just fail this request.
+      if (after.ownership === "replaced" || after.ownership === "cleared") {
+        throw sessionEnded();
+      }
+      // Only a genuine auth rejection (the refresh token is invalid/expired)
+      // may clear the saved session. A transient server outage (5xx) or a
+      // malformed 2xx must keep the tokens so a retry can recover, instead of
+      // deleting the login on a temporary blip (W7).
+      if (refreshFailureClears(res.status)) {
+        // The store still holds this exact session ("current"); a real expiry.
+        // Still guard on the in-tab generation, and clear only this refresh's
+        // own store so a sibling session in the other store is never wiped (W6).
+        if (!isAuthGenerationStale(startedGeneration)) {
+          clearAuthStorage(authLocation.storage);
+        }
+        throw new ApiClientError(
+          body?.error?.message ?? "Your session has expired. Please sign in again.",
+          body?.error?.code ?? "AUTH_EXPIRED",
+          res.status,
         );
       }
-      if (rotated) return rotated;
-      clearAuth();
-      throw new Error(body?.error?.message ?? "Your session has expired. Please sign in again.");
+      throw new ApiClientError(
+        body?.error?.message ?? "Could not refresh your session. Please retry.",
+        body?.error?.code ?? "AUTH_REFRESH_FAILED",
+        res.status || 503,
+      );
+    }
+
+    if (isAuthGenerationStale(startedGeneration)) {
+      // A logout or account switch happened while this refresh was in flight.
+      // Do not resurrect cleared credentials; fail the triggering request (W6).
+      throw sessionEnded();
+    }
+
+    // Cross-tab guard (mirrors the in-tab generation check above), evaluated
+    // after the successful response:
+    //  - rotated:  the same account's newer pair won elsewhere — adopt it and
+    //              let the original request retry under the same identity.
+    //  - replaced: a different account owns the store — do NOT overwrite it and
+    //              do NOT hand our result to the caller, or A's pending request
+    //              would replay under B's authority (W6).
+    //  - cleared:  the store was logged out mid-flight — never recreate it (W6).
+    const after = ownershipNow();
+    if (after.ownership === "rotated" && after.pair) return adopt(after.pair);
+    if (after.ownership === "replaced" || after.ownership === "cleared") {
+      throw sessionEnded();
     }
 
     const raw = authLocation.storage.getItem(AUTH_STORAGE_KEY);
@@ -330,12 +481,14 @@ async function refreshAuthTokens(authLocation: PersistedAuthLocation): Promise<R
     authLocation.storage === localStorage && lockManager
       ? lockManager.request(AUTH_REFRESH_LOCK, refreshOnce).then((tokens) => tokens)
       : refreshOnce();
-  refreshInFlight = pendingRefresh;
+  refreshInFlight = { identity: attemptedIdentity, promise: pendingRefresh };
 
   try {
     return await pendingRefresh;
   } finally {
-    refreshInFlight = null;
+    // Only clear the slot if it is still ours — a different-identity refresh may
+    // have replaced it after we chose not to pool with the previous one.
+    if (refreshInFlight?.promise === pendingRefresh) refreshInFlight = null;
   }
 }
 

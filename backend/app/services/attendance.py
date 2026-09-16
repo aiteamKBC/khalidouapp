@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections import defaultdict
+from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Literal
 from uuid import UUID
@@ -19,6 +21,7 @@ from app.models import (
 )
 from app.services.activity_timeline import (
     build_workday_timeline,
+    build_workday_timelines,
     company_idle_threshold_seconds,
     local_today,
     scope_timeline_to_schedule,
@@ -33,6 +36,26 @@ from app.services.work_profiles import get_or_create_work_profile
 
 DAILY_PAID_IDLE_GRACE_SECONDS = 15 * 60
 _ATTENDANCE_NOT_LOADED = object()
+
+
+@dataclass(frozen=True)
+class DailyAttendanceInputs:
+    """Pre-fetched per-(employee, day) inputs for ``calculate_daily_attendance``.
+
+    When supplied, ``calculate_daily_attendance`` performs no per-employee reads
+    of its own: a batch caller resolves every field in bulk and the daily
+    calculation runs purely in memory. Every field must correspond to exactly
+    what the single-employee path would have fetched for the same day, so the
+    persisted row is identical to the unbatched result.
+    """
+
+    timezone: str
+    schedule: dict
+    timeline: dict
+    adjustments: list[TimeAdjustmentRequest]
+    correction: AttendanceCorrection | None
+    leave: LeaveRequest | None
+    overtime_rows: list[OvertimeRecord]
 
 
 def _utc(value: datetime) -> datetime:
@@ -77,6 +100,219 @@ def attendance_timezone(
         if _utc(started_at).astimezone(zone).date() == work_date:
             return zone.key
     return employee.timezone or "UTC"
+
+
+def attendance_timezones_bulk(
+    db: Session,
+    *,
+    company_id: UUID,
+    requests: list[tuple[Employee, date]],
+) -> dict[tuple[UUID, date], str]:
+    """Resolve ``attendance_timezone`` for many (employee, date) pairs in one query.
+
+    Mirrors the single-employee resolution exactly: for each pair, the most
+    recent work session (no device filter) whose snapshotted timezone renders
+    ``work_date`` as its local date wins; otherwise the employee's own timezone.
+    """
+    if not requests:
+        return {}
+    employee_ids = {employee.id for employee, _ in requests}
+    min_date = min(work_date for _, work_date in requests)
+    max_date = max(work_date for _, work_date in requests)
+    window_start = datetime.combine(min_date - timedelta(days=1), time.min, tzinfo=UTC)
+    window_end = datetime.combine(max_date + timedelta(days=2), time.min, tzinfo=UTC)
+    rows = db.execute(
+        select(WorkSession.employee_id, WorkSession.timezone, WorkSession.started_at)
+        .where(
+            WorkSession.company_id == company_id,
+            WorkSession.employee_id.in_(employee_ids),
+            WorkSession.timezone.is_not(None),
+            WorkSession.started_at >= window_start,
+            WorkSession.started_at < window_end,
+        )
+        .order_by(WorkSession.started_at.desc())
+    ).all()
+    candidates_by_employee: dict[UUID, list[tuple[str, datetime]]] = defaultdict(list)
+    for employee_id, tz_name, started_at in rows:
+        candidates_by_employee[employee_id].append((tz_name, started_at))
+
+    result: dict[tuple[UUID, date], str] = {}
+    for employee, work_date in requests:
+        pair_start = datetime.combine(work_date - timedelta(days=1), time.min, tzinfo=UTC)
+        pair_end = datetime.combine(work_date + timedelta(days=2), time.min, tzinfo=UTC)
+        chosen = employee.timezone or "UTC"
+        for tz_name, started_at in candidates_by_employee.get(employee.id, []):
+            started = _utc(started_at)
+            if not (pair_start <= started < pair_end):
+                continue
+            try:
+                zone = ZoneInfo(tz_name)
+            except (ZoneInfoNotFoundError, ValueError):
+                continue
+            if started.astimezone(zone).date() == work_date:
+                chosen = zone.key
+                break
+        result[(employee.id, work_date)] = chosen
+    return result
+
+
+def calculate_daily_attendance_bulk(
+    db: Session,
+    *,
+    company_id: UUID,
+    requests: list[tuple[Employee, date]],
+    now: datetime | None = None,
+    profiles: dict[UUID, EmployeeWorkProfile] | None = None,
+    existing_by_key: dict[tuple[UUID, date], DailyAttendance] | None = None,
+    persist: bool = True,
+) -> dict[tuple[UUID, date], tuple[DailyAttendance, dict]]:
+    """Compute daily attendance for many (employee, date) pairs with bulk reads.
+
+    Every per-employee query the single path issues (timezone, schedule,
+    timeline, adjustments, correction, leave, overtime, existing row) is fetched
+    here in a fixed number of statements, then ``calculate_daily_attendance``
+    runs purely in memory via :class:`DailyAttendanceInputs`. Results are
+    identical to calling ``calculate_daily_attendance`` per pair.
+    """
+    if not requests:
+        return {}
+    calculation_now = _utc(now or datetime.now(UTC))
+    profiles = dict(profiles or {})
+    employees_by_id: dict[UUID, Employee] = {}
+    for employee, _ in requests:
+        employees_by_id[employee.id] = employee
+        if employee.id not in profiles:
+            profiles[employee.id] = get_or_create_work_profile(db, employee)
+
+    # 1) Effective timezone per pair (one query).
+    tz_by_key = attendance_timezones_bulk(db, company_id=company_id, requests=requests)
+
+    # 2) Schedules, grouped by work_date (effective_schedules_for_employees runs
+    #    two queries per distinct date, honoring each employee's snapshot tz).
+    requests_by_date: dict[date, list[Employee]] = defaultdict(list)
+    for employee, work_date in requests:
+        requests_by_date[work_date].append(employee)
+    schedule_by_key: dict[tuple[UUID, date], dict] = {}
+    for work_date, day_employees in requests_by_date.items():
+        tz_for_date = {
+            employee.id: tz_by_key[(employee.id, work_date)] for employee in day_employees
+        }
+        day_schedules = effective_schedules_for_employees(
+            db,
+            day_employees,
+            work_date,
+            profiles=profiles,
+            timezone_by_employee=tz_for_date,
+        )
+        for employee in day_employees:
+            schedule_by_key[(employee.id, work_date)] = day_schedules[employee.id]
+
+    # 3) Timelines (bulk); the single path builds each from schedule["timezone"].
+    timeline_requests = [
+        (employee.id, schedule_by_key[(employee.id, work_date)]["timezone"], work_date)
+        for employee, work_date in requests
+    ]
+    timelines = build_workday_timelines(
+        db, company_id=company_id, requests=timeline_requests, now=calculation_now
+    )
+
+    # 4) Per-pair source rows, each fetched once in bulk.
+    employee_ids = list(employees_by_id)
+    work_dates = {work_date for _, work_date in requests}
+    min_date, max_date = min(work_dates), max(work_dates)
+
+    adjustments_by_key: dict[tuple[UUID, date], list[TimeAdjustmentRequest]] = defaultdict(list)
+    for row in db.scalars(
+        select(TimeAdjustmentRequest).where(
+            TimeAdjustmentRequest.company_id == company_id,
+            TimeAdjustmentRequest.employee_id.in_(employee_ids),
+            TimeAdjustmentRequest.requested_date.in_(work_dates),
+        )
+    ).all():
+        adjustments_by_key[(row.employee_id, row.requested_date)].append(row)
+
+    correction_by_key: dict[tuple[UUID, date], AttendanceCorrection] = {}
+    for row in db.scalars(
+        select(AttendanceCorrection).where(
+            AttendanceCorrection.company_id == company_id,
+            AttendanceCorrection.employee_id.in_(employee_ids),
+            AttendanceCorrection.work_date.in_(work_dates),
+        )
+    ).all():
+        correction_by_key[(row.employee_id, row.work_date)] = row
+
+    overtime_by_key: dict[tuple[UUID, date], list[OvertimeRecord]] = defaultdict(list)
+    for row in db.scalars(
+        select(OvertimeRecord).where(
+            OvertimeRecord.company_id == company_id,
+            OvertimeRecord.employee_id.in_(employee_ids),
+            OvertimeRecord.work_date.in_(work_dates),
+        )
+    ).all():
+        overtime_by_key[(row.employee_id, row.work_date)].append(row)
+
+    leaves_by_employee: dict[UUID, list[LeaveRequest]] = defaultdict(list)
+    for row in db.scalars(
+        select(LeaveRequest).where(
+            LeaveRequest.company_id == company_id,
+            LeaveRequest.employee_id.in_(employee_ids),
+            LeaveRequest.status == "approved",
+            LeaveRequest.start_date <= max_date,
+            LeaveRequest.end_date >= min_date,
+        )
+    ).all():
+        leaves_by_employee[row.employee_id].append(row)
+
+    if existing_by_key is None:
+        existing_by_key = {}
+        for row in db.scalars(
+            select(DailyAttendance).where(
+                DailyAttendance.company_id == company_id,
+                DailyAttendance.employee_id.in_(employee_ids),
+                DailyAttendance.work_date.in_(work_dates),
+            )
+        ).all():
+            existing_by_key[(row.employee_id, row.work_date)] = row
+
+    results: dict[tuple[UUID, date], tuple[DailyAttendance, dict]] = {}
+    for employee, work_date in requests:
+        key = (employee.id, work_date)
+        # Match the single path: the first approved leave row covering this day,
+        # in the query's default ordering (primary key / insertion order).
+        leave = next(
+            (
+                item
+                for item in leaves_by_employee.get(employee.id, [])
+                if item.start_date <= work_date <= item.end_date
+            ),
+            None,
+        )
+        inputs = DailyAttendanceInputs(
+            timezone=tz_by_key[key],
+            schedule=schedule_by_key[key],
+            timeline=timelines[(employee.id, work_date)],
+            adjustments=adjustments_by_key.get(key, []),
+            correction=correction_by_key.get(key),
+            leave=leave,
+            overtime_rows=overtime_by_key.get(key, []),
+        )
+        # Compute in memory here; persist once for the whole batch below so a
+        # payroll refresh flushes every current-day row in a single round trip
+        # instead of one flush per employee.
+        results[key] = calculate_daily_attendance(
+            db,
+            employee=employee,
+            work_date=work_date,
+            now=calculation_now,
+            persist=False,
+            existing_attendance=existing_by_key.get(key),
+            profile=profiles[employee.id],
+            prefetched=inputs,
+        )
+    if persist:
+        db.add_all(row for row, _ in results.values())
+        db.flush()
+    return results
 
 
 def cached_daily_attendance(
@@ -157,39 +393,52 @@ def calculate_daily_attendance(
     device_id: UUID | None = None,
     existing_attendance: DailyAttendance | None | object = _ATTENDANCE_NOT_LOADED,
     profile: EmployeeWorkProfile | None = None,
+    prefetched: "DailyAttendanceInputs | None" = None,
 ) -> tuple[DailyAttendance, dict]:
     calculation_now = _utc(now or datetime.now(UTC))
-    effective_timezone = attendance_timezone(
-        db,
-        employee=employee,
-        work_date=work_date,
-        timezone_name=timezone_name,
-        device_id=device_id,
-    )
-    profile = profile or get_or_create_work_profile(db, employee)
-    schedule = effective_schedule(
-        db,
-        employee,
-        profile,
-        work_date,
-        timezone_name=effective_timezone,
-    )
-    timeline = build_workday_timeline(
-        db,
-        company_id=employee.company_id,
-        employee_id=employee.id,
-        timezone_name=schedule["timezone"],
-        target_date=work_date,
-        now=now,
-        device_id=device_id,
-    )
-    adjustments = db.scalars(
-        select(TimeAdjustmentRequest).where(
-            TimeAdjustmentRequest.company_id == employee.company_id,
-            TimeAdjustmentRequest.employee_id == employee.id,
-            TimeAdjustmentRequest.requested_date == work_date,
+    if prefetched is not None:
+        effective_timezone = prefetched.timezone
+    else:
+        effective_timezone = attendance_timezone(
+            db,
+            employee=employee,
+            work_date=work_date,
+            timezone_name=timezone_name,
+            device_id=device_id,
         )
-    ).all()
+    profile = profile or get_or_create_work_profile(db, employee)
+    if prefetched is not None:
+        schedule = prefetched.schedule
+    else:
+        schedule = effective_schedule(
+            db,
+            employee,
+            profile,
+            work_date,
+            timezone_name=effective_timezone,
+        )
+    if prefetched is not None:
+        timeline = prefetched.timeline
+    else:
+        timeline = build_workday_timeline(
+            db,
+            company_id=employee.company_id,
+            employee_id=employee.id,
+            timezone_name=schedule["timezone"],
+            target_date=work_date,
+            now=now,
+            device_id=device_id,
+        )
+    if prefetched is not None:
+        adjustments = prefetched.adjustments
+    else:
+        adjustments = db.scalars(
+            select(TimeAdjustmentRequest).where(
+                TimeAdjustmentRequest.company_id == employee.company_id,
+                TimeAdjustmentRequest.employee_id == employee.id,
+                TimeAdjustmentRequest.requested_date == work_date,
+            )
+        ).all()
     start_at = schedule["start_at"]
     end_at = schedule["end_at"]
     timeline = scope_timeline_to_schedule(
@@ -245,13 +494,16 @@ def calculate_daily_attendance(
     raw_last_at = max((item[2] for item in worked_intervals), default=None)
     scheduled_first_at = first_activity_at(scheduled_activity_intervals)
     scheduled_last_at = max((item[2] for item in scheduled_worked_intervals), default=None)
-    correction = db.scalar(
-        select(AttendanceCorrection).where(
-            AttendanceCorrection.company_id == employee.company_id,
-            AttendanceCorrection.employee_id == employee.id,
-            AttendanceCorrection.work_date == work_date,
+    if prefetched is not None:
+        correction = prefetched.correction
+    else:
+        correction = db.scalar(
+            select(AttendanceCorrection).where(
+                AttendanceCorrection.company_id == employee.company_id,
+                AttendanceCorrection.employee_id == employee.id,
+                AttendanceCorrection.work_date == work_date,
+            )
         )
-    )
     first_at = (
         _utc(correction.corrected_start_at)
         if correction and correction.corrected_start_at
@@ -341,15 +593,18 @@ def calculate_daily_attendance(
         else 0
     )
 
-    leave = db.scalar(
-        select(LeaveRequest).where(
-            LeaveRequest.company_id == employee.company_id,
-            LeaveRequest.employee_id == employee.id,
-            LeaveRequest.status == "approved",
-            LeaveRequest.start_date <= work_date,
-            LeaveRequest.end_date >= work_date,
+    if prefetched is not None:
+        leave = prefetched.leave
+    else:
+        leave = db.scalar(
+            select(LeaveRequest).where(
+                LeaveRequest.company_id == employee.company_id,
+                LeaveRequest.employee_id == employee.id,
+                LeaveRequest.status == "approved",
+                LeaveRequest.start_date <= work_date,
+                LeaveRequest.end_date >= work_date,
+            )
         )
-    )
     if leave:
         eligible_idle = 0
 
@@ -422,13 +677,16 @@ def calculate_daily_attendance(
     paid_idle_grace = min(automatic_idle, DAILY_PAID_IDLE_GRACE_SECONDS)
     deductible_idle = manual_pause_idle + max(0, automatic_idle - paid_idle_grace)
 
-    overtime_rows = db.scalars(
-        select(OvertimeRecord).where(
-            OvertimeRecord.company_id == employee.company_id,
-            OvertimeRecord.employee_id == employee.id,
-            OvertimeRecord.work_date == work_date,
-        )
-    ).all()
+    if prefetched is not None:
+        overtime_rows = prefetched.overtime_rows
+    else:
+        overtime_rows = db.scalars(
+            select(OvertimeRecord).where(
+                OvertimeRecord.company_id == employee.company_id,
+                OvertimeRecord.employee_id == employee.id,
+                OvertimeRecord.work_date == work_date,
+            )
+        ).all()
     recorded_overtime = max(
         pre_shift_extra + post_shift_extra,
         sum(int(row.recorded_extra_seconds) for row in overtime_rows),
@@ -470,6 +728,36 @@ def calculate_daily_attendance(
         pending_overtime += unclassified_overtime
     else:
         recorded_only_overtime += unclassified_overtime
+
+    # Admin screenshot deletions remove proven work from the session ledger
+    # (WorkSession.deducted_seconds, surfaced per day by the timeline). Attendance
+    # is a projection of that ledger, so subtract the deduction from PAYABLE time
+    # in priority order — normal in-shift work first, then paid (approved)
+    # overtime, then any remaining recorded/extra overtime — so the pay actually
+    # drops instead of being restored by the overtime record (W3). Reading the
+    # accumulated ledger total keeps repeated deletions idempotent.
+    remaining_deduction = max(0, int(timeline.get("deducted_seconds", 0)))
+    if remaining_deduction:
+        take = min(remaining_deduction, normal_worked)
+        normal_worked -= take
+        remaining_deduction -= take
+        # Overtime beyond normal time: reduce the paid amount and keep
+        # recorded_overtime >= approved_overtime.
+        take = min(remaining_deduction, approved_overtime)
+        approved_overtime -= take
+        recorded_overtime = max(0, recorded_overtime - take)
+        remaining_deduction -= take
+        take = min(remaining_deduction, recorded_overtime)
+        recorded_overtime -= take
+        remaining_deduction -= take
+        take = min(remaining_deduction, post_shift_extra)
+        post_shift_extra -= take
+        remaining_deduction -= take
+        take = min(remaining_deduction, pre_shift_extra)
+        pre_shift_extra -= take
+        remaining_deduction -= take
+        unapproved_overtime = max(0, recorded_overtime - approved_overtime)
+
     expected_seconds = int((end_at - start_at).total_seconds()) if start_at and end_at else 0
     if leave and leave.leave_type != "unpaid":
         normal_payable = expected_seconds
@@ -608,6 +896,12 @@ def calculate_daily_attendance(
             "paid_idle_grace_seconds": paid_idle_grace,
             "raw_first_activity_at": raw_first_at.isoformat() if raw_first_at else None,
             "raw_last_activity_at": raw_last_at.isoformat() if raw_last_at else None,
+            # Interval-reconstructed worked total (includes in-shift, pre/post-shift
+            # extra, and break-overlapped worked time). This is the single
+            # authoritative worked-evidence figure that desktop summary, the
+            # timeline, and timesheets all reconcile session counters against, so
+            # every surface reports the same worked/overtime seconds (D7).
+            "worked_seconds": int(timeline.get("worked_seconds", 0)),
         },
         "calculated_at": datetime.now(UTC),
     }

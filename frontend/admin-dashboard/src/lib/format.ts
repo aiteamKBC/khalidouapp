@@ -103,16 +103,34 @@ export function formatDate(iso?: string): string {
   return new Date(iso).toLocaleDateString([], { dateStyle: "medium" });
 }
 
+const PLAIN_NUMBER = /^-?(?:\d+\.?\d*|\.\d+)$/;
+const FORMULA_LEAD = /^[=+\-@\t\r]/;
+
+/**
+ * Render one value as a spreadsheet-safe CSV cell.
+ *
+ * Neutralizes CSV/formula injection: a string a spreadsheet would evaluate as a
+ * formula (leading `=`, `+`, `-`, `@`, tab, or CR) is prefixed with a single
+ * quote so it imports as literal text (W10). Genuine numbers — including
+ * negative amounts — and dates are preserved. Standard CSV quoting is applied
+ * for separators, quotes, and newlines.
+ */
+export function csvCell(value: unknown): string {
+  if (value == null) return "";
+  let text = String(value);
+  const isNumeric = typeof value === "number" || typeof value === "bigint";
+  if (!isNumeric && FORMULA_LEAD.test(text) && !PLAIN_NUMBER.test(text)) {
+    text = `'${text}`;
+  }
+  return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
 export function downloadCSV(filename: string, rows: Record<string, unknown>[]) {
   if (rows.length === 0) return;
   const headers = Object.keys(rows[0]);
-  const escape = (v: unknown) => {
-    const s = v == null ? "" : String(v);
-    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-  };
   const csv = [
-    headers.join(","),
-    ...rows.map((r) => headers.map((h) => escape(r[h])).join(",")),
+    headers.map((h) => csvCell(h)).join(","),
+    ...rows.map((r) => headers.map((h) => csvCell(r[h])).join(",")),
   ].join("\n");
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
   const url = URL.createObjectURL(blob);

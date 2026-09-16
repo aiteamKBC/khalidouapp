@@ -5,9 +5,12 @@ from decimal import Decimal, ROUND_HALF_UP
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from sqlalchemy import or_, select
+from sqlalchemy import or_, select, text
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session, selectinload
 
+from app.core.exceptions import ApiError
+from app.database.session import POSTGRES_LOCK_TIMEOUT_MILLISECONDS
 from app.models import (
     DailyAttendance,
     CompanyPayrollSettings,
@@ -24,7 +27,10 @@ from app.models import (
     WorkScheduleOverride,
     WorkSession,
 )
-from app.services.attendance import calculate_daily_attendance
+from app.services.attendance import (
+    calculate_daily_attendance,
+    calculate_daily_attendance_bulk,
+)
 from app.services.work_profiles import (
     DEFAULT_WORKING_DAYS,
     STANDARD_MONTH_DAYS,
@@ -35,8 +41,21 @@ from app.services.work_profiles import (
 MONEY = Decimal("0.01")
 DEDUCTION_ADJUSTMENTS = {"deduction", "late_deduction", "idle_deduction", "unpaid_leave"}
 BONUS_ADJUSTMENTS = {"bonus", "overtime_exception", "salary_correction"}
+# Runs whose figures are frozen: automatic recalculation must not silently
+# change them when a source (e.g. an employee's salary) changes afterwards.
+# Approval binds the calculation (R1); an approved run can still be moved back
+# to draft through the explicit status workflow to make deliberate edits.
+FROZEN_RUN_STATUSES = frozenset({"approved", "locked", "paid"})
 # Matches cached_daily_attendance's dashboard-polling window in app.services.attendance.
 TODAY_ATTENDANCE_REFRESH_SECONDS = 30
+# Fixed namespace for payroll-run advisory locks so the two-int pg_advisory
+# key cannot collide with advisory locks taken elsewhere in the app.
+PAYROLL_RUN_LOCK_NAMESPACE = 0x7061  # "pa"
+# How long a concurrent request waits for an in-progress payroll build to
+# commit before giving up. Deliberately longer than the default lock_timeout
+# so a normal refresh is not mistaken for contention, but still bounded so a
+# stuck build surfaces a clean 503 instead of hanging a connection.
+PAYROLL_RUN_LOCK_WAIT_MILLISECONDS = 20_000
 
 
 def month_bounds(value: str | date) -> tuple[date, date]:
@@ -115,6 +134,51 @@ def _as_utc(value: datetime | None) -> datetime:
     return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
 
 
+def _lock_payroll_run(db: Session, *, company_id: UUID, month: date) -> None:
+    """Serialize run creation and entry refresh for one company/month.
+
+    Concurrent requests for the same company/month otherwise reserve the same
+    ``uq_payroll_runs_company_month`` (and, during refresh,
+    ``uq_payroll_entries_run_employee``) index entries and block on each
+    other's uncommitted transaction until ``lock_timeout`` fires, which
+    surfaces to the client as an unhandled 500. A transaction-scoped advisory
+    lock makes the second request wait for the first to commit and then read
+    its result, so the unique indexes are never contended.
+
+    The lock is released automatically when the caller commits or rolls back.
+    No-op outside PostgreSQL (SQLite tests are single-connection).
+    """
+    if db.bind is None or db.bind.dialect.name != "postgresql":
+        return
+    key = f"{company_id}:{month.isoformat()}"
+    # Wait longer for the advisory lock than for row locks: a healthy refresh
+    # is expected to hold it for a second or two, which must not be treated as
+    # contention. Restore the normal lock_timeout for the row-level work that
+    # follows so a genuinely stuck row lock still fails fast.
+    db.execute(
+        text("select set_config('lock_timeout', :wait, true)"),
+        {"wait": f"{PAYROLL_RUN_LOCK_WAIT_MILLISECONDS}ms"},
+    )
+    try:
+        db.execute(
+            text("select pg_advisory_xact_lock(:ns, hashtext(:key))"),
+            {"ns": PAYROLL_RUN_LOCK_NAMESPACE, "key": key},
+        )
+    except OperationalError as exc:
+        # The holder's build exceeded the bounded wait. Surface a clean,
+        # retryable 503 instead of a leaked lock-timeout 500.
+        db.rollback()
+        raise ApiError(
+            "PAYROLL_BUSY",
+            "Payroll for this period is being calculated. Please retry shortly.",
+            503,
+        ) from exc
+    db.execute(
+        text("select set_config('lock_timeout', :wait, true)"),
+        {"wait": f"{POSTGRES_LOCK_TIMEOUT_MILLISECONDS}ms"},
+    )
+
+
 def get_or_create_run(
     db: Session,
     *,
@@ -125,6 +189,7 @@ def get_or_create_run(
     period_end: date | None = None,
     cycle_timezone: str | None = None,
 ) -> PayrollRun:
+    _lock_payroll_run(db, company_id=company_id, month=month)
     run = db.scalar(
         select(PayrollRun).where(PayrollRun.company_id == company_id, PayrollRun.month == month)
     )
@@ -139,8 +204,21 @@ def get_or_create_run(
             created_by_admin_user_id=admin_user_id,
         )
         db.add(run)
-        db.flush()
-    elif run.status not in {"locked", "paid"}:
+        try:
+            db.flush()
+        except IntegrityError:
+            # Safety net for environments without the advisory lock (or a
+            # lost race): another transaction committed the run first. Recover
+            # its committed row instead of surfacing a duplicate-key error.
+            db.rollback()
+            run = db.scalar(
+                select(PayrollRun).where(
+                    PayrollRun.company_id == company_id, PayrollRun.month == month
+                )
+            )
+            if run is None:
+                raise
+    elif run.status not in FROZEN_RUN_STATUSES:
         run.period_start = period_start or run.period_start
         run.period_end = period_end or run.period_end
         run.cycle_timezone = cycle_timezone or run.cycle_timezone
@@ -235,6 +313,7 @@ def calculate_employee_metrics(
     overtime_records: list[OvertimeRecord] | None = None,
     approved_leave: list[LeaveRequest] | None = None,
     team_ids: set[UUID] | None = None,
+    stored_attendance: dict[date, DailyAttendance] | None = None,
 ) -> dict:
     zone = _timezone(employee)
     if sessions is None:
@@ -396,16 +475,19 @@ def calculate_employee_metrics(
     employee_today = datetime.now(zone).date()
     if first <= employee_today <= last:
         relevant_days.add(employee_today)
-    stored_rows = {
-        item.work_date: item
-        for item in db.scalars(
-            select(DailyAttendance).where(
-                DailyAttendance.company_id == company_id,
-                DailyAttendance.employee_id == employee.id,
-                DailyAttendance.work_date.between(first, last),
-            )
-        ).all()
-    }
+    if stored_attendance is not None:
+        stored_rows = stored_attendance
+    else:
+        stored_rows = {
+            item.work_date: item
+            for item in db.scalars(
+                select(DailyAttendance).where(
+                    DailyAttendance.company_id == company_id,
+                    DailyAttendance.employee_id == employee.id,
+                    DailyAttendance.work_date.between(first, last),
+                )
+            ).all()
+        }
     override_updates = {
         item.effective_date: _as_utc(item.updated_at)
         for item in overrides
@@ -633,7 +715,7 @@ def refresh_run_entries(db: Session, run: PayrollRun) -> list[PayrollEntry]:
             .where(PayrollEntry.payroll_run_id == run.id)
         ).all()
     }
-    if run.status in {"locked", "paid"}:
+    if run.status in FROZEN_RUN_STATUSES:
         return list(existing.values())
 
     first, last = (
@@ -717,6 +799,52 @@ def refresh_run_entries(db: Session, run: PayrollRun) -> list[PayrollEntry]:
         )
     ).all():
         team_ids_by_employee[member_employee_id].add(member_team_id)
+    # Pre-warm each employee's current day in one batched pass. The current day
+    # is the only routinely-stale attendance day in a payroll refresh, and
+    # recomputing it per employee issued ~20 queries each — minutes of latency
+    # over a remote database, which surfaced to the client as a payroll 503/500.
+    # The batch path fetches every input in a fixed number of queries and
+    # persists byte-identical rows, so the loop below reads them fresh instead
+    # of recomputing. Any other stale day still falls back to the per-employee
+    # path inside calculate_employee_metrics.
+    for employee in employees:
+        if profiles.get(employee.id) is None:
+            profiles[employee.id] = get_or_create_work_profile(db, employee)
+
+    # Materialized attendance for the whole period, fetched once for every
+    # employee instead of one query per employee inside calculate_employee_metrics.
+    stored_attendance_by_employee: dict[UUID, dict[date, DailyAttendance]] = defaultdict(dict)
+    for attendance_row in db.scalars(
+        select(DailyAttendance).where(
+            DailyAttendance.company_id == run.company_id,
+            DailyAttendance.employee_id.in_(employee_ids),
+            DailyAttendance.work_date.between(first, last),
+        )
+    ).all():
+        stored_attendance_by_employee[attendance_row.employee_id][
+            attendance_row.work_date
+        ] = attendance_row
+
+    prewarm_requests = [
+        (employee, employee_today)
+        for employee in employees
+        if first <= (employee_today := datetime.now(_timezone(employee)).date()) <= last
+    ]
+    if prewarm_requests:
+        existing_by_key = {
+            (employee.id, work_date): stored_attendance_by_employee[employee.id].get(work_date)
+            for employee, work_date in prewarm_requests
+        }
+        warmed = calculate_daily_attendance_bulk(
+            db,
+            company_id=run.company_id,
+            requests=prewarm_requests,
+            profiles=profiles,
+            existing_by_key=existing_by_key,
+        )
+        for (warmed_employee_id, warmed_date), (warmed_row, _) in warmed.items():
+            stored_attendance_by_employee[warmed_employee_id][warmed_date] = warmed_row
+
     result: list[PayrollEntry] = []
     for employee in employees:
         profile = profiles.get(employee.id)
@@ -736,6 +864,7 @@ def refresh_run_entries(db: Session, run: PayrollRun) -> list[PayrollEntry]:
             overtime_records=overtime_by_employee[employee.id],
             approved_leave=leave_by_employee[employee.id],
             team_ids=team_ids_by_employee[employee.id],
+            stored_attendance=stored_attendance_by_employee.get(employee.id, {}),
         )
         entry = existing.get(employee.id)
         if entry is None:

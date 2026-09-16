@@ -311,8 +311,24 @@ def has_capability(admin: AdminUser, capability: str) -> bool:
     return capability in capabilities_for_admin(admin)
 
 
+def has_any_capability(admin: AdminUser) -> bool:
+    """True when the admin holds at least one effective capability.
+
+    Used to gate broadly-shared read surfaces (e.g. the employee overview
+    selector consumed by payroll, devices, reports, teams …) so that a custom
+    permission-mode admin with no grants is denied, while any admin with a
+    legitimate capability keeps the selector its feature needs.
+    """
+    return bool(capabilities_for_admin(admin))
+
+
 def require_capability(admin: AdminUser, capability: str) -> None:
     if not has_capability(admin, capability):
+        raise ApiError("FORBIDDEN", "You do not have permission to perform this action.", 403)
+
+
+def require_any_capability(admin: AdminUser) -> None:
+    if not has_any_capability(admin):
         raise ApiError("FORBIDDEN", "You do not have permission to perform this action.", 403)
 
 

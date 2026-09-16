@@ -522,14 +522,25 @@ def timesheet_rows(
             )
 
             # A live session can have authoritative activity events before its
-            # cumulative counters are persisted by the next heartbeat.
-            if timeline is not None:
+            # cumulative counters are persisted by the next heartbeat. Reconcile
+            # the raw session counter against the interval-reconstructed worked
+            # total so this endpoint reports the same worked seconds as the desktop
+            # summary, timeline, and attendance overtime — even when no timeline
+            # was rebuilt on this request (the daily view runs without a refresh),
+            # in which case the persisted worked_seconds carries the same figure.
+            # Older attendance rows predating this field fall back to 0, leaving
+            # the counter untouched until the next recalculation (D7).
+            worked_evidence_seconds = (
+                int(timeline["worked_seconds"])
+                if timeline is not None
+                else int(calculation_sources.get("worked_seconds", 0))
+            )
+            if worked_evidence_seconds > 0:
                 item["active_seconds"] = max(
                     int(item["active_seconds"]),
                     max(
                         0,
-                        int(timeline["worked_seconds"])
-                        - int(item["deducted_seconds"]),
+                        worked_evidence_seconds - int(item["deducted_seconds"]),
                     ),
                 )
 
