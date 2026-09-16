@@ -1,3 +1,5 @@
+param([switch]$CheckOnly)
+
 $ErrorActionPreference = "Stop"
 
 $root = Resolve-Path (Join-Path $PSScriptRoot "..")
@@ -13,15 +15,18 @@ if (-not $env:DATABASE_URL -and -not (Test-Path -LiteralPath $envFile)) {
   throw "DATABASE_URL is required. Set it in the current shell or create backend/.env."
 }
 
-if (-not $env:JWT_SECRET_KEY) {
-  $env:JWT_SECRET_KEY = "your-dev-jwt-secret"
-}
-
-if (-not $env:DEVICE_TOKEN_SECRET) {
-  $env:DEVICE_TOKEN_SECRET = "your-dev-device-secret"
-}
-
 Set-Location $backend
+# Settings already loads backend/.env. Do not inject fallback secrets into the
+# process environment: environment variables override that file and can invalidate
+# existing login/device tokens and JWT-derived encrypted salary records.
+& $venvPython -m scripts.check_environment
+if ($LASTEXITCODE -ne 0) {
+  throw "Backend configuration needs attention. No migrations or server startup were attempted."
+}
+if ($CheckOnly) {
+  exit 0
+}
+
 & $venvPython -m alembic upgrade head
 if ($LASTEXITCODE -ne 0) {
   throw "Database migration failed."

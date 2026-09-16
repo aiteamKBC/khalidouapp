@@ -2,6 +2,8 @@
   "name": "khaliduo-backend",
   "private": true,
   "scripts": {
+    "check:env": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev-backend.ps1 -CheckOnly",
+    "restore:salary-key": ".\\.venv\\Scripts\\python.exe -m scripts.restore_salary_key",
     "dev": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev-backend.ps1",
     "test": ".\\.venv\\Scripts\\python.exe -m pytest"
   }

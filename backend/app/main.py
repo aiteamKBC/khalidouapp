@@ -124,15 +124,37 @@ def create_app() -> FastAPI:
             )
         return response
 
+    def _apply_cors_headers(request: Request, response) -> None:
+        # Unhandled exceptions are turned into a 500 by Starlette's outermost
+        # ServerErrorMiddleware, which sits ABOVE CORSMiddleware, so that error
+        # response never passes back through the CORS layer and would otherwise
+        # reach the browser without Access-Control-Allow-Origin (surfacing a
+        # real backend 500 as a misleading CORS/network failure). Re-apply the
+        # same allowlist + credentials policy here so error responses are
+        # readable by permitted origins while disallowed origins stay denied.
+        origin = request.headers.get("origin")
+        if not origin:
+            return
+        allowed = settings.cors_origins
+        if origin in allowed or "*" in allowed:
+            response.headers["Access-Control-Allow-Origin"] = origin
+            response.headers["Access-Control-Allow-Credentials"] = "true"
+            existing_vary = response.headers.get("Vary")
+            response.headers["Vary"] = (
+                f"{existing_vary}, Origin" if existing_vary else "Origin"
+            )
+
     @app.exception_handler(Exception)
-    async def unhandled_exception_handler(_, exc: Exception):
+    async def unhandled_exception_handler(request: Request, exc: Exception):
         logger.exception("Unhandled API exception", exc_info=exc)
-        return error_response(
+        response = error_response(
             code="INTERNAL_SERVER_ERROR",
             message="An unexpected server error occurred.",
             status_code=500,
             details={} if production else {"type": exc.__class__.__name__},
         )
+        _apply_cors_headers(request, response)
+        return response
 
     @app.exception_handler(ApiError)
     async def api_error_handler(_, exc: ApiError):

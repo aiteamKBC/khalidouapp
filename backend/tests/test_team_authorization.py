@@ -4615,7 +4615,7 @@ def test_monitoring_roster_is_lightweight_scoped_and_has_bounded_queries(team_cl
         str(data["employee_a"].id),
         str(data["shared_employee"].id),
     }
-    assert len(statements) <= 8, [
+    assert len(statements) <= 9, [
         f"{index}: {' '.join(statement.split())[:180]}"
         for index, statement in enumerate(statements, start=1)
     ]
@@ -4982,3 +4982,584 @@ def test_employee_start_date_and_leave_balance_overview_are_editable(team_client
             "request_id": balance["taken_dates"][1]["request_id"],
         },
     ]
+
+
+def test_no_grant_admin_cannot_read_employee_roster(team_client):
+    # W8: a custom permission-mode admin with no grants must not read the roster.
+    client, data = team_client
+    db = data["session_factory"]()
+    try:
+        no_grant = AdminUser(
+            company_id=data["general_admin"].company_id,
+            name="No Grant Admin",
+            email="nogrant@example.com",
+            password_hash=hash_password("ExamplePassword123!"),
+            role="team_owner",
+            is_super_admin=False,
+            status="active",
+            permission_mode="custom",
+            data_scope="company",
+        )
+        db.add(no_grant)
+        db.commit()
+        admin_id = no_grant.id
+        company_id = no_grant.company_id
+    finally:
+        db.close()
+    token = create_jwt_token(
+        subject=admin_id,
+        company_id=company_id,
+        token_type="access",
+        expires_delta=timedelta(minutes=30),
+        extra_claims={"role": "team_owner"},
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+
+    me = client.get("/api/v1/auth/me", headers=headers)
+    assert me.status_code == 200
+    assert me.json()["data"]["permissions"] == []
+
+    roster = client.get("/api/v1/employees", headers=headers)
+    overview = client.get("/api/v1/employees-overview", headers=headers)
+    assert roster.status_code == 403
+    assert overview.status_code == 403
+
+
+def test_capable_admins_still_read_roster(team_client):
+    # W8: gating must not break legitimate roster/selector access.
+    client, data = team_client
+
+    roster = client.get("/api/v1/employees", headers=data["general_headers"])
+    overview = client.get("/api/v1/employees-overview", headers=data["general_headers"])
+    assert roster.status_code == 200
+    assert overview.status_code == 200
+
+    # A role-mode team owner keeps the shared employee selector its features use.
+    owner_overview = client.get(
+        "/api/v1/employees-overview", headers=data["owner_headers"]
+    )
+    assert owner_overview.status_code == 200
+
+
+def test_custom_range_sheet_does_not_mutate_saved_run(team_client):
+    # W4: a custom viewing range is a read-only preview; it must reflect the
+    # range in the response but never rewrite the shared persisted run.
+    from datetime import date as _date
+
+    from app.models import PayrollRun
+
+    client, data = team_client
+    work_date = local_today("UTC")
+    payroll_month = (
+        (work_date.replace(day=28) + timedelta(days=4)).replace(day=1)
+        if work_date.day >= 26
+        else work_date.replace(day=1)
+    )
+    month_str = payroll_month.strftime("%Y-%m")
+    headers = data["general_headers"]
+
+    canonical = client.get(f"/api/v1/payroll/sheet?month={month_str}", headers=headers)
+    assert canonical.status_code == 200
+    canonical_start = canonical.json()["data"]["run"]["period_start"]
+    canonical_end = canonical.json()["data"]["run"]["period_end"]
+
+    custom_start = payroll_month.replace(day=1).isoformat()
+    custom_end = payroll_month.replace(day=7).isoformat()
+    assert custom_start != canonical_start  # a genuine custom sub-range
+
+    custom = client.get(
+        f"/api/v1/payroll/sheet?month={month_str}"
+        f"&start_date={custom_start}&end_date={custom_end}",
+        headers=headers,
+    )
+    assert custom.status_code == 200
+    # The preview reflects the requested range...
+    assert custom.json()["data"]["run"]["period_start"] == custom_start
+    assert custom.json()["data"]["run"]["period_end"] == custom_end
+
+    # ...but the stored run keeps the canonical company cycle.
+    db = data["session_factory"]()
+    try:
+        run = db.scalar(
+            select(PayrollRun).where(PayrollRun.month == payroll_month.replace(day=1))
+        )
+        assert run.period_start.isoformat() == canonical_start
+        assert run.period_end.isoformat() == canonical_end
+    finally:
+        db.close()
+
+    # A later canonical view is unchanged for the next administrator.
+    again = client.get(f"/api/v1/payroll/sheet?month={month_str}", headers=headers)
+    assert again.json()["data"]["run"]["period_start"] == canonical_start
+    assert again.json()["data"]["run"]["period_end"] == canonical_end
+
+
+def test_approved_run_freezes_numbers_when_salary_changes(team_client):
+    # R1 (policy: approval freezes numbers): once a run is approved, a later
+    # salary change must not alter its figures until it is moved back to draft.
+    from decimal import Decimal
+
+    from app.models import EmployeeWorkProfile, PayrollEntry, PayrollRun
+    from app.services.payroll import (
+        get_or_create_payroll_settings,
+        get_or_create_run,
+        refresh_run_entries,
+    )
+
+    client, data = team_client
+    db = data["session_factory"]()
+    try:
+        company_id = data["employee_a"].company_id
+        employee = data["employee_a"]
+        profile = get_or_create_work_profile(db, employee)
+        profile.salary_type = "monthly"
+        profile.salary_amount = Decimal("3000")
+        profile.salary_currency = "EGP"
+        db.flush()
+
+        settings = get_or_create_payroll_settings(db, company_id)
+        month = date(2026, 9, 1)
+        run = get_or_create_run(
+            db,
+            company_id=company_id,
+            month=month,
+            admin_user_id=data["general_admin"].id,
+            cycle_timezone=settings.timezone,
+        )
+        refresh_run_entries(db, run)
+        db.commit()
+
+        entry = db.scalar(
+            select(PayrollEntry).where(
+                PayrollEntry.payroll_run_id == run.id,
+                PayrollEntry.employee_id == employee.id,
+            )
+        )
+        assert entry is not None
+        assert float(entry.salary_amount) == 3000.0
+        frozen_base = float(entry.base_salary)
+
+        run.status = "approved"
+        db.commit()
+        profile.salary_amount = Decimal("6000")
+        db.commit()
+
+        # Refreshing an approved run must not pick up the new salary.
+        refresh_run_entries(db, run)
+        db.commit()
+        db.refresh(entry)
+        assert float(entry.salary_amount) == 3000.0
+        assert float(entry.base_salary) == frozen_base
+
+        # Returning to draft unfreezes it (the deliberate edit path).
+        run.status = "draft"
+        db.commit()
+        refresh_run_entries(db, run)
+        db.commit()
+        db.refresh(entry)
+        assert float(entry.salary_amount) == 6000.0
+    finally:
+        db.close()
+
+
+def test_export_honors_all_sheet_filters(team_client):
+    # W5: the export must apply the same filters as the sheet (previously it
+    # dropped has_lateness/has_idle/has_deductions/has_manual_adjustments).
+    client, data = team_client
+    work_date = local_today("UTC")
+    payroll_month = (
+        (work_date.replace(day=28) + timedelta(days=4)).replace(day=1)
+        if work_date.day >= 26
+        else work_date.replace(day=1)
+    )
+    month_str = payroll_month.strftime("%Y-%m")
+    headers = data["general_headers"]
+
+    # A filter that returns no rows on the sheet ...
+    sheet = client.get(
+        f"/api/v1/payroll/sheet?month={month_str}&has_deductions=true", headers=headers
+    )
+    assert sheet.status_code == 200
+    assert sheet.json()["data"]["summary"]["employees"] == 0
+
+    # ... must also return no employee/total rows in the export.
+    filtered = client.get(
+        f"/api/v1/payroll/export?month={month_str}&format=csv&has_deductions=true",
+        headers=headers,
+    )
+    assert filtered.status_code == 200
+    filtered_lines = [
+        line for line in filtered.content.decode("utf-8-sig").splitlines() if line.strip()
+    ]
+    assert len(filtered_lines) == 1  # header row only
+
+    # Sanity: the unfiltered export still contains rows.
+    unfiltered = client.get(
+        f"/api/v1/payroll/export?month={month_str}&format=csv", headers=headers
+    )
+    unfiltered_lines = [
+        line for line in unfiltered.content.decode("utf-8-sig").splitlines() if line.strip()
+    ]
+    assert len(unfiltered_lines) > 1
+
+
+def test_audit_log_paginates_and_filters_full_history(team_client):
+    # W11: server-side filters + pagination make older matching events
+    # discoverable and report totals honestly. W12: To date is inclusive.
+    from datetime import datetime, timezone
+
+    from app.models import AuditLog
+
+    client, data = team_client
+    db = data["session_factory"]()
+    try:
+        company_id = data["general_admin"].company_id
+        admin_id = data["general_admin"].id
+        for index in range(205):
+            db.add(
+                AuditLog(
+                    company_id=company_id,
+                    admin_user_id=admin_id,
+                    action="created",
+                    entity_type="employee",
+                    entity_name=f"row-{index}",
+                    created_at=datetime(2026, 6, 1, 12, 0, tzinfo=timezone.utc),
+                )
+            )
+        # One older, distinctly-actioned event far beyond the first page.
+        db.add(
+            AuditLog(
+                company_id=company_id,
+                admin_user_id=admin_id,
+                action="special_action",
+                entity_type="payroll_run",
+                entity_name="old-event",
+                created_at=datetime(2026, 1, 1, 9, 0, tzinfo=timezone.utc),
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    headers = data["general_headers"]
+
+    first = client.get("/api/v1/audit-log?page=1", headers=headers)
+    assert first.status_code == 200
+    body = first.json()
+    assert len(body["data"]) == 100
+    assert body["meta"]["total"] >= 206
+    assert body["meta"]["total_pages"] >= 3
+    assert "special_action" in body["meta"]["available_actions"]
+
+    big = client.get("/api/v1/audit-log?page=1&page_size=200", headers=headers)
+    assert len(big.json()["data"]) == 200
+
+    # Server-side filter surfaces the old event even though it is not on page 1.
+    filtered = client.get("/api/v1/audit-log?action=special_action", headers=headers)
+    fbody = filtered.json()
+    assert fbody["meta"]["total"] == 1
+    assert fbody["data"][0]["entity_name"] == "old-event"
+
+    # W12: the To date includes same-day events.
+    same_day = client.get(
+        "/api/v1/audit-log?action=special_action&date_to=2026-01-01", headers=headers
+    )
+    assert same_day.json()["meta"]["total"] == 1
+    before = client.get(
+        "/api/v1/audit-log?action=special_action&date_to=2025-12-31", headers=headers
+    )
+    assert before.json()["meta"]["total"] == 0
+
+
+def test_reports_summary_and_employees_respect_employee_and_date_filters(team_client):
+    # W9: employee/date filters must reach backend aggregation so the headline
+    # cards and per-employee rows change consistently with the selection.
+    client, data = team_client
+    headers = data["general_headers"]
+    employee_a = str(data["employee_a"].id)
+
+    unfiltered = client.get("/api/v1/reports/summary", headers=headers)
+    assert unfiltered.status_code == 200
+    total_all = unfiltered.json()["data"]["total_tracked_seconds"]
+    assert total_all >= 360  # employee_a (120) + employee_b (240)
+
+    by_employee = client.get(
+        f"/api/v1/reports/summary?employee_id={employee_a}", headers=headers
+    )
+    total_a = by_employee.json()["data"]["total_tracked_seconds"]
+    assert total_a == 120
+    assert total_a < total_all  # selecting an employee changes the headline totals
+
+    rows = client.get(
+        f"/api/v1/reports/employees?employee_id={employee_a}", headers=headers
+    )
+    row_data = rows.json()["data"]
+    assert len(row_data) == 1
+    assert row_data[0]["employee_id"] == employee_a
+    assert row_data[0]["active_seconds"] == 120
+
+    # A date window with no sessions yields zero, proving the date filter applies.
+    empty = client.get(
+        "/api/v1/reports/summary?date_from=2020-01-01&date_to=2020-01-02", headers=headers
+    )
+    assert empty.json()["data"]["total_tracked_seconds"] == 0
+
+
+def _seed_sept_run(data):
+    """Build September's run+entries and return (run_id, month_str)."""
+    from datetime import date as _date
+
+    from app.models import AdminUser as _Admin  # noqa: F401
+    from app.services.payroll import (
+        get_or_create_payroll_settings,
+        get_or_create_run,
+        refresh_run_entries,
+    )
+
+    db = data["session_factory"]()
+    try:
+        company_id = data["general_admin"].company_id
+        settings = get_or_create_payroll_settings(db, company_id)
+        from app.services.payroll import payroll_period_bounds as _bounds
+
+        canonical_start, canonical_end = _bounds(
+            "2026-09", settings.cycle_start_day, settings.cycle_end_day
+        )
+        run = get_or_create_run(
+            db,
+            company_id=company_id,
+            month=_date(2026, 9, 1),
+            admin_user_id=data["general_admin"].id,
+            period_start=canonical_start,
+            period_end=canonical_end,
+            cycle_timezone=settings.timezone,
+        )
+        refresh_run_entries(db, run)
+        db.commit()
+        return run.id
+    finally:
+        db.close()
+
+
+def test_approved_run_rejects_entry_edits(team_client):
+    # R1: an approved run must reject deliberate edits until returned to draft.
+    from app.models import PayrollEntry, PayrollRun
+
+    client, data = team_client
+    run_id = _seed_sept_run(data)
+    db = data["session_factory"]()
+    try:
+        run = db.get(PayrollRun, run_id)
+        run.status = "approved"
+        entry_id = db.scalar(
+            select(PayrollEntry.id).where(PayrollEntry.payroll_run_id == run_id)
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    resp = client.patch(
+        f"/api/v1/payroll/entries/{entry_id}",
+        json={"bonus_amount": 123},
+        headers=data["general_headers"],
+    )
+    assert resp.status_code == 409
+
+
+def test_exceptions_custom_range_does_not_mutate_saved_run(team_client):
+    # W4: the exceptions reader must not rewrite the shared run either.
+    from app.models import PayrollRun
+
+    client, data = team_client
+    run_id = _seed_sept_run(data)
+    db = data["session_factory"]()
+    try:
+        run = db.get(PayrollRun, run_id)
+        canonical_start = run.period_start.isoformat()
+        canonical_end = run.period_end.isoformat()
+    finally:
+        db.close()
+
+    resp = client.get(
+        "/api/v1/payroll/exceptions?month=2026-09&start_date=2026-09-01&end_date=2026-09-07",
+        headers=data["general_headers"],
+    )
+    assert resp.status_code == 200
+
+    db = data["session_factory"]()
+    try:
+        run = db.get(PayrollRun, run_id)
+        assert run.period_start.isoformat() == canonical_start
+        assert run.period_end.isoformat() == canonical_end
+    finally:
+        db.close()
+
+
+def test_export_custom_range_does_not_mutate_saved_run(team_client):
+    # W4: the export reader must not rewrite the shared run either.
+    from app.models import PayrollRun
+
+    client, data = team_client
+    run_id = _seed_sept_run(data)
+    db = data["session_factory"]()
+    try:
+        run = db.get(PayrollRun, run_id)
+        canonical_start = run.period_start.isoformat()
+    finally:
+        db.close()
+
+    resp = client.get(
+        "/api/v1/payroll/export?month=2026-09&format=csv"
+        "&start_date=2026-09-01&end_date=2026-09-07",
+        headers=data["general_headers"],
+    )
+    assert resp.status_code == 200
+
+    db = data["session_factory"]()
+    try:
+        run = db.get(PayrollRun, run_id)
+        assert run.period_start.isoformat() == canonical_start
+    finally:
+        db.close()
+
+
+def test_frozen_run_rejects_custom_range_preview(team_client):
+    # W4: a custom range on an approved run is rejected rather than relabeling
+    # the frozen figures with a period they were not computed for.
+    from app.models import PayrollRun
+
+    client, data = team_client
+    run_id = _seed_sept_run(data)
+    db = data["session_factory"]()
+    try:
+        db.get(PayrollRun, run_id).status = "approved"
+        db.commit()
+    finally:
+        db.close()
+
+    for path in ("sheet", "exceptions", "export"):
+        suffix = "&format=csv" if path == "export" else ""
+        resp = client.get(
+            f"/api/v1/payroll/{path}?month=2026-09"
+            f"&start_date=2026-09-01&end_date=2026-09-07{suffix}",
+            headers=data["general_headers"],
+        )
+        assert resp.status_code == 409, path
+        # The canonical view (no custom range) still works on an approved run.
+        canonical = client.get(
+            f"/api/v1/payroll/{path}?month=2026-09{suffix}",
+            headers=data["general_headers"],
+        )
+        assert canonical.status_code == 200, path
+
+
+def test_no_grant_admin_cannot_read_monitoring_roster(team_client):
+    # W8: the monitoring roster is part of the gated roster family.
+    client, data = team_client
+    db = data["session_factory"]()
+    try:
+        no_grant = AdminUser(
+            company_id=data["general_admin"].company_id,
+            name="No Grant Monitor",
+            email="nogrant-monitor@example.com",
+            password_hash=hash_password("ExamplePassword123!"),
+            role="team_owner",
+            is_super_admin=False,
+            status="active",
+            permission_mode="custom",
+            data_scope="company",
+        )
+        db.add(no_grant)
+        db.commit()
+        admin_id, company_id = no_grant.id, no_grant.company_id
+    finally:
+        db.close()
+    token = create_jwt_token(
+        subject=admin_id,
+        company_id=company_id,
+        token_type="access",
+        expires_delta=timedelta(minutes=30),
+        extra_claims={"role": "team_owner"},
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+    assert client.get("/api/v1/employees-monitoring", headers=headers).status_code == 403
+    assert client.get("/api/v1/employees-monitoring", headers=data["general_headers"]).status_code == 200
+
+
+def test_reports_csv_export_filters_and_escapes(team_client):
+    # W9/W10: the backend report CSV honours filters and neutralizes formulas.
+    from app.models import Employee
+
+    client, data = team_client
+    headers = data["general_headers"]
+    employee_a = str(data["employee_a"].id)
+
+    # Rename an employee to a formula-like value.
+    db = data["session_factory"]()
+    try:
+        emp = db.get(Employee, data["employee_b"].id)
+        emp.name = "=1+1"
+        db.commit()
+    finally:
+        db.close()
+
+    full = client.get("/api/v1/reports/export.csv", headers=headers)
+    assert full.status_code == 200
+    body = full.content.decode("utf-8")
+    assert "'=1+1" in body  # formula neutralized
+    assert "\n=1+1" not in body
+
+    # Employee filter reduces the export to one row.
+    filtered = client.get(
+        f"/api/v1/reports/export.csv?employee_id={employee_a}", headers=headers
+    )
+    lines = [line for line in filtered.content.decode("utf-8").splitlines() if line.strip()]
+    assert len(lines) == 2  # header + one employee
+
+    # An empty date window exports the header only.
+    empty = client.get(
+        "/api/v1/reports/export.csv?date_from=2020-01-01&date_to=2020-01-02", headers=headers
+    )
+    empty_lines = [line for line in empty.content.decode("utf-8").splitlines() if line.strip()]
+    # Employees still listed but with zero seconds; ensure no active time leaks.
+    assert all(",0,0,0" in line or "active_seconds" in line for line in empty_lines)
+
+
+def test_audit_date_filter_uses_viewer_timezone(team_client):
+    # W12: an event whose displayed day (in the viewer timezone) is D must be
+    # matched by a filter of D, even when its UTC instant is the neighbouring day.
+    from datetime import datetime, timezone
+
+    from app.models import AuditLog
+
+    client, data = team_client
+    db = data["session_factory"]()
+    try:
+        db.add(
+            AuditLog(
+                company_id=data["general_admin"].company_id,
+                admin_user_id=data["general_admin"].id,
+                action="tz_probe",
+                entity_type="payroll_run",
+                entity_name="near-midnight",
+                # 21:30 UTC on Sep 14 == 00:30 on Sep 15 in Africa/Cairo (UTC+3, DST).
+                created_at=datetime(2026, 9, 14, 21, 30, tzinfo=timezone.utc),
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    headers = data["general_headers"]
+
+    def total(query):
+        return client.get(f"/api/v1/audit-log?action=tz_probe&{query}", headers=headers).json()[
+            "meta"
+        ]["total"]
+
+    # In Cairo the event is on Sep 15, so a Sep 15 filter includes it and Sep 14 excludes it.
+    assert total("date_from=2026-09-15&date_to=2026-09-15&tz=Africa/Cairo") == 1
+    assert total("date_from=2026-09-14&date_to=2026-09-14&tz=Africa/Cairo") == 0
+    # In UTC the same event is on Sep 14 (demonstrating the timezone actually matters).
+    assert total("date_from=2026-09-14&date_to=2026-09-14") == 1
+    assert total("date_from=2026-09-15&date_to=2026-09-15") == 0

@@ -1,4 +1,5 @@
 from datetime import UTC, date, datetime, time, timedelta
+from uuid import uuid4
 
 import pytest
 from sqlalchemy import create_engine, select
@@ -1789,3 +1790,171 @@ def test_monthly_payroll_aggregates_canonical_daily_attendance(attendance_contex
     assert metrics["paid_break_seconds"] == 30 * 60
     assert metrics["normal_seconds"] == 8 * 3600
     assert metrics["total_payable_seconds"] == 8 * 3600
+
+
+def test_screenshot_deduction_reduces_canonical_payable_time(attendance_context):
+    # W3: a screenshot deletion (WorkSession.deducted_seconds) must reduce the
+    # canonical attendance worked/payable time, not be silently restored by the
+    # attendance projection. Recomputing is idempotent (no double deduction).
+    db, employee, device, _ = attendance_context
+    work_date = date(2026, 7, 21)
+    session = _session(
+        db,
+        employee,
+        device,
+        datetime(2026, 7, 21, 9, 0, tzinfo=UTC),
+        datetime(2026, 7, 21, 17, 0, tzinfo=UTC),
+    )
+    db.commit()
+    now = datetime(2026, 7, 22, tzinfo=UTC)
+
+    before, _ = calculate_daily_attendance(
+        db, employee=employee, work_date=work_date, now=now
+    )
+    base_worked = before.normal_worked_seconds
+    base_payable = before.total_payable_seconds
+    assert base_worked > 600
+
+    # Simulate the ledger effect of deleting a screenshot worth 600 seconds.
+    session.deducted_seconds = 600
+    db.commit()
+
+    after, _ = calculate_daily_attendance(
+        db, employee=employee, work_date=work_date, now=now
+    )
+    assert after.normal_worked_seconds == base_worked - 600
+    assert after.total_payable_seconds == base_payable - 600
+
+    # Recomputing again with the same ledger value must not deduct twice.
+    again, _ = calculate_daily_attendance(
+        db, employee=employee, work_date=work_date, now=now
+    )
+    assert again.normal_worked_seconds == base_worked - 600
+    assert again.total_payable_seconds == base_payable - 600
+
+
+def test_screenshot_deduction_reduces_overtime_only_pay(attendance_context):
+    # W3: a deduction on overtime-only work must reduce approved-overtime pay,
+    # not be restored by the overtime record.
+    db, employee, device, _ = attendance_context
+    work_date = date(2026, 7, 21)
+    session = _session(
+        db,
+        employee,
+        device,
+        datetime(2026, 7, 21, 17, 0, tzinfo=UTC),
+        datetime(2026, 7, 21, 18, 0, tzinfo=UTC),
+    )
+    db.add(
+        OvertimeRecord(
+            company_id=employee.company_id,
+            employee_id=employee.id,
+            work_session_id=session.id,
+            work_date=work_date,
+            overtime_enabled_snapshot=True,
+            recorded_extra_seconds=3600,
+            approved_seconds=3600,
+            status="approved",
+        )
+    )
+    db.commit()
+    now = datetime(2026, 7, 22, tzinfo=UTC)
+
+    before, _ = calculate_daily_attendance(
+        db, employee=employee, work_date=work_date, now=now
+    )
+    assert before.normal_worked_seconds == 0
+    assert before.approved_overtime_seconds == 3600
+    assert before.total_payable_seconds == 3600
+
+    session.deducted_seconds = 600
+    db.commit()
+
+    after, _ = calculate_daily_attendance(
+        db, employee=employee, work_date=work_date, now=now
+    )
+    assert after.approved_overtime_seconds == 3000
+    assert after.total_payable_seconds == 3000
+
+    again, _ = calculate_daily_attendance(
+        db, employee=employee, work_date=work_date, now=now
+    )
+    assert again.approved_overtime_seconds == 3000
+    assert again.total_payable_seconds == 3000
+
+
+def _activity_event(session, event_type, event_timestamp):
+    return ActivityEvent(
+        company_id=session.company_id,
+        employee_id=session.employee_id,
+        device_id=session.device_id,
+        session_id=session.id,
+        event_type=event_type,
+        event_timestamp=event_timestamp,
+        payload=None,
+        idempotency_key=str(uuid4()),
+    )
+
+
+def test_off_day_worked_seconds_reconciles_low_counter_and_is_stable(
+    attendance_context,
+):
+    """D7: on an off day the interval-reconstructed worked total is the single
+    authoritative figure. It is persisted on the attendance row, drives overtime,
+    and does not depend on (nor get dragged down by) an under-reporting session
+    counter — and repeat reads with the same frozen clock never drift.
+    """
+    db, employee, device, _ = attendance_context
+    work_date = date(2026, 7, 25)  # Saturday -> weekly off day
+    start = datetime(2026, 7, 25, 10, 0, tzinfo=UTC)
+    now = start + timedelta(minutes=30)
+    # The session counter under-reports (only 120s active) while the activity
+    # events prove 660s of worked time: worked 10:00-10:10 (600s), idle
+    # 10:10-10:25, worked 10:25-10:26 (60s), idle 10:26-10:30.
+    session = WorkSession(
+        company_id=employee.company_id,
+        employee_id=employee.id,
+        device_id=device.id,
+        started_at=start,
+        ended_at=None,
+        status="idle",
+        active_seconds=120,
+        idle_seconds=20 * 60,
+    )
+    db.add(session)
+    db.flush()
+    db.add_all(
+        [
+            _activity_event(session, "idle_started", start + timedelta(minutes=10)),
+            # Deliberately out of order relative to the idle_ended below.
+            _activity_event(session, "idle_started", start + timedelta(minutes=26)),
+            _activity_event(session, "idle_ended", start + timedelta(minutes=25)),
+        ]
+    )
+    db.commit()
+
+    row, timeline = calculate_daily_attendance(
+        db, employee=employee, work_date=work_date, now=now
+    )
+    worked = int(timeline["worked_seconds"])
+    assert worked == 660, "600s + 60s of worked intervals"
+    # The authoritative worked total is persisted for counter reconciliation.
+    assert row.calculation_sources["worked_seconds"] == 660
+    # Off-day work is entirely post-shift extra / overtime; idle is excluded.
+    assert row.normal_worked_seconds == 0
+    assert row.post_shift_extra_seconds == 660
+    assert row.recorded_overtime_seconds == 660
+    assert row.idle_seconds == 0
+
+    # A repeat read at the same frozen clock, reusing the stored row, must not
+    # drift the worked/overtime figures.
+    row_again, timeline_again = calculate_daily_attendance(
+        db,
+        employee=employee,
+        work_date=work_date,
+        now=now,
+        existing_attendance=row,
+    )
+    assert int(timeline_again["worked_seconds"]) == 660
+    assert row_again.calculation_sources["worked_seconds"] == 660
+    assert row_again.recorded_overtime_seconds == 660

@@ -42,6 +42,27 @@ def _utc(value: datetime) -> datetime:
     return value.astimezone(UTC)
 
 
+def _company_tracking_settings(db: Session, company_id: UUID) -> tuple[int | None, int | None]:
+    """Return (idle_threshold_minutes, offline_threshold_minutes), memoized per Session.
+
+    These are company-level constants that do not change within a single request,
+    yet the attendance/timeline build reads them once per employee per day. A
+    payroll sheet recomputes every employee's current day, so the same rows were
+    fetched dozens of times over a high-latency connection. Cache them on
+    ``db.info`` (request-scoped, since each request gets a fresh Session) so the
+    values are read at most once per company per request.
+    """
+    cache = db.info.setdefault("_tracking_settings_cache", {})
+    if company_id not in cache:
+        cache[company_id] = db.execute(
+            select(
+                TrackingSettings.idle_threshold_minutes,
+                TrackingSettings.offline_threshold_minutes,
+            ).where(TrackingSettings.company_id == company_id)
+        ).first()
+    return cache[company_id] if cache[company_id] is not None else (None, None)
+
+
 def session_observation_bounds(
     db: Session,
     *,
@@ -89,14 +110,7 @@ def session_observation_bounds(
         if event_at is not None:
             signal_by_session.setdefault(session_id, {})[event_type] = _utc(event_at)
 
-    offline_threshold_minutes = (
-        db.scalar(
-            select(TrackingSettings.offline_threshold_minutes).where(
-                TrackingSettings.company_id == company_id
-            )
-        )
-        or 3
-    )
+    offline_threshold_minutes = _company_tracking_settings(db, company_id)[1] or 3
     freshness_limit = timedelta(minutes=max(1, int(offline_threshold_minutes)))
     result: dict[UUID, SessionObservation] = {}
     for session_id, session in sessions_by_id.items():
@@ -264,11 +278,7 @@ def _exclude_gaps(interval: dict, gaps: list[tuple[datetime, datetime]]) -> list
 
 def company_idle_threshold_seconds(db: Session, company_id: UUID) -> int:
     """The company's idle threshold, the yardstick for 'the employee left'."""
-    minutes = db.scalar(
-        select(TrackingSettings.idle_threshold_minutes).where(
-            TrackingSettings.company_id == company_id
-        )
-    )
+    minutes, _ = _company_tracking_settings(db, company_id)
     return max(1, minutes or 10) * 60
 
 
@@ -751,14 +761,7 @@ def build_workday_timeline(
         for session_id, heartbeat_at, payload in heartbeat_rows:
             heartbeats_by_session[session_id].append((_utc(heartbeat_at), payload))
 
-    offline_threshold_minutes = (
-        db.scalar(
-            select(TrackingSettings.offline_threshold_minutes).where(
-                TrackingSettings.company_id == company_id
-            )
-        )
-        or 3
-    )
+    offline_threshold_minutes = _company_tracking_settings(db, company_id)[1] or 3
     freshness_limit = timedelta(minutes=max(1, int(offline_threshold_minutes)))
     observations = session_observation_bounds(
         db,
@@ -766,7 +769,45 @@ def build_workday_timeline(
         sessions=sessions,
         now=now_utc,
     )
+    return _assemble_workday_timeline(
+        sessions=sessions,
+        session_context=session_context,
+        events_by_session=events_by_session,
+        heartbeats_by_session=heartbeats_by_session,
+        observations=observations,
+        freshness_limit=freshness_limit,
+        day_start=day_start,
+        day_end=day_end,
+        now_utc=now_utc,
+        zone=zone,
+        selected_date=selected_date,
+        approved_leave=approved_leave,
+        idle_threshold_seconds=company_idle_threshold_seconds(db, company_id),
+    )
 
+
+def _assemble_workday_timeline(
+    *,
+    sessions: list[WorkSession],
+    session_context: dict,
+    events_by_session: dict,
+    heartbeats_by_session: dict,
+    observations: dict,
+    freshness_limit: timedelta,
+    day_start: datetime,
+    day_end: datetime,
+    now_utc: datetime,
+    zone: ZoneInfo,
+    selected_date: date,
+    approved_leave: bool,
+    idle_threshold_seconds: int,
+) -> dict:
+    """Pure timeline assembly shared by the single- and batch-fetch paths.
+
+    Every database read for one employee/day happens in the callers; this
+    function only transforms already-fetched rows so a payroll build can fetch
+    all employees' data in a handful of queries and reuse identical logic.
+    """
     intervals: list[dict] = []
     offline_gaps_by_session: dict[UUID, list[tuple[datetime, datetime]]] = {}
     has_open_session = False
@@ -963,14 +1004,25 @@ def build_workday_timeline(
                 (interval["type"], interval["started_at"], interval["ended_at"])
                 for interval in merged
             ],
-            company_idle_threshold_seconds(db, company_id),
+            idle_threshold_seconds,
         )
         or first_signal_at
     )
     last_visible_end = max((interval["ended_at"] for interval in merged), default=None)
+    # Admin screenshot deletions remove proven work from the session ledger via
+    # WorkSession.deducted_seconds. Attendance is a projection of that ledger, so
+    # surface the deduction for the day (attributed to the session's start day so
+    # a midnight-spanning session is never double-counted) and let attendance
+    # subtract it from payable worked time (W3).
+    deducted_seconds = sum(
+        max(0, session.deducted_seconds or 0)
+        for session in sessions
+        if _utc(session.started_at).astimezone(zone).date() == selected_date
+    )
     return {
         "date": selected_date.isoformat(),
         "timezone": zone.key,
+        "deducted_seconds": deducted_seconds,
         "first_started_at": max(first_started_at, day_start).isoformat()
         if first_started_at
         else None,
@@ -995,3 +1047,196 @@ def build_workday_timeline(
         "leave_seconds": leave_seconds,
         "intervals": serialized_intervals,
     }
+
+
+def build_workday_timelines(
+    db: Session,
+    *,
+    company_id: UUID,
+    requests: list[tuple[UUID, str, date]],
+    now: datetime | None = None,
+) -> dict[tuple[UUID, date], dict]:
+    """Batch equivalent of ``build_workday_timeline`` for many employees.
+
+    ``requests`` is a list of ``(employee_id, timezone_name, target_date)``.
+    Sessions, activity events, heartbeats and per-session observations for every
+    request are fetched in a fixed handful of queries, then the same pure
+    assembly runs per request. Callers with no device filter (payroll) collapse
+    ~6 queries per employee for the current day into a constant total.
+
+    Each request is assembled from exactly the rows the single-employee path
+    would have fetched for that (employee, timezone, date), so the result is
+    byte-identical to calling ``build_workday_timeline`` for each request.
+    """
+    now_utc = _utc(now or datetime.now(UTC))
+    if not requests:
+        return {}
+
+    bounds: dict[tuple[UUID, date], tuple[datetime, datetime, ZoneInfo]] = {}
+    employee_ids: set[UUID] = set()
+    for employee_id, timezone_name, target_date in requests:
+        day_start, day_end, zone = _day_bounds(target_date, timezone_name)
+        bounds[(employee_id, target_date)] = (day_start, day_end, zone)
+        employee_ids.add(employee_id)
+    window_start = min(day_start for day_start, _, _ in bounds.values())
+    window_end = max(day_end for _, day_end, _ in bounds.values())
+
+    # Approved leave rows overlapping the window; membership resolved per request.
+    leave_rows = db.execute(
+        select(
+            LeaveRequest.employee_id,
+            LeaveRequest.start_date,
+            LeaveRequest.end_date,
+        ).where(
+            LeaveRequest.company_id == company_id,
+            LeaveRequest.employee_id.in_(employee_ids),
+            LeaveRequest.status == "approved",
+            LeaveRequest.start_date <= window_end.date(),
+            LeaveRequest.end_date >= window_start.date(),
+        )
+    ).all()
+    leaves_by_employee: dict[UUID, list[tuple[date, date]]] = defaultdict(list)
+    for employee_id, start_date, end_date in leave_rows:
+        leaves_by_employee[employee_id].append((start_date, end_date))
+
+    # Sessions overlapping the window for every requested employee (one query).
+    session_rows = db.execute(
+        select(WorkSession, Project.name, Task.name)
+        .outerjoin(Project, Project.id == WorkSession.project_id)
+        .outerjoin(Task, Task.id == WorkSession.task_id)
+        .where(
+            WorkSession.company_id == company_id,
+            WorkSession.employee_id.in_(employee_ids),
+            WorkSession.started_at < window_end,
+            or_(WorkSession.ended_at.is_(None), WorkSession.ended_at > window_start),
+        )
+        .order_by(WorkSession.started_at)
+    ).all()
+    sessions_by_employee: dict[UUID, list[WorkSession]] = defaultdict(list)
+    session_context: dict[UUID, dict] = {}
+    all_sessions: list[WorkSession] = []
+    for session, project_name, task_name in session_rows:
+        sessions_by_employee[session.employee_id].append(session)
+        all_sessions.append(session)
+        session_context[session.id] = {
+            "project_id": session.project_id,
+            "task_id": session.task_id,
+            "project_name": project_name,
+            "task_name": task_name,
+        }
+
+    events_by_session: dict[UUID, list[ActivityEvent]] = defaultdict(list)
+    heartbeats_by_session: dict[UUID, list[tuple[datetime, dict | None]]] = defaultdict(list)
+    if all_sessions:
+        session_ids = [session.id for session in all_sessions]
+        events = db.scalars(
+            select(ActivityEvent)
+            .join(WorkSession, WorkSession.id == ActivityEvent.session_id)
+            .where(
+                ActivityEvent.company_id == company_id,
+                ActivityEvent.session_id.in_(session_ids),
+                ActivityEvent.event_type.in_(TIMELINE_EVENTS),
+                ActivityEvent.event_timestamp >= WorkSession.started_at,
+                or_(
+                    WorkSession.ended_at.is_(None),
+                    ActivityEvent.event_timestamp <= WorkSession.ended_at,
+                ),
+                ActivityEvent.event_timestamp < window_end,
+            )
+            .order_by(ActivityEvent.event_timestamp, ActivityEvent.created_at)
+        ).all()
+        for event in events:
+            events_by_session[event.session_id].append(event)
+        heartbeat_rows = db.execute(
+            select(
+                ActivityEvent.session_id,
+                ActivityEvent.event_timestamp,
+                ActivityEvent.payload,
+            )
+            .join(WorkSession, WorkSession.id == ActivityEvent.session_id)
+            .where(
+                ActivityEvent.company_id == company_id,
+                ActivityEvent.session_id.in_(session_ids),
+                ActivityEvent.event_type == "heartbeat",
+                ActivityEvent.event_timestamp >= WorkSession.started_at,
+                or_(
+                    WorkSession.ended_at.is_(None),
+                    ActivityEvent.event_timestamp <= WorkSession.ended_at,
+                ),
+                ActivityEvent.event_timestamp < window_end,
+            )
+            .order_by(
+                ActivityEvent.session_id,
+                ActivityEvent.event_timestamp,
+                ActivityEvent.created_at,
+            )
+        ).all()
+        for session_id, heartbeat_at, payload in heartbeat_rows:
+            heartbeats_by_session[session_id].append((_utc(heartbeat_at), payload))
+
+    observations = session_observation_bounds(
+        db,
+        company_id=company_id,
+        sessions=all_sessions,
+        now=now_utc,
+    )
+    idle_threshold_seconds = company_idle_threshold_seconds(db, company_id)
+
+    results: dict[tuple[UUID, date], dict] = {}
+    for (employee_id, target_date), (day_start, day_end, zone) in bounds.items():
+        approved_leave = any(
+            start_date <= target_date <= end_date
+            for start_date, end_date in leaves_by_employee.get(employee_id, [])
+        )
+        # Replicate the single-employee query predicates for this exact day so
+        # the assembled timeline matches build_workday_timeline byte for byte.
+        day_sessions = [
+            session
+            for session in sessions_by_employee.get(employee_id, [])
+            if _utc(session.started_at) < day_end
+            and (session.ended_at is None or _utc(session.ended_at) > day_start)
+        ]
+        day_session_ids = {session.id for session in day_sessions}
+        day_events = {
+            session.id: [
+                event
+                for event in events_by_session.get(session.id, [])
+                if _utc(event.event_timestamp) < day_end
+            ]
+            for session in day_sessions
+        }
+        day_heartbeats = {
+            session.id: [
+                (heartbeat_at, payload)
+                for heartbeat_at, payload in heartbeats_by_session.get(session.id, [])
+                if heartbeat_at < day_end
+            ]
+            for session in day_sessions
+        }
+        day_events_map: dict[UUID, list[ActivityEvent]] = defaultdict(list, day_events)
+        day_heartbeats_map: dict[UUID, list[tuple[datetime, dict | None]]] = defaultdict(
+            list, day_heartbeats
+        )
+        day_observations = {
+            session_id: observation
+            for session_id, observation in observations.items()
+            if session_id in day_session_ids
+        }
+        results[(employee_id, target_date)] = _assemble_workday_timeline(
+            sessions=day_sessions,
+            session_context=session_context,
+            events_by_session=day_events_map,
+            heartbeats_by_session=day_heartbeats_map,
+            observations=day_observations,
+            freshness_limit=timedelta(
+                minutes=max(1, int(_company_tracking_settings(db, company_id)[1] or 3))
+            ),
+            day_start=day_start,
+            day_end=day_end,
+            now_utc=now_utc,
+            zone=zone,
+            selected_date=target_date,
+            approved_leave=approved_leave,
+            idle_threshold_seconds=idle_threshold_seconds,
+        )
+    return results

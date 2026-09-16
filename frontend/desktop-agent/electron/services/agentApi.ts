@@ -328,6 +328,13 @@ export async function enrollDeviceWithCredentials(
   email: string,
   password: string,
   agentVersion: string,
+  // Ownership predicate captured by the caller when the request began. It is
+  // re-evaluated immediately BEFORE credentials are persisted so an enrollment
+  // that a later sign-out / re-enrollment invalidated cannot write identity to
+  // disk (H1). A network round-trip elapses inside this function, during which a
+  // logout can start and finish; a check only after this function returns is too
+  // late because persistence has already happened.
+  ensureStillAuthorized: () => boolean = () => true,
 ) {
   const loginResponse = await axios.post<ApiSuccess<EmployeeLoginResponse>>(
     `${getApiBaseUrl()}/employee-auth/login`,
@@ -347,6 +354,17 @@ export async function enrollDeviceWithCredentials(
       },
     },
   );
+
+  if (!ensureStillAuthorized()) {
+    // A superseding sign-out / enrollment invalidated this request while its
+    // HTTP calls were in flight. Do not persist; report an explicit, benign
+    // cancellation the caller can distinguish from a genuine enrollment error.
+    const superseded = new Error(
+      "Enrollment was superseded by a sign-out or a newer enrollment.",
+    );
+    (superseded as { code?: string }).code = "ENROLLMENT_SUPERSEDED";
+    throw superseded;
+  }
 
   const data = response.data.data;
   return saveEnrollmentIdentity({
@@ -560,7 +578,17 @@ export async function endSession(options: {
   reason: string;
   endedAt?: string;
   eventId?: string;
+  // Operation-bound credential: when closing a session that belongs to a specific
+  // enrollment (e.g. cleaning up an orphaned stale-startup session under its
+  // ORIGINAL identity), pass the token captured when that operation began. Using
+  // it instead of the global current token prevents A's cleanup from authenticating
+  // as a newer identity B — the server rejects a foreign device (403/404) or a
+  // revoked token (401), which the caller handles distinctly (Gap 3).
+  authToken?: string;
 }) {
+  const headers = options.authToken
+    ? { Authorization: `Bearer ${options.authToken}` }
+    : getAuthHeaders();
   const response = await axios.post<ApiSuccess<SessionPayload>>(
     `${getApiBaseUrl()}/agent/sessions/${options.sessionId}/end`,
     {
@@ -570,7 +598,7 @@ export async function endSession(options: {
       idle_seconds: options.idleSeconds,
       reason: options.reason,
     },
-    { headers: getAuthHeaders() },
+    { headers },
   );
   return response.data.data;
 }
@@ -689,6 +717,10 @@ export async function sendQueuedRequest(
 export type ScreenshotMetadata = {
   screenshotId: string;
   sessionId?: string | null;
+  // The local (offline) tracking session this capture belonged to, when it was
+  // taken before a server session existed. Client-only: it is resolved to the
+  // recovered server session id at upload time and is never sent to the backend.
+  localSessionId?: string | null;
   capturedAt: string;
   width: number;
   height: number;

@@ -4,6 +4,8 @@ import log from 'electron-log/main';
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { orderedDuePendingEvents } from './pendingEventOrdering.js';
+
 const { app } = electronMain;
 
 type SqlValue = string | number | null;
@@ -226,6 +228,14 @@ export async function initializeLocalDatabase() {
   ensureColumn("local_sessions", "device_id", "text");
   ensureColumn("local_sessions", "last_checkpoint_at", "text");
   ensureColumn("local_sessions", "synced_at", "text");
+  // Durable recovery baseline: the server session's counters captured the FIRST
+  // time this local session was promoted. Reusing it on every retry (instead of
+  // re-reading the live server counters, which already include a previous
+  // attempt) makes offline recovery idempotent — the backend heartbeat is
+  // monotonic/absolute, so submitting baseline+local repeatedly converges.
+  ensureColumn("local_sessions", "recovery_baseline_active", "integer");
+  ensureColumn("local_sessions", "recovery_baseline_idle", "integer");
+  ensureColumn("local_sessions", "server_session_id", "text");
   database.run(
     `create index if not exists ix_local_session_events_session_time
      on local_session_events(local_session_id, event_timestamp, created_at)`,
@@ -379,15 +389,77 @@ export function getPendingLocalTrackingSession(
   );
 }
 
+export function getRecoveryBaseline(
+  sessionId: string,
+): { activeSeconds: number; idleSeconds: number } | null {
+  const row = rows<{
+    recovery_baseline_active: number | null;
+    recovery_baseline_idle: number | null;
+  }>(
+    `select recovery_baseline_active, recovery_baseline_idle
+     from local_sessions where session_id = ? limit 1`,
+    [sessionId],
+  )[0];
+  if (
+    !row ||
+    row.recovery_baseline_active === null ||
+    row.recovery_baseline_active === undefined
+  ) {
+    return null;
+  }
+  return {
+    activeSeconds: Math.max(0, Math.floor(row.recovery_baseline_active)),
+    idleSeconds: Math.max(0, Math.floor(row.recovery_baseline_idle ?? 0)),
+  };
+}
+
+export function setRecoveryBaseline(
+  sessionId: string,
+  baseline: { activeSeconds: number; idleSeconds: number },
+) {
+  if (!database) return;
+  // Set once, and only for a not-yet-synced row. `where recovery_baseline_active
+  // is null` makes this a no-op on a concurrent/second call, so the first
+  // captured baseline is authoritative for all retries.
+  database.run(
+    `update local_sessions
+     set recovery_baseline_active = ?, recovery_baseline_idle = ?
+     where session_id = ? and recovery_baseline_active is null`,
+    [
+      Math.max(0, Math.floor(baseline.activeSeconds)),
+      Math.max(0, Math.floor(baseline.idleSeconds)),
+      sessionId,
+    ],
+  );
+  persist();
+}
+
+export function getServerSessionIdForLocalSession(
+  localSessionId: string,
+): string | null {
+  return (
+    rows<{ server_session_id: string | null }>(
+      `select server_session_id from local_sessions
+       where session_id = ? limit 1`,
+      [localSessionId],
+    )[0]?.server_session_id ?? null
+  );
+}
+
 export function markLocalTrackingSessionSynced(
   sessionId: string,
   syncedAt = new Date().toISOString(),
+  serverSessionId: string | null = null,
 ) {
   if (!database) return;
   database.run(
-    `update local_sessions set synced_at = ? where session_id = ?`,
-    [syncedAt, sessionId],
+    `update local_sessions set synced_at = ?, server_session_id = ?
+     where session_id = ?`,
+    [syncedAt, serverSessionId, sessionId],
   );
+  // Keep the row (with its server_session_id mapping) so a delayed offline
+  // screenshot can still resolve its recovered server session; only the replayed
+  // events are no longer needed.
   database.run(
     `delete from local_session_events where local_session_id = ?`,
     [sessionId],
@@ -438,11 +510,20 @@ export function enqueuePendingEvent(options: {
   endpoint: string;
   payload: Record<string, unknown>;
   idempotencyKey: string;
+  // Optional ordering override. Events deliver in `created_at asc, rowid asc`
+  // order within a session group (see getDuePendingEvents / orderedDuePendingEvents).
+  // A durable finalization End is enqueued BEFORE its in-flight predecessors are
+  // awaited (so it survives a kill during the wait), but it must still deliver
+  // AFTER them. Passing a sentinel far-future createdAt makes it sort last within
+  // its session group regardless of when a predecessor's failure row is inserted,
+  // so a kill-then-restart replays predecessor evidence first and End last (O1).
+  createdAt?: string;
 }) {
   if (!database) {
     return;
   }
   const now = new Date().toISOString();
+  const createdAt = options.createdAt ?? now;
   database.run(
     `insert or ignore into pending_events
       (id, method, endpoint, payload_json, idempotency_key, status, attempts, next_attempt_at, created_at, updated_at)
@@ -454,7 +535,7 @@ export function enqueuePendingEvent(options: {
       JSON.stringify(options.payload),
       options.idempotencyKey,
       now,
-      now,
+      createdAt,
       now,
     ],
   );
@@ -464,16 +545,56 @@ export function enqueuePendingEvent(options: {
 export function getDuePendingEvents(
   limit = 25,
   options: { force?: boolean } = {},
-) {
-  const ignoreNextAttempt = options.force === true;
-  return rows<PendingEvent>(
-    `select id, method, endpoint, payload_json as payloadJson, attempts
+): PendingEvent[] {
+  // Fetch the whole ordered chain (no backoff filter in SQL) and let the
+  // ordering policy decide what is deliverable, so a backed-off predecessor
+  // blocks its session's later events instead of being skipped past. Ordering
+  // by created_at then rowid gives a stable causal order per session.
+  const ordered = rows<PendingEvent & { endpoint: string; nextAttemptAt: string }>(
+    `select id, method, endpoint, payload_json as payloadJson, attempts,
+            next_attempt_at as nextAttemptAt
      from pending_events
-     where status in ('pending', 'failed')${ignoreNextAttempt ? '' : ' and next_attempt_at <= ?'}
-     order by created_at asc, rowid asc
-     limit ?`,
-    ignoreNextAttempt ? [limit] : [new Date().toISOString(), limit],
+     where status in ('pending', 'failed')
+     order by created_at asc, rowid asc`,
   );
+  return orderedDuePendingEvents(ordered, {
+    now: Date.now(),
+    force: options.force === true,
+    limit,
+  }).map(({ id, method, endpoint, payloadJson, attempts }) => ({
+    id,
+    method,
+    endpoint,
+    payloadJson,
+    attempts,
+  }));
+}
+
+export function hasPendingEventsForSession(
+  serverSessionId: string,
+  exceptId?: string,
+): boolean {
+  // Any still-undelivered (pending or backed-off 'failed') event whose endpoint
+  // targets this session. Used so a direct End does not overtake a queued
+  // predecessor (e.g. a backed-off Pause) for the same session and close it
+  // before the predecessor is delivered. Session ids are UUIDs, so they contain
+  // no SQL LIKE wildcards.
+  //
+  // `exceptId` excludes one row from the count. The durable finalization End is
+  // enqueued up front (so it survives a kill during predecessor waits, O1); when
+  // later deciding whether End can be sent DIRECTLY, its own queued row must not
+  // count as a blocking predecessor.
+  const query = exceptId
+    ? `select count(*) as n from pending_events
+       where status in ('pending', 'failed')
+         and endpoint like ? and id <> ?`
+    : `select count(*) as n from pending_events
+       where status in ('pending', 'failed')
+         and endpoint like ?`;
+  const params = exceptId
+    ? [`/agent/sessions/${serverSessionId}/%`, exceptId]
+    : [`/agent/sessions/${serverSessionId}/%`];
+  return (rows<{ n: number }>(query, params)[0]?.n ?? 0) > 0;
 }
 
 export function markPendingEventUploaded(id: string) {
@@ -483,6 +604,36 @@ export function markPendingEventUploaded(id: string) {
   // more expensive without bound.
   database?.run(`delete from pending_events where id = ?`, [id]);
   persist();
+}
+
+export function markPendingEventIgnored(id: string) {
+  // The server accepted but IGNORED this event (e.g. it reached an already-closed
+  // session). Its payload may hold work that was never applied, so it must not be
+  // silently deleted. Move it to a terminal 'ignored' state instead: it is not
+  // re-read by getDuePendingEvents (so it is never retried in a futile loop) and
+  // NOT removed by purgeTerminalPendingEvents (which only clears 'uploaded'/'dead'),
+  // so the full payload is durably retained for later reconciliation.
+  database?.run(
+    `update pending_events
+     set status = 'ignored', updated_at = ?
+     where id = ?`,
+    [new Date().toISOString(), id],
+  );
+  persist();
+}
+
+export function listIgnoredPendingEvents(): Array<{
+  id: string;
+  endpoint: string;
+  payloadJson: string;
+}> {
+  // Ignored events retained for reconciliation (see markPendingEventIgnored).
+  return rows<{ id: string; endpoint: string; payloadJson: string }>(
+    `select id, endpoint, payload_json as payloadJson
+     from pending_events
+     where status = 'ignored'
+     order by created_at asc, rowid asc`,
+  );
 }
 
 export function markPendingEventFailed(id: string, attempts: number) {
@@ -540,29 +691,68 @@ export function getDuePendingScreenshots(
 }
 
 export function markPendingScreenshotUploaded(screenshotId: string) {
-  // Synced screenshots are never re-read; delete the row (its file is removed
-  // by the caller) so the queue cannot grow without bound.
-  database?.run(`delete from pending_screenshots where screenshot_id = ?`, [
-    screenshotId,
-  ]);
+  // Move the row to a terminal 'uploaded' state instead of deleting it here, so
+  // the owned JPEG is removed BEFORE its queue row disappears. Deleting the row
+  // first and then removing the file is unsafe: if the delete fails (EPERM / file
+  // in use) the file is orphaned with no record to drive a retry. The trailing
+  // cleanup pass removes the file and only then purges the terminal row, and it
+  // retains rows whose file could not be removed. 'uploaded' rows are excluded
+  // from getDuePendingScreenshots, so the image is never re-uploaded.
+  database?.run(
+    `update pending_screenshots
+     set status = 'uploaded', updated_at = ?
+     where screenshot_id = ?`,
+    [new Date().toISOString(), screenshotId],
+  );
   persist();
 }
 
-export function purgeTerminalQueueEntries() {
-  // Remove any rows left in a terminal state: 'uploaded' rows written by older
-  // builds, and 'dead' rows for permanently-rejected items (their files are
-  // already removed). These are never re-read; deleting them keeps the on-disk
-  // database bounded by the amount of genuinely in-flight (pending/failed) work.
+export function listTerminalPendingScreenshots(): Array<{
+  screenshotId: string;
+  filePath: string;
+}> {
+  // Screenshots in a terminal state ('dead' = permanently rejected, 'uploaded'
+  // = legacy synced rows). Their files must be removed before the rows are
+  // purged, otherwise a JPEG is orphaned on disk with no queue record. Returned
+  // so the caller — which owns the pending-screenshot directory — can delete
+  // only application-owned files. Restart-safe: any dead row whose file removal
+  // was interrupted is returned again on the next pass.
+  return rows<{ screenshotId: string; filePath: string }>(
+    `select screenshot_id as screenshotId, file_path as filePath
+     from pending_screenshots
+     where status in ('uploaded', 'dead')`,
+  );
+}
+
+export function purgeTerminalPendingEvents() {
+  // Remove pending_events left in a terminal state ('uploaded' rows written by
+  // older builds, 'dead' rows for permanently-rejected items). These are never
+  // re-read; deleting them keeps the database bounded by in-flight work.
   if (!database) {
     return;
   }
   database.run(`delete from pending_events where status in ('uploaded', 'dead')`);
-  let changed = database.getRowsModified();
+  if (database.getRowsModified() > 0) {
+    persist();
+  }
+}
+
+export function purgeTerminalScreenshotRows(screenshotIds: string[]) {
+  // Delete ONLY the specific terminal screenshot rows whose owned file the caller
+  // has confirmed removed (or was never present). A terminal row whose file could
+  // not be deleted is deliberately NOT passed here, so it survives for a later
+  // retry instead of leaving an orphaned JPEG with no queue record.
+  if (!database || screenshotIds.length === 0) {
+    return;
+  }
+  const placeholders = screenshotIds.map(() => "?").join(", ");
   database.run(
-    `delete from pending_screenshots where status in ('uploaded', 'dead')`,
+    `delete from pending_screenshots
+     where status in ('uploaded', 'dead')
+       and screenshot_id in (${placeholders})`,
+    screenshotIds,
   );
-  changed += database.getRowsModified();
-  if (changed > 0) {
+  if (database.getRowsModified() > 0) {
     persist();
   }
 }

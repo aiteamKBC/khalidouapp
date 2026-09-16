@@ -33,6 +33,7 @@ from app.models import AdminUser, Device, Employee, Screenshot, ScreenshotCaptur
 from app.services.audit import record_audit_log
 from app.services.permissions import require_capability
 from app.services.projects import get_project_or_404, get_task_or_404
+from app.services.attendance import calculate_daily_attendance
 from app.services.screenshots import (
     available_screenshot_preview_path,
     build_thumbnail,
@@ -769,6 +770,23 @@ def delete_screenshot(
         db.add(session)
     db.add(screenshot)
     db.commit()
+    # Force the affected day's canonical attendance to recompute now so the
+    # deduction reaches payroll and timesheets immediately, instead of relying on
+    # a past day's immutable cache (W3). The day is the session's local start day,
+    # matching how the timeline attributes the deduction.
+    if session is not None and deducted_seconds:
+        employee = db.get(Employee, screenshot.employee_id)
+        if employee is not None:
+            try:
+                zone = ZoneInfo(session.timezone or employee.timezone or "UTC")
+            except (ZoneInfoNotFoundError, ValueError):
+                zone = ZoneInfo("UTC")
+            started_at = session.started_at
+            if started_at.tzinfo is None:
+                started_at = started_at.replace(tzinfo=UTC)
+            work_date = started_at.astimezone(zone).date()
+            calculate_daily_attendance(db, employee=employee, work_date=work_date)
+            db.commit()
     LocalScreenshotStorage().delete(screenshot.storage_path)
     if screenshot.thumbnail_path:
         LocalScreenshotStorage().delete(screenshot.thumbnail_path)

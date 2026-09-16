@@ -12,6 +12,10 @@ npm run dev -- --host localhost --port 5174
 
 Default API URL:
 
+The backend must run separately. For missing `SALARY_ENCRYPTION_KEY` or salary-related
+API errors, follow [the local environment fix](../../docs/web-local-environment-fix.md).
+From `backend/`, `npm run check:env` checks configuration without accessing the database.
+
 ```text
 http://127.0.0.1:8000/api/v1
 ```

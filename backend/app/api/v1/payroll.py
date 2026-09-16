@@ -1,7 +1,9 @@
 import csv
 import html
 import io
+import re
 import zipfile
+from contextlib import contextmanager
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Annotated, Literal
@@ -43,6 +45,7 @@ from app.schemas.admin import BreakRule
 from app.services.audit import record_audit_log
 from app.services.activity_timeline import local_today
 from app.services.payroll import (
+    FROZEN_RUN_STATUSES,
     get_or_create_run,
     get_or_create_payroll_settings,
     month_bounds,
@@ -181,6 +184,80 @@ def _period_for_request(
         raise ApiError("INVALID_PAYROLL_PERIOD", str(exc), 400) from exc
 
 
+def _prepare_payroll_run(
+    db: Session,
+    current_admin: AdminUser,
+    settings: CompanyPayrollSettings,
+    month: str,
+    start_date: date | None,
+    end_date: date | None,
+) -> tuple[PayrollRun, tuple[date, date], tuple[date, date]]:
+    """Create/refresh the canonical run and return (run, requested, canonical).
+
+    The persisted run always uses the canonical company-cycle period; a custom
+    range never mutates it (W4). Callers hand the result to
+    :func:`_payroll_preview` to read either the canonical run or a non-persisted
+    custom-range preview.
+    """
+    requested = _period_for_request(settings, month, start_date, end_date)
+    try:
+        canonical = payroll_period_bounds(
+            month, settings.cycle_start_day, settings.cycle_end_day
+        )
+    except ValueError as exc:
+        raise ApiError("INVALID_PAYROLL_PERIOD", str(exc), 400) from exc
+    try:
+        first, _ = month_bounds(month)
+    except ValueError as exc:
+        raise ApiError("INVALID_MONTH", str(exc), 400) from exc
+    run = get_or_create_run(
+        db,
+        company_id=current_admin.company_id,
+        month=first,
+        admin_user_id=current_admin.id,
+        period_start=canonical[0],
+        period_end=canonical[1],
+        cycle_timezone=settings.timezone,
+    )
+    refresh_run_entries(db, run)
+    db.commit()
+    return run, requested, canonical
+
+
+@contextmanager
+def _payroll_preview(
+    db: Session,
+    run: PayrollRun,
+    requested: tuple[date, date],
+    canonical: tuple[date, date],
+):
+    """Yield the effective (start, end) for reading a run.
+
+    For a custom range on an editable run, the range is applied inside a SAVEPOINT
+    that is rolled back on exit, so the committed canonical run/entries are never
+    changed — callers must serialize before the ``with`` block ends (W4). A custom
+    range on a frozen (approved/locked/paid) run is rejected rather than relabeling
+    the frozen figures with a period they were not computed for.
+    """
+    if requested == canonical:
+        yield canonical
+        return
+    if run.status in FROZEN_RUN_STATUSES:
+        raise ApiError(
+            "PAYROLL_CUSTOM_RANGE_UNAVAILABLE",
+            "Custom date ranges are not available for approved, locked, or paid "
+            "payroll. Return it to draft to preview a different period.",
+            409,
+        )
+    savepoint = db.begin_nested()
+    try:
+        run.period_start, run.period_end = requested
+        refresh_run_entries(db, run)
+        yield requested
+    finally:
+        savepoint.rollback()
+
+
 @router.get("/settings")
 def payroll_settings(
     current_admin: Annotated[AdminUser, Depends(get_current_admin)],
@@ -247,8 +324,14 @@ def _scope_entries(
 
 def _run_editable(db: Session, entry: PayrollEntry) -> PayrollRun:
     run = db.get(PayrollRun, entry.payroll_run_id)
-    if run is None or run.status in {"locked", "paid"}:
-        raise ApiError("PAYROLL_LOCKED", "Locked or paid payroll cannot be edited.", 409)
+    # Approved runs are frozen like locked/paid: their figures were signed off,
+    # so deliberate edits must first return the run to draft (R1).
+    if run is None or run.status in FROZEN_RUN_STATUSES:
+        raise ApiError(
+            "PAYROLL_LOCKED",
+            "Approved, locked, or paid payroll cannot be edited. Return it to draft first.",
+            409,
+        )
     return run
 
 
@@ -278,6 +361,50 @@ def _filtered_entries(
     ]
 
 
+_CSV_PLAIN_NUMBER = re.compile(r"^-?(?:\d+\.?\d*|\.\d+)$")
+
+
+def _csv_safe(value: object) -> object:
+    """Neutralize spreadsheet formula injection for one CSV cell (W10).
+
+    A string a spreadsheet would evaluate as a formula (leading ``= + - @``, tab,
+    or CR) is prefixed with a single quote so it imports as literal text. Genuine
+    numbers (including negatives) and non-string values are returned unchanged.
+    """
+    if not isinstance(value, str) or not value:
+        return value
+    if value[0] in "=+-@\t\r" and not _CSV_PLAIN_NUMBER.match(value):
+        return "'" + value
+    return value
+
+
+def _sheet_payload(run: PayrollRun, settings: CompanyPayrollSettings, entries: list) -> dict:
+    currencies: dict[str, dict[str, float]] = {}
+    for entry in entries:
+        totals = currencies.setdefault(
+            entry.currency,
+            {"base": 0, "overtime": 0, "bonuses": 0, "deductions": 0, "final": 0},
+        )
+        totals["base"] += float(entry.base_salary)
+        totals["overtime"] += float(entry.overtime_amount)
+        totals["bonuses"] += float(entry.total_bonuses)
+        totals["deductions"] += float(entry.total_deductions)
+        totals["final"] += float(entry.final_salary)
+    return {
+        "run": serialize_run(run),
+        "settings": _settings_data(settings),
+        "summary": {
+            "employees": len(entries),
+            "needs_review": sum(item.status == "needs_review" for item in entries),
+            "late_employees": sum(item.late_minutes > 0 for item in entries),
+            "overtime_employees": sum(item.recorded_overtime_seconds > 0 for item in entries),
+            "currencies": currencies,
+        },
+        "teams": sorted({item.team_name for item in entries if item.team_name}),
+        "entries": [serialize_entry(item) for item in entries],
+    }
+
+
 @router.get("/sheet")
 def payroll_sheet(
     current_admin: Annotated[AdminUser, Depends(get_current_admin)],
@@ -296,66 +423,35 @@ def payroll_sheet(
 ):
     require_capability(current_admin, "payroll.view")
     settings = get_or_create_payroll_settings(db, current_admin.company_id)
-    period_start, period_end = _period_for_request(settings, month, start_date, end_date)
-    try:
-        first, _ = month_bounds(month)
-    except ValueError as exc:
-        raise ApiError("INVALID_MONTH", str(exc), 400) from exc
-    run = get_or_create_run(
-        db,
-        company_id=current_admin.company_id,
-        month=first,
-        admin_user_id=current_admin.id,
-        period_start=period_start,
-        period_end=period_end,
-        cycle_timezone=settings.timezone,
+    run, requested, canonical = _prepare_payroll_run(
+        db, current_admin, settings, month, start_date, end_date
     )
-    entries = refresh_run_entries(db, run)
-    db.commit()
-    entries = db.scalars(
-        select(PayrollEntry)
-        .options(selectinload(PayrollEntry.employee), selectinload(PayrollEntry.adjustments))
-        .where(PayrollEntry.payroll_run_id == run.id)
-        .order_by(PayrollEntry.team_name.nullslast(), PayrollEntry.employee_id)
-    ).all()
-    entries = _scope_entries(db, current_admin, entries)
-    entries = _filtered_entries(
-        entries,
-        team=team,
-        employee_id=employee_id,
-        status=status,
-        overtime_eligible=overtime_eligible,
-        has_lateness=has_lateness,
-        has_idle=has_idle,
-        has_deductions=has_deductions,
-        has_manual_adjustments=has_manual_adjustments,
-    )
-    currencies: dict[str, dict[str, float]] = {}
-    for entry in entries:
-        totals = currencies.setdefault(
-            entry.currency,
-            {"base": 0, "overtime": 0, "bonuses": 0, "deductions": 0, "final": 0},
+
+    def load_entries():
+        rows = db.scalars(
+            select(PayrollEntry)
+            .options(selectinload(PayrollEntry.employee), selectinload(PayrollEntry.adjustments))
+            .where(PayrollEntry.payroll_run_id == run.id)
+            .order_by(PayrollEntry.team_name.nullslast(), PayrollEntry.employee_id)
+        ).all()
+        rows = _scope_entries(db, current_admin, rows)
+        return _filtered_entries(
+            rows,
+            team=team,
+            employee_id=employee_id,
+            status=status,
+            overtime_eligible=overtime_eligible,
+            has_lateness=has_lateness,
+            has_idle=has_idle,
+            has_deductions=has_deductions,
+            has_manual_adjustments=has_manual_adjustments,
         )
-        totals["base"] += float(entry.base_salary)
-        totals["overtime"] += float(entry.overtime_amount)
-        totals["bonuses"] += float(entry.total_bonuses)
-        totals["deductions"] += float(entry.total_deductions)
-        totals["final"] += float(entry.final_salary)
-    return success_response(
-        data={
-            "run": serialize_run(run),
-            "settings": _settings_data(settings),
-            "summary": {
-                "employees": len(entries),
-                "needs_review": sum(item.status == "needs_review" for item in entries),
-                "late_employees": sum(item.late_minutes > 0 for item in entries),
-                "overtime_employees": sum(item.recorded_overtime_seconds > 0 for item in entries),
-                "currencies": currencies,
-            },
-            "teams": sorted({item.team_name for item in entries if item.team_name}),
-            "entries": [serialize_entry(item) for item in entries],
-        }
-    )
+
+    # Serialize inside the preview context so a custom range is reflected in the
+    # response while the committed canonical run stays untouched (W4).
+    with _payroll_preview(db, run, requested, canonical):
+        payload = _sheet_payload(run, settings, load_entries())
+    return success_response(data=payload)
 
 
 @router.get("/entries/{entry_id}")
@@ -641,65 +737,64 @@ def payroll_exceptions(
 ):
     require_capability(current_admin, "payroll.view")
     settings = get_or_create_payroll_settings(db, current_admin.company_id)
-    period_start, period_end = _period_for_request(settings, month, start_date, end_date)
-    first, _ = month_bounds(month)
-    run = get_or_create_run(
-        db,
-        company_id=current_admin.company_id,
-        month=first,
-        admin_user_id=current_admin.id,
-        period_start=period_start,
-        period_end=period_end,
-        cycle_timezone=settings.timezone,
+    run, requested, canonical = _prepare_payroll_run(
+        db, current_admin, settings, month, start_date, end_date
     )
-    refresh_run_entries(db, run)
-    db.commit()
-    entries = db.scalars(
-        select(PayrollEntry)
-        .options(selectinload(PayrollEntry.employee))
-        .where(PayrollEntry.payroll_run_id == run.id)
-    ).all()
-    entries = _scope_entries(db, current_admin, entries)
-    by_employee = {item.employee_id: item for item in entries}
-    first, last = run.period_start or period_start, run.period_end or period_end
-    pending_holiday_ids = set(
-        db.scalars(
-            select(LeaveRequest.employee_id).where(
-                LeaveRequest.company_id == current_admin.company_id,
-                LeaveRequest.status == "pending",
-                LeaveRequest.start_date <= last,
-                LeaveRequest.end_date >= first,
-            )
+
+    def build_payload(period: tuple[date, date]) -> dict:
+        entries = db.scalars(
+            select(PayrollEntry)
+            .options(selectinload(PayrollEntry.employee))
+            .where(PayrollEntry.payroll_run_id == run.id)
         ).all()
-    )
-    pending_permission_ids = set(
-        db.scalars(
-            select(TimeAdjustmentRequest.employee_id).where(
-                TimeAdjustmentRequest.company_id == current_admin.company_id,
-                TimeAdjustmentRequest.status == "pending",
-                TimeAdjustmentRequest.requested_date.between(first, last),
-            )
-        ).all()
-    )
-    categories = {
-        "late": [item for item in entries if item.late_minutes > 0],
-        "high_idle": [item for item in entries if item.idle_seconds >= 3600],
-        "missing_work": [item for item in entries if item.absence_days > 0],
-        "overtime": [item for item in entries if item.recorded_overtime_seconds > 0],
-        "pending_manual": [item for item in entries if item.pending_manual_seconds > 0],
-        "missing_breaks": [
-            item for item in entries if item.paid_break_seconds + item.unpaid_break_seconds == 0
-        ],
-        "pending_holiday": [
-            by_employee[item] for item in pending_holiday_ids if item in by_employee
-        ],
-        "pending_permission": [
-            by_employee[item] for item in pending_permission_ids if item in by_employee
-        ],
-    }
-    return success_response(
-        data={key: [serialize_entry(item) for item in values] for key, values in categories.items()}
-    )
+        entries = _scope_entries(db, current_admin, entries)
+        by_employee = {item.employee_id: item for item in entries}
+        first, last = period
+        pending_holiday_ids = set(
+            db.scalars(
+                select(LeaveRequest.employee_id).where(
+                    LeaveRequest.company_id == current_admin.company_id,
+                    LeaveRequest.status == "pending",
+                    LeaveRequest.start_date <= last,
+                    LeaveRequest.end_date >= first,
+                )
+            ).all()
+        )
+        pending_permission_ids = set(
+            db.scalars(
+                select(TimeAdjustmentRequest.employee_id).where(
+                    TimeAdjustmentRequest.company_id == current_admin.company_id,
+                    TimeAdjustmentRequest.status == "pending",
+                    TimeAdjustmentRequest.requested_date.between(first, last),
+                )
+            ).all()
+        )
+        categories = {
+            "late": [item for item in entries if item.late_minutes > 0],
+            "high_idle": [item for item in entries if item.idle_seconds >= 3600],
+            "missing_work": [item for item in entries if item.absence_days > 0],
+            "overtime": [item for item in entries if item.recorded_overtime_seconds > 0],
+            "pending_manual": [item for item in entries if item.pending_manual_seconds > 0],
+            "missing_breaks": [
+                item
+                for item in entries
+                if item.paid_break_seconds + item.unpaid_break_seconds == 0
+            ],
+            "pending_holiday": [
+                by_employee[item] for item in pending_holiday_ids if item in by_employee
+            ],
+            "pending_permission": [
+                by_employee[item] for item in pending_permission_ids if item in by_employee
+            ],
+        }
+        return {
+            key: [serialize_entry(item) for item in values]
+            for key, values in categories.items()
+        }
+
+    with _payroll_preview(db, run, requested, canonical) as period:
+        payload = build_payload(period)
+    return success_response(data=payload)
 
 
 @router.post("/schedule-overrides")
@@ -1062,82 +1157,85 @@ def _export_rows(
     employee_id: UUID | None = None,
     status: str | None = None,
     overtime_eligible: bool | None = None,
+    has_lateness: bool | None = None,
+    has_idle: bool | None = None,
+    has_deductions: bool | None = None,
+    has_manual_adjustments: bool | None = None,
     start_date: date | None = None,
     end_date: date | None = None,
-) -> tuple[list[dict], PayrollRun]:
-    first, _ = month_bounds(month)
+) -> tuple[list[dict], tuple[date, date]]:
+    # Exports honour the same custom-range preview contract as the sheet: the
+    # persisted run stays canonical; a custom range is a non-persisted preview and
+    # is rejected on frozen runs (W4). Exports also apply every sheet filter (W5).
     settings = get_or_create_payroll_settings(db, admin.company_id)
-    period_start, period_end = _period_for_request(settings, month, start_date, end_date)
-    run = get_or_create_run(
-        db,
-        company_id=admin.company_id,
-        month=first,
-        admin_user_id=admin.id,
-        period_start=period_start,
-        period_end=period_end,
-        cycle_timezone=settings.timezone,
+    run, requested, canonical = _prepare_payroll_run(
+        db, admin, settings, month, start_date, end_date
     )
-    refresh_run_entries(db, run)
-    db.commit()
-    entries = db.scalars(
-        select(PayrollEntry)
-        .options(selectinload(PayrollEntry.employee).selectinload(Employee.work_profile))
-        .where(PayrollEntry.payroll_run_id == run.id)
-    ).all()
-    entries = _scope_entries(db, admin, entries)
-    entries = _filtered_entries(
-        entries,
-        team=team,
-        employee_id=employee_id,
-        status=status,
-        overtime_eligible=overtime_eligible,
-        has_lateness=None,
-        has_idle=None,
-        has_deductions=None,
-        has_manual_adjustments=None,
-    )
-    rows = []
-    for item in entries:
-        row = serialize_entry(item, include_details=True)
-        row["period_start"] = (run.period_start or period_start).isoformat()
-        row["period_end"] = (run.period_end or period_end).isoformat()
-        row["manual_adjustments"] = "; ".join(
-            f"{adjustment['type']}: {adjustment['amount']} ({adjustment['reason']})"
-            for adjustment in row.get("adjustments", [])
+
+    def build_rows(period: tuple[date, date]) -> list[dict]:
+        period_start, period_end = period
+        entries = db.scalars(
+            select(PayrollEntry)
+            .options(selectinload(PayrollEntry.employee).selectinload(Employee.work_profile))
+            .where(PayrollEntry.payroll_run_id == run.id)
+        ).all()
+        entries = _scope_entries(db, admin, entries)
+        entries = _filtered_entries(
+            entries,
+            team=team,
+            employee_id=employee_id,
+            status=status,
+            overtime_eligible=overtime_eligible,
+            has_lateness=has_lateness,
+            has_idle=has_idle,
+            has_deductions=has_deductions,
+            has_manual_adjustments=has_manual_adjustments,
         )
-        # Kept as private export metadata. It is never included in the normal
-        # CSV/XLSX/PDF column list, but is used by the bank upload formatter.
-        profile = item.employee.work_profile
-        row["_bank_account_number"] = profile.bank_account_number if profile else None
-        row["_bank_employee_id"] = profile.bank_employee_id if profile else None
-        rows.append(row)
-    totals: dict[str, dict[str, Decimal]] = {}
-    for item in entries:
-        currency = item.currency
-        summary = totals.setdefault(
-            currency,
-            {
-                "base_salary": Decimal(0),
-                "overtime_amount": Decimal(0),
-                "total_deductions": Decimal(0),
-                "total_bonuses": Decimal(0),
-                "final_salary": Decimal(0),
-            },
-        )
-        for key in summary:
-            summary[key] += Decimal(str(getattr(item, key) or 0))
-    for currency, summary in totals.items():
-        rows.append(
-            {
-                "period_start": (run.period_start or period_start).isoformat(),
-                "period_end": (run.period_end or period_end).isoformat(),
-                "employee_name": f"COMPANY TOTAL ({currency})",
-                "currency": currency,
-                **{key: float(value) for key, value in summary.items()},
-                "status": run.status,
-            }
-        )
-    return rows, run
+        rows: list[dict] = []
+        for item in entries:
+            row = serialize_entry(item, include_details=True)
+            row["period_start"] = period_start.isoformat()
+            row["period_end"] = period_end.isoformat()
+            row["manual_adjustments"] = "; ".join(
+                f"{adjustment['type']}: {adjustment['amount']} ({adjustment['reason']})"
+                for adjustment in row.get("adjustments", [])
+            )
+            # Kept as private export metadata. It is never included in the normal
+            # CSV/XLSX/PDF column list, but is used by the bank upload formatter.
+            profile = item.employee.work_profile
+            row["_bank_account_number"] = profile.bank_account_number if profile else None
+            row["_bank_employee_id"] = profile.bank_employee_id if profile else None
+            rows.append(row)
+        totals: dict[str, dict[str, Decimal]] = {}
+        for item in entries:
+            summary = totals.setdefault(
+                item.currency,
+                {
+                    "base_salary": Decimal(0),
+                    "overtime_amount": Decimal(0),
+                    "total_deductions": Decimal(0),
+                    "total_bonuses": Decimal(0),
+                    "final_salary": Decimal(0),
+                },
+            )
+            for key in summary:
+                summary[key] += Decimal(str(getattr(item, key) or 0))
+        for currency, summary in totals.items():
+            rows.append(
+                {
+                    "period_start": period_start.isoformat(),
+                    "period_end": period_end.isoformat(),
+                    "employee_name": f"COMPANY TOTAL ({currency})",
+                    "currency": currency,
+                    **{key: float(value) for key, value in summary.items()},
+                    "status": run.status,
+                }
+            )
+        return rows
+
+    with _payroll_preview(db, run, requested, canonical) as period:
+        rows = build_rows(period)
+    return rows, period
 
 
 VISA_BANK_COLUMNS = [
@@ -1231,7 +1329,7 @@ def _visa_bank_document(rows: list[dict]) -> bytes:
     return document.encode("utf-8")
 
 
-def _xlsx_document(rows: list[dict], run: PayrollRun) -> bytes:
+def _xlsx_document(rows: list[dict], period: tuple[date, date]) -> bytes:
     def cell(reference: str, value: object) -> str:
         escaped = html.escape(str(value if value is not None else ""))
         return f'<c r="{reference}" t="inlineStr"><is><t>{escaped}</t></is></c>'
@@ -1246,7 +1344,7 @@ def _xlsx_document(rows: list[dict], run: PayrollRun) -> bytes:
     sheet_rows = [
         '<row r="1">'
         + cell("A1", "Payroll period")
-        + cell("B1", f"{run.period_start} to {run.period_end}")
+        + cell("B1", f"{period[0]} to {period[1]}")
         + "</row>",
         '<row r="2">'
         + "".join(
@@ -1345,11 +1443,15 @@ def export_payroll(
     employee_id: UUID | None = None,
     status: str | None = None,
     overtime_eligible: bool | None = None,
+    has_lateness: bool | None = None,
+    has_idle: bool | None = None,
+    has_deductions: bool | None = None,
+    has_manual_adjustments: bool | None = None,
     start_date: date | None = None,
     end_date: date | None = None,
 ):
     require_capability(current_admin, "payroll.view")
-    rows, run = _export_rows(
+    rows, period = _export_rows(
         db,
         current_admin,
         month,
@@ -1357,6 +1459,10 @@ def export_payroll(
         employee_id=employee_id,
         status=status,
         overtime_eligible=overtime_eligible,
+        has_lateness=has_lateness,
+        has_idle=has_idle,
+        has_deductions=has_deductions,
+        has_manual_adjustments=has_manual_adjustments,
         start_date=start_date,
         end_date=end_date,
     )
@@ -1378,14 +1484,16 @@ def export_payroll(
         )
     if format == "excel":
         return Response(
-            content=_xlsx_document(rows, run),
+            content=_xlsx_document(rows, period),
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             headers={"Content-Disposition": f'attachment; filename="payroll-{month}.xlsx"'},
         )
     output = io.StringIO()
     writer = csv.writer(output)
-    writer.writerow([label for label, _ in EXPORT_COLUMNS])
-    writer.writerows([[row.get(key) for _, key in EXPORT_COLUMNS] for row in rows])
+    writer.writerow([_csv_safe(label) for label, _ in EXPORT_COLUMNS])
+    writer.writerows(
+        [[_csv_safe(row.get(key)) for _, key in EXPORT_COLUMNS] for row in rows]
+    )
     return StreamingResponse(
         iter([output.getvalue().encode("utf-8-sig")]),
         media_type="text/csv",
