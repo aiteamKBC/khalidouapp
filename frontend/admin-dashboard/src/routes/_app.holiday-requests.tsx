@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CalendarDays, Check, X } from "lucide-react";
+import { CalendarDays, Check, Pencil, X } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/ui/page-header";
@@ -29,6 +29,7 @@ import {
   listLeaveRequests,
   recordManualLeave,
   reviewLeaveRequest,
+  setRemainingLeaveDays,
 } from "@/api/leaveRequests";
 import { listTimeAdjustmentRequests, reviewTimeAdjustmentRequest } from "@/api/timeAdjustments";
 import { listEmployees } from "@/api/employees";
@@ -49,7 +50,13 @@ function HolidayRequestsPage() {
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [reason, setReason] = useState("");
-  const { can, scopedTeamIds } = useAuth();
+  const [editingBalance, setEditingBalance] = useState<{
+    employeeId: string;
+    value: string;
+  } | null>(null);
+  const { can, scopedTeamIds, user } = useAuth();
+  // Matches the server: only HR and the Super Admin may change holiday credit.
+  const canEditBalances = Boolean(user && (user.isSuperAdmin || user.role === "hr"));
   const scope = scopedTeamIds();
   const queryClient = useQueryClient();
   const requests = useQuery({
@@ -111,6 +118,17 @@ function HolidayRequestsPage() {
     },
     onError: (error) =>
       toast.error(error instanceof Error ? error.message : "Early leave review failed"),
+  });
+  const editBalance = useMutation({
+    mutationFn: ({ employeeId: id, remainingDays }: { employeeId: string; remainingDays: number }) =>
+      setRemainingLeaveDays(id, balanceYear, remainingDays),
+    onSuccess: async () => {
+      toast.success("Holiday balance updated");
+      setEditingBalance(null);
+      await queryClient.invalidateQueries({ queryKey: ["leave-balances"] });
+    },
+    onError: (error) =>
+      toast.error(error instanceof Error ? error.message : "Failed to update the balance"),
   });
   const manualLeave = useMutation({
     mutationFn: () =>
@@ -190,7 +208,61 @@ function HolidayRequestsPage() {
                   </TableCell>
                   <TableCell className="font-mono-numeric">{balance.usedDays}</TableCell>
                   <TableCell className="font-mono-numeric font-bold text-success">
-                    {balance.remainingDays}
+                    {editingBalance?.employeeId === balance.employeeId ? (
+                      <form
+                        className="flex items-center gap-1.5"
+                        onSubmit={(event) => {
+                          event.preventDefault();
+                          const remainingDays = Number(editingBalance.value);
+                          if (!Number.isFinite(remainingDays) || remainingDays < 0 || remainingDays > 365) {
+                            toast.error("Enter a number of days between 0 and 365");
+                            return;
+                          }
+                          editBalance.mutate({ employeeId: balance.employeeId, remainingDays });
+                        }}
+                      >
+                        <Input
+                          type="number"
+                          min={0}
+                          max={365}
+                          step={0.5}
+                          autoFocus
+                          aria-label={`Remaining holiday days for ${balance.employeeName}`}
+                          className="h-8 w-20"
+                          value={editingBalance.value}
+                          onChange={(event) =>
+                            setEditingBalance({ employeeId: balance.employeeId, value: event.target.value })
+                          }
+                        />
+                        <Button type="submit" size="icon" className="h-8 w-8" disabled={editBalance.isPending} aria-label="Save">
+                          <Check className="h-4 w-4" />
+                        </Button>
+                        <Button type="button" size="icon" variant="ghost" className="h-8 w-8" onClick={() => setEditingBalance(null)} aria-label="Cancel">
+                          <X className="h-4 w-4" />
+                        </Button>
+                      </form>
+                    ) : (
+                      <span className="inline-flex items-center gap-1.5">
+                        {balance.remainingDays}
+                        {canEditBalances && (
+                          <Button
+                            type="button"
+                            size="icon"
+                            variant="ghost"
+                            className="h-7 w-7"
+                            aria-label={`Edit remaining holiday days for ${balance.employeeName}`}
+                            onClick={() =>
+                              setEditingBalance({
+                                employeeId: balance.employeeId,
+                                value: String(balance.remainingDays),
+                              })
+                            }
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </Button>
+                        )}
+                      </span>
+                    )}
                   </TableCell>
                   <TableCell>
                     {balance.takenDates.length ? (

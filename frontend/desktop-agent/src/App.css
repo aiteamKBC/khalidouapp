@@ -2310,6 +2310,12 @@ textarea:focus {
   color: var(--text-2);
 }
 
+.k-details-mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  word-break: break-all;
+}
+
 .k-error {
   color: var(--red);
   font-size: 12px;
@@ -2325,6 +2331,176 @@ textarea:focus {
 .k-danger {
   color: var(--red);
   font-weight: 900;
+}
+
+.k-meeting-active {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-3);
+}
+
+.k-meeting-active .k-primary {
+  margin-top: 4px;
+}
+
+.k-meeting-live-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--green);
+  background: rgba(31, 122, 77, 0.14);
+  padding: 3px 10px;
+  border-radius: 999px;
+}
+
+.k-meeting-live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--green);
+  animation: k-meeting-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes k-meeting-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.k-meeting-active-title {
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.k-meeting-elapsed {
+  font-size: 40px;
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+
+.k-meeting-inprogress {
+  color: var(--green);
+  background: rgba(31, 122, 77, 0.14);
+}
+
+.k-meeting-waiting {
+  color: var(--amber, #b7791f);
+  background: rgba(183, 121, 31, 0.14);
+}
+
+.k-meeting-failed {
+  color: var(--red);
+  background: rgba(132, 32, 41, 0.14);
+}
+
+.k-linklike {
+  border: none;
+  background: none;
+  padding: 0;
+  margin-top: 4px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--accent, #4f46e5);
+  cursor: pointer;
+}
+
+.k-linklike:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.k-meeting-hint {
+  font-size: 12px;
+  opacity: 0.7;
+}
+
+.k-meeting-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.k-meeting-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.k-meeting-badge {
+  font-size: 11px;
+  font-weight: 800;
+  padding: 2px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.k-meeting-pending {
+  color: var(--amber, #b7791f);
+  background: rgba(183, 121, 31, 0.14);
+}
+
+.k-meeting-approved {
+  color: var(--green);
+  background: rgba(31, 122, 77, 0.14);
+}
+
+.k-meeting-rejected {
+  color: var(--red);
+  background: rgba(132, 32, 41, 0.14);
+}
+
+.k-break-bank-stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 12px 0;
+}
+
+.k-break-bank-stats > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-3);
+}
+
+.k-break-bank-stats strong {
+  font-size: 18px;
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+}
+
+.k-break-bank-label {
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.65;
+}
+
+.k-break-bank-hint {
+  font-size: 12px;
+  opacity: 0.75;
 }
 
 .k-statusbar {
@@ -5791,4 +5967,18 @@ textarea:focus {
   display: none;
   width: 0;
   height: 0;
+}
+
+.k-shift-reschedule {
+  margin-top: 16px;
+}
+
+.k-shift-reschedule-row > span:last-child {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.k-shift-reschedule-row small {
+  display: block;
 }

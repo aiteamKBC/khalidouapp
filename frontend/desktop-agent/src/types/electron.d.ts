@@ -22,6 +22,8 @@ export type AgentStatus = {
   activeSeconds: number;
   idleSeconds: number;
   currentIdleSeconds: number;
+  // The scheduled break running right now, if any (idle during it is paid break).
+  scheduledBreak?: { name: string; endsAt: string } | null;
   eligibleIdleSeconds: number;
   connectionStatus: "online" | "offline";
   lastScreenshotAt: string | null;
@@ -68,6 +70,66 @@ export type AgentStatus = {
     | "error";
   updateVersion: string | null;
   updatePercent: number | null;
+  activeMeeting: ActiveMeeting | null;
+  meetings: MeetingSummary[];
+  breakBank: BreakBank | null;
+  diagnostics?: RuntimeDiagnostics | null;
+};
+
+export type RuntimeDiagnostics = {
+  buildIdentifier: string;
+  environment: "packaged" | "development";
+  processId: number;
+  userDataPath: string;
+  apiBaseUrl: string;
+};
+
+export type BreakBank = {
+  policy_active: boolean;
+  worked_break_seconds: number;
+  earned_seconds: number;
+  approved_seconds: number;
+  reserved_seconds: number;
+  remaining_seconds: number;
+  paid_late_allowance_seconds: number;
+};
+
+export type MeetingSyncState =
+  | "start_pending"
+  | "start_synced"
+  | "end_pending"
+  | "synced"
+  | "start_error"
+  | "end_error";
+
+export type ActiveMeeting = {
+  deviceId: string;
+  idempotencyKey: string;
+  title: string;
+  reason: string;
+  startedAt: string;
+  expectedEndAt: string;
+  workSessionId: string | null;
+  projectId: string | null;
+  taskId: string | null;
+  syncState: MeetingSyncState;
+  lastError: string | null;
+};
+
+export type MeetingSummary = {
+  id: string;
+  idempotencyKey: string | null;
+  title: string;
+  reason: string;
+  startedAt: string;
+  expectedEndAt: string;
+  endedAt: string | null;
+  lifecycleState: "active" | "ended";
+  status: "pending" | "approved" | "rejected";
+  recordedSeconds: number;
+  approvedSeconds: number | null;
+  syncState: MeetingSyncState | null;
+  lastError: string | null;
 };
 
 export type AgentPeriodSummary = {
@@ -222,6 +284,43 @@ export type LeaveBalance = {
   remaining_days: number;
 };
 
+export type ShiftRescheduleRequest = {
+  id: string;
+  employee_id: string;
+  work_date: string;
+  requested_start: string;
+  requested_end: string;
+  original_start: string;
+  original_end: string;
+  duration_minutes: number;
+  reason: string;
+  status: "pending" | "approved" | "rejected" | "cancelled" | "expired";
+  source: "employee" | "admin";
+  reviewed_by_name: string | null;
+  reviewed_at: string | null;
+  review_reason: string | null;
+  created_at: string | null;
+};
+
+export type ShiftReschedulesPayload = {
+  policy: {
+    timezone: string;
+    notice_days: number;
+    earliest_date: string;
+    working_days: number[];
+    weekly_off_days: number[];
+  };
+  requests: ShiftRescheduleRequest[];
+};
+
+export type ShiftRescheduleDay = {
+  date: string;
+  scheduled_day: boolean;
+  shift_start: string | null;
+  shift_end: string | null;
+  shift_minutes: number;
+};
+
 export type LeaveRequestsPayload = {
   balance: LeaveBalance;
   requests: LeaveRequest[];
@@ -229,7 +328,10 @@ export type LeaveRequestsPayload = {
 
 export type IdleAlert = {
   id: string;
-  kind: "idle_return" | "tracking_start";
+  // "idle_started" is shown the moment idle is detected (at the threshold),
+  // without waiting for input to return, so a mistaken detection can be
+  // corrected immediately. "idle_return" is the legacy on-return review.
+  kind: "idle_return" | "tracking_start" | "idle_started";
   lostSeconds: number;
   eligibleLostSeconds: number;
   outsideScheduledShift: boolean;
@@ -262,6 +364,16 @@ declare global {
         success: boolean;
         message?: string;
       }>;
+      startMeeting: (input: {
+        title: string;
+        reason: string;
+        expectedEndMinutes: number;
+        projectId?: string | null;
+        taskId?: string | null;
+      }) => Promise<{ success: boolean; message?: string }>;
+      endMeeting: () => Promise<{ success: boolean; message?: string }>;
+      refreshMeetings: () => Promise<MeetingSummary[]>;
+      retryMeetingSync: () => Promise<{ success: boolean }>;
       confirmTrackingStart: () => Promise<{
         success: boolean;
         message?: string;
@@ -340,7 +452,7 @@ declare global {
       createTimeAdjustmentRequest: (input: {
         requestedMinutes: number;
         reason: string;
-        requestType?: "idle_time" | "early_leave" | "manual_time";
+        requestType?: "idle_time" | "early_leave" | "manual_time" | "delayed_break";
         requestedDate?: string;
         workSessionId?: string;
         sourceStartAt?: string;
@@ -362,6 +474,31 @@ declare global {
         message?: string;
         request?: LeaveRequest;
         status?: AgentStatus;
+      }>;
+      listShiftReschedules: () => Promise<{
+        success: boolean;
+        message?: string;
+        data?: ShiftReschedulesPayload;
+      }>;
+      getShiftRescheduleDay: (workDate: string) => Promise<{
+        success: boolean;
+        message?: string;
+        data?: ShiftRescheduleDay;
+      }>;
+      createShiftReschedule: (input: {
+        workDate: string;
+        requestedStart: string;
+        requestedEnd: string;
+        reason: string;
+      }) => Promise<{
+        success: boolean;
+        message?: string;
+        request?: ShiftRescheduleRequest;
+      }>;
+      cancelShiftReschedule: (requestId: string) => Promise<{
+        success: boolean;
+        message?: string;
+        request?: ShiftRescheduleRequest;
       }>;
       setIdleAlertAttention: (active: boolean) => void;
       setUpdateAttention: (active: boolean) => void;

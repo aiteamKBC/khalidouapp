@@ -416,9 +416,27 @@ function TimesheetsPage() {
                       <span>Shift idle {formatMinutes(t.accountableIdleMinutes)}</span>
                       <span>Manual {formatMinutes(t.adjustmentMinutes)}</span>
                     </div>
+                    {t.financialPolicyActive && (
+                      <p className="mt-2 text-[11px] font-semibold text-muted-foreground">
+                        Paid break {formatMinutes(t.paidBreakMinutes)} · Late allowance{" "}
+                        {formatMinutes(t.paidLateAllowanceMinutes)} · Delayed break{" "}
+                        {formatMinutes(t.delayedBreakMinutes)} · Approved meeting{" "}
+                        {formatMinutes(t.approvedMeetingMinutes)}
+                      </p>
+                    )}
                   </div>
 
                   <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+                    {(t.financialPolicyActive || t.payableMinutes > 0) && (
+                      <span className="rounded-full bg-primary/10 px-2.5 py-1 text-xs font-bold text-primary">
+                        Payable {formatMinutes(t.payableMinutes)}
+                      </span>
+                    )}
+                    {t.pendingMeetingMinutes > 0 && (
+                      <span className="rounded-full bg-warning/10 px-2.5 py-1 text-xs font-bold text-warning-foreground">
+                        Meeting pending {formatMinutes(t.pendingMeetingMinutes)}
+                      </span>
+                    )}
                     <Button
                       type="button"
                       variant="outline"

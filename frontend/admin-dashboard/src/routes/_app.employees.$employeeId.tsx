@@ -3,6 +3,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import {
   Activity,
+  Archive,
+  ArchiveRestore,
   Bell,
   Banknote,
   BriefcaseBusiness,
@@ -17,7 +19,6 @@ import {
   FileSpreadsheet,
   History,
   MonitorCheck,
-  PencilLine,
   Plus,
   Save,
   Settings2,
@@ -65,13 +66,11 @@ import {
   type WorkProfile,
 } from "@/api/employees";
 import {
-  deleteAttendanceCorrection,
   getDailyAttendance,
   getEmployeeAttendanceRange,
-  updateAttendanceCorrection,
-  type DailyAttendance,
   type EmployeeAttendanceRange,
 } from "@/api/attendance";
+import { CorrectAttendanceButton } from "@/components/attendance/attendance-correction-dialog";
 import {
   getPayrollEntry,
   getPayrollSheet,
@@ -95,6 +94,9 @@ import {
   formatSessionStatus,
 } from "@/lib/format";
 import { useAuth } from "@/lib/auth";
+import { archivePerson, restorePerson, type PersonArchiveInput } from "@/api/people";
+import { ArchiveEmployeeDialog } from "@/components/people/archive-employee-dialog";
+import { ARCHIVE_REASON_LABELS, canArchiveEmployees } from "@/lib/employee-archive";
 import { permissions } from "@/lib/permissions";
 import { retryTransientRequest } from "@/api/client";
 
@@ -104,9 +106,10 @@ export const Route = createFileRoute("/_app/employees/$employeeId")({
 
 function EmployeeDetailPage() {
   const { employeeId } = Route.useParams();
-  const { can, scopedTeamIds } = useAuth();
+  const { can, scopedTeamIds, user: currentUser } = useAuth();
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState("profile");
+  const [archiveOpen, setArchiveOpen] = useState(false);
   const [previewScreenshotId, setPreviewScreenshotId] = useState<string | null>(null);
   const [downloadingScreenshotId, setDownloadingScreenshotId] = useState<string | null>(null);
   const [timelineDay, setTimelineDay] = useState(() => {
@@ -119,7 +122,6 @@ function EmployeeDetailPage() {
   const [applicationHistoryDay, setApplicationHistoryDay] = useState(() => toDateKey(new Date()));
   const [showAmounts, setShowAmounts] = useState(false);
   const canManageSchedule = can(permissions.breaksManage);
-  const canManageAttendance = can(permissions.timesheetsManage);
   const canViewPayroll = can(permissions.payrollView);
   const canManagePayroll = can(permissions.payrollManage);
   const scope = scopedTeamIds();
@@ -130,6 +132,24 @@ function EmployeeDetailPage() {
     staleTime: 30_000,
     placeholderData: (previous) => previous,
     retry: retryTransientRequest,
+  });
+  const archiveMutation = useMutation({
+    mutationFn: (details: PersonArchiveInput | null) =>
+      details
+        ? archivePerson("employee", employeeId, details)
+        : restorePerson("employee", employeeId),
+    onSuccess: async (result) => {
+      toast.success(result.archived ? "Employee archived" : "Employee restored");
+      setArchiveOpen(false);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["employee"] }),
+        queryClient.invalidateQueries({ queryKey: ["employees"] }),
+        queryClient.invalidateQueries({ queryKey: ["archived-employees"] }),
+        queryClient.invalidateQueries({ queryKey: ["users"] }),
+      ]);
+    },
+    onError: (error) =>
+      toast.error(error instanceof Error ? error.message : "Failed to change archive status"),
   });
   const sessions = useQuery({
     queryKey: ["sessions", scope, employeeId],
@@ -296,6 +316,8 @@ function EmployeeDetailPage() {
   if (!emp.data) return <div className="text-sm text-muted-foreground">Loading...</div>;
 
   const e = emp.data;
+  const canArchive = canArchiveEmployees(currentUser);
+  const isOwnProfile = currentUser?.employeeId === e.id || currentUser?.trackedEmployeeId === e.id;
   const device = (devs.data ?? []).find((item) => item.id === e.currentDeviceId);
   const empTeams = (teams.data ?? []).filter((team) => e.teamIds.includes(team.id));
   const empShots = (shots.data ?? []).filter((screenshot) => screenshot.employeeId === e.id);
@@ -350,18 +372,63 @@ function EmployeeDetailPage() {
         description={`Employee profile · ${e.code} · ${e.jobTitle || "No job title"}`}
         actions={
           <div className="flex items-center gap-2">
-            <StatusBadge status={employeeDisplayStatus(e)} />
-            <Button asChild variant="outline" size="sm">
-              <Link
-                to="/monitoring"
-                search={{ employeeId: e.id, day: todayKey, tab: "attendance" }}
-              >
-                <MonitorCheck className="mr-2 h-4 w-4" />
-                Monitor
-              </Link>
-            </Button>
+            <StatusBadge status={e.archived ? "archived" : employeeDisplayStatus(e)} />
+            {!e.archived && (
+              <Button asChild variant="outline" size="sm">
+                <Link
+                  to="/monitoring"
+                  search={{ employeeId: e.id, day: todayKey, tab: "attendance" }}
+                >
+                  <MonitorCheck className="mr-2 h-4 w-4" />
+                  Monitor
+                </Link>
+              </Button>
+            )}
+            {canArchive &&
+              !isOwnProfile &&
+              (e.archived ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={archiveMutation.isPending}
+                  onClick={() => archiveMutation.mutate(null)}
+                >
+                  <ArchiveRestore className="mr-2 h-4 w-4" />
+                  Restore
+                </Button>
+              ) : (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="text-destructive"
+                  disabled={archiveMutation.isPending}
+                  onClick={() => setArchiveOpen(true)}
+                >
+                  <Archive className="mr-2 h-4 w-4" />
+                  Archive
+                </Button>
+              ))}
           </div>
         }
+      />
+      {e.archived && (
+        <div className="mb-4 rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm">
+          <span className="font-medium">Archived</span>
+          {e.archiveReason ? ` · ${ARCHIVE_REASON_LABELS[e.archiveReason]}` : ""}
+          {e.lastWorkingDay ? ` · Last working day ${e.lastWorkingDay}` : ""}
+          <span className="text-muted-foreground">
+            {" "}
+            — hidden from current views; paid only through the last working day.
+          </span>
+        </div>
+      )}
+      <ArchiveEmployeeDialog
+        open={archiveOpen}
+        name={e.name}
+        startDate={e.startDate}
+        pending={archiveMutation.isPending}
+        onOpenChange={setArchiveOpen}
+        onConfirm={(details) => archiveMutation.mutate(details)}
       />
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
@@ -1071,31 +1138,33 @@ function EmployeeDetailPage() {
                 />
               </div>
               <WorkdayTimeline timeline={attendanceDetail.data.timeline} />
-              {canManageAttendance && selectedAttendanceDay && (
-                <DailyCorrectionEditor
-                  employeeId={employeeId}
-                  day={selectedAttendanceDay}
-                  attendance={attendanceDetail.data}
-                  onSaved={async () => {
-                    await Promise.all([
-                      queryClient.invalidateQueries({
-                        queryKey: ["employee-attendance-day", employeeId],
-                      }),
-                      queryClient.invalidateQueries({
-                        queryKey: ["employee-attendance-range", employeeId],
-                      }),
-                      queryClient.invalidateQueries({
-                        queryKey: ["employee-change-history", employeeId],
-                      }),
-                      queryClient.invalidateQueries({
-                        queryKey: ["employee-payroll-sheet", employeeId],
-                      }),
-                    ]);
-                  }}
-                />
-              )}
               <div className="flex justify-end">
                 <div className="flex flex-wrap gap-2">
+                  {selectedAttendanceDay && (
+                    <CorrectAttendanceButton
+                      employeeId={employeeId}
+                      workDate={selectedAttendanceDay}
+                      attendance={attendanceDetail.data}
+                      buttonVariant="outline"
+                      buttonSize="default"
+                      onSaved={async () => {
+                        await Promise.all([
+                          queryClient.invalidateQueries({
+                            queryKey: ["employee-attendance-day", employeeId],
+                          }),
+                          queryClient.invalidateQueries({
+                            queryKey: ["employee-attendance-range", employeeId],
+                          }),
+                          queryClient.invalidateQueries({
+                            queryKey: ["employee-change-history", employeeId],
+                          }),
+                          queryClient.invalidateQueries({
+                            queryKey: ["employee-payroll-sheet", employeeId],
+                          }),
+                        ]);
+                      }}
+                    />
+                  )}
                   <Button
                     variant="outline"
                     onClick={() => {
@@ -1242,132 +1311,6 @@ type EditableBreak = {
   end_time: string;
   paid: boolean;
 };
-
-function DailyCorrectionEditor({
-  employeeId,
-  day,
-  attendance,
-  onSaved,
-}: {
-  employeeId: string;
-  day: string;
-  attendance: DailyAttendance;
-  onSaved: () => Promise<void>;
-}) {
-  const [startTime, setStartTime] = useState("");
-  const [endTime, setEndTime] = useState("");
-  const [payableMinutesDelta, setPayableMinutesDelta] = useState("0");
-  const [reason, setReason] = useState("");
-
-  useEffect(() => {
-    setStartTime(toTimeInput(attendance.actualFirstActivityAt, attendance.timezone));
-    setEndTime(toTimeInput(attendance.actualLastActivityAt, attendance.timezone));
-    setPayableMinutesDelta(String(Math.round(attendance.attendanceAdjustmentSeconds / 60)));
-    setReason(attendance.attendanceCorrection?.reason ?? "");
-  }, [attendance]);
-
-  const save = useMutation({
-    mutationFn: () =>
-      updateAttendanceCorrection(employeeId, day, {
-        startTime: startTime || null,
-        endTime: endTime || null,
-        payableMinutesDelta: Number(payableMinutesDelta) || 0,
-        reason,
-      }),
-    onSuccess: async () => {
-      toast.success("Attendance correction saved with an audit record.");
-      await onSaved();
-    },
-    onError: (error) =>
-      toast.error(error instanceof Error ? error.message : "Could not save the correction."),
-  });
-  const remove = useMutation({
-    mutationFn: () => deleteAttendanceCorrection(employeeId, day),
-    onSuccess: async () => {
-      toast.success("Manual correction removed. Tracking evidence is active again.");
-      await onSaved();
-    },
-    onError: (error) =>
-      toast.error(error instanceof Error ? error.message : "Could not remove the correction."),
-  });
-
-  return (
-    <Card className="border-amber-300/70 bg-amber-50/40 dark:bg-amber-950/10">
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-base">
-          <PencilLine className="h-4 w-4" />
-          HR attendance correction
-        </CardTitle>
-        <p className="text-sm text-muted-foreground">
-          Tracking evidence is preserved. Any corrected times or payable-minute adjustment is stored
-          separately with the reason and editor.
-        </p>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        <div className="grid gap-3 sm:grid-cols-3">
-          <FieldInput
-            label="Corrected start"
-            value={startTime}
-            onChange={setStartTime}
-            type="time"
-            disabled={save.isPending || remove.isPending}
-          />
-          <FieldInput
-            label="Corrected end"
-            value={endTime}
-            onChange={setEndTime}
-            type="time"
-            disabled={save.isPending || remove.isPending}
-          />
-          <div className="space-y-1.5">
-            <Label>Payable minutes adjustment</Label>
-            <Input
-              type="number"
-              min={-1440}
-              max={1440}
-              value={payableMinutesDelta}
-              disabled={save.isPending || remove.isPending}
-              onChange={(event) => setPayableMinutesDelta(event.target.value)}
-            />
-            <p className="text-xs text-muted-foreground">
-              Positive adds approved time; negative removes it.
-            </p>
-          </div>
-        </div>
-        <div className="space-y-1.5">
-          <Label>Required reason</Label>
-          <Input
-            value={reason}
-            maxLength={2000}
-            placeholder="Explain the evidence and why this correction is required."
-            disabled={save.isPending || remove.isPending}
-            onChange={(event) => setReason(event.target.value)}
-          />
-        </div>
-        <div className="flex flex-wrap justify-end gap-2">
-          {attendance.attendanceCorrection && (
-            <Button
-              variant="destructive"
-              loading={remove.isPending}
-              disabled={save.isPending}
-              onClick={() => remove.mutate()}
-            >
-              Remove correction
-            </Button>
-          )}
-          <Button
-            loading={save.isPending}
-            disabled={remove.isPending || reason.trim().length < 3}
-            onClick={() => save.mutate()}
-          >
-            <Save className="mr-2 h-4 w-4" />
-            Save correction
-          </Button>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
 
 function ScheduleEditor({
   employeeId,
@@ -1993,19 +1936,6 @@ function formatSeconds(value: number) {
   const hours = Math.floor(seconds / 3600);
   const minutes = Math.floor((seconds % 3600) / 60);
   return `${hours}h ${String(minutes).padStart(2, "0")}m`;
-}
-
-function toTimeInput(value?: string | null, timezone?: string | null) {
-  if (!value) return "";
-  const parts = new Intl.DateTimeFormat("en-GB", {
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23",
-    timeZone: timezone || undefined,
-  }).formatToParts(new Date(value));
-  const hour = parts.find((part) => part.type === "hour")?.value ?? "00";
-  const minute = parts.find((part) => part.type === "minute")?.value ?? "00";
-  return `${hour}:${minute}`;
 }
 
 function minutesBetween(start: string, end: string) {

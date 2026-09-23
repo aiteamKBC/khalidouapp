@@ -10,9 +10,14 @@ from app.models.mixins import TimestampMixin, UUIDPrimaryKeyMixin
 
 
 def default_admin_data_scope(context) -> str:
+    # HR is a company-wide role (it owns payroll and salary access), so a new HR
+    # row must default to company scope like general admin. Only team owners are
+    # scoped to their assigned teams. This mirrors the explicit HR creation paths
+    # (people.py / users.py), which already set "company"; it does not rewrite
+    # existing rows.
     return (
         "company"
-        if context.get_current_parameters().get("role") == "general_admin"
+        if context.get_current_parameters().get("role") in {"general_admin", "hr"}
         else "assigned_teams"
     )
 

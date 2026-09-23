@@ -165,7 +165,7 @@ def manual_request_status_seconds(
         select(TimeAdjustmentRequest).where(
             TimeAdjustmentRequest.company_id == employee.company_id,
             TimeAdjustmentRequest.employee_id == employee.id,
-            TimeAdjustmentRequest.request_type != "early_leave",
+            TimeAdjustmentRequest.request_type.notin_(("early_leave", "delayed_break")),
             TimeAdjustmentRequest.requested_date >= start_date,
             TimeAdjustmentRequest.requested_date <= end_date,
         )

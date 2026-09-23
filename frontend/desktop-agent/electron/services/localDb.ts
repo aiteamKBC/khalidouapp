@@ -636,6 +636,25 @@ export function listIgnoredPendingEvents(): Array<{
   );
 }
 
+export function listPendingMeetingEvents(): Array<{
+  id: string;
+  endpoint: string;
+  payloadJson: string;
+}> {
+  // Legacy Meeting Mode delivered start/end through this generic outbox. Meetings
+  // now use a dedicated durable store + sync, so on upgrade we import any
+  // still-undelivered meeting rows into that store and neutralize them here
+  // (see markPendingEventIgnored) instead of re-POSTing blindly. Terminal rows
+  // ('uploaded' are already deleted; 'dead'/'ignored' are excluded) are skipped.
+  return rows<{ id: string; endpoint: string; payloadJson: string }>(
+    `select id, endpoint, payload_json as payloadJson
+     from pending_events
+     where status in ('pending', 'failed')
+       and endpoint in ('/agent/meetings', '/agent/meetings/end')
+     order by created_at asc, rowid asc`,
+  );
+}
+
 export function markPendingEventFailed(id: string, attempts: number) {
   const nextAttempts = attempts + 1;
   database?.run(

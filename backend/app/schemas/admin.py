@@ -103,15 +103,14 @@ class TrackingSettingsUpdate(BaseModel):
     screenshot_enabled: bool | None = None
     screenshot_interval_minutes: int | None = Field(default=None, ge=1, le=240)
     screenshots_per_interval: int | None = Field(default=None, ge=1, le=2)
+    # Idle detection threshold in minutes. The current policy default is 15
+    # (see config/model defaults). The value is company-configurable and shared
+    # across backend accounting, agent detection, and UI descriptions; it is no
+    # longer force-pinned to a hardcoded 10.
     idle_threshold_minutes: int | None = Field(default=None, ge=1, le=120)
     capture_during_idle: bool | None = None
     offline_threshold_minutes: int | None = Field(default=None, ge=1, le=60)
     screenshot_retention_days: int | None = Field(default=None, ge=1, le=3650)
-
-    @field_validator("idle_threshold_minutes")
-    @classmethod
-    def enforce_idle_threshold(cls, value: int | None) -> int | None:
-        return 10 if value is not None else None
 
 
 class TeamCreate(BaseModel):
@@ -291,6 +290,13 @@ class PersonRoleUpdate(BaseModel):
     password: str | None = Field(default=None, min_length=8, max_length=255)
 
 
+class PersonArchiveRequest(BaseModel):
+    """Offboarding details recorded when HR archives a fired/resigned person."""
+
+    reason: Literal["fired", "resigned"]
+    last_working_day: date
+
+
 class TimeAdjustmentReview(BaseModel):
     status: str = Field(pattern="^(approved|rejected)$")
     approved_minutes: int | None = Field(default=None, ge=1, le=720)
@@ -319,7 +325,16 @@ class LeaveRequestReview(BaseModel):
 
 
 class LeaveBalanceUpdate(BaseModel):
-    credit_days: float = Field(ge=0, le=365)
+    # Either the yearly credit, or (preferred for migrating employees from the
+    # old system) the remaining days to leave available right now.
+    credit_days: float | None = Field(default=None, ge=0, le=365)
+    remaining_days: float | None = Field(default=None, ge=0, le=365)
+
+    @model_validator(mode="after")
+    def _one_value(self):
+        if (self.credit_days is None) == (self.remaining_days is None):
+            raise ValueError("Provide exactly one of credit_days or remaining_days.")
+        return self
 
 
 class ManualLeaveCreate(BaseModel):

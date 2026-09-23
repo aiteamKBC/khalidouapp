@@ -143,6 +143,11 @@ export interface Employee {
   portalLastLoginIp?: string;
   portalLastUserAgent?: string;
   weeklyCapacityMinutes: number;
+  /** Archived (fired/resigned): hidden from current views, paid through lastWorkingDay. */
+  archived?: boolean;
+  archivedAt?: string;
+  archiveReason?: "fired" | "resigned";
+  lastWorkingDay?: string;
   managers: Array<{
     id: string;
     name: string;
@@ -264,6 +269,13 @@ export interface Timesheet {
   accountableIdleMinutes: number;
   overtimeMinutes: number;
   adjustmentMinutes: number;
+  payableMinutes: number;
+  paidBreakMinutes: number;
+  paidLateAllowanceMinutes: number;
+  delayedBreakMinutes: number;
+  approvedMeetingMinutes: number;
+  pendingMeetingMinutes: number;
+  financialPolicyActive: boolean;
   deductedMinutes: number;
   points: number;
   screenshotCount: number;

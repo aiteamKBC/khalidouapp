@@ -75,6 +75,8 @@ def _admin_profile_data(
         "role": admin.role,
         "is_super_admin": is_super_admin(admin),
         "permissions": capabilities_for_admin(admin),
+        "permission_mode": admin.permission_mode,
+        "data_scope": admin.data_scope,
         "status": admin.status,
         "avatar_url": admin.avatar_url,
         "assigned_team_ids": [str(team_id) for team_id in assigned_team_ids],

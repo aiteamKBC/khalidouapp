@@ -24,7 +24,8 @@ class RefreshDeviceTokenRequest(BaseModel):
 class AgentTimeAdjustmentRequestCreate(BaseModel):
     requested_date: date | None = None
     request_type: str = Field(
-        default="manual_time", pattern="^(idle_time|early_leave|manual_time)$"
+        default="manual_time",
+        pattern="^(idle_time|early_leave|manual_time|delayed_break)$",
     )
     work_session_id: UUID | None = None
     source_start_at: datetime | None = None
@@ -32,6 +33,24 @@ class AgentTimeAdjustmentRequestCreate(BaseModel):
     requested_leave_time: time | None = None
     requested_minutes: int = Field(ge=1, le=720)
     reason: str = Field(min_length=3, max_length=1000)
+
+
+class AgentMeetingStart(BaseModel):
+    device_id: UUID
+    idempotency_key: str = Field(min_length=8, max_length=120)
+    title: str = Field(min_length=1, max_length=255)
+    reason: str = Field(min_length=3, max_length=1000)
+    expected_end_at: datetime
+    started_at: datetime | None = None
+    work_session_id: UUID | None = None
+    project_id: UUID | None = None
+    task_id: UUID | None = None
+
+
+class AgentMeetingEnd(BaseModel):
+    device_id: UUID
+    idempotency_key: str = Field(min_length=8, max_length=120)
+    ended_at: datetime | None = None
 
 
 class AgentLeaveRequestCreate(BaseModel):
@@ -71,3 +90,10 @@ class AgentChecklistItemCreate(BaseModel):
 
 class AgentChecklistItemUpdate(BaseModel):
     completed: bool | None = None
+
+
+class AgentShiftRescheduleCreate(BaseModel):
+    work_date: date
+    requested_start: time
+    requested_end: time
+    reason: str = Field(min_length=3, max_length=1000)

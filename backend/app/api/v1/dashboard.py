@@ -14,6 +14,7 @@ from app.core.responses import success_response
 from app.database.session import get_db
 from app.models import AdminUser, Device, Employee, Screenshot, WorkSession
 from app.services.attendance import current_idle_contexts
+from app.services.employee_archive import current_employee_clause
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
@@ -82,7 +83,7 @@ def summary(
     total_employees_query = scoped(
         select(func.count())
         .select_from(Employee)
-        .where(Employee.company_id == current_admin.company_id),
+        .where(Employee.company_id == current_admin.company_id, current_employee_clause()),
         Employee.id,
     )
     online_employees_query = scoped(

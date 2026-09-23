@@ -37,18 +37,23 @@ REQUIRED_PROFILE_FIELDS = (
     "salary_type",
 )
 
+# Scheduled breaks are paid portions of the shift under the phase-1 policy. New
+# profiles get paid breaks by default; existing profiles keep their configured
+# paid flag until the effective-dated dry-run (scripts/dry_run_break_policy.py)
+# updates them, so a deliberately unpaid break is preserved and surfaced for
+# review rather than silently changed.
 DEFAULT_BREAK_RULES = [
     {
         "name": "Lunch",
         "minutes": 30,
-        "paid": False,
+        "paid": True,
         "start_time": "13:00",
         "end_time": "13:30",
     },
     {
         "name": "Short break",
         "minutes": 15,
-        "paid": False,
+        "paid": True,
         "start_time": "16:30",
         "end_time": "16:45",
     },

@@ -159,7 +159,7 @@ def build_idle_request_periods(
         select(TimeAdjustmentRequest).where(
             TimeAdjustmentRequest.company_id == company_id,
             TimeAdjustmentRequest.employee_id == employee.id,
-            TimeAdjustmentRequest.request_type == "idle_time",
+            TimeAdjustmentRequest.request_type.in_(("idle_time", "delayed_break")),
             TimeAdjustmentRequest.requested_date == work_date,
             TimeAdjustmentRequest.status.in_(REVIEWABLE_STATUSES),
         )

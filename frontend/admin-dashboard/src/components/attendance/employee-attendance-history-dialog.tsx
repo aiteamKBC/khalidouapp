@@ -10,6 +10,7 @@ import {
 } from "@/api/attendance";
 import { AttendanceStatusBadges } from "@/components/attendance/attendance-status-badges";
 import { WorkdayTimeline } from "@/components/workday-timeline";
+import { CorrectAttendanceButton } from "@/components/attendance/attendance-correction-dialog";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -278,7 +279,35 @@ export function EmployeeAttendanceHistoryDialog({
                   value={formatDuration(dayDetail.data.totalPayableSeconds)}
                 />
               </div>
-              <WorkdayTimeline timeline={dayDetail.data.timeline} />
+              <WorkdayTimeline
+                timeline={dayDetail.data.timeline}
+                financials={{
+                  paidLateAllowanceSeconds:
+                    dayDetail.data.paidLateAllowanceSeconds,
+                  deductibleLateSeconds: dayDetail.data.deductibleLateSeconds,
+                  approvedDelayedBreakSeconds:
+                    dayDetail.data.approvedDelayedBreakSeconds,
+                  approvedMeetingSeconds: dayDetail.data.approvedMeetingSeconds,
+                  pendingMeetingSeconds: dayDetail.data.pendingMeetingSeconds,
+                }}
+              />
+              <div className="flex items-center justify-between gap-2">
+                {dayDetail.data.attendanceCorrection ? (
+                  <span className="rounded bg-amber-500/15 px-2 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-300">
+                    Attendance corrected
+                  </span>
+                ) : (
+                  <span />
+                )}
+                <CorrectAttendanceButton
+                  employeeId={dayDetail.data.employeeId}
+                  workDate={dayDetail.data.date}
+                  attendance={dayDetail.data}
+                  onSaved={async () => {
+                    await dayDetail.refetch();
+                  }}
+                />
+              </div>
             </div>
           ) : null}
         </DialogContent>

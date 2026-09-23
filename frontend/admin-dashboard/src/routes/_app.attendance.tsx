@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 
 import { getDailyAttendance, listDailyAttendanceWithMeta } from "@/api/attendance";
+import { CorrectAttendanceButton } from "@/components/attendance/attendance-correction-dialog";
 import { listTeams } from "@/api/teams";
 import { AttendanceStatusBadges } from "@/components/attendance/attendance-status-badges";
 import { EmployeeAttendanceHistoryDialog } from "@/components/attendance/employee-attendance-history-dialog";
@@ -712,9 +713,66 @@ function AttendancePage() {
                 />
                 <Small label="Before shift" value={duration(detail.data.preShiftExtraSeconds)} />
                 <Small label="After shift" value={duration(detail.data.postShiftExtraSeconds)} />
+                {detail.data.paidLateAllowanceSeconds > 0 && (
+                  <Small
+                    label="Paid late allowance"
+                    value={duration(detail.data.paidLateAllowanceSeconds)}
+                  />
+                )}
+                {detail.data.earnedBreakCreditSeconds > 0 && (
+                  <Small
+                    label="Break bank earned"
+                    value={duration(detail.data.earnedBreakCreditSeconds)}
+                  />
+                )}
+                {detail.data.remainingBreakCreditSeconds > 0 && (
+                  <Small
+                    label="Break bank remaining"
+                    value={duration(detail.data.remainingBreakCreditSeconds)}
+                  />
+                )}
+                {detail.data.approvedMeetingSeconds > 0 && (
+                  <Small
+                    label="Meeting (approved)"
+                    value={duration(detail.data.approvedMeetingSeconds)}
+                  />
+                )}
+                {detail.data.pendingMeetingSeconds > 0 && (
+                  <Small
+                    label="Meeting (pending)"
+                    value={duration(detail.data.pendingMeetingSeconds)}
+                  />
+                )}
                 <Small label="Payable" value={duration(detail.data.totalPayableSeconds)} />
               </div>
-              <WorkdayTimeline timeline={detail.data.timeline} />
+              <WorkdayTimeline
+                timeline={detail.data.timeline}
+                financials={{
+                  paidLateAllowanceSeconds: detail.data.paidLateAllowanceSeconds,
+                  deductibleLateSeconds: detail.data.deductibleLateSeconds,
+                  approvedDelayedBreakSeconds:
+                    detail.data.approvedDelayedBreakSeconds,
+                  approvedMeetingSeconds: detail.data.approvedMeetingSeconds,
+                  pendingMeetingSeconds: detail.data.pendingMeetingSeconds,
+                }}
+              />
+              <div className="flex items-center justify-between gap-2 pt-1">
+                {detail.data.attendanceCorrection ? (
+                  <span className="rounded bg-amber-500/15 px-2 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-300">
+                    Attendance corrected
+                  </span>
+                ) : (
+                  <span />
+                )}
+                <CorrectAttendanceButton
+                  employeeId={detail.data.employeeId}
+                  workDate={detail.data.date}
+                  attendance={detail.data}
+                  onSaved={async () => {
+                    await detail.refetch();
+                  }}
+                />
+              </div>
             </>
           ) : (
             <div className="py-10 text-center text-sm text-muted-foreground">

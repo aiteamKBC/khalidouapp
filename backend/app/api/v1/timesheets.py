@@ -24,6 +24,7 @@ from app.models import (
     TimeAdjustmentRequest,
     WorkSession,
 )
+from app.services.employee_archive import current_employee_clause
 from app.services.activity_timeline import local_today, session_observation_bounds
 from app.services.attendance import (
     accountable_idle_seconds,
@@ -103,6 +104,13 @@ def _empty_timesheet_item(
         "recorded_overtime_seconds": 0,
         "deducted_seconds": 0,
         "adjustment_seconds": 0,
+        "payable_seconds": 0,
+        "paid_break_seconds": 0,
+        "paid_late_allowance_seconds": 0,
+        "approved_delayed_break_seconds": 0,
+        "approved_meeting_seconds": 0,
+        "pending_meeting_seconds": 0,
+        "financial_policy_active": False,
     }
 
 
@@ -148,6 +156,10 @@ def timesheet_rows(
         if current_admin is not None:
             ensure_employee_access(db, current_admin, employee_id, team_id)
         session_statement = session_statement.where(Employee.id == employee_id)
+    elif current_admin is not None:
+        # Admin roster views hide archived (fired/resigned) employees; a
+        # direct per-employee lookup still returns their history.
+        session_statement = session_statement.where(current_employee_clause())
     if device_id:
         session_statement = session_statement.where(WorkSession.device_id == device_id)
 
@@ -242,6 +254,8 @@ def timesheet_rows(
         )
     if employee_id:
         leave_statement = leave_statement.where(Employee.id == employee_id)
+    elif current_admin is not None:
+        leave_statement = leave_statement.where(current_employee_clause())
 
     for row in db.execute(leave_statement).all():
         leave_start = max(start_day, row[3])
@@ -467,6 +481,23 @@ def timesheet_rows(
         if attendance is not None:
             calculation_sources = attendance.calculation_sources or {}
             item["_has_attendance_projection"] = True
+            item["payable_seconds"] = max(0, int(attendance.total_payable_seconds))
+            item["paid_break_seconds"] = max(0, int(attendance.paid_break_seconds))
+            item["paid_late_allowance_seconds"] = max(
+                0, int(calculation_sources.get("paid_late_allowance_seconds", 0))
+            )
+            item["approved_delayed_break_seconds"] = max(
+                0, int(calculation_sources.get("approved_delayed_break_seconds", 0))
+            )
+            item["approved_meeting_seconds"] = max(
+                0, int(calculation_sources.get("approved_meeting_seconds", 0))
+            )
+            item["pending_meeting_seconds"] = max(
+                0, int(calculation_sources.get("pending_meeting_seconds", 0))
+            )
+            item["financial_policy_active"] = bool(
+                calculation_sources.get("financial_policy_active", False)
+            )
             item["idle_seconds"] = accountable_idle_seconds(attendance)
             # The scoped attendance timeline excludes idle/locked/sleeping
             # device state outside the scheduled shift. Once that projection
@@ -556,7 +587,7 @@ def timesheet_rows(
         .where(
             TimeAdjustmentRequest.company_id == company_id,
             TimeAdjustmentRequest.status == "approved",
-            TimeAdjustmentRequest.request_type != "early_leave",
+            TimeAdjustmentRequest.request_type.notin_(("early_leave", "delayed_break")),
             TimeAdjustmentRequest.requested_date >= start_day,
             TimeAdjustmentRequest.requested_date <= end_day,
         )
@@ -574,6 +605,8 @@ def timesheet_rows(
         )
     if employee_id:
         adjustment_statement = adjustment_statement.where(Employee.id == employee_id)
+    elif current_admin is not None:
+        adjustment_statement = adjustment_statement.where(current_employee_clause())
 
     for row in db.execute(adjustment_statement).all():
         work_date = row[3]
@@ -711,6 +744,15 @@ def timesheet_rows(
                     int(item["recorded_overtime_seconds"]),
                 ),
                 "adjustment_seconds": int(item["adjustment_seconds"]),
+                "payable_seconds": int(item["payable_seconds"]),
+                "paid_break_seconds": int(item["paid_break_seconds"]),
+                "paid_late_allowance_seconds": int(item["paid_late_allowance_seconds"]),
+                "approved_delayed_break_seconds": int(
+                    item["approved_delayed_break_seconds"]
+                ),
+                "approved_meeting_seconds": int(item["approved_meeting_seconds"]),
+                "pending_meeting_seconds": int(item["pending_meeting_seconds"]),
+                "financial_policy_active": bool(item["financial_policy_active"]),
                 "deducted_seconds": int(item["deducted_seconds"]),
                 "points": round(active_seconds / 3600, 2),
                 "screenshot_count": int(screenshot_count),

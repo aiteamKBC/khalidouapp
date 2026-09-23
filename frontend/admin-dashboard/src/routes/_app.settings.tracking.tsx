@@ -98,6 +98,8 @@ function TrackingSettingsPage() {
   };
 
   const invalid =
+    form.idleThresholdMinutes < 1 ||
+    form.idleThresholdMinutes > 120 ||
     form.offlineThresholdMinutes < 1 ||
     form.screenshotsPerInterval < 1 ||
     form.screenshotsPerInterval > 2 ||
@@ -239,9 +241,17 @@ function TrackingSettingsPage() {
         <CardContent className="space-y-5">
           <ToggleRow
             label="Idle threshold"
-            hint="Idle starts after 10 complete minutes without keyboard or mouse input."
+            hint="Idle starts after this many complete minutes without keyboard or mouse input. The separate daily paid automatic-idle grace remains 15 minutes."
           >
-            <Input disabled type="number" className="w-32" value={10} readOnly />
+            <Input
+              disabled={!canEdit}
+              type="number"
+              min={1}
+              max={120}
+              className="w-32"
+              value={form.idleThresholdMinutes}
+              onChange={(e) => update("idleThresholdMinutes", Number(e.target.value))}
+            />
           </ToggleRow>
           <FieldRow label="Offline threshold (minutes)">
             <Input

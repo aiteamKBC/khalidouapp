@@ -17,28 +17,37 @@ import {
   shouldWaitForInputBeforeRestart,
 } from "../electron/services/idlePolicy.ts";
 
-test("idle starts only after ten complete minutes without input", () => {
-  assert.equal(IDLE_THRESHOLD_MINUTES, 10);
-  assert.equal(IDLE_THRESHOLD_SECONDS, 600);
-  assert.equal(hasReachedIdleThreshold(599), false);
-  assert.equal(hasReachedIdleThreshold(600), true);
-  assert.equal(hasReachedIdleThreshold(601), true);
+test("idle starts only after fifteen complete minutes without input", () => {
+  assert.equal(IDLE_THRESHOLD_MINUTES, 15);
+  assert.equal(IDLE_THRESHOLD_SECONDS, 900);
+  assert.equal(hasReachedIdleThreshold(899), false);
+  assert.equal(hasReachedIdleThreshold(900), true);
+  assert.equal(hasReachedIdleThreshold(901), true);
 });
 
-test("idle duration starts at zero after the ten-minute grace period", () => {
-  assert.equal(idleDurationAfterThreshold(599), 0);
-  assert.equal(idleDurationAfterThreshold(600), 0);
-  assert.equal(idleDurationAfterThreshold(601), 1);
-  assert.equal(idleDurationAfterThreshold(900), 300);
+test("idle duration starts at zero after the fifteen-minute grace period", () => {
+  assert.equal(idleDurationAfterThreshold(899), 0);
+  assert.equal(idleDurationAfterThreshold(900), 0);
+  assert.equal(idleDurationAfterThreshold(901), 1);
+  assert.equal(idleDurationAfterThreshold(1200), 300);
 });
 
-test("a scheduled break uses the same ten-minute idle threshold", () => {
-  assert.equal(BREAK_IDLE_THRESHOLD_MINUTES, 10);
-  assert.equal(BREAK_IDLE_THRESHOLD_SECONDS, 600);
-  assert.equal(hasReachedIdleThreshold(599, true), false);
-  assert.equal(hasReachedIdleThreshold(600, true), true);
-  assert.equal(idleDurationAfterThreshold(600, true), 0);
-  assert.equal(idleDurationAfterThreshold(605, true), 5);
+test("a scheduled break uses the same fifteen-minute idle threshold", () => {
+  assert.equal(BREAK_IDLE_THRESHOLD_MINUTES, 15);
+  assert.equal(BREAK_IDLE_THRESHOLD_SECONDS, 900);
+  assert.equal(hasReachedIdleThreshold(899, true), false);
+  assert.equal(hasReachedIdleThreshold(900, true), true);
+  assert.equal(idleDurationAfterThreshold(900, true), 0);
+  assert.equal(idleDurationAfterThreshold(905, true), 5);
+});
+
+test("the company idle threshold is applied to work and scheduled breaks", () => {
+  assert.equal(hasReachedIdleThreshold(419, false, 7), false);
+  assert.equal(hasReachedIdleThreshold(420, false, 7), true);
+  assert.equal(hasReachedIdleThreshold(419, true, 7), false);
+  assert.equal(hasReachedIdleThreshold(420, true, 7), true);
+  assert.equal(idleDurationAfterThreshold(425, false, 7), 5);
+  assert.equal(idleDurationAfterThreshold(425, true, 7), 5);
 });
 
 test("returning early from a break is detected from fresh input", () => {

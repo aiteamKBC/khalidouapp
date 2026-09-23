@@ -16,6 +16,7 @@ from app.models import AdminUser, Employee, TimeAdjustmentRequest
 from app.schemas.admin import TimeAdjustmentBulkReview, TimeAdjustmentReview
 from app.services.audit import record_audit_log
 from app.services.attendance import refresh_daily_attendance_range
+from app.services.employee_archive import current_employee_clause
 from app.services.permissions import is_super_admin, require_capability
 from app.services.time_adjustments import (
     get_time_adjustment_or_404,
@@ -52,6 +53,8 @@ def list_time_adjustment_requests(
     if employee_id:
         ensure_employee_access(db, current_admin, employee_id, team_id)
         statement = statement.where(TimeAdjustmentRequest.employee_id == employee_id)
+    else:
+        statement = statement.where(current_employee_clause())
     if status:
         statement = statement.where(TimeAdjustmentRequest.status == status)
     if request_group == "early_leave":
@@ -86,6 +89,7 @@ def bulk_review_time_adjustment_requests(
         .where(
             TimeAdjustmentRequest.company_id == current_admin.company_id,
             TimeAdjustmentRequest.status == "pending",
+            current_employee_clause(),
         )
         .order_by(TimeAdjustmentRequest.created_at)
     )

@@ -1,4 +1,4 @@
-import { apiFetch } from "./client";
+import { apiFetch, apiFetchWithMeta } from "./client";
 import { normalizeAiAcronym } from "@/lib/text";
 
 export type PersonInvitationInput = {
@@ -130,6 +130,14 @@ export async function invitePerson(input: PersonInvitationInput): Promise<Person
   };
 }
 
+export type ArchiveReason = "fired" | "resigned";
+
+export type PersonArchiveInput = {
+  reason: ArchiveReason;
+  /** Inclusive last working day (YYYY-MM-DD); nothing after it is paid. */
+  lastWorkingDay: string;
+};
+
 export type PersonArchiveResult = {
   personType: "admin" | "employee";
   adminUserId?: string;
@@ -137,6 +145,28 @@ export type PersonArchiveResult = {
   archived: boolean;
   adminStatus?: string;
   employeeStatus?: string;
+  archiveReason?: ArchiveReason;
+  lastWorkingDay?: string;
+};
+
+export type ArchivedEmployee = {
+  id: string;
+  name: string;
+  email: string;
+  code: string;
+  jobTitle?: string;
+  startDate?: string;
+  archivedAt?: string;
+  archiveReason?: ArchiveReason;
+  lastWorkingDay?: string;
+  archivedByName?: string;
+  adminUserId?: string;
+  adminRole?: string;
+};
+
+export type ArchivedEmployeesResult = {
+  employees: ArchivedEmployee[];
+  canRestore: boolean;
 };
 
 export type PersonRole = "employee" | "team_owner" | "hr" | "general_admin";
@@ -148,7 +178,7 @@ export type PersonRoleResult = PersonArchiveResult & {
 async function setPersonArchived(
   personType: "admin" | "employee",
   personId: string,
-  archived: boolean,
+  archive: PersonArchiveInput | null,
 ): Promise<PersonArchiveResult> {
   const row = await apiFetch<{
     person_type: "admin" | "employee";
@@ -157,8 +187,13 @@ async function setPersonArchived(
     archived: boolean;
     admin_status?: string | null;
     employee_status?: string | null;
-  }>(`/people/${personType}/${personId}/${archived ? "archive" : "restore"}`, {
+    archive_reason?: ArchiveReason | null;
+    last_working_day?: string | null;
+  }>(`/people/${personType}/${personId}/${archive ? "archive" : "restore"}`, {
     method: "POST",
+    body: archive
+      ? JSON.stringify({ reason: archive.reason, last_working_day: archive.lastWorkingDay })
+      : undefined,
   });
   return {
     personType: row.person_type,
@@ -167,15 +202,61 @@ async function setPersonArchived(
     archived: row.archived,
     adminStatus: row.admin_status ?? undefined,
     employeeStatus: row.employee_status ?? undefined,
+    archiveReason: row.archive_reason ?? undefined,
+    lastWorkingDay: row.last_working_day ?? undefined,
   };
 }
 
-export function archivePerson(personType: "admin" | "employee", personId: string) {
-  return setPersonArchived(personType, personId, true);
+export function archivePerson(
+  personType: "admin" | "employee",
+  personId: string,
+  input: PersonArchiveInput,
+) {
+  return setPersonArchived(personType, personId, input);
 }
 
 export function restorePerson(personType: "admin" | "employee", personId: string) {
-  return setPersonArchived(personType, personId, false);
+  return setPersonArchived(personType, personId, null);
+}
+
+export async function listArchivedEmployees(
+  search?: string,
+  signal?: AbortSignal,
+): Promise<ArchivedEmployeesResult> {
+  const query = search?.trim() ? `?search=${encodeURIComponent(search.trim())}` : "";
+  const { data, meta } = await apiFetchWithMeta<
+    Array<{
+      id: string;
+      name: string;
+      email: string;
+      employee_code: string;
+      job_title?: string | null;
+      start_date?: string | null;
+      archived_at?: string | null;
+      archive_reason?: ArchiveReason | null;
+      last_working_day?: string | null;
+      archived_by?: { id: string; name?: string | null } | null;
+      admin_user_id?: string | null;
+      admin_role?: string | null;
+    }>
+  >(`/people/archived-employees${query}`, { signal });
+  return {
+    canRestore: meta.can_restore === true,
+    employees: data.map((row) => ({
+      id: row.id,
+      name: row.name,
+      email: row.email,
+      code: row.employee_code,
+      jobTitle: row.job_title ?? undefined,
+      startDate: row.start_date ?? undefined,
+      archivedAt: row.archived_at ?? undefined,
+      archiveReason: row.archive_reason ?? undefined,
+      lastWorkingDay: row.last_working_day ?? undefined,
+      archivedByName: row.archived_by?.name ?? undefined,
+      adminUserId: row.admin_user_id ?? undefined,
+      adminRole: row.admin_role ?? undefined,
+    })),
+  };
 }
 
 export async function deletePerson(personType: "admin" | "employee", personId: string) {

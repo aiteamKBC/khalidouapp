@@ -5,7 +5,7 @@ from decimal import Decimal, ROUND_HALF_UP
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from sqlalchemy import or_, select, text
+from sqlalchemy import and_, or_, select, text
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session, selectinload
 
@@ -17,6 +17,7 @@ from app.models import (
     Employee,
     EmployeeWorkProfile,
     LeaveRequest,
+    MeetingRecord,
     OvertimeRecord,
     PayrollAdjustment,
     PayrollEntry,
@@ -31,6 +32,7 @@ from app.services.attendance import (
     calculate_daily_attendance,
     calculate_daily_attendance_bulk,
 )
+from app.services.employee_archive import cap_to_employment_end
 from app.services.work_profiles import (
     DEFAULT_WORKING_DAYS,
     STANDARD_MONTH_DAYS,
@@ -314,8 +316,14 @@ def calculate_employee_metrics(
     approved_leave: list[LeaveRequest] | None = None,
     team_ids: set[UUID] | None = None,
     stored_attendance: dict[date, DailyAttendance] | None = None,
+    meeting_dates: set[date] | None = None,
 ) -> dict:
     zone = _timezone(employee)
+    # An archived (fired/resigned) employee is paid only up to and including
+    # their last working day: nothing after it counts toward attendance, time,
+    # or salary for the period.
+    period_last = last
+    last = cap_to_employment_end(employee, last)
     if sessions is None:
         local_start = datetime.combine(first, time.min, tzinfo=zone).astimezone(UTC)
         local_end = datetime.combine(last + timedelta(days=1), time.min, tzinfo=zone).astimezone(
@@ -355,6 +363,11 @@ def calculate_employee_metrics(
                 LeaveRequest.end_date >= first,
             )
         ).all()
+
+    if last < period_last:
+        # Batched callers pre-fetch sources for the full period.
+        adjustments = [item for item in adjustments if item.requested_date <= last]
+        overtime_records = [item for item in overtime_records if item.work_date <= last]
 
     sessions_by_day: dict[date, list[WorkSession]] = defaultdict(list)
     month_sessions: list[WorkSession] = []
@@ -468,10 +481,28 @@ def calculate_employee_metrics(
     # Materialize days that contain a source record and reuse immutable past
     # results until a source/profile changes. This avoids summing overlapping
     # sessions twice and keeps subsequent payroll refreshes inexpensive.
+    # Meeting Mode periods are their own attendance evidence: an approved
+    # meeting reclassifies idle into payable time inside calculate_daily_attendance.
+    # A day with only a meeting (no session/adjustment/overtime/leave) must still
+    # materialize an attendance row, or that payable meeting time is dropped.
+    # Delayed-break claims need no special handling here — they are
+    # TimeAdjustmentRequests and already arrive via ``adjustments``.
+    if meeting_dates is None:
+        meeting_dates = set(
+            db.scalars(
+                select(MeetingRecord.work_date).where(
+                    MeetingRecord.company_id == company_id,
+                    MeetingRecord.employee_id == employee.id,
+                    MeetingRecord.work_date.between(first, last),
+                )
+            ).all()
+        )
+
     relevant_days = set(sessions_by_day)
     relevant_days.update(item.requested_date for item in adjustments)
     relevant_days.update(item.work_date for item in overtime_records)
     relevant_days.update(day for day in leave_days if first <= day <= last)
+    relevant_days.update(day for day in meeting_dates if first <= day <= last)
     employee_today = datetime.now(zone).date()
     if first <= employee_today <= last:
         relevant_days.add(employee_today)
@@ -573,6 +604,11 @@ def calculate_employee_metrics(
             if item.actual_first_activity_at is not None or item.approved_manual_seconds > 0
         )
     else:
+        # No attendance rows means the period has no sessions, meetings,
+        # adjustments, or leave (every source above feeds ``relevant_days``).
+        # The phase-1 terms — paid late allowance, delayed break, and meeting
+        # seconds — are therefore all zero by construction, so this raw-session
+        # fallback stays reconciled with the canonical stored-attendance path.
         canonical_regular_seconds = min(
             expected_seconds,
             worked_seconds + manual["approved"] + paid_break_seconds,
@@ -596,6 +632,16 @@ def calculate_employee_metrics(
         if profile.salary_type == "monthly"
         else (Decimal(regular_payable_seconds) / Decimal(3600) * hourly_rate)
     )
+    if profile.salary_type == "monthly" and last < period_last:
+        # Final month of an archived employee: pro-rate the monthly salary by
+        # the calendar days employed through the last working day, using the
+        # same 30-day payroll month as the hourly conversion.
+        employed_from = max(first, employee.start_date) if employee.start_date else first
+        employed_days = max(0, (last - employed_from).days + 1)
+        base_salary = min(
+            configured,
+            configured * Decimal(employed_days) / Decimal(STANDARD_MONTH_DAYS),
+        )
     needs_review = any(
         (
             late_minutes,
@@ -641,6 +687,7 @@ def calculate_employee_metrics(
         else None,
         "shift_end": profile.shift_end.isoformat(timespec="minutes") if profile.shift_end else None,
         "late_grace_minutes": int(profile.late_grace_minutes or 15),
+        "last_working_day": last.isoformat() if last < period_last else None,
     }
 
 
@@ -729,9 +776,29 @@ def refresh_run_entries(db: Session, run: PayrollRun) -> list[PayrollEntry]:
             Employee.company_id == run.company_id,
             Employee.status != "deleted",
             or_(Employee.start_date.is_(None), Employee.start_date <= last),
+            # Archived (fired/resigned) employees only appear in the period
+            # that contains their last working day; later draft payroll omits
+            # them. Frozen runs returned above keep them as records.
+            or_(
+                Employee.status != "archived",
+                and_(
+                    Employee.last_working_day.is_not(None),
+                    Employee.last_working_day >= first,
+                ),
+            ),
         )
         .order_by(Employee.name)
     ).all()
+    eligible_ids = {employee.id for employee in employees}
+    for stale_employee_id, stale_entry in list(existing.items()):
+        if stale_employee_id in eligible_ids:
+            continue
+        stale_employee = db.get(Employee, stale_employee_id)
+        if stale_employee is not None and stale_employee.status == "archived":
+            # Editable (draft/review) runs drop employees archived before this
+            # period started; nothing after the last working day is payable.
+            db.delete(stale_entry)
+            del existing[stale_employee_id]
     overrides = db.scalars(
         select(WorkScheduleOverride).where(
             WorkScheduleOverride.company_id == run.company_id,
@@ -791,6 +858,15 @@ def refresh_run_entries(db: Session, run: PayrollRun) -> list[PayrollEntry]:
         )
     ).all():
         leave_by_employee[item.employee_id].append(item)
+    meeting_dates_by_employee: dict[UUID, set[date]] = defaultdict(set)
+    for meeting_employee_id, meeting_date in db.execute(
+        select(MeetingRecord.employee_id, MeetingRecord.work_date).where(
+            MeetingRecord.company_id == run.company_id,
+            MeetingRecord.employee_id.in_(employee_ids),
+            MeetingRecord.work_date.between(first, last),
+        )
+    ).all():
+        meeting_dates_by_employee[meeting_employee_id].add(meeting_date)
     teams = _team_names(db, run.company_id)
     team_ids_by_employee: dict[UUID, set[UUID]] = defaultdict(set)
     for member_employee_id, member_team_id in db.execute(
@@ -828,7 +904,9 @@ def refresh_run_entries(db: Session, run: PayrollRun) -> list[PayrollEntry]:
     prewarm_requests = [
         (employee, employee_today)
         for employee in employees
-        if first <= (employee_today := datetime.now(_timezone(employee)).date()) <= last
+        if first
+        <= (employee_today := datetime.now(_timezone(employee)).date())
+        <= cap_to_employment_end(employee, last)
     ]
     if prewarm_requests:
         existing_by_key = {
@@ -865,6 +943,7 @@ def refresh_run_entries(db: Session, run: PayrollRun) -> list[PayrollEntry]:
             approved_leave=leave_by_employee[employee.id],
             team_ids=team_ids_by_employee[employee.id],
             stored_attendance=stored_attendance_by_employee.get(employee.id, {}),
+            meeting_dates=meeting_dates_by_employee.get(employee.id, set()),
         )
         entry = existing.get(employee.id)
         if entry is None:

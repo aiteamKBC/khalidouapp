@@ -101,7 +101,128 @@ function resolveDisplayType(
   return intervalType;
 }
 
-export function WorkdayTimeline({ timeline }: { timeline?: WorkdayTimelineData }) {
+export type PayableBreakdown = {
+  paidLateAllowanceSeconds: number;
+  deductibleLateSeconds: number;
+  approvedDelayedBreakSeconds: number;
+  approvedMeetingSeconds: number;
+  pendingMeetingSeconds: number;
+};
+
+type BreakdownSegment = {
+  key: string;
+  label: string;
+  seconds: number;
+  bar: string;
+  badge: string;
+  paid: boolean;
+};
+
+// Phase-1 financial-policy classifications are derived daily-attendance
+// overlays (not exclusive per-second intervals), so they render as their own
+// proportional breakdown bar rather than mixing into the activity timeline.
+function buildBreakdownSegments(financials: PayableBreakdown): BreakdownSegment[] {
+  return [
+    {
+      key: "paid_late",
+      label: "Paid late allowance",
+      seconds: financials.paidLateAllowanceSeconds,
+      bar: "bg-teal-500",
+      badge: "bg-teal-500/15 text-teal-700 dark:text-teal-300",
+      paid: true,
+    },
+    {
+      key: "delayed_break",
+      label: "Delayed break (paid)",
+      seconds: financials.approvedDelayedBreakSeconds,
+      bar: "bg-violet-500",
+      badge: "bg-violet-500/15 text-violet-800 dark:text-violet-300",
+      paid: true,
+    },
+    {
+      key: "meeting_approved",
+      label: "Meeting (approved)",
+      seconds: financials.approvedMeetingSeconds,
+      bar: "bg-blue-500",
+      badge: "bg-blue-500/15 text-blue-700 dark:text-blue-300",
+      paid: true,
+    },
+    {
+      key: "meeting_pending",
+      label: "Meeting (pending)",
+      seconds: financials.pendingMeetingSeconds,
+      bar: "bg-blue-300 dark:bg-blue-400/60",
+      badge: "bg-blue-400/15 text-blue-600 dark:text-blue-300",
+      paid: true,
+    },
+    {
+      key: "excess_late",
+      label: "Excess lateness (unpaid)",
+      seconds: financials.deductibleLateSeconds,
+      bar: "bg-rose-500",
+      badge: "bg-rose-500/15 text-rose-700 dark:text-rose-300",
+      paid: false,
+    },
+  ].filter((segment) => segment.seconds > 0);
+}
+
+function PayableBreakdownBar({ financials }: { financials: PayableBreakdown }) {
+  const segments = buildBreakdownSegments(financials);
+  if (segments.length === 0) {
+    return null;
+  }
+  const totalSeconds = Math.max(
+    1,
+    segments.reduce((total, segment) => total + segment.seconds, 0),
+  );
+  return (
+    <div className="space-y-2">
+      <span className="block text-xs font-medium text-muted-foreground">
+        Payable adjustments
+      </span>
+      <div
+        className="flex h-3 overflow-hidden rounded-sm bg-muted"
+        aria-label="Payable adjustments bar"
+      >
+        {segments.map((segment) => (
+          <span
+            key={segment.key}
+            className={segment.bar}
+            style={{ width: `${(segment.seconds / totalSeconds) * 100}%` }}
+            title={`${segment.label}: ${formatDurationSeconds(segment.seconds)}`}
+          />
+        ))}
+      </div>
+      <div className="flex flex-wrap gap-2">
+        {segments.map((segment) => (
+          <span
+            key={segment.key}
+            className={`inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs font-medium ${segment.badge}`}
+          >
+            <span className={`h-2 w-2 rounded-full ${segment.bar}`} />
+            {segment.label}
+            <strong className="font-mono">
+              {formatDurationSeconds(segment.seconds)}
+            </strong>
+          </span>
+        ))}
+      </div>
+      <p className="text-xs text-muted-foreground">
+        These are payable-policy overlays on the activity above: paid late
+        allowance, delayed-break claims, and approved/pending meeting time are
+        paid; excess lateness is the unpaid remainder after the allowance.
+      </p>
+    </div>
+  );
+}
+
+export function WorkdayTimeline({
+  timeline,
+  financials,
+}: {
+  timeline?: WorkdayTimelineData;
+  financials?: PayableBreakdown;
+}) {
   if (!timeline || timeline.intervals.length === 0) {
     if (timeline?.approvedLeave) {
       return (
@@ -194,6 +315,8 @@ export function WorkdayTimeline({ timeline }: { timeline?: WorkdayTimelineData }
         idle shows recorded device inactivity; requestable or deductible idle can be lower because
         paid grace, breaks, off-shift time, and periods shorter than one minute are excluded.
       </p>
+
+      {financials && <PayableBreakdownBar financials={financials} />}
 
       <div className="divide-y rounded-md border">
         {timeline.intervals.map((interval, index) => {

@@ -17,6 +17,16 @@ contextBridge.exposeInMainWorld("khaliduo", {
     ipcRenderer.invoke("agent:pause-tracking", options),
   resumeTracking: () => ipcRenderer.invoke("agent:resume-tracking"),
   resumeAutomaticIdle: () => ipcRenderer.invoke("agent:resume-automatic-idle"),
+  startMeeting: (input: {
+    title: string;
+    reason: string;
+    expectedEndMinutes: number;
+    projectId?: string | null;
+    taskId?: string | null;
+  }) => ipcRenderer.invoke("agent:start-meeting", input),
+  endMeeting: () => ipcRenderer.invoke("agent:end-meeting"),
+  refreshMeetings: () => ipcRenderer.invoke("agent:refresh-meetings"),
+  retryMeetingSync: () => ipcRenderer.invoke("agent:retry-meeting-sync"),
   confirmTrackingStart: () =>
     ipcRenderer.invoke("agent:confirm-tracking-start"),
   declineTrackingStart: () =>
@@ -57,7 +67,7 @@ contextBridge.exposeInMainWorld("khaliduo", {
   createTimeAdjustmentRequest: (input: {
     requestedMinutes: number;
     reason: string;
-    requestType?: "idle_time" | "early_leave" | "manual_time";
+    requestType?: "idle_time" | "early_leave" | "manual_time" | "delayed_break";
     requestedDate?: string;
     workSessionId?: string;
     sourceStartAt?: string;
@@ -70,6 +80,17 @@ contextBridge.exposeInMainWorld("khaliduo", {
     leaveType?: "annual" | "sick" | "unpaid";
     reason?: string;
   }) => ipcRenderer.invoke("agent:create-leave-request", input),
+  listShiftReschedules: () => ipcRenderer.invoke("agent:list-shift-reschedules"),
+  getShiftRescheduleDay: (workDate: string) =>
+    ipcRenderer.invoke("agent:get-shift-reschedule-day", workDate),
+  createShiftReschedule: (input: {
+    workDate: string;
+    requestedStart: string;
+    requestedEnd: string;
+    reason: string;
+  }) => ipcRenderer.invoke("agent:create-shift-reschedule", input),
+  cancelShiftReschedule: (requestId: string) =>
+    ipcRenderer.invoke("agent:cancel-shift-reschedule", requestId),
   setIdleAlertAttention: (active: boolean) =>
     ipcRenderer.send("agent:set-idle-alert-attention", active),
   setUpdateAttention: (active: boolean) =>
@@ -92,7 +113,7 @@ contextBridge.exposeInMainWorld("khaliduo", {
   onIdleAlert: (
     callback: (alert: {
       id: string;
-      kind: "idle_return" | "tracking_start";
+      kind: "idle_return" | "tracking_start" | "idle_started";
       lostSeconds: number;
       eligibleLostSeconds: number;
       outsideScheduledShift: boolean;
@@ -103,7 +124,7 @@ contextBridge.exposeInMainWorld("khaliduo", {
       _event: Electron.IpcRendererEvent,
       alert: {
         id: string;
-        kind: "idle_return" | "tracking_start";
+        kind: "idle_return" | "tracking_start" | "idle_started";
         lostSeconds: number;
         eligibleLostSeconds: number;
         outsideScheduledShift: boolean;

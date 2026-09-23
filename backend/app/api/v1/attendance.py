@@ -24,6 +24,7 @@ from app.models import (
     AdminUser,
     AttendanceCorrection,
     DailyAttendance,
+    Device,
     Employee,
     LeaveRequest,
     OvertimeRecord,
@@ -45,7 +46,9 @@ from app.services.attendance import (
     calculate_daily_attendance,
     serialize_daily_attendance,
 )
+from app.services.employee_archive import cap_to_employment_end, current_employee_clause
 from app.services.permissions import require_capability
+from app.services.session_tracking import close_open_session, session_zone, utc as _session_utc
 from app.services.schedules import (
     effective_schedules_for_employees,
     effective_schedules_for_range,
@@ -70,6 +73,19 @@ class AttendanceCorrectionUpdate(BaseModel):
         if self.start_time is None and self.end_time is None and self.payable_minutes_delta == 0:
             raise ValueError("Enter a corrected time or a payable-time adjustment.")
         return self
+
+
+class AdminSessionCloseRequest(BaseModel):
+    """Administratively close a live work session at a validated end time.
+
+    Distinct from an attendance correction: this ends the underlying live
+    WorkSession lifecycle (a corrected end time alone never does). Requires the
+    device/session-management capability, not just timesheets.manage.
+    """
+
+    session_id: UUID | None = None
+    ended_at: datetime | None = None
+    reason: str = Field(min_length=3, max_length=2000)
 
 
 def _ensure_unlocked_payroll_day(
@@ -198,7 +214,7 @@ def _employee_statement(
     statement = (
         select(Employee)
         .options(selectinload(Employee.work_profile))
-        .where(Employee.company_id == admin.company_id, Employee.status != "deleted")
+        .where(Employee.company_id == admin.company_id, current_employee_clause())
         .order_by(Employee.name)
     )
     scope = accessible_employee_ids_statement(db, admin, team_id)
@@ -289,7 +305,7 @@ def _refresh_missing_daily_attendance(
                 .where(
                     Employee.company_id == company_id,
                     Employee.id.in_(employee_ids),
-                    Employee.status != "deleted",
+                    current_employee_clause(),
                 )
                 .order_by(Employee.name)
             ).all()
@@ -650,6 +666,102 @@ def employee_day_detail(
     return success_response(data=data)
 
 
+@router.post("/employee/{employee_id}/sessions/close")
+def admin_close_session(
+    employee_id: UUID,
+    payload: AdminSessionCloseRequest,
+    request: Request,
+    current_admin: Annotated[AdminUser, Depends(get_current_admin)],
+    db: Annotated[Session, Depends(get_db)],
+    team_id: UUID | None = None,
+):
+    """Administratively close a still-running work session at a validated time.
+
+    Separate from attendance correction on purpose: saving a corrected end time
+    never stops a live session. This is the dedicated, audited operation for
+    remotely ending one — for example the overnight incident, where the erroneous
+    running session must be closed at the verified boundary before the day is
+    corrected. Requires ``devices.manage`` (not merely ``timesheets.manage``) and
+    enforces team scope. Idempotent: an already-closed session is returned
+    unchanged. A stale (<= end) heartbeat cannot reopen the closed session; only
+    genuinely later active input starts a new one.
+    """
+    require_capability(current_admin, "devices.manage")
+    employee = ensure_employee_access(db, current_admin, employee_id, team_id)
+
+    statement = select(WorkSession).where(
+        WorkSession.company_id == current_admin.company_id,
+        WorkSession.employee_id == employee.id,
+        WorkSession.ended_at.is_(None),
+        WorkSession.status.in_(ACTIVE_SESSION_STATUSES | {"offline"}),
+    )
+    if payload.session_id is not None:
+        statement = statement.where(WorkSession.id == payload.session_id)
+    session = db.scalar(statement.order_by(WorkSession.started_at.desc()))
+    if session is None:
+        # Idempotent: nothing live to close (already closed, or a stale request).
+        return success_response(
+            data={"closed": False, "reason": "no_live_session", "session": None}
+        )
+
+    device = db.get(Device, session.device_id)
+    if device is None:
+        raise ApiError("DEVICE_NOT_FOUND", "The session's device was not found.", 404)
+
+    now = datetime.now(UTC)
+    requested_end = _session_utc(payload.ended_at) if payload.ended_at else now
+    # Never before the session start, never in the future.
+    ended_at = max(_session_utc(session.started_at), min(now, requested_end))
+
+    close_open_session(
+        db,
+        device=device,
+        session=session,
+        ended_at=ended_at,
+        reason=f"Administrative close: {payload.reason.strip()}",
+    )
+    db.flush()
+
+    zone = session_zone(db, session)
+    work_date = _session_utc(session.started_at).astimezone(zone).date()
+    calculate_daily_attendance(
+        db,
+        employee=employee,
+        work_date=work_date,
+        now=now,
+    )
+    record_audit_log(
+        db,
+        current_admin,
+        "session_admin_closed",
+        "work_session",
+        entity_id=session.id,
+        entity_name=f"{employee.name} · {work_date.isoformat()}",
+        details={
+            "session_id": str(session.id),
+            "ended_at": ended_at.isoformat(),
+            "reason": payload.reason.strip(),
+            "work_date": work_date.isoformat(),
+        },
+        request=request,
+    )
+    db.commit()
+    db.refresh(session)
+    return success_response(
+        data={
+            "closed": True,
+            "session": {
+                "id": str(session.id),
+                "ended_at": _session_utc(session.ended_at).isoformat()
+                if session.ended_at
+                else None,
+                "status": session.status,
+                "work_date": work_date.isoformat(),
+            },
+        }
+    )
+
+
 @router.patch("/employee/{employee_id}/{work_date}/correction")
 def update_employee_day_correction(
     employee_id: UUID,
@@ -882,7 +994,7 @@ def employee_attendance_range(
     # A monthly ledger is historical evidence, not a forward schedule. Rebuilding
     # every future date on each request made the current month progressively
     # slower and produced rows that could not contain attendance yet.
-    ledger_end_date = min(end_date, employee_today)
+    ledger_end_date = cap_to_employment_end(employee, min(end_date, employee_today))
     existing_by_day = {
         row.work_date: row
         for row in db.scalars(

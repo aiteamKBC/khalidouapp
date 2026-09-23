@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 
 import { getDailyAttendance, type DailyAttendance } from "@/api/attendance";
+import { CorrectAttendanceButton } from "@/components/attendance/attendance-correction-dialog";
 import { retryTransientRequest } from "@/api/client";
 import { employeeDisplayStatus, listMonitoringEmployees } from "@/api/employees";
 import { listMonitoringTeams } from "@/api/teams";
@@ -928,10 +929,29 @@ function DailyAttendanceTab({
 
       <Card>
         <CardHeader>
-          <CardTitle>Workday timeline</CardTitle>
-          <p className="text-sm text-muted-foreground">
-            Worked, idle, locked, and sleeping periods recorded during this workday.
-          </p>
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div>
+              <CardTitle className="flex items-center gap-2">
+                Workday timeline
+                {row.attendanceCorrection && (
+                  <span className="rounded bg-amber-500/15 px-2 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-300">
+                    Attendance corrected
+                  </span>
+                )}
+              </CardTitle>
+              <p className="text-sm text-muted-foreground">
+                Worked, idle, locked, and sleeping periods recorded during this workday.
+              </p>
+            </div>
+            <CorrectAttendanceButton
+              employeeId={row.employeeId}
+              workDate={row.date}
+              attendance={row}
+              onSaved={async () => {
+                await attendance.refetch();
+              }}
+            />
+          </div>
         </CardHeader>
         <CardContent>
           <WorkdayTimeline timeline={row.timeline} />

@@ -315,8 +315,11 @@ def team_client():
         [
             screenshot_a,
             screenshot_b,
-            TrackingSettings(company_id=company.id),
-            TrackingSettings(company_id=other_company.id),
+            # These team-authorization scenarios are calibrated to a 10-minute
+            # idle threshold and are independent of the production policy default
+            # (now 15). Pin the threshold explicitly so the fixtures stay stable.
+            TrackingSettings(company_id=company.id, idle_threshold_minutes=10),
+            TrackingSettings(company_id=other_company.id, idle_threshold_minutes=10),
         ]
     )
     db.commit()
@@ -2797,6 +2800,16 @@ def test_desktop_summary_matches_employee_periods_and_profile(team_client):
             "manual_pending_seconds",
             "manual_rejected_seconds",
         }.issubset(period)
+    # The break-bank ledger is surfaced so the desktop can show saved break
+    # time and gate the delayed-break claim.
+    assert {
+        "policy_active",
+        "earned_seconds",
+        "approved_seconds",
+        "reserved_seconds",
+        "remaining_seconds",
+        "paid_late_allowance_seconds",
+    }.issubset(summary["break_bank"])
 
 
 def test_daily_timesheet_uses_employee_local_date_for_sessions_and_screenshots(

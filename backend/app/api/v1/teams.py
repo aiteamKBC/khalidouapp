@@ -47,6 +47,7 @@ from app.schemas.admin import (
     TeamUpdate,
 )
 from app.services.audit import record_audit_log
+from app.services.employee_archive import current_employee_clause
 from app.services.attendance import accountable_idle_totals, current_idle_contexts
 from app.services.projects import ensure_general_work_project
 from app.services.screenshots import serialize_screenshot
@@ -228,7 +229,11 @@ def list_team_members(
     rows = db.execute(
         select(Employee, TeamMember.role)
         .join(TeamMember, TeamMember.employee_id == Employee.id)
-        .where(TeamMember.team_id == team_id, TeamMember.status == "active")
+        .where(
+            TeamMember.team_id == team_id,
+            TeamMember.status == "active",
+            current_employee_clause(),
+        )
         .order_by(Employee.name)
     ).all()
     data = []
@@ -498,6 +503,7 @@ def team_summary(
     total_employees_query = select(func.count()).where(
         Employee.id.in_(employee_ids),
         Employee.company_id == current_admin.company_id,
+        current_employee_clause(),
     )
     online_employees_query = select(func.count(func.distinct(Device.employee_id))).where(
         Device.company_id == current_admin.company_id,
@@ -676,6 +682,7 @@ def team_reports(
                 TimeAdjustmentRequest.company_id == current_admin.company_id,
                 TimeAdjustmentRequest.employee_id.in_(employee_ids),
                 TimeAdjustmentRequest.status == "approved",
+                TimeAdjustmentRequest.request_type != "delayed_break",
             )
         )
         or 0

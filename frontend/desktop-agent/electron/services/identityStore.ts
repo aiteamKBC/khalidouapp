@@ -31,10 +31,16 @@ function getIdentityPath() {
 }
 
 function getLegacyIdentityPaths() {
-  const currentPath = path.resolve(getIdentityPath());
+  // A development run keeps its own userData (see main.ts). Never adopt the
+  // installed app's identity: on Windows the legacy "Khaliduo" folder IS the
+  // packaged app's folder (paths are case-insensitive).
+  if (!app.isPackaged) {
+    return [];
+  }
+  const currentPath = path.resolve(getIdentityPath()).toLowerCase();
   return ['khaliduo-desktop-agent', 'Khaliduo']
     .map((directoryName) => path.join(app.getPath('appData'), directoryName, 'identity.json'))
-    .filter((candidate) => path.resolve(candidate) !== currentPath);
+    .filter((candidate) => path.resolve(candidate).toLowerCase() !== currentPath);
 }
 
 function ensureUserDataDirectory() {
@@ -53,7 +59,12 @@ function readIdentityFile(): StoredIdentity | null {
       const identity = JSON.parse(fs.readFileSync(candidatePath, 'utf-8')) as StoredIdentity;
       if (identity.installationId) {
         if (candidatePath !== filePath) {
-          writeIdentityFile(identity);
+          // The device token is encrypted with the OTHER folder's safeStorage
+          // key and can never be decrypted here. Keep only the installation
+          // id; the employee signs in again instead of every request failing.
+          const migrated: StoredIdentity = { installationId: identity.installationId };
+          writeIdentityFile(migrated);
+          return migrated;
         }
         return identity;
       }
@@ -98,7 +109,31 @@ export function getDeviceToken(): string | null {
     throw new Error('Windows secure storage is not available.');
   }
 
-  return safeStorage.decryptString(Buffer.from(identity.encryptedDeviceToken, 'base64'));
+  try {
+    return safeStorage.decryptString(Buffer.from(identity.encryptedDeviceToken, 'base64'));
+  } catch {
+    throw new Error('The saved sign-in on this device can no longer be read. Sign in again.');
+  }
+}
+
+/**
+ * Startup check: a stored token that cannot be decrypted (copied from another
+ * profile, or the OS key was reset) makes every API call fail while the app
+ * still looks signed in. Drop the unusable enrollment so the sign-in screen
+ * shows instead. Returns true when the enrollment was cleared.
+ */
+export function discardUndecryptableEnrollment(): boolean {
+  const identity = loadIdentity();
+  if (!identity.encryptedDeviceToken || !safeStorage.isEncryptionAvailable()) {
+    return false;
+  }
+  try {
+    safeStorage.decryptString(Buffer.from(identity.encryptedDeviceToken, 'base64'));
+    return false;
+  } catch {
+    clearEnrollmentIdentity();
+    return true;
+  }
 }
 
 export function saveEnrollmentIdentity(enrollment: EnrollmentIdentity): StoredIdentity {

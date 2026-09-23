@@ -22,6 +22,13 @@ type BackendTimesheet = {
   observed_idle_seconds?: number;
   recorded_overtime_seconds?: number;
   adjustment_seconds?: number;
+  payable_seconds?: number;
+  paid_break_seconds?: number;
+  paid_late_allowance_seconds?: number;
+  approved_delayed_break_seconds?: number;
+  approved_meeting_seconds?: number;
+  pending_meeting_seconds?: number;
+  financial_policy_active?: boolean;
   deducted_seconds?: number;
   points?: number;
   screenshot_count: number;
@@ -50,6 +57,13 @@ function mapTimesheet(row: BackendTimesheet, teamId: string): Timesheet {
     accountableIdleMinutes: toMinutes(row.idle_seconds),
     overtimeMinutes: toMinutes(row.recorded_overtime_seconds ?? 0),
     adjustmentMinutes: toMinutes(row.adjustment_seconds ?? 0),
+    payableMinutes: toMinutes(row.payable_seconds ?? 0),
+    paidBreakMinutes: toMinutes(row.paid_break_seconds ?? 0),
+    paidLateAllowanceMinutes: toMinutes(row.paid_late_allowance_seconds ?? 0),
+    delayedBreakMinutes: toMinutes(row.approved_delayed_break_seconds ?? 0),
+    approvedMeetingMinutes: toMinutes(row.approved_meeting_seconds ?? 0),
+    pendingMeetingMinutes: toMinutes(row.pending_meeting_seconds ?? 0),
+    financialPolicyActive: row.financial_policy_active ?? false,
     deductedMinutes: toMinutes(row.deducted_seconds ?? 0),
     points: row.points ?? Math.round((row.active_seconds / 3600) * 100) / 100,
     screenshotCount: row.screenshot_count,

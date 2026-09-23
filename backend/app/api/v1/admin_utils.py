@@ -57,6 +57,11 @@ def serialize_employee(employee: Employee, invitation=None) -> dict[str, Any]:
         else None,
         "portal_last_login_ip": employee.portal_last_login_ip,
         "portal_last_user_agent": employee.portal_last_user_agent,
+        "archived_at": employee.archived_at.isoformat() if employee.archived_at else None,
+        "archive_reason": employee.archive_reason,
+        "last_working_day": (
+            employee.last_working_day.isoformat() if employee.last_working_day else None
+        ),
         "created_at": employee.created_at.isoformat(),
         "updated_at": employee.updated_at.isoformat(),
     }

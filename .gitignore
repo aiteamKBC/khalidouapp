@@ -55,5 +55,5 @@ docs/DESKTOP-*.md
 docs/WEB-*.md
 docs/CLAUDE-*.md
 docs/desktop-*.md
-docs/web-*.md
+docs/*.md
 HANDOVER.md

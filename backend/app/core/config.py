@@ -74,10 +74,15 @@ class Settings(BaseSettings):
     default_screenshots_per_interval: int = Field(
         default=1, alias="DEFAULT_SCREENSHOTS_PER_INTERVAL"
     )
-    default_idle_threshold_minutes: int = Field(default=10, alias="DEFAULT_IDLE_THRESHOLD_MINUTES")
+    default_idle_threshold_minutes: int = Field(default=15, alias="DEFAULT_IDLE_THRESHOLD_MINUTES")
     default_offline_threshold_minutes: int = Field(
         default=3, alias="DEFAULT_OFFLINE_THRESHOLD_MINUTES"
     )
+    # Oldest desktop agent whose reported active/idle counters are trusted across
+    # long heartbeat gaps, and the floor below which the heartbeat reports an
+    # update-required state. Releases <= 1.1.95 over-counted sleep/hibernate
+    # freezes as active work (commit 09a209b); 1.1.96 fixed it with trackingTick.
+    required_agent_version: str = Field(default="1.1.96", alias="REQUIRED_AGENT_VERSION")
     default_screenshot_retention_days: int = Field(
         default=30, alias="DEFAULT_SCREENSHOT_RETENTION_DAYS"
     )

@@ -1,7 +1,10 @@
-const IDLE_THRESHOLD_SECONDS = 10 * 60;
+const DEFAULT_IDLE_THRESHOLD_MINUTES = 15;
 
-function hasReachedIdleThreshold(systemIdleSeconds: number) {
-  return systemIdleSeconds >= IDLE_THRESHOLD_SECONDS;
+function hasReachedIdleThreshold(systemIdleSeconds: number, thresholdMinutes = 15) {
+  const minutes = Number.isFinite(thresholdMinutes)
+    ? Math.max(1, Math.floor(thresholdMinutes))
+    : DEFAULT_IDLE_THRESHOLD_MINUTES;
+  return systemIdleSeconds >= minutes * 60;
 }
 
 export type RuntimeTrackingStatus =
@@ -57,6 +60,7 @@ export function screenshotCaptureBlockReasonForState(options: {
   onAcPower: boolean;
   trackingStatus: RuntimeTrackingStatus;
   systemIdleSeconds: number;
+  idleThresholdMinutes?: number;
 }): string | null {
   if (!options.enrolled) return "device_not_enrolled";
   if (!options.screenshotsEnabled) return "capture_disabled";
@@ -67,7 +71,10 @@ export function screenshotCaptureBlockReasonForState(options: {
   if (options.trackingStatus === "sleeping") return "system_sleeping";
   if (
     options.trackingStatus === "idle" ||
-    hasReachedIdleThreshold(options.systemIdleSeconds)
+    hasReachedIdleThreshold(
+      options.systemIdleSeconds,
+      options.idleThresholdMinutes,
+    )
   ) {
     return "no_user_activity";
   }

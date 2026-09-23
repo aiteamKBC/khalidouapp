@@ -130,6 +130,22 @@ export async function listLeaveBalanceOverview(
   }));
 }
 
+// HR / Super Admin: set how many holiday days the employee has left this year
+// (e.g. carried over from before Khaliduo). The server derives the allowance.
+export async function setRemainingLeaveDays(
+  employeeId: string,
+  year: number,
+  remainingDays: number,
+) {
+  return apiFetch<{ year: number; credit_days: number; used_days: number; remaining_days: number }>(
+    withQuery(`/leave-requests/balances/${employeeId}`, { year }),
+    {
+      method: "PUT",
+      body: JSON.stringify({ remaining_days: remainingDays }),
+    },
+  );
+}
+
 export async function reviewLeaveRequest(id: string, status: "approved" | "rejected") {
   return mapLeave(
     await apiFetch<BackendLeaveRequest>(`/leave-requests/${id}`, {

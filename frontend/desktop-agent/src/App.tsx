@@ -14,6 +14,7 @@ import type {
   AgentStatus,
   AgentTask,
   IdleAlert,
+  MeetingSummary,
   RecentScreenshot,
   WorkdayTimeline,
 } from "./types/electron";
@@ -30,6 +31,7 @@ import {
 } from "./idleRequests";
 import { OperationTimeoutError, withOperationTimeout } from "./promiseTimeout";
 import { toValidDate } from "./safeDate";
+import { ShiftRescheduleCard } from "./ShiftRescheduleCard";
 import {
   screenshotSyncLabel,
   shouldReloadScreenshotsAfterRecovery,
@@ -90,6 +92,9 @@ const fallbackStatus: AgentStatus = {
   updateStatus: "idle",
   updateVersion: null,
   updatePercent: null,
+  activeMeeting: null,
+  meetings: [],
+  breakBank: null,
   privacyNotice:
     "While work tracking is active, Khaliduo records the foreground application name and, for supported browsers, the website domain. Company policy may also capture periodic workplace screenshots while this enrolled device is active, unlocked, and connected to AC power. Full URLs, page titles, typed text, passwords, webcam, microphone, and personal files are not recorded.",
 };
@@ -150,6 +155,7 @@ type KIconName =
   | "sleeping"
   | "untracked"
   | "settings"
+  | "meeting"
   | "update"
   | "sun"
   | "moon";
@@ -205,6 +211,12 @@ function KIcon({
         <path d="M4 8h16v10.2A1.8 1.8 0 0 1 18.2 20H5.8A1.8 1.8 0 0 1 4 18.2Z" />
         <path d="M4 12h16" />
         <path d="M10 12v2h4v-2" />
+      </>
+    ),
+    meeting: (
+      <>
+        <path d="M3 7.5A1.5 1.5 0 0 1 4.5 6h9A1.5 1.5 0 0 1 15 7.5v9A1.5 1.5 0 0 1 13.5 18h-9A1.5 1.5 0 0 1 3 16.5Z" />
+        <path d="M15 10.5 21 7v10l-6-3.5" />
       </>
     ),
     worked: (
@@ -455,7 +467,7 @@ function App() {
   const [enrollmentError, setEnrollmentError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [activeView, setActiveView] = useState<
-    "home" | "tasks" | "requests" | "settings"
+    "home" | "tasks" | "requests" | "meeting" | "settings"
   >("home");
   const [projectFilterId, setProjectFilterId] = useState("");
   const [sessionNote, setSessionNote] = useState("");
@@ -797,6 +809,9 @@ function App() {
   );
   const isNotWorkingOutsideShift =
     isExtraTime && (isPaused || isIdleState || !isTracking);
+  // Away during a scheduled break: paid break time, never shown as idle.
+  const onScheduledBreak =
+    isTracking && isIdleState && !isPaused && Boolean(status.scheduledBreak);
   const timerTone = isPaused
     ? "paused"
     : isTracking && isExtraTime
@@ -806,7 +821,9 @@ function App() {
         : isIdleState
           ? "paused"
           : "stopped";
-  const statusText = isNotWorkingOutsideShift
+  const statusText = onScheduledBreak
+    ? `On break · ${status.scheduledBreak?.name ?? "Break"}`
+    : isNotWorkingOutsideShift
     ? "Off shift"
     : isPaused
       ? "Paused"
@@ -818,7 +835,8 @@ function App() {
             : "Paid shift"
         : "No timer running";
   const displayedTimerSeconds = mainTimerSeconds({
-    isAutomaticIdle: status.trackingStatus === "idle" && !isPaused,
+    isAutomaticIdle:
+      status.trackingStatus === "idle" && !isPaused && !onScheduledBreak,
     isExtraTime,
     currentIdleSeconds: status.currentIdleSeconds,
     extraSeconds,
@@ -977,6 +995,40 @@ function App() {
       );
     } finally {
       setIsSubmittingTimeRequest(false);
+    }
+  }
+
+  async function handleDelayedBreakRequest(input: {
+    requestedMinutes: number;
+    reason: string;
+    idle: IdleRequestOption;
+  }): Promise<{ success: boolean; message?: string }> {
+    if (!window.khaliduo || !status.enrolled) {
+      return {
+        success: false,
+        message: "Device must be enrolled before sending a request.",
+      };
+    }
+    try {
+      const result = await window.khaliduo.createTimeAdjustmentRequest({
+        requestedMinutes: input.requestedMinutes,
+        reason: input.reason,
+        requestType: "delayed_break",
+        requestedDate: status.todayTimeline?.date ?? localDateKey(),
+        workSessionId: input.idle.sessionId,
+        sourceStartAt: input.idle.startedAt,
+        sourceEndAt: input.idle.endedAt,
+      });
+      if (result.success && result.status) setStatus(result.status);
+      return result;
+    } catch (error) {
+      return {
+        success: false,
+        message: ipcErrorMessage(
+          error,
+          "The claim could not be sent. Please try again.",
+        ),
+      };
     }
   }
 
@@ -1396,10 +1448,16 @@ function App() {
     shownIdleAlertId.current = alert.id;
     window.khaliduo?.setIdleAlertAttention(true);
     const isTrackingStart = alert.kind === "tracking_start";
-    const canRequestManualTime =
-      !isTrackingStart &&
-      !alert.outsideScheduledShift &&
-      alert.eligibleLostSeconds > 0;
+    // Shown the moment idle is detected (at the threshold), before any input
+    // returns. Distinguishes "Continue working" (mistaken detection, resume now)
+    // from "I was working during this idle period" (an explanation request that
+    // still requires review — never a retrospective self-approval).
+    const isIdleStarted = alert.kind === "idle_started";
+    const canRequestManualTime = isIdleStarted
+      ? !alert.outsideScheduledShift
+      : !isTrackingStart &&
+        !alert.outsideScheduledShift &&
+        alert.eligibleLostSeconds > 0;
     let result: SweetAlertResult;
     try {
       result = await Swal.fire({
@@ -1407,14 +1465,18 @@ function App() {
           ? alert.outsideScheduledShift
             ? "Start extra time?"
             : "Start work tracking?"
-          : "Confirm you are back",
+          : isIdleStarted
+            ? "Are you still working?"
+            : "Confirm you are back",
         text: isTrackingStart
           ? alert.outsideScheduledShift
             ? "You are outside your scheduled shift. A device being on or mouse and keyboard movement alone will not start time. Confirm only if you are actually working."
             : "Khaliduo will not count time just because this device is on. Confirm that you are present and actually starting work."
-          : canRequestManualTime
-            ? `Input was detected after ${formatDuration(alert.lostSeconds)} away. Choose Continue to resume now; ${formatDuration(alert.eligibleLostSeconds)} inside your paid shift remains available to explain.`
-            : `Input was detected after ${formatDuration(alert.lostSeconds)} away. Choose Continue to resume tracking now.`,
+          : isIdleStarted
+            ? "No keyboard or mouse activity was detected, so idle time has started. Choose Continue working if you are here. If you were working away from the computer, submit an explanation for review."
+            : canRequestManualTime
+              ? `Input was detected after ${formatDuration(alert.lostSeconds)} away. Choose Continue to resume now; ${formatDuration(alert.eligibleLostSeconds)} inside your paid shift remains available to explain.`
+              : `Input was detected after ${formatDuration(alert.lostSeconds)} away. Choose Continue to resume tracking now.`,
         icon: "warning",
         showDenyButton: true,
         showCancelButton: canRequestManualTime,
@@ -1422,9 +1484,13 @@ function App() {
           ? alert.outsideScheduledShift
             ? "Start extra time"
             : "Start work"
-          : "Continue tracking",
+          : isIdleStarted
+            ? "Continue working"
+            : "Continue tracking",
         denyButtonText: isTrackingStart ? "Not working" : "Stop tracking",
-        cancelButtonText: "Request manual time",
+        cancelButtonText: isIdleStarted
+          ? "I was working during this idle period"
+          : "Request manual time",
         confirmButtonColor: "#1f7a4d",
         denyButtonColor: "#842029",
         allowEscapeKey: false,
@@ -1571,6 +1637,15 @@ function App() {
               aria-label="Requests"
             >
               <KIcon name="calendar" />
+            </button>
+            <button
+              type="button"
+              className={activeView === "meeting" ? "active" : ""}
+              onClick={() => setActiveView("meeting")}
+              title="Meeting"
+              aria-label="Meeting"
+            >
+              <KIcon name="meeting" />
             </button>
             <button
               type="button"
@@ -1850,6 +1925,11 @@ function App() {
             />
           )}
           {activeView === "requests" && (
+            <>
+            <BreakBankCard
+              status={status}
+              onSubmit={handleDelayedBreakRequest}
+            />
             <RequestCentreView
               status={status}
               timeRequestReason={timeRequestReason}
@@ -1887,6 +1967,17 @@ function App() {
               }}
               onSubmitIdleTimeRequest={handleIdleTimeRequest}
               onSubmitEarlyLeaveRequest={handleEarlyLeaveRequest}
+            />
+            <ShiftRescheduleCard enrolled={status.enrolled} />
+            </>
+          )}
+          {activeView === "meeting" && (
+            <MeetingView
+              status={status}
+              onRefresh={async () => {
+                const next = await window.khaliduo?.getAgentStatus();
+                if (next) setStatus(next);
+              }}
             />
           )}
           {activeView === "settings" && (
@@ -1991,9 +2082,11 @@ function Sidebar({
   onOpenDashboard,
   isTracking,
 }: {
-  activeView: "home" | "tasks" | "requests" | "settings";
+  activeView: "home" | "tasks" | "requests" | "meeting" | "settings";
   status: AgentStatus;
-  onViewChange: (view: "home" | "tasks" | "requests" | "settings") => void;
+  onViewChange: (
+    view: "home" | "tasks" | "requests" | "meeting" | "settings",
+  ) => void;
   onOpenDashboard: () => void;
   isTracking: boolean;
 }) {
@@ -2022,6 +2115,13 @@ function Sidebar({
         >
           <KIcon name="calendar" />
           <span>Requests</span>
+        </button>
+        <button
+          className={activeView === "meeting" ? "active" : ""}
+          onClick={() => onViewChange("meeting")}
+        >
+          <KIcon name="meeting" />
+          <span>Meeting</span>
         </button>
         <button
           className={activeView === "settings" ? "active" : ""}
@@ -2187,10 +2287,16 @@ function HomeView({
     Intl.DateTimeFormat().resolvedOptions().timeZone ??
     "UTC";
   const isAutomaticIdle =
-    status.trackingStatus === "idle" && !status.trackingPaused;
+    status.trackingStatus === "idle" &&
+    !status.trackingPaused &&
+    !status.scheduledBreak;
   const heroStatusLabel = !hasRunningSession
     ? statusLabel
-    : isExtraTime &&
+    : status.scheduledBreak &&
+        !isPaused &&
+        ["idle", "locked", "sleeping"].includes(status.trackingStatus)
+      ? `On break · ${status.scheduledBreak.name}`
+      : isExtraTime &&
         (isPaused ||
           ["idle", "locked", "sleeping"].includes(status.trackingStatus))
       ? "Off shift"
@@ -2271,7 +2377,7 @@ function HomeView({
             className="k-ring"
             aria-label={
               isAutomaticIdle
-                ? `Idle for ${formatDuration(displayedTimerSeconds)} after the ten-minute grace period`
+                ? `Idle for ${formatDuration(displayedTimerSeconds)} after the idle threshold`
                 : isExtraTime
                   ? `Recorded overtime ${formatDuration(displayedTimerSeconds)}`
                   : `Worked today ${formatDuration(trackedTodaySeconds)}; ${formatDuration(countedTodaySeconds)} counts toward the ${formatDuration(status.dailyTargetSeconds)} target`
@@ -2286,7 +2392,7 @@ function HomeView({
               <strong>{formatDuration(displayedTimerSeconds)}</strong>
               <small>
                 {isAutomaticIdle
-                  ? "Idle time after 10-minute grace"
+                  ? "Idle time (outside breaks)"
                   : isExtraTime
                     ? "Overtime recorded today"
                     : `Worked today · ${targetProgress}% of ${formatDuration(status.dailyTargetSeconds)} target`}
@@ -3730,6 +3836,498 @@ function RequestCentreView(props: RequestCentreProps) {
   );
 }
 
+function meetingStatusLabel(status: MeetingSummary["status"]) {
+  if (status === "approved") return "Approved";
+  if (status === "rejected") return "Rejected";
+  return "Pending review";
+}
+
+// The single lifecycle+sync label. A meeting is only "Pending review" once the
+// server has confirmed its end; before that it is clearly a local/waiting state.
+function meetingStateLabel(
+  syncState: MeetingSummary["syncState"],
+  status: MeetingSummary["status"],
+  lifecycleState: MeetingSummary["lifecycleState"],
+) {
+  switch (syncState) {
+    case "start_pending":
+      return "In progress · waiting to sync";
+    case "start_synced":
+      return "In progress · synced";
+    case "end_pending":
+      return "Ending · waiting to sync";
+    case "start_error":
+    case "end_error":
+      return "Sync failed · tap Retry";
+    default:
+      if (lifecycleState === "active") return "In progress";
+      return meetingStatusLabel(status);
+  }
+}
+
+// A CSS-class-friendly kind for the badge color.
+function meetingStateKind(
+  syncState: MeetingSummary["syncState"],
+  status: MeetingSummary["status"],
+  lifecycleState: MeetingSummary["lifecycleState"],
+) {
+  if (syncState === "start_error" || syncState === "end_error") return "failed";
+  if (syncState === "start_pending" || syncState === "end_pending") return "waiting";
+  if (lifecycleState === "active") return "inprogress";
+  return status;
+}
+
+function BreakBankCard({
+  status,
+  onSubmit,
+}: {
+  status: AgentStatus;
+  onSubmit: (input: {
+    requestedMinutes: number;
+    reason: string;
+    idle: IdleRequestOption;
+  }) => Promise<{ success: boolean; message?: string }>;
+}) {
+  const bank = status.breakBank;
+  const idleOptions = useMemo<IdleRequestOption[]>(() => {
+    return (status.idleRequestPeriods ?? [])
+      .map((period) => ({
+        key: `${period.work_session_id}|${period.started_at}|${period.ended_at}`,
+        sessionId: period.work_session_id,
+        startedAt: period.started_at,
+        endedAt: period.ended_at,
+        durationSeconds: period.duration_seconds,
+        availableSeconds: period.available_seconds,
+        projectName: period.project_name,
+        taskName: period.task_name,
+      }))
+      .filter((option) => option.availableSeconds >= 60)
+      .reverse();
+  }, [status.idleRequestPeriods]);
+
+  const [selectedKey, setSelectedKey] = useState("");
+  const [reason, setReason] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!idleOptions.length) {
+      setSelectedKey("");
+      return;
+    }
+    if (!selectedKey || !idleOptions.some((o) => o.key === selectedKey)) {
+      setSelectedKey(idleOptions[0].key);
+    }
+  }, [idleOptions, selectedKey]);
+
+  // The break bank is a phase-1 financial-policy feature; hide it entirely
+  // until the company has an active effective date so nothing new appears
+  // for companies still on the previous behavior.
+  if (!bank || !bank.policy_active) {
+    return null;
+  }
+
+  const selected =
+    idleOptions.find((o) => o.key === selectedKey) ?? idleOptions[0] ?? null;
+  const remainingMinutes = Math.floor(bank.remaining_seconds / 60);
+  const claimableMinutes = selected
+    ? Math.min(remainingMinutes, Math.floor(selected.availableSeconds / 60))
+    : 0;
+
+  async function handleClaim(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError(null);
+    setSuccess(null);
+    if (!selected) {
+      setError("You need a later idle period to apply saved break time to.");
+      return;
+    }
+    if (claimableMinutes < 1) {
+      setError("No whole minutes are available to claim right now.");
+      return;
+    }
+    if (reason.trim().length < 10) {
+      setError(
+        "Describe what you were doing during this idle time (at least 10 characters).",
+      );
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const result = await onSubmit({
+        requestedMinutes: claimableMinutes,
+        reason: reason.trim(),
+        idle: selected,
+      });
+      if (!result.success) {
+        setError(result.message ?? "The claim could not be sent.");
+        return;
+      }
+      setReason("");
+      setSuccess(
+        `Claimed ${claimableMinutes} minute${claimableMinutes === 1 ? "" : "s"} of saved break time for review.`,
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <section className="k-panel k-break-bank">
+      <h2>Saved break time</h2>
+      <p>
+        You earn saved break time when you work through a scheduled break. Claim
+        it against a later idle period today — approved time is paid and does not
+        double-count the work you already did.
+      </p>
+      <div className="k-break-bank-stats">
+        <div>
+          <span className="k-break-bank-label">Remaining</span>
+          <strong>{formatDuration(bank.remaining_seconds)}</strong>
+        </div>
+        <div>
+          <span className="k-break-bank-label">Earned today</span>
+          <strong>{formatDuration(bank.earned_seconds)}</strong>
+        </div>
+        <div>
+          <span className="k-break-bank-label">Approved</span>
+          <strong>{formatDuration(bank.approved_seconds)}</strong>
+        </div>
+        <div>
+          <span className="k-break-bank-label">Pending claims</span>
+          <strong>{formatDuration(bank.reserved_seconds)}</strong>
+        </div>
+      </div>
+      {bank.paid_late_allowance_seconds > 0 && (
+        <p className="k-break-bank-hint">
+          Paid late allowance applied today:{" "}
+          {formatDuration(bank.paid_late_allowance_seconds)}.
+        </p>
+      )}
+
+      {bank.remaining_seconds < 60 ? (
+        <p className="k-break-bank-hint">
+          No saved break time is available to claim right now.
+        </p>
+      ) : idleOptions.length === 0 ? (
+        <p className="k-break-bank-hint">
+          You have {formatDuration(bank.remaining_seconds)} saved. It can be
+          claimed once you have a later idle period today.
+        </p>
+      ) : (
+        <form className="k-form" onSubmit={handleClaim}>
+          <label>
+            Apply to idle period
+            <select
+              value={selected?.key ?? ""}
+              onChange={(event) => setSelectedKey(event.target.value)}
+              disabled={submitting}
+            >
+              {idleOptions.map((option) => (
+                <option key={option.key} value={option.key}>
+                  {new Date(option.startedAt).toLocaleTimeString([], {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })}{" "}
+                  · {formatDuration(option.availableSeconds)} idle
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Reason
+            <textarea
+              value={reason}
+              onChange={(event) => setReason(event.target.value)}
+              placeholder="What were you doing during this time?"
+              maxLength={1000}
+              minLength={10}
+              disabled={submitting}
+              required
+            />
+          </label>
+          <p className="k-break-bank-hint">
+            This claim will request {claimableMinutes} minute
+            {claimableMinutes === 1 ? "" : "s"} (limited by your saved balance
+            and the selected idle period).
+          </p>
+          <button
+            type="submit"
+            className="k-primary"
+            disabled={submitting || claimableMinutes < 1}
+          >
+            {submitting ? "Sending…" : "Claim saved break time"}
+          </button>
+        </form>
+      )}
+      {error && <p className="k-error">{error}</p>}
+      {success && <p className="k-success">{success}</p>}
+    </section>
+  );
+}
+
+function MeetingView({
+  status,
+  onRefresh,
+}: {
+  status: AgentStatus;
+  onRefresh: () => Promise<void>;
+}) {
+  const active = status.activeMeeting;
+  const [title, setTitle] = useState("");
+  const [reason, setReason] = useState("");
+  const [expectedMinutes, setExpectedMinutes] = useState(30);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const [retrying, setRetrying] = useState(false);
+  // A bare tick that forces a re-render every second while any meeting is
+  // active, so every live timer (the top card AND each active Recent row, which
+  // may be running on the server without a local active meeting) stays current.
+  const [, setTick] = useState(0);
+  const hasActiveRow =
+    Boolean(active) ||
+    status.meetings.some((meeting) => meeting.lifecycleState === "active");
+
+  useEffect(() => {
+    void window.khaliduo?.refreshMeetings();
+  }, []);
+
+  useEffect(() => {
+    if (!hasActiveRow) return;
+    const timer = window.setInterval(() => setTick((value) => value + 1), 1000);
+    return () => window.clearInterval(timer);
+  }, [hasActiveRow]);
+
+  async function handleRetry() {
+    setRetrying(true);
+    try {
+      await window.khaliduo?.retryMeetingSync();
+      await onRefresh();
+    } finally {
+      setRetrying(false);
+    }
+  }
+
+  async function handleStart(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError(null);
+    setMessage(null);
+    setSubmitting(true);
+    try {
+      const result = await window.khaliduo?.startMeeting({
+        title,
+        reason,
+        expectedEndMinutes: expectedMinutes,
+      });
+      if (result?.success) {
+        setTitle("");
+        setReason("");
+        setMessage(result.message ?? "Meeting started.");
+      } else {
+        setError(result?.message ?? "Could not start the meeting.");
+      }
+      await onRefresh();
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function handleEnd() {
+    setError(null);
+    setMessage(null);
+    setSubmitting(true);
+    try {
+      const result = await window.khaliduo?.endMeeting();
+      if (result?.success) {
+        setMessage(result.message ?? "Meeting ended.");
+      } else {
+        setError(result?.message ?? "Could not end the meeting.");
+      }
+      await onRefresh();
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  const elapsedSeconds = active
+    ? Math.max(0, Math.floor((Date.now() - Date.parse(active.startedAt)) / 1000))
+    : 0;
+  const expectedEndClock = active
+    ? new Date(active.expectedEndAt).toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+      })
+    : "";
+
+  return (
+    <section className="k-page k-requests-page">
+      <article className="k-panel k-request-card">
+        <header className="k-request-card-header">
+          <span className="k-request-icon">
+            <KIcon name="meeting" />
+          </span>
+          <div>
+            <h2>Meeting Mode</h2>
+            <p className="k-muted">
+              Record an offline meeting or call. Screenshot capture continues as
+              normal. The time is sent for review once it ends; approved meetings
+              are paid, and genuine activity is preserved if it is rejected.
+            </p>
+          </div>
+        </header>
+
+        {active ? (
+          <div className="k-meeting-active">
+            <span className="k-meeting-live-chip">
+              <span className="k-meeting-live-dot" aria-hidden="true" />
+              {meetingStateLabel(active.syncState, "pending", "active")}
+            </span>
+            <p className="k-meeting-elapsed" aria-live="polite">
+              {formatDuration(elapsedSeconds)}
+            </p>
+            <p className="k-meeting-active-title">{active.title}</p>
+            <p className="k-muted">{active.reason}</p>
+            <p className="k-meeting-hint">
+              Becomes “Pending review” once its end is confirmed · ends
+              automatically by {expectedEndClock}
+            </p>
+            {active.lastError && (
+              <p className="k-error">{active.lastError}</p>
+            )}
+            <button
+              type="button"
+              className="k-primary"
+              onClick={() => void handleEnd()}
+              disabled={submitting}
+            >
+              {submitting ? "Ending…" : "End meeting"}
+            </button>
+          </div>
+        ) : (
+          <form className="k-form" onSubmit={handleStart}>
+            <label>
+              Title
+              <input
+                type="text"
+                value={title}
+                onChange={(event) => setTitle(event.target.value)}
+                placeholder="Client call, standup, workshop…"
+                maxLength={255}
+                disabled={submitting}
+                required
+              />
+            </label>
+            <label>
+              Reason
+              <textarea
+                value={reason}
+                onChange={(event) => setReason(event.target.value)}
+                placeholder="Briefly describe the meeting"
+                maxLength={1000}
+                minLength={3}
+                disabled={submitting}
+                required
+              />
+            </label>
+            <label>
+              Expected duration (minutes)
+              <input
+                type="number"
+                value={expectedMinutes}
+                onChange={(event) =>
+                  setExpectedMinutes(Number(event.target.value) || 0)
+                }
+                min={1}
+                max={720}
+                disabled={submitting}
+                required
+              />
+            </label>
+            <button type="submit" className="k-primary" disabled={submitting}>
+              {submitting ? "Starting…" : "Start meeting"}
+            </button>
+          </form>
+        )}
+        {error && <p className="k-error">{error}</p>}
+        {message && <p className="k-success">{message}</p>}
+      </article>
+
+      <article className="k-panel k-request-card">
+        <header className="k-request-card-header">
+          <span className="k-request-icon">
+            <KIcon name="calendar" />
+          </span>
+          <div>
+            <h2>Recent meetings</h2>
+            <p className="k-muted">Your latest Meeting Mode periods.</p>
+          </div>
+        </header>
+        {status.meetings.length === 0 ? (
+          <p className="k-meeting-hint">No meetings recorded yet.</p>
+        ) : (
+          <ul className="k-meeting-list">
+            {status.meetings.map((meeting) => {
+              const isActive = meeting.lifecycleState === "active";
+              const badgeKind = meetingStateKind(
+                meeting.syncState,
+                meeting.status,
+                meeting.lifecycleState,
+              );
+              const badgeLabel = meetingStateLabel(
+                meeting.syncState,
+                meeting.status,
+                meeting.lifecycleState,
+              );
+              // Each active row computes its own elapsed time from its own
+              // startedAt — a server-side active meeting shows real elapsed time
+              // even when there is no local active meeting.
+              const rowSeconds =
+                isActive && meeting.endedAt === null
+                  ? Math.max(
+                      0,
+                      Math.floor((Date.now() - Date.parse(meeting.startedAt)) / 1000),
+                    )
+                  : meeting.recordedSeconds;
+              const failed =
+                meeting.syncState === "start_error" ||
+                meeting.syncState === "end_error";
+              return (
+                <li key={meeting.id}>
+                  <div>
+                    <strong>{meeting.title}</strong>
+                    <span className="k-meeting-hint">
+                      {" "}
+                      · {formatDuration(rowSeconds)}
+                    </span>
+                    {failed && meeting.lastError && (
+                      <p className="k-error">{meeting.lastError}</p>
+                    )}
+                    {failed && (
+                      <button
+                        type="button"
+                        className="k-linklike"
+                        onClick={() => void handleRetry()}
+                        disabled={retrying}
+                      >
+                        {retrying ? "Retrying…" : "Retry sync"}
+                      </button>
+                    )}
+                  </div>
+                  <span className={`k-meeting-badge k-meeting-${badgeKind}`}>
+                    {badgeLabel}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </article>
+    </section>
+  );
+}
+
 function SettingsView({
   status,
   onLogout,
@@ -3770,6 +4368,31 @@ function SettingsView({
             <dt>Agent version</dt>
             <dd>{status.agentVersion}</dd>
           </div>
+          {status.diagnostics && (
+            <>
+              <div>
+                <dt>Build</dt>
+                <dd>
+                  {status.diagnostics.buildIdentifier} ·{" "}
+                  {status.diagnostics.environment}
+                </dd>
+              </div>
+              <div>
+                <dt>Process ID</dt>
+                <dd>{status.diagnostics.processId}</dd>
+              </div>
+              <div>
+                <dt>API base URL</dt>
+                <dd className="k-details-mono">{status.diagnostics.apiBaseUrl}</dd>
+              </div>
+              <div>
+                <dt>Data directory</dt>
+                <dd className="k-details-mono">
+                  {status.diagnostics.userDataPath}
+                </dd>
+              </div>
+            </>
+          )}
         </dl>
       </details>
       <section className="k-panel k-device-account">
@@ -3926,6 +4549,31 @@ function MoreView({
             <dt>Agent version</dt>
             <dd>{status.agentVersion}</dd>
           </div>
+          {status.diagnostics && (
+            <>
+              <div>
+                <dt>Build</dt>
+                <dd>
+                  {status.diagnostics.buildIdentifier} ·{" "}
+                  {status.diagnostics.environment}
+                </dd>
+              </div>
+              <div>
+                <dt>Process ID</dt>
+                <dd>{status.diagnostics.processId}</dd>
+              </div>
+              <div>
+                <dt>API base URL</dt>
+                <dd className="k-details-mono">{status.diagnostics.apiBaseUrl}</dd>
+              </div>
+              <div>
+                <dt>Data directory</dt>
+                <dd className="k-details-mono">
+                  {status.diagnostics.userDataPath}
+                </dd>
+              </div>
+            </>
+          )}
         </dl>
       </details>
 

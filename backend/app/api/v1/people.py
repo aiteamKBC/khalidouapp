@@ -3,12 +3,15 @@ import string
 from datetime import UTC, datetime
 from typing import Annotated, Literal
 from uuid import UUID, uuid4
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Request
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, or_, select, update
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_admin
+from app.api.v1.admin_utils import serialize_employee
+from app.api.v1.team_auth import apply_employee_scope
 from app.core.config import settings
 from app.core.exceptions import ApiError
 from app.core.responses import success_response
@@ -24,7 +27,7 @@ from app.models import (
     TeamMember,
     TeamOwner,
 )
-from app.schemas.admin import PersonInvitationCreate, PersonRoleUpdate
+from app.schemas.admin import PersonArchiveRequest, PersonInvitationCreate, PersonRoleUpdate
 from app.schemas.employee_portal import EmployeeInvitationAccept
 from app.services.audit import record_audit_log
 from app.services.email import (
@@ -39,7 +42,9 @@ from app.services.employee_invitations import (
     serialize_employee_invitation,
 )
 from app.services.permissions import (
+    can_archive_employees,
     is_full_admin,
+    require_can_archive_employees,
     require_can_assign_role,
     require_can_manage_admin,
     require_capability,
@@ -149,6 +154,9 @@ def invite_person(
             employee.status = "invited"
             employee.archived_at = None
             employee.status_before_archive = None
+            employee.archive_reason = None
+            employee.last_working_day = None
+            employee.archived_by_admin_user_id = None
         db.add(employee)
 
     if payload.kind in {"team_manager", "general_admin", "hr"}:
@@ -580,6 +588,9 @@ def update_person_role(
         employee.status = "active"
         employee.archived_at = None
         employee.status_before_archive = None
+        employee.archive_reason = None
+        employee.last_working_day = None
+        employee.archived_by_admin_user_id = None
         employee.portal_password_hash = password_hash
         db.add(employee)
         next_admin = admin
@@ -662,16 +673,108 @@ def update_person_role(
     )
 
 
+@router.get("/archived-employees")
+def list_archived_employees(
+    current_admin: Annotated[AdminUser, Depends(get_current_admin)],
+    db: Annotated[Session, Depends(get_db)],
+    search: str | None = None,
+):
+    """Archived (fired/resigned) employees for HR lookup and restore."""
+
+    require_capability(current_admin, "people.view")
+    statement = select(Employee).where(
+        Employee.company_id == current_admin.company_id,
+        Employee.status == "archived",
+    )
+    statement = apply_employee_scope(statement, db, current_admin, Employee.id)
+    if search:
+        pattern = f"%{search.strip()}%"
+        statement = statement.where(
+            or_(
+                Employee.name.ilike(pattern),
+                Employee.email.ilike(pattern),
+                Employee.employee_code.ilike(pattern),
+            )
+        )
+    employees = db.scalars(
+        statement.order_by(Employee.archived_at.desc().nullslast(), Employee.name)
+    ).all()
+    admin_ids = {
+        employee.archived_by_admin_user_id
+        for employee in employees
+        if employee.archived_by_admin_user_id is not None
+    }
+    admin_names = (
+        {
+            admin_id: name
+            for admin_id, name in db.execute(
+                select(AdminUser.id, AdminUser.name).where(AdminUser.id.in_(admin_ids))
+            ).all()
+        }
+        if admin_ids
+        else {}
+    )
+    linked_admins = {
+        employee_id: (admin_id, role)
+        for admin_id, employee_id, role in db.execute(
+            select(AdminUser.id, AdminUser.employee_id, AdminUser.role).where(
+                AdminUser.company_id == current_admin.company_id,
+                AdminUser.employee_id.in_([employee.id for employee in employees]),
+                AdminUser.status == "archived",
+            )
+        ).all()
+    } if employees else {}
+    data = []
+    for employee in employees:
+        linked = linked_admins.get(employee.id)
+        data.append(
+            {
+                **serialize_employee(employee),
+                "archived_by": (
+                    {
+                        "id": str(employee.archived_by_admin_user_id),
+                        "name": admin_names.get(employee.archived_by_admin_user_id),
+                    }
+                    if employee.archived_by_admin_user_id
+                    else None
+                ),
+                "admin_user_id": str(linked[0]) if linked else None,
+                "admin_role": linked[1] if linked else None,
+            }
+        )
+    return success_response(data=data, meta={"can_restore": can_archive_employees(current_admin)})
+
+
 @router.post("/{person_type}/{person_id}/archive")
 def archive_person(
     person_type: Literal["admin", "employee"],
     person_id: UUID,
+    payload: PersonArchiveRequest,
     request: Request,
     current_admin: Annotated[AdminUser, Depends(get_current_admin)],
     db: Annotated[Session, Depends(get_db)],
 ):
-    require_capability(current_admin, "people.archive")
+    require_can_archive_employees(current_admin)
     admin, employee = resolve_person(db, current_admin, person_type, person_id)
+    if employee is not None:
+        # Re-archiving an archived employee corrects the reason / last working
+        # day; revocation is idempotent.
+        try:
+            employee_today = datetime.now(ZoneInfo(employee.timezone or "UTC")).date()
+        except ZoneInfoNotFoundError:
+            employee_today = datetime.now(UTC).date()
+        if payload.last_working_day > employee_today:
+            raise ApiError(
+                "INVALID_LAST_WORKING_DAY",
+                "The last working day cannot be in the future. Archive the employee on or after their last day.",
+                400,
+            )
+        if employee.start_date is not None and payload.last_working_day < employee.start_date:
+            raise ApiError(
+                "INVALID_LAST_WORKING_DAY",
+                "The last working day cannot be before the employment start date.",
+                400,
+            )
     if admin is not None and admin.id == current_admin.id:
         raise ApiError("CANNOT_ARCHIVE_SELF", "You cannot archive your own account.", 409)
     if admin is not None:
@@ -693,7 +796,14 @@ def archive_person(
                 "The company must keep at least one active admin with full access.",
                 409,
             )
-    archive_linked_person(db, admin, employee)
+    archive_linked_person(
+        db,
+        admin,
+        employee,
+        reason=payload.reason,
+        last_working_day=payload.last_working_day,
+        archived_by=current_admin,
+    )
     record_audit_log(
         db,
         current_admin,
@@ -701,7 +811,11 @@ def archive_person(
         "person",
         entity_id=admin.id if admin else employee.id,
         entity_name=admin.email if admin else employee.email,
-        details={"person_type": person_type},
+        details={
+            "person_type": person_type,
+            "reason": payload.reason,
+            "last_working_day": payload.last_working_day.isoformat(),
+        },
         request=request,
     )
     db.commit()
@@ -716,10 +830,12 @@ def restore_person(
     current_admin: Annotated[AdminUser, Depends(get_current_admin)],
     db: Annotated[Session, Depends(get_db)],
 ):
-    require_capability(current_admin, "people.archive")
+    require_can_archive_employees(current_admin)
     admin, employee = resolve_person(db, current_admin, person_type, person_id)
     if admin is not None:
         require_can_manage_admin(current_admin, admin)
+    previous_reason = employee.archive_reason if employee is not None else None
+    previous_last_day = employee.last_working_day if employee is not None else None
     restore_linked_person(db, admin, employee)
     record_audit_log(
         db,
@@ -728,7 +844,13 @@ def restore_person(
         "person",
         entity_id=admin.id if admin else employee.id,
         entity_name=admin.email if admin else employee.email,
-        details={"person_type": person_type},
+        details={
+            "person_type": person_type,
+            "previous_archive_reason": previous_reason,
+            "previous_last_working_day": (
+                previous_last_day.isoformat() if previous_last_day else None
+            ),
+        },
         request=request,
     )
     db.commit()

@@ -81,6 +81,9 @@ def ensure_tracked_employee(db: Session, admin: AdminUser) -> Employee:
         employee.start_date = admin.created_at.date() if admin.created_at else date.today()
     employee.archived_at = None
     employee.status_before_archive = None
+    employee.archive_reason = None
+    employee.last_working_day = None
+    employee.archived_by_admin_user_id = None
     admin.employee_id = employee.id
     db.add_all([admin, employee])
     get_or_create_work_profile(db, employee)
@@ -189,25 +192,64 @@ def archive_admin_identity(db: Session, admin: AdminUser, now: datetime) -> None
     db.add(admin)
 
 
-def archive_employee_identity(db: Session, employee: Employee, now: datetime) -> None:
+def archive_employee_identity(
+    db: Session,
+    employee: Employee,
+    now: datetime,
+    *,
+    reason: str | None = None,
+    last_working_day: date | None = None,
+    archived_by: AdminUser | None = None,
+) -> None:
     if employee.status != "archived":
         employee.status_before_archive = employee.status
     employee.status = "archived"
     employee.archived_at = now
+    employee.archive_reason = reason
+    employee.last_working_day = last_working_day
+    employee.archived_by_admin_user_id = archived_by.id if archived_by else None
     revoke_employee_runtime(db, employee, now)
+    _cancel_pending_shift_reschedules(db, employee, now)
     db.add(employee)
+
+
+def _cancel_pending_shift_reschedules(db: Session, employee: Employee, now: datetime) -> None:
+    """A pending reschedule of someone who has left can never be worked."""
+    from app.models import ShiftRescheduleRequest
+
+    pending = db.scalars(
+        select(ShiftRescheduleRequest).where(
+            ShiftRescheduleRequest.employee_id == employee.id,
+            ShiftRescheduleRequest.status == "pending",
+        )
+    ).all()
+    for row in pending:
+        row.status = "cancelled"
+        row.updated_at = now
+        db.add(row)
 
 
 def archive_linked_person(
     db: Session,
     admin: AdminUser | None,
     employee: Employee | None,
+    *,
+    reason: str | None = None,
+    last_working_day: date | None = None,
+    archived_by: AdminUser | None = None,
 ) -> None:
     now = datetime.now(UTC)
     if admin is not None:
         archive_admin_identity(db, admin, now)
     if employee is not None:
-        archive_employee_identity(db, employee, now)
+        archive_employee_identity(
+            db,
+            employee,
+            now,
+            reason=reason,
+            last_working_day=last_working_day,
+            archived_by=archived_by,
+        )
 
 
 def restore_linked_person(
@@ -224,6 +266,12 @@ def restore_linked_person(
         employee.status = employee.status_before_archive or "active"
         employee.status_before_archive = None
         employee.archived_at = None
+        # Restoring re-employs the person: payroll/attendance stop capping at
+        # the old last working day. Revoked device tokens stay revoked, so the
+        # employee signs in to the desktop app again.
+        employee.archive_reason = None
+        employee.last_working_day = None
+        employee.archived_by_admin_user_id = None
         db.add(employee)
 
 
@@ -291,4 +339,10 @@ def person_state(admin: AdminUser | None, employee: Employee | None, person_type
         ),
         "admin_status": admin.status if admin else None,
         "employee_status": employee.status if employee else None,
+        "archive_reason": employee.archive_reason if employee else None,
+        "last_working_day": (
+            employee.last_working_day.isoformat()
+            if employee is not None and employee.last_working_day
+            else None
+        ),
     }

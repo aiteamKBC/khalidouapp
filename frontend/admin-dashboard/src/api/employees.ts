@@ -23,6 +23,9 @@ type BackendEmployee = {
   portal_last_login_ip?: string | null;
   portal_last_user_agent?: string | null;
   weekly_capacity_minutes?: number;
+  archived_at?: string | null;
+  archive_reason?: "fired" | "resigned" | null;
+  last_working_day?: string | null;
 };
 
 type BackendDevice = {
@@ -252,6 +255,10 @@ function mapEmployee(status: BackendEmployeeStatus, teamIds: string[]): Employee
     portalLastLoginIp: employee.portal_last_login_ip ?? undefined,
     portalLastUserAgent: employee.portal_last_user_agent ?? undefined,
     weeklyCapacityMinutes: employee.weekly_capacity_minutes ?? 2400,
+    archived: employee.status === "archived",
+    archivedAt: employee.archived_at ?? undefined,
+    archiveReason: employee.archive_reason ?? undefined,
+    lastWorkingDay: employee.last_working_day ?? undefined,
     managers: status.managers ?? [],
   };
 }
@@ -286,10 +293,16 @@ function mapWorkProfile(row: BackendWorkProfile): WorkProfile {
 export async function listEmployees(
   scopedTeamIds?: string[],
   signal?: AbortSignal,
+  options?: { includeArchived?: boolean },
 ): Promise<Employee[]> {
   const teamId = scopedTeamIds?.length === 1 ? scopedTeamIds[0] : undefined;
+  // Archived (fired/resigned) employees are hidden from every current view
+  // unless a caller (the People archive) explicitly asks for them.
   const statuses = await apiFetch<BackendEmployeeStatus[]>(
-    withQuery("/employees-overview", { team_id: teamId }),
+    withQuery("/employees-overview", {
+      team_id: teamId,
+      include_archived: options?.includeArchived ? true : undefined,
+    }),
     { signal },
   );
   return statuses.map((status) => mapEmployee(status, status.team_ids ?? []));

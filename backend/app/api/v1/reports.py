@@ -16,6 +16,7 @@ from app.core.responses import success_response
 from app.database.session import get_db
 from app.models import AdminUser, Employee, Screenshot, TimeAdjustmentRequest, WorkSession
 from app.services.attendance import accountable_idle_totals
+from app.services.employee_archive import current_employee_clause
 from app.services.permissions import require_capability
 
 router = APIRouter(prefix="/reports", tags=["reports"])
@@ -116,6 +117,8 @@ def employee_report(
     )
     if employee_id is not None:
         statement = statement.where(Employee.id == employee_id)
+    else:
+        statement = statement.where(current_employee_clause())
     statement = apply_employee_scope(statement, db, current_admin, Employee.id, team_id)
     rows = db.execute(statement).all()
     idle_by_employee = accountable_idle_totals(
@@ -133,6 +136,7 @@ def employee_report(
         .where(
             TimeAdjustmentRequest.company_id == current_admin.company_id,
             TimeAdjustmentRequest.status == "approved",
+            TimeAdjustmentRequest.request_type != "delayed_break",
         )
         .group_by(TimeAdjustmentRequest.employee_id)
     )

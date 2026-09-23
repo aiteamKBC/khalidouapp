@@ -4,7 +4,7 @@ import log from "electron-log/main";
 import electronUpdater from "electron-updater";
 import dotenv from "dotenv";
 import axios from "axios";
-import { execFile, fork, type ChildProcess } from "node:child_process";
+import { execFile, fork, spawn, type ChildProcess } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -13,6 +13,7 @@ import { fileURLToPath } from "node:url";
 
 import {
   enrollDeviceWithCredentials,
+  getApiBaseUrl,
   getLocalNetworkInfo,
   endSession,
   getAgentConfig,
@@ -26,10 +27,17 @@ import {
   deleteAgentTaskChecklistItem,
   createLeaveRequest,
   createTimeAdjustmentRequest,
+  createShiftReschedule,
+  cancelShiftReschedule,
+  getShiftRescheduleDay,
+  listShiftReschedules,
   listAgentProjects,
   listLeaveRequests,
   listAgentRecentScreenshots,
   listAgentTasks,
+  listMeetings,
+  startMeeting as apiStartMeeting,
+  endMeeting as apiEndMeeting,
   initiateScreenshot,
   reportScreenshotSkip,
   listTimeAdjustmentRequests,
@@ -56,6 +64,7 @@ import {
 } from "./services/agentApi.js";
 import {
   clearEnrollmentIdentity,
+  discardUndecryptableEnrollment,
   getDeviceToken,
   isEnrolled,
   loadIdentity,
@@ -87,10 +96,34 @@ import {
   markPendingEventUploaded,
   markPendingScreenshotFailed,
   markPendingScreenshotUploaded,
+  listPendingMeetingEvents,
   purgeTerminalPendingEvents,
   purgeTerminalScreenshotRows,
   type LocalTrackingSession,
 } from "./services/localDb.js";
+import {
+  boundedMeetingEnd,
+  deriveActiveMeeting,
+  mergeMeetingsForDisplay,
+  nextSyncStep,
+  type LocalMeetingRecord,
+  type MeetingSyncState,
+} from "./services/meetingStore.js";
+import {
+  breakWindowAt,
+  idleSecondsOutsideBreaks,
+  type BreakWindow,
+} from "./services/breakWindows.js";
+import {
+  RUN_KEY,
+  STARTUP_VALUE_NAME,
+  desiredStartupCommand,
+  findLegacyInstall,
+  legacyCleanupScript,
+  legacyInstallDirectories,
+  parseRunValue,
+  startupEntryNeedsRepair,
+} from "./services/legacyInstall.js";
 import {
   automaticIdleReturnAction,
   hasReachedIdleThreshold,
@@ -101,6 +134,7 @@ import {
   reclassifyVerifiedReturnCounters,
   shouldWaitForInputBeforeRestart,
 } from "./services/idlePolicy.js";
+import { sessionGroupForEndpoint } from "./services/pendingEventOrdering.js";
 import { createCoalescedRefresh } from "./services/coalescedRefresh.js";
 import { getUserFacingError } from "./services/userFacingError.js";
 import { trackingTick } from "./services/trackingTick.js";
@@ -177,6 +211,20 @@ const { autoUpdater } = electronUpdater;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// Dev/prod isolation. A local `electron .` run and the INSTALLED app otherwise
+// share %APPDATA%/<productName> — the same meetings.json, offline queue, device
+// credentials, AND single-instance lock. That makes local testing consume or
+// mutate the packaged app's real meeting queue, and the shared lock can hand the
+// dev window to the already-running installed process (so source changes appear
+// to "not take"). In development, redirect userData to a separate directory so
+// the two never collide. This MUST run before any getPath("userData"), the log
+// file transport, dotenv, or requestSingleInstanceLock — the lock file lives
+// under userData, so a distinct dev path yields a distinct lock.
+if (!app.isPackaged) {
+  const devUserData = path.join(app.getPath("appData"), `${app.getName()}-dev`);
+  app.setPath("userData", devUserData);
+}
+
 type AgentRuntimeStatus = {
   enrolled: boolean;
   employeeName: string;
@@ -228,6 +276,7 @@ type AgentRuntimeStatus = {
   recentTasks: RuntimeTask[];
   todayTimeline: AgentSummary["today_timeline"] | null;
   idleRequestPeriods: NonNullable<AgentSummary["idle_request_periods"]>;
+  breakBank: NonNullable<AgentSummary["break_bank"]> | null;
   lastIdleAlert: IdleLossAlert | null;
   locallyEndedIdleAt: string | null;
   updateStatus:
@@ -241,6 +290,38 @@ type AgentRuntimeStatus = {
     | "error";
   updateVersion: string | null;
   updatePercent: number | null;
+  activeMeeting: ActiveMeeting | null;
+  meetings: MeetingSummary[];
+};
+
+type ActiveMeeting = {
+  deviceId: string;
+  idempotencyKey: string;
+  title: string;
+  reason: string;
+  startedAt: string;
+  expectedEndAt: string;
+  workSessionId: string | null;
+  projectId: string | null;
+  taskId: string | null;
+  syncState: MeetingSyncState;
+  lastError: string | null;
+};
+
+type MeetingSummary = {
+  id: string;
+  idempotencyKey: string | null;
+  title: string;
+  reason: string;
+  startedAt: string;
+  expectedEndAt: string;
+  endedAt: string | null;
+  lifecycleState: "active" | "ended";
+  status: "pending" | "approved" | "rejected";
+  recordedSeconds: number;
+  approvedSeconds: number | null;
+  syncState: MeetingSyncState | null;
+  lastError: string | null;
 };
 
 type RuntimeTask = {
@@ -278,7 +359,7 @@ type RuntimeTask = {
 
 type IdleLossAlert = {
   id: string;
-  kind: "idle_return" | "tracking_start";
+  kind: "idle_return" | "tracking_start" | "idle_started";
   lostSeconds: number;
   eligibleLostSeconds: number;
   outsideScheduledShift: boolean;
@@ -432,7 +513,7 @@ let trackingConfig: TrackingConfig = {
   screenshot_enabled: true,
   screenshot_interval_minutes: 10,
   screenshots_per_interval: 1,
-  idle_threshold_minutes: 10,
+  idle_threshold_minutes: IDLE_THRESHOLD_MINUTES,
   capture_during_idle: false,
   offline_threshold_minutes: 3,
   screenshot_retention_days: 30,
@@ -481,11 +562,14 @@ const runtimeStatus: AgentRuntimeStatus = {
   recentTasks: [],
   todayTimeline: null,
   idleRequestPeriods: [],
+  breakBank: null,
   lastIdleAlert: null,
   locallyEndedIdleAt: null,
   updateStatus: "idle",
   updateVersion: null,
   updatePercent: null,
+  activeMeeting: null,
+  meetings: [],
 };
 
 const privacyNotice =
@@ -563,10 +647,29 @@ dotenv.config({
     : path.join(app.getAppPath(), ".env"),
 });
 
+// Safe, non-secret runtime identity — surfaced in Settings and logged at startup
+// so you can confirm WHICH process owns the window and that dev is not pointed at
+// the packaged app's state or the wrong backend. No tokens or credentials here.
+function runtimeDiagnostics() {
+  return {
+    buildIdentifier: `${app.getVersion()}${app.isPackaged ? "" : "-dev"}`,
+    environment: app.isPackaged ? ("packaged" as const) : ("development" as const),
+    processId: process.pid,
+    userDataPath: app.getPath("userData"),
+    apiBaseUrl: getApiBaseUrl(),
+  };
+}
+
+log.info("Khaliduo runtime diagnostics", runtimeDiagnostics());
+
 function normalizeTrackingConfig(config: TrackingConfig): TrackingConfig {
+  const configuredIdleThreshold = Number(config.idle_threshold_minutes);
   return {
     ...config,
-    idle_threshold_minutes: IDLE_THRESHOLD_MINUTES,
+    idle_threshold_minutes:
+      Number.isFinite(configuredIdleThreshold) && configuredIdleThreshold >= 1
+        ? Math.min(120, Math.floor(configuredIdleThreshold))
+        : IDLE_THRESHOLD_MINUTES,
     screenshot_interval_minutes: Math.max(
       1,
       Math.min(240, config.screenshot_interval_minutes ?? 10),
@@ -692,6 +795,7 @@ function clearedPersonalRuntimeStatus(): Partial<AgentRuntimeStatus> {
     timeSummary: null,
     todayTimeline: null,
     idleRequestPeriods: [],
+    breakBank: null,
     lastIdleAlert: null,
     locallyEndedIdleAt: null,
     activityPercent: 0,
@@ -703,6 +807,8 @@ function clearedPersonalRuntimeStatus(): Partial<AgentRuntimeStatus> {
     paidPauseEndsAt: null,
     paidPauseRemainingSeconds: 0,
     paidPauseBalanceRemainingSeconds: null,
+    activeMeeting: null,
+    meetings: [],
   } satisfies Partial<AgentRuntimeStatus>;
 }
 
@@ -717,6 +823,13 @@ function resetForDeviceReenrollment() {
   );
   clearRuntimeTimers();
   inputIntegrityMonitor.stop();
+  // The meeting store is keyed to the enrolled device; a re-enrollment starts
+  // fresh. Records still awaiting sync were retained on disk for the prior
+  // identity and are reloaded only if the same device re-enrolls.
+  meetingRecords.clear();
+  activeMeeting = null;
+  runtimeStatus.activeMeeting = null;
+  runtimeStatus.meetings = [];
   clearEnrollmentIdentity();
   enrollmentGeneration += 1;
   configureAutoStart(false);
@@ -748,6 +861,11 @@ function resetForDeviceReenrollment() {
 }
 
 function hydrateIdentityStatus() {
+  if (discardUndecryptableEnrollment()) {
+    log.warn(
+      "Stored device token could not be decrypted; cleared enrollment so the employee signs in again",
+    );
+  }
   const identity = loadIdentity();
   runtimeStatus.enrolled = isEnrolled(identity);
   runtimeStatus.employeeName = identity.employeeName ?? "Not enrolled";
@@ -1611,6 +1729,7 @@ function resetDailyRuntimeCounters(nextCounterDate: string, now = new Date()) {
   runtimeStatus.timeSummary = null;
   runtimeStatus.todayTimeline = null;
   runtimeStatus.idleRequestPeriods = [];
+  runtimeStatus.breakBank = null;
   runtimeStatus.locallyEndedIdleAt = null;
   clearIdleReturnVerification();
   lastHandledIdleReturnInputAt = now.getTime();
@@ -1909,6 +2028,54 @@ function isInsideScheduledBreak(at: Date) {
   });
 }
 
+// Today's scheduled break windows as absolute times, for the idle counter and
+// the "On break" status. Mirrors isInsideScheduledBreak's eligibility rules.
+function todaysBreakWindows(nowMs = Date.now()): BreakWindow[] {
+  const policy = runtimeStatus.requestPolicy;
+  if (!policy || policy.approved_leave_today) return [];
+  const now = new Date(nowMs);
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: policy.timezone || "UTC",
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(now);
+  const part = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((item) => item.type === type)?.value;
+  const weekday =
+    (
+      { Mon: 0, Tue: 1, Wed: 2, Thu: 3, Fri: 4, Sat: 5, Sun: 6 } as Record<
+        string,
+        number
+      >
+    )[part("weekday") ?? ""] ?? -1;
+  if (!policy.working_days.includes(weekday)) return [];
+  const shiftStart = timeToMinuteOfDay(policy.shift_start);
+  const shiftEnd = timeToMinuteOfDay(policy.shift_end);
+  if (shiftStart === null || shiftEnd === null) return [];
+  const approvedEarlyLeave = timeToMinuteOfDay(policy.approved_early_leave_from);
+  const secondOfDay =
+    Number(part("hour")) * 3600 + Number(part("minute")) * 60 + Number(part("second"));
+  const localMidnightMs = nowMs - secondOfDay * 1000 - (nowMs % 1000);
+  const windows: BreakWindow[] = [];
+  for (const rule of policy.break_rules ?? []) {
+    const start = timeToMinuteOfDay(rule.start_time);
+    let end = timeToMinuteOfDay(rule.end_time);
+    if (start === null || end === null) continue;
+    end = Math.min(end, shiftEnd, approvedEarlyLeave ?? Number.POSITIVE_INFINITY);
+    const boundedStart = Math.max(start, shiftStart);
+    if (end <= boundedStart) continue;
+    windows.push({
+      name: rule.name,
+      startMs: localMidnightMs + boundedStart * 60_000,
+      endMs: localMidnightMs + end * 60_000,
+    });
+  }
+  return windows;
+}
+
 function scheduledIdleIsCountable(at: Date) {
   const policy = runtimeStatus.requestPolicy;
   if (!policy) return true;
@@ -2129,6 +2296,7 @@ async function refreshWorkedTodayTotalOnce() {
     runtimeStatus.activityPercent = summary.activity_percent ?? 0;
     runtimeStatus.todayTimeline = summary.today_timeline;
     runtimeStatus.idleRequestPeriods = summary.idle_request_periods ?? [];
+    runtimeStatus.breakBank = summary.break_bank ?? null;
     if (
       !summary.today_timeline.intervals.some(
         (interval) => interval.type === "idle" && interval.is_current,
@@ -2638,6 +2806,34 @@ function showAutomaticIdleReturnReview() {
   showIdleLossAlert(lostSeconds, eligibleLostSeconds);
 }
 
+// Open the idle review immediately when idle begins, rather than waiting for
+// input to return. Works while minimized to the tray (the main window is raised
+// with attention). One alert per idle episode: the guard bails if an alert is
+// already pending, and the on-return review defers to it. Suppressed during a
+// scheduled break by the caller.
+function showIdleStartedReview() {
+  if (
+    unpaidPauseActive ||
+    runtimeStatus.trackingStatus !== "idle" ||
+    !hasTrackingSession() ||
+    runtimeStatus.lastIdleAlert
+  ) {
+    return;
+  }
+  const outsideScheduledShift = activeTimeBucket(new Date()) === "extra";
+  runtimeStatus.lastIdleAlert = {
+    id: randomUUID(),
+    kind: "idle_started",
+    lostSeconds: 0,
+    eligibleLostSeconds: 0,
+    outsideScheduledShift,
+    endedAt: new Date().toISOString(),
+  };
+  setIdleAlertAttention(true);
+  showMainWindow({ forceForeground: true, centerOnPointerDisplay: true });
+  mainWindow?.webContents.send("agent:idle-alert", runtimeStatus.lastIdleAlert);
+}
+
 function finishAutomaticIdleAfterVerification(
   verification: IdleReturnVerification,
 ) {
@@ -2754,10 +2950,12 @@ async function resumeAutomaticIdle() {
 }
 
 function showIdleStartedNotification() {
-  const title = "You are now idle";
-  const body =
-    `No keyboard or mouse activity was detected for ${IDLE_THRESHOLD_MINUTES} minutes. ` +
-    "Idle time starts now.";
+  const runningBreak = breakWindowAt(Date.now(), todaysBreakWindows());
+  const title = runningBreak ? `On break · ${runningBreak.name}` : "You are now idle";
+  const body = runningBreak
+    ? "You're away during your scheduled break. Break time is paid and is not counted as idle."
+    : `No keyboard or mouse activity was detected for ${trackingConfig.idle_threshold_minutes} minutes. ` +
+      "Idle time starts now.";
 
   if (Notification.isSupported()) {
     const notification = new Notification({
@@ -2780,12 +2978,518 @@ function showIdleStartedNotification() {
   }
 }
 
+// ---- Meeting Mode ---------------------------------------------------------
+//
+// A meeting is started and ended on the desktop and saved locally BEFORE network
+// delivery, so a crash, restart, or offline period never loses or duplicates it.
+// Delivery reuses the ordered, retrying pending-events outbox keyed by a stable
+// idempotency key; the backend dedups replays and clamps the period to the
+// shift. The recorded period is provisional until an Admin/HR reviewer approves
+// it. Meeting Mode prevents automatic input inactivity from being treated as an
+// ordinary idle episode (no popup) while preserving the underlying evidence.
+
+// Every meeting the desktop knows about, keyed by its stable idempotency key.
+// This durable store is the source of truth for the UI: a meeting is visible the
+// instant it starts and never disappears while it waits to synchronize. Server
+// rows (fetched by refreshMeetingsList) are merged in for the authoritative
+// review decision once delivery is confirmed.
+const meetingRecords = new Map<string, LocalMeetingRecord>();
+let lastServerMeetings: Awaited<ReturnType<typeof listMeetings>> = [];
+// The single running meeting, derived from the store. Used for idle-popup
+// suppression and the top card timer.
+let activeMeeting: ActiveMeeting | null = null;
+
+function getMeetingsPath() {
+  return path.join(app.getPath("userData"), "meetings.json");
+}
+
+function persistMeetingRecords() {
+  try {
+    fs.mkdirSync(app.getPath("userData"), { recursive: true });
+    fs.writeFileSync(
+      getMeetingsPath(),
+      JSON.stringify(Array.from(meetingRecords.values()), null, 2),
+      "utf-8",
+    );
+  } catch (error) {
+    log.warn("Failed to persist meetings", safeErrorForLog(error));
+  }
+}
+
+function recordToActiveMeeting(record: LocalMeetingRecord): ActiveMeeting {
+  return {
+    deviceId: record.deviceId,
+    idempotencyKey: record.idempotencyKey,
+    title: record.title,
+    reason: record.reason,
+    startedAt: record.startedAt,
+    expectedEndAt: record.expectedEndAt,
+    workSessionId: record.workSessionId,
+    projectId: record.projectId,
+    taskId: record.taskId,
+    syncState: record.syncState,
+    lastError: record.lastError,
+  };
+}
+
+// Recompute the derived active meeting and the merged Recent-meetings list from
+// the durable store + last-known server rows, then publish to the renderer.
+function updateMeetingRuntime() {
+  const records = Array.from(meetingRecords.values());
+  const activeRecord = deriveActiveMeeting(records);
+  activeMeeting = activeRecord ? recordToActiveMeeting(activeRecord) : null;
+  runtimeStatus.activeMeeting = activeMeeting;
+  runtimeStatus.meetings = mergeMeetingsForDisplay(records, lastServerMeetings).map(
+    (item) => ({
+      id: item.id,
+      idempotencyKey: item.idempotencyKey,
+      title: item.title,
+      reason: item.reason,
+      startedAt: item.startedAt,
+      expectedEndAt: item.expectedEndAt,
+      endedAt: item.endedAt,
+      lifecycleState: item.lifecycleState,
+      status: item.status,
+      recordedSeconds: item.recordedSeconds,
+      approvedSeconds: item.approvedSeconds,
+      syncState: item.syncState,
+      lastError: item.lastError,
+    }),
+  );
+  notifyRendererStatus();
+}
+
+function applyServerMeetingToRecord(
+  record: LocalMeetingRecord,
+  server: Awaited<ReturnType<typeof listMeetings>>[number],
+) {
+  record.serverId = server.id;
+  record.status = server.status;
+  record.lifecycleState = server.lifecycle_state;
+  // The server clamps the expected end to the shift end; honour it locally so
+  // the countdown, auto-end and idle suppression stop at the same instant.
+  if (server.expected_end_at) {
+    record.expectedEndAt = server.expected_end_at;
+  }
+  // The server auto-ends a meeting past its expected end. A meeting still open
+  // locally adopts that end so it stops running here too; a locally recorded
+  // (earlier) end is kept and still delivered.
+  if (server.ended_at && record.endedAt === null) {
+    record.endedAt = server.ended_at;
+  }
+  record.recordedSeconds = server.recorded_seconds;
+  record.approvedSeconds = server.approved_seconds;
+  record.updatedAt = new Date().toISOString();
+}
+
+// Deliver every remaining step (start, then end) for one meeting, so an End
+// recorded before the start was confirmed is not left waiting for a manual sync.
+async function syncMeetingRecordFully(record: LocalMeetingRecord): Promise<void> {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const step = nextSyncStep(record);
+    if (step === null) return;
+    await syncMeetingRecord(record);
+    if (
+      nextSyncStep(record) === step ||
+      record.syncState === "start_error" ||
+      record.syncState === "end_error"
+    ) {
+      return;
+    }
+  }
+}
+
+// Deliver one meeting's next step (start, then end) directly, capturing the
+// server record so the UI only reports "synced"/"Pending review" once the
+// backend has accepted it. Each meeting syncs independently, so a failed meeting
+// never blocks another. Both endpoints are idempotent by idempotency_key.
+async function syncMeetingRecord(record: LocalMeetingRecord): Promise<void> {
+  const step = nextSyncStep(record);
+  if (step === null) {
+    return;
+  }
+  try {
+    if (step === "start") {
+      const server = await apiStartMeeting({
+        deviceId: record.deviceId,
+        idempotencyKey: record.idempotencyKey,
+        title: record.title,
+        reason: record.reason,
+        startedAt: record.startedAt,
+        expectedEndAt: record.expectedEndAt,
+        workSessionId: record.workSessionId,
+        projectId: record.projectId,
+        taskId: record.taskId,
+      });
+      applyServerMeetingToRecord(record, server);
+      record.lastError = null;
+      record.syncState = record.endedAt !== null ? "end_pending" : "start_synced";
+      if (
+        server.ended_at &&
+        record.endedAt !== null &&
+        Date.parse(record.endedAt) >= Date.parse(server.ended_at)
+      ) {
+        record.syncState = "synced";
+      }
+    } else {
+      const server = await apiEndMeeting({
+        deviceId: record.deviceId,
+        idempotencyKey: record.idempotencyKey,
+        endedAt: record.endedAt as string,
+      });
+      applyServerMeetingToRecord(record, server);
+      record.lastError = null;
+      record.syncState = "synced";
+    }
+    runtimeStatus.connectionStatus = "online";
+    runtimeStatus.lastSuccessfulSyncAt = new Date().toISOString();
+  } catch (error) {
+    const responseStatus = apiResponseStatus(error);
+    const permanent = isPermanentPendingEventSyncFailure(responseStatus);
+    // Retryable (offline, 5xx, auth-repairable) stays "waiting to sync"; a
+    // definitive client rejection (outside-shift, overlap, invalid session,
+    // device mismatch, missing migration) surfaces the real, safe error and is
+    // retained locally for reconciliation — never reported as success.
+    if (permanent) {
+      record.syncState = step === "start" ? "start_error" : "end_error";
+      record.lastError = getUserFacingError(
+        error,
+        step === "start"
+          ? "The meeting start was rejected by the server."
+          : "The meeting end was rejected by the server.",
+      );
+    } else {
+      record.syncState = step === "start" ? "start_pending" : "end_pending";
+      record.lastError = null;
+    }
+    runtimeStatus.connectionStatus = connectionStatusAfterApiFailure(responseStatus);
+    log.warn("Meeting sync failed", safeErrorForLog(error));
+  }
+  record.updatedAt = new Date().toISOString();
+  persistMeetingRecords();
+  updateMeetingRuntime();
+  rebuildTrayMenu();
+}
+
+// Attempt delivery for every meeting that still needs it. Independent per
+// meeting: one failure does not stop the others.
+async function syncMeetings(options: { retryErrors?: boolean } = {}): Promise<void> {
+  if (!runtimeStatus.enrolled || !runtimeStatus.deviceId) {
+    return;
+  }
+  for (const record of Array.from(meetingRecords.values())) {
+    if (options.retryErrors) {
+      if (record.syncState === "start_error") record.syncState = "start_pending";
+      else if (record.syncState === "end_error") record.syncState = "end_pending";
+    }
+    if (nextSyncStep(record) !== null) {
+      await syncMeetingRecordFully(record);
+    }
+  }
+}
+
+let isSyncingMeetingsPeriodically = false;
+
+// Runs on its own timer, independent of the tracking timers: a meeting can run
+// while tracking is stopped, and it must still auto-end and deliver its end.
+async function meetingMaintenanceTick() {
+  if (!runtimeStatus.enrolled || isSyncingMeetingsPeriodically) return;
+  maybeAutoEndMeeting();
+  const needsSync = Array.from(meetingRecords.values()).some(
+    (record) => nextSyncStep(record) !== null && !record.syncState.endsWith("_error"),
+  );
+  if (!needsSync) return;
+  isSyncingMeetingsPeriodically = true;
+  try {
+    await syncMeetings();
+  } finally {
+    isSyncingMeetingsPeriodically = false;
+  }
+}
+
+async function refreshMeetingsList() {
+  if (!runtimeStatus.enrolled) {
+    return;
+  }
+  if (!runtimeStatus.deviceId) {
+    return { success: false, message: "Device identity is unavailable. Sign in again." };
+  }
+  try {
+    lastServerMeetings = await listMeetings();
+    // Reconcile: adopt the server's authoritative decision for any meeting we
+    // have delivered, and mark an ended meeting fully synced once the server row
+    // confirms it. Never let stale server data hide a newer local active state.
+    for (const server of lastServerMeetings) {
+      const key = server.idempotency_key;
+      if (!key) continue;
+      const record = meetingRecords.get(key);
+      if (!record) continue;
+      applyServerMeetingToRecord(record, server);
+      if (
+        record.endedAt !== null &&
+        server.ended_at !== null &&
+        Date.parse(record.endedAt) >= Date.parse(server.ended_at)
+      ) {
+        // The server holds this end (or an earlier one); nothing left to send.
+        // A local end EARLIER than the server's auto-end is still delivered so
+        // the server can shorten the meeting to the real end.
+        record.syncState = "synced";
+      } else if (record.serverId !== null && record.syncState === "start_pending") {
+        record.syncState = record.endedAt !== null ? "end_pending" : "start_synced";
+      }
+    }
+    persistMeetingRecords();
+    updateMeetingRuntime();
+  } catch (error) {
+    log.warn("Failed to refresh meetings", safeErrorForLog(error));
+  }
+}
+
+async function startMeeting(options: {
+  title: string;
+  reason: string;
+  expectedEndMinutes: number;
+  projectId?: string | null;
+  taskId?: string | null;
+}) {
+  if (!runtimeStatus.enrolled) {
+    return { success: false, message: "Enroll this device before starting a meeting." };
+  }
+  const deviceId = runtimeStatus.deviceId;
+  if (!deviceId) {
+    return { success: false, message: "Device identity is unavailable. Sign in again." };
+  }
+  if (activeMeeting) {
+    return { success: false, message: "A meeting is already running. End it first." };
+  }
+  const title = options.title.trim();
+  const reason = options.reason.trim();
+  if (!title) {
+    return { success: false, message: "Enter a meeting title." };
+  }
+  if (reason.length < 3) {
+    return { success: false, message: "Describe the meeting reason." };
+  }
+  const minutes = Math.max(1, Math.min(720, Math.floor(options.expectedEndMinutes || 0)));
+  const startedAt = new Date();
+  const expectedEndAt = new Date(startedAt.getTime() + minutes * 60_000);
+  const nowIso = startedAt.toISOString();
+  const record: LocalMeetingRecord = {
+    deviceId,
+    idempotencyKey: randomUUID(),
+    title,
+    reason,
+    startedAt: nowIso,
+    expectedEndAt: expectedEndAt.toISOString(),
+    endedAt: null,
+    workSessionId: currentSessionId,
+    projectId: options.projectId ?? null,
+    taskId: options.taskId ?? null,
+    syncState: "start_pending",
+    lastError: null,
+    serverId: null,
+    status: null,
+    lifecycleState: null,
+    recordedSeconds: null,
+    approvedSeconds: null,
+    updatedAt: nowIso,
+  };
+  // Persist and show "In progress · waiting to sync" immediately, before any
+  // network call — the live card and timer appear at once.
+  meetingRecords.set(record.idempotencyKey, record);
+  persistMeetingRecords();
+  updateMeetingRuntime();
+  rebuildTrayMenu();
+  // Confirm acceptance against the server response.
+  await syncMeetingRecord(record);
+  const saved = meetingRecords.get(record.idempotencyKey);
+  if (saved?.syncState === "start_error") {
+    // Rejected on the spot (e.g. outside the shift or overlapping): the employee
+    // sees the reason now, so drop the record instead of leaving a phantom
+    // meeting behind.
+    meetingRecords.delete(record.idempotencyKey);
+    persistMeetingRecords();
+    updateMeetingRuntime();
+    rebuildTrayMenu();
+    return { success: false, message: saved.lastError ?? "Could not start the meeting." };
+  }
+  if (saved?.syncState === "start_synced") {
+    return { success: true, message: "Meeting started and is in progress." };
+  }
+  return {
+    success: true,
+    message: "Meeting started and saved on this device. Waiting to sync.",
+  };
+}
+
+async function endMeeting() {
+  const records = Array.from(meetingRecords.values());
+  const activeRecord = deriveActiveMeeting(records);
+  if (!activeRecord) {
+    return { success: false, message: "No meeting is currently running." };
+  }
+  // Idempotent: recording the end again returns the same record without
+  // extending it.
+  if (activeRecord.endedAt === null) {
+    activeRecord.endedAt = boundedMeetingEnd(
+      activeRecord.startedAt,
+      activeRecord.expectedEndAt,
+      Date.now(),
+    );
+    // Move to an ending state; keep the record durably (do NOT delete it) so it
+    // stays visible in Recent meetings while it waits to sync.
+    activeRecord.syncState =
+      activeRecord.serverId !== null ? "end_pending" : activeRecord.syncState;
+    activeRecord.updatedAt = new Date().toISOString();
+    persistMeetingRecords();
+    updateMeetingRuntime();
+    rebuildTrayMenu();
+    // Idle that began inside the meeting was silent. If the employee is still
+    // away when the meeting ends, the ordinary idle episode starts now: open the
+    // review at the meeting end instead of later offering one that also covers
+    // the meeting itself.
+    if (
+      runtimeStatus.trackingStatus === "idle" &&
+      !isInsideScheduledBreak(new Date())
+    ) {
+      showIdleStartedReview();
+    }
+  }
+  await syncMeetingRecordFully(activeRecord);
+  const saved = meetingRecords.get(activeRecord.idempotencyKey);
+  if (saved?.syncState === "synced") {
+    return { success: true, message: "Meeting ended. It is now pending review." };
+  }
+  if (saved?.syncState === "end_error" || saved?.syncState === "start_error") {
+    return {
+      success: false,
+      message: saved.lastError ?? "The meeting end was rejected by the server.",
+    };
+  }
+  return {
+    success: true,
+    message: "Meeting ended and saved on this device. Waiting to sync.",
+  };
+}
+
+function maybeAutoEndMeeting() {
+  const activeRecord = deriveActiveMeeting(Array.from(meetingRecords.values()));
+  if (!activeRecord || activeRecord.endedAt !== null) {
+    return;
+  }
+  const expectedEndMs = Date.parse(activeRecord.expectedEndAt);
+  if (Number.isFinite(expectedEndMs) && Date.now() >= expectedEndMs) {
+    // Same durable end path as a manual end; works whether or not the Meeting
+    // page is open.
+    void endMeeting();
+  }
+}
+
+// One-time migration: legacy Meeting Mode delivered start/end through the
+// generic outbox. Import any still-undelivered meeting rows into the durable
+// store, then neutralize the outbox rows so they are never re-POSTed blindly.
+function migrateStrandedMeetingEvents() {
+  let imported = false;
+  for (const event of listPendingMeetingEvents()) {
+    let payload: Record<string, unknown>;
+    try {
+      payload = JSON.parse(event.payloadJson) as Record<string, unknown>;
+    } catch {
+      markPendingEventIgnored(event.id);
+      continue;
+    }
+    const key = typeof payload.idempotency_key === "string" ? payload.idempotency_key : null;
+    if (!key) {
+      markPendingEventIgnored(event.id);
+      continue;
+    }
+    const existing = meetingRecords.get(key);
+    if (event.endpoint === "/agent/meetings") {
+      if (!existing) {
+        const nowIso = new Date().toISOString();
+        meetingRecords.set(key, {
+          deviceId: typeof payload.device_id === "string" ? payload.device_id : "",
+          idempotencyKey: key,
+          title: typeof payload.title === "string" ? payload.title : "Meeting",
+          reason: typeof payload.reason === "string" ? payload.reason : "",
+          startedAt: typeof payload.started_at === "string" ? payload.started_at : nowIso,
+          expectedEndAt:
+            typeof payload.expected_end_at === "string" ? payload.expected_end_at : nowIso,
+          endedAt: null,
+          workSessionId:
+            typeof payload.work_session_id === "string" ? payload.work_session_id : null,
+          projectId: typeof payload.project_id === "string" ? payload.project_id : null,
+          taskId: typeof payload.task_id === "string" ? payload.task_id : null,
+          syncState: "start_pending",
+          lastError: null,
+          serverId: null,
+          status: null,
+          lifecycleState: null,
+          recordedSeconds: null,
+          approvedSeconds: null,
+          updatedAt: nowIso,
+        });
+        imported = true;
+      }
+    } else if (event.endpoint === "/agent/meetings/end") {
+      const target = meetingRecords.get(key);
+      if (target && target.endedAt === null) {
+        target.endedAt =
+          typeof payload.ended_at === "string" ? payload.ended_at : new Date().toISOString();
+        imported = true;
+      }
+    }
+    // Neutralize the legacy outbox row: the dedicated meeting sync now owns it.
+    markPendingEventIgnored(event.id);
+  }
+  if (imported) {
+    persistMeetingRecords();
+  }
+}
+
+function loadMeetings() {
+  meetingRecords.clear();
+  try {
+    const restored = JSON.parse(
+      fs.readFileSync(getMeetingsPath(), "utf-8"),
+    ) as LocalMeetingRecord[];
+    for (const record of restored) {
+      if (
+        record &&
+        typeof record.idempotencyKey === "string" &&
+        record.deviceId === runtimeStatus.deviceId
+      ) {
+        meetingRecords.set(record.idempotencyKey, record);
+      }
+    }
+  } catch {
+    // No durable file yet, or unreadable — start empty.
+  }
+  // Bring in any meeting events stranded in the legacy outbox before syncing.
+  try {
+    migrateStrandedMeetingEvents();
+  } catch (error) {
+    log.warn("Failed to migrate stranded meeting events", safeErrorForLog(error));
+  }
+  updateMeetingRuntime();
+  void syncMeetings().then(() => refreshMeetingsList());
+}
+
+async function retryMeetingSync() {
+  await syncMeetings({ retryErrors: true });
+  await refreshMeetingsList();
+  return { success: true };
+}
+
 function startIdleMonitor() {
   if (idleTimer) {
     return;
   }
 
   idleTimer = setInterval(() => {
+    // Auto-end a meeting at its expected end (which already respects the shift
+    // end), so a forgotten Meeting Mode never runs indefinitely.
+    maybeAutoEndMeeting();
     if (waitingForInputAfterIdleSessionClose) {
       if (
         !runtimeStatus.enrolled ||
@@ -2839,7 +3543,11 @@ function startIdleMonitor() {
     }
     const insideScheduledBreak = isInsideScheduledBreak(new Date());
     if (
-      hasReachedIdleThreshold(idleSeconds, insideScheduledBreak) &&
+      hasReachedIdleThreshold(
+        idleSeconds,
+        insideScheduledBreak,
+        trackingConfig.idle_threshold_minutes,
+      ) &&
       runtimeStatus.trackingStatus !== "idle"
     ) {
       recalculateWorkedTime();
@@ -2858,7 +3566,18 @@ function startIdleMonitor() {
           automaticIdleStartPromise = null;
         }
       });
-      showIdleStartedNotification();
+      if (activeMeeting) {
+        // Meeting Mode: inactivity during a bounded meeting is not an ordinary
+        // idle episode. Record the state silently (evidence is preserved and the
+        // backend reclassifies approved meeting time) without an idle popup.
+      } else if (insideScheduledBreak) {
+        // Idle during a scheduled break is expected and paid: keep the quiet
+        // notification and suppress the accountable-idle review popup.
+        showIdleStartedNotification();
+      } else {
+        // Show the review the instant idle begins, not on input return.
+        showIdleStartedReview();
+      }
     } else if (
       automaticIdleReturnAction({
         trackingStatus: runtimeStatus.trackingStatus,
@@ -2870,7 +3589,14 @@ function startIdleMonitor() {
         sustainedInputConfirmed: false,
       }) === "review"
     ) {
-      showAutomaticIdleReturnReview();
+      if (activeMeeting) {
+        // Real input during Meeting Mode ends the silent idle evidence without
+        // opening the ordinary review popup. This preserves genuine activity
+        // inside the meeting for either approval or rejection accounting.
+        void resumeAutomaticIdle();
+      } else {
+        showAutomaticIdleReturnReview();
+      }
     }
   }, 250);
 }
@@ -3494,7 +4220,11 @@ function screenshotCaptureBlockReason(): string | null {
   if (
     !trackingConfig.capture_during_idle &&
     (runtimeStatus.trackingStatus === "idle" ||
-      hasReachedIdleThreshold(systemIdleSeconds))
+      hasReachedIdleThreshold(
+        systemIdleSeconds,
+        false,
+        trackingConfig.idle_threshold_minutes,
+      ))
   ) {
     return "no_user_activity";
   }
@@ -3839,7 +4569,12 @@ function showScreenshotCapturedNotification(uploaded: number, queued: number) {
 }
 
 async function syncPendingQueuesOnce(forcePendingQueues: boolean) {
+  const failedGroups = new Set<string>();
   for (const event of getDuePendingEvents(25, { force: forcePendingQueues })) {
+    const eventGroup = sessionGroupForEndpoint(event.endpoint);
+    if (failedGroups.has(eventGroup)) {
+      continue;
+    }
     try {
       const response = (await sendQueuedRequest(
         event.method,
@@ -3889,6 +4624,10 @@ async function syncPendingQueuesOnce(forcePendingQueues: boolean) {
       } else {
         // Connection and server failures must never erase recorded work.
         markPendingEventFailed(event.id, event.attempts);
+        // The due list was selected before this delivery failed. Block later
+        // members of the same causal chain for this pass so an End/Resume cannot
+        // overtake the predecessor that was just moved into backoff.
+        failedGroups.add(eventGroup);
       }
       // Any HTTP response proves that the API is reachable. Keep the agent
       // online while the rejected item remains pending for a later decision.
@@ -4180,6 +4919,7 @@ async function startTrackingAutomatically() {
       hasReachedIdleThreshold(
         systemIdleSeconds,
         isInsideScheduledBreak(new Date()),
+        trackingConfig.idle_threshold_minutes,
       )
     ) {
       waitForInputAfterIdleSessionClose("idle");
@@ -4258,6 +4998,7 @@ async function startTrackingAutomatically() {
       hasReachedIdleThreshold(
         observedIdleSeconds(),
         isInsideScheduledBreak(new Date()),
+        trackingConfig.idle_threshold_minutes,
       )
     ) {
       waitForInputAfterIdleSessionClose("idle");
@@ -4683,6 +5424,9 @@ async function logoutDevice() {
 
   try {
     if (wasEnrolled) {
+      if (runtimeStatus.activeMeeting) {
+        await endMeeting();
+      }
       // Stop the session locally and durably record its End first, then make a
       // bounded best-effort attempt to flush already-durable evidence. The local
       // teardown below runs regardless of whether the network flush succeeds, so
@@ -4734,6 +5478,8 @@ async function syncNow() {
   await refreshTrackingConfig();
   await promotePendingLocalTrackingSessions();
   await syncPendingQueues();
+  await syncMeetings();
+  await refreshMeetingsList();
   if (currentSessionId && !trackingPausedByUser) {
     await heartbeatTick();
   }
@@ -4950,23 +5696,41 @@ function setUpdateAttention(active: boolean) {
 
 function runtimeStatusPayload() {
   const screenshotBlockReason = screenshotCaptureBlockReason();
-  const currentIdleSeconds =
+  const nowMs = Date.now();
+  const breakWindows = todaysBreakWindows(nowMs);
+  const runningBreak = breakWindowAt(nowMs, breakWindows);
+  const idleDurationSeconds =
     runtimeStatus.trackingStatus === "idle" &&
     !runtimeStatus.trackingPaused &&
     !unpaidPauseActive
       ? idleDurationAfterThreshold(
           observedIdleSeconds(),
           automaticIdleStartedDuringBreak,
+          trackingConfig.idle_threshold_minutes,
+        )
+      : 0;
+  // Idle inside a scheduled break is paid break time, not idle: only count the
+  // part of the current idle episode that falls outside break windows.
+  const currentIdleSeconds =
+    idleDurationSeconds > 0
+      ? idleSecondsOutsideBreaks(
+          nowMs - idleDurationSeconds * 1000,
+          nowMs,
+          breakWindows,
         )
       : 0;
   return {
     ...runtimeStatus,
     currentIdleSeconds,
+    scheduledBreak: runningBreak
+      ? { name: runningBreak.name, endsAt: new Date(runningBreak.endMs).toISOString() }
+      : null,
     screenshotMonitoringEnabled:
       runtimeStatus.enrolled && trackingConfig.screenshot_enabled,
     screenshotCaptureActive: screenshotBlockReason === null,
     powerSource: onAcPower ? "ac" : "battery",
     privacyNotice,
+    diagnostics: runtimeDiagnostics(),
   };
 }
 
@@ -4989,13 +5753,196 @@ function configureAutoStart(enabled = runtimeStatus.enrolled) {
     args: ["--autostart"],
   });
 
-  const startupSettings = app.getLoginItemSettings({
-    path: process.execPath,
-    args: ["--autostart"],
-  });
-  log.info(
-    `Windows automatic startup is ${startupSettings.openAtLogin ? "enabled" : "disabled"}${runtimeStatus.enrolled ? " for the enrolled device" : " until enrollment is completed"}`,
+  if (!enabled) {
+    log.info("Windows automatic startup is disabled until enrollment is completed");
+    return;
+  }
+  // getLoginItemSettings cannot look an entry up by name, so it always reported
+  // "disabled". Verify (and repair) the real Run value instead.
+  void ensureStartupEntryPointsHere("app startup");
+}
+
+async function readStartupCommand(): Promise<string | null> {
+  try {
+    const { stdout } = await execFileAsync(
+      "reg",
+      ["query", RUN_KEY, "/v", STARTUP_VALUE_NAME],
+      { windowsHide: true },
+    );
+    return parseRunValue(stdout);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Keep the Windows startup entry pointing at THIS executable. A leftover
+ * all-users install (C:\Program Files\Khaliduo) rewrites the same entry to
+ * itself whenever it is launched; at the next sign-in that old build starts,
+ * re-downloads the update and installs it again, forever.
+ */
+async function ensureStartupEntryPointsHere(reason: string) {
+  if (process.platform !== "win32" || !app.isPackaged || !runtimeStatus.enrolled) {
+    return;
+  }
+  const current = await readStartupCommand();
+  if (!startupEntryNeedsRepair(current, process.execPath)) {
+    return;
+  }
+  try {
+    await execFileAsync(
+      "reg",
+      [
+        "add",
+        RUN_KEY,
+        "/v",
+        STARTUP_VALUE_NAME,
+        "/t",
+        "REG_SZ",
+        "/d",
+        desiredStartupCommand(process.execPath),
+        "/f",
+      ],
+      { windowsHide: true },
+    );
+    log.info("Windows automatic startup now points to this Khaliduo", {
+      reason,
+      previous: current,
+    });
+  } catch (error) {
+    log.warn("Could not repair the Windows startup entry", safeErrorForLog(error));
+  }
+}
+
+function getLegacyCleanupStatePath() {
+  return path.join(app.getPath("userData"), "legacy-install.json");
+}
+
+const LEGACY_CLEANUP_PROMPT_INTERVAL_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Offer (at most once a day) to remove a leftover all-users Khaliduo. Removal
+ * needs administrator rights, so Windows shows its own permission prompt; the
+ * helper script relaunches this per-user Khaliduo if the old uninstaller
+ * closed it.
+ */
+type LegacyCleanupState = { lastPromptedAt?: number; cleanupStartedAt?: number };
+
+function readLegacyCleanupState(): LegacyCleanupState {
+  try {
+    return JSON.parse(fs.readFileSync(getLegacyCleanupStatePath(), "utf-8"));
+  } catch {
+    return {};
+  }
+}
+
+function writeLegacyCleanupState(state: LegacyCleanupState) {
+  try {
+    fs.writeFileSync(getLegacyCleanupStatePath(), JSON.stringify(state));
+  } catch (error) {
+    log.warn("Could not record the legacy cleanup state", safeErrorForLog(error));
+  }
+}
+
+function currentLegacyInstall() {
+  return findLegacyInstall(
+    process.execPath,
+    legacyInstallDirectories(process.env),
+    (filePath) => fs.existsSync(filePath),
   );
+}
+
+/**
+ * After a confirmed removal, the old all-users desktop icon is gone with it.
+ * Give this employee a desktop icon for the current install, once.
+ */
+function finishLegacyCleanupIfDone() {
+  const state = readLegacyCleanupState();
+  if (!state.cleanupStartedAt || currentLegacyInstall()) {
+    return false;
+  }
+  const shortcutPath = path.join(app.getPath("desktop"), "Khaliduo.lnk");
+  if (!fs.existsSync(shortcutPath)) {
+    const created = shell.writeShortcutLink(shortcutPath, "create", {
+      target: process.execPath,
+      description: "Khaliduo",
+      icon: process.execPath,
+      iconIndex: 0,
+    });
+    log.info("Old all-users Khaliduo removed; desktop icon restored", { created });
+  } else {
+    log.info("Old all-users Khaliduo removed");
+  }
+  writeLegacyCleanupState({ lastPromptedAt: state.lastPromptedAt });
+  void ensureStartupEntryPointsHere("old all-users copy removed");
+  return true;
+}
+
+async function maybeOfferLegacyCleanup() {
+  if (process.platform !== "win32" || !app.isPackaged || isQuitting) {
+    return;
+  }
+  if (finishLegacyCleanupIfDone()) {
+    return;
+  }
+  const legacy = currentLegacyInstall();
+  if (!legacy) {
+    return;
+  }
+  log.warn("An old all-users Khaliduo install was found; it blocks updates", {
+    directory: legacy.directory,
+  });
+  const state = readLegacyCleanupState();
+  if (Date.now() - Number(state.lastPromptedAt ?? 0) < LEGACY_CLEANUP_PROMPT_INTERVAL_MS) {
+    return;
+  }
+  writeLegacyCleanupState({ ...state, lastPromptedAt: Date.now() });
+  const choice = await showUpdateMessage({
+    type: "warning",
+    title: "Khaliduo",
+    message: "An old version of Khaliduo is blocking updates",
+    detail:
+      "An older copy of Khaliduo installed for all users on this computer keeps starting instead of this one, so updates download again and again. " +
+      "Remove the old copy now? Windows will ask for administrator permission. Your tracking and data are not affected.",
+    buttons: ["Remove old version", "Later"],
+    defaultId: 0,
+    cancelId: 1,
+    noLink: true,
+  });
+  if (choice.response !== 0) {
+    log.info("Employee postponed removing the old all-users Khaliduo");
+    return;
+  }
+  const script = legacyCleanupScript(legacy, process.execPath);
+  try {
+    const child = spawn(
+      "powershell.exe",
+      [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-WindowStyle",
+        "Hidden",
+        "-EncodedCommand",
+        Buffer.from(script, "utf16le").toString("base64"),
+      ],
+      { detached: true, stdio: "ignore", windowsHide: true },
+    );
+    child.unref();
+    writeLegacyCleanupState({ ...readLegacyCleanupState(), cleanupStartedAt: Date.now() });
+    log.info("Started removal of the old all-users Khaliduo", {
+      directory: legacy.directory,
+    });
+    // If this process survives the old uninstaller, finish up here; otherwise
+    // the relaunched Khaliduo finishes it at startup.
+    let checks = 0;
+    const poll = setInterval(() => {
+      checks += 1;
+      if (finishLegacyCleanupIfDone() || checks >= 60) clearInterval(poll);
+    }, 10_000);
+  } catch (error) {
+    log.error("Could not start removal of the old Khaliduo", safeErrorForLog(error));
+  }
 }
 
 function startCrashRecoveryWatchdog(attempt: number) {
@@ -5535,6 +6482,13 @@ app.on("second-instance", (_event, commandLine) => {
   if (!isCrashRecoveryLaunch(commandLine)) {
     showMainWindow();
   }
+  // Another copy was just launched; if it was the old all-users install it may
+  // point the startup entry back at itself before exiting. Re-claim it.
+  void ensureStartupEntryPointsHere("another Khaliduo was launched");
+  setTimeout(
+    () => void ensureStartupEntryPointsHere("after another Khaliduo launched"),
+    15_000,
+  );
 });
 
 app.on("before-quit", (event) => {
@@ -5733,6 +6687,14 @@ app.whenReady().then(async () => {
       launchedByWindowsStartup,
       launchedForCrashRecovery,
     });
+    // Restore the durable meeting store: active meetings, ended meetings still
+    // waiting to sync, and any failed start/end awaiting reconciliation. If a
+    // restored meeting's expected end has passed, close it at that bound.
+    loadMeetings();
+    maybeAutoEndMeeting();
+    // Meeting auto-end and delivery run for the whole app lifetime, even while
+    // tracking is stopped (clearRuntimeTimers never touches this timer).
+    setInterval(() => void meetingMaintenanceTick(), 15_000);
     if (launchedForCrashRecovery && !crashRecoveryHasWork) {
       // Not enrolled (e.g. after logout) or explicitly stopped: nothing to
       // recover, and resuming would be wrong. Exit so no hidden process lingers.
@@ -5747,6 +6709,12 @@ app.whenReady().then(async () => {
     // recovers BOTH interrupted online sessions (no open local row) and offline
     // local-only sessions — instead of exiting before the server is queried.
     configureAutoStart();
+    // The old all-users copy can re-point the startup entry at any time.
+    setInterval(
+      () => void ensureStartupEntryPointsHere("periodic check"),
+      5 * 60 * 1000,
+    );
+    setTimeout(() => void maybeOfferLegacyCleanup(), 20_000);
     wireSystemEvents();
 
     tray = new Tray(
@@ -5957,6 +6925,30 @@ ipcMain.handle("agent:pause-tracking", (_event, options) =>
 ipcMain.handle("agent:resume-tracking", () => resumeTracking());
 
 ipcMain.handle("agent:resume-automatic-idle", () => resumeAutomaticIdle());
+
+ipcMain.handle(
+  "agent:start-meeting",
+  (
+    _event,
+    input: {
+      title: string;
+      reason: string;
+      expectedEndMinutes: number;
+      projectId?: string | null;
+      taskId?: string | null;
+    },
+  ) => startMeeting(input),
+);
+
+ipcMain.handle("agent:end-meeting", () => endMeeting());
+
+ipcMain.handle("agent:refresh-meetings", async () => {
+  await syncMeetings();
+  await refreshMeetingsList();
+  return runtimeStatus.meetings;
+});
+
+ipcMain.handle("agent:retry-meeting-sync", () => retryMeetingSync());
 
 ipcMain.handle("agent:confirm-tracking-start", () =>
   confirmFreshSessionStart(),
@@ -6239,7 +7231,7 @@ ipcMain.handle(
     input: {
       requestedMinutes: number;
       reason: string;
-      requestType?: "idle_time" | "early_leave" | "manual_time";
+      requestType?: "idle_time" | "early_leave" | "manual_time" | "delayed_break";
       requestedDate?: string;
       workSessionId?: string;
       sourceStartAt?: string;
@@ -6256,7 +7248,8 @@ ipcMain.handle(
         ),
       ].slice(0, 10);
       if (
-        request.request_type === "idle_time" &&
+        (request.request_type === "idle_time" ||
+          request.request_type === "delayed_break") &&
         request.work_session_id &&
         request.source_start_at &&
         request.source_end_at
@@ -6300,6 +7293,91 @@ ipcMain.handle(
       return {
         success: false,
         message: getUserFacingError(error, "Time adjustment request failed."),
+      };
+    }
+  },
+);
+
+// Shift reschedule requests are fetched on demand by the Requests view and
+// never cached in runtimeStatus, so nothing personal outlives the view.
+ipcMain.handle("agent:list-shift-reschedules", async () => {
+  try {
+    const data = await listShiftReschedules();
+    return { success: true, data };
+  } catch (error) {
+    log.warn("Failed to load shift reschedules", safeErrorForLog(error));
+    return {
+      success: false,
+      message: getUserFacingError(error, "Could not load shift reschedules."),
+    };
+  }
+});
+
+ipcMain.handle(
+  "agent:get-shift-reschedule-day",
+  async (_, workDate: string) => {
+    try {
+      if (typeof workDate !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(workDate)) {
+        return { success: false, message: "Choose a valid date." };
+      }
+      const data = await getShiftRescheduleDay(workDate);
+      return { success: true, data };
+    } catch (error) {
+      log.warn("Failed to load shift for date", safeErrorForLog(error));
+      return {
+        success: false,
+        message: getUserFacingError(error, "Could not load your shift for that day."),
+      };
+    }
+  },
+);
+
+ipcMain.handle(
+  "agent:create-shift-reschedule",
+  async (
+    _,
+    input: {
+      workDate: string;
+      requestedStart: string;
+      requestedEnd: string;
+      reason: string;
+    },
+  ) => {
+    try {
+      const request = await createShiftReschedule({
+        workDate: input.workDate,
+        requestedStart: input.requestedStart,
+        requestedEnd: input.requestedEnd,
+        reason: input.reason,
+      });
+      runtimeStatus.connectionStatus = "online";
+      runtimeStatus.lastSuccessfulSyncAt = new Date().toISOString();
+      return { success: true, request };
+    } catch (error) {
+      runtimeStatus.connectionStatus = connectionStatusAfterApiFailure(
+        apiResponseStatus(error),
+      );
+      rebuildTrayMenu();
+      log.error("Shift reschedule request failed", safeErrorForLog(error));
+      return {
+        success: false,
+        message: getUserFacingError(error, "Shift reschedule request failed."),
+      };
+    }
+  },
+);
+
+ipcMain.handle(
+  "agent:cancel-shift-reschedule",
+  async (_, requestId: string) => {
+    try {
+      const request = await cancelShiftReschedule(String(requestId));
+      return { success: true, request };
+    } catch (error) {
+      log.error("Shift reschedule cancel failed", safeErrorForLog(error));
+      return {
+        success: false,
+        message: getUserFacingError(error, "Could not cancel the request."),
       };
     }
   },

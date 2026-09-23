@@ -21,6 +21,31 @@ test("session endpoints group by their session id", () => {
   );
 });
 
+test("meeting start and end share one causal delivery group", () => {
+  assert.equal(sessionGroupForEndpoint("/agent/meetings"), "/agent/meetings");
+  assert.equal(sessionGroupForEndpoint("/agent/meetings/end"), "/agent/meetings");
+});
+
+test("a backed-off meeting start blocks its end", () => {
+  const now = Date.parse("2026-09-10T12:00:00Z");
+  const due = orderedDuePendingEvents(
+    [
+      {
+        id: "meeting-start",
+        endpoint: "/agent/meetings",
+        nextAttemptAt: "2026-09-10T12:05:00Z",
+      },
+      {
+        id: "meeting-end",
+        endpoint: "/agent/meetings/end",
+        nextAttemptAt: "2026-09-10T11:59:00Z",
+      },
+    ],
+    { now, limit: 25 },
+  );
+  assert.deepEqual(due, []);
+});
+
 test("a backed-off predecessor blocks its session's later events", () => {
   const now = Date.parse("2026-09-10T12:00:00Z");
   const events = [

@@ -197,3 +197,9 @@ class CompanyPayrollSettings(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     cycle_start_day: Mapped[int] = mapped_column(Integer, nullable=False, default=26)
     cycle_end_day: Mapped[int] = mapped_column(Integer, nullable=False, default=25)
     timezone: Mapped[str] = mapped_column(String(80), nullable=False, default="Africa/Cairo")
+    # Phase-1 financial policies (paid scheduled breaks, paid late allowance,
+    # break-bank / delayed-break credit) activate on and after this employee-local
+    # date. Null means the new policies are inactive, so historical and frozen
+    # payroll are computed exactly as before. Applied prospectively; never used to
+    # retroactively recalculate earlier days.
+    financial_policy_effective_date: Mapped[date | None] = mapped_column(Date, nullable=True)

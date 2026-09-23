@@ -1,32 +1,54 @@
-export const IDLE_THRESHOLD_MINUTES = 10;
+// Default idle detection threshold. Kept in sync with the backend policy
+// default (backend TrackingSettings.idle_threshold_minutes / config
+// DEFAULT_IDLE_THRESHOLD_MINUTES). The backend now reports the company's
+// configured value at enrollment; this constant is the shared fallback used
+// offline and before the first config sync.
+export const IDLE_THRESHOLD_MINUTES = 15;
 export const IDLE_THRESHOLD_SECONDS = IDLE_THRESHOLD_MINUTES * 60;
-export const BREAK_IDLE_THRESHOLD_MINUTES = 10;
+export const BREAK_IDLE_THRESHOLD_MINUTES = 15;
 export const BREAK_IDLE_THRESHOLD_SECONDS =
   BREAK_IDLE_THRESHOLD_MINUTES * 60;
 export const IDLE_RETURN_VERIFICATION_SECONDS = 3 * 60;
 export const IDLE_RETURN_VERIFICATION_MS =
   IDLE_RETURN_VERIFICATION_SECONDS * 1_000;
 
-export function idleThresholdSeconds(insideScheduledBreak = false): number {
-  return insideScheduledBreak
-    ? BREAK_IDLE_THRESHOLD_SECONDS
-    : IDLE_THRESHOLD_SECONDS;
+function configuredIdleThresholdSeconds(thresholdMinutes = IDLE_THRESHOLD_MINUTES) {
+  const minutes = Number.isFinite(thresholdMinutes)
+    ? Math.max(1, Math.floor(thresholdMinutes))
+    : IDLE_THRESHOLD_MINUTES;
+  return minutes * 60;
+}
+
+export function idleThresholdSeconds(
+  insideScheduledBreak = false,
+  thresholdMinutes = IDLE_THRESHOLD_MINUTES,
+): number {
+  // Breaks use the same company policy. Keep the positional flag for existing
+  // callers because it also documents why a quiet idle transition is occurring.
+  void insideScheduledBreak;
+  return configuredIdleThresholdSeconds(thresholdMinutes);
 }
 
 export function hasReachedIdleThreshold(
   systemIdleSeconds: number,
   insideScheduledBreak = false,
+  thresholdMinutes = IDLE_THRESHOLD_MINUTES,
 ): boolean {
-  return systemIdleSeconds >= idleThresholdSeconds(insideScheduledBreak);
+  return (
+    systemIdleSeconds >=
+    idleThresholdSeconds(insideScheduledBreak, thresholdMinutes)
+  );
 }
 
 export function idleDurationAfterThreshold(
   systemIdleSeconds: number,
   insideScheduledBreak = false,
+  thresholdMinutes = IDLE_THRESHOLD_MINUTES,
 ): number {
   return Math.max(
     0,
-    Math.floor(systemIdleSeconds) - idleThresholdSeconds(insideScheduledBreak),
+    Math.floor(systemIdleSeconds) -
+      idleThresholdSeconds(insideScheduledBreak, thresholdMinutes),
   );
 }
 

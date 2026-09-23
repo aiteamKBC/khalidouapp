@@ -63,6 +63,7 @@ from app.services.work_profiles import (
     validate_break_rules,
 )
 from app.services.attendance import refresh_daily_attendance_range
+from app.services.employee_archive import current_employee_clause
 
 
 router = APIRouter(prefix="/payroll", tags=["payroll"])
@@ -840,7 +841,7 @@ def create_schedule_override(
         employee_ids = list(
             db.scalars(
                 select(Employee.id).where(
-                    Employee.company_id == current_admin.company_id, Employee.status != "deleted"
+                    Employee.company_id == current_admin.company_id, current_employee_clause()
                 )
             ).all()
         )

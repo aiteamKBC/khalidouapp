@@ -11,15 +11,16 @@ from app.models import Device, DeviceToken, Employee, TrackingSettings
 from app.schemas.agent import AgentDeviceInfo
 from app.services.device_location import refresh_device_location
 
-IDLE_THRESHOLD_MINUTES = 10
-
 
 def serialize_tracking_settings(settings_row: TrackingSettings) -> dict[str, Any]:
+    # Report the company's actual configured idle threshold so the desktop agent
+    # detects idle on the same yardstick the backend accounting uses. Previously
+    # this was hardcoded to 10, silently overriding the stored value.
     return {
         "screenshot_enabled": settings_row.screenshot_enabled,
         "screenshot_interval_minutes": settings_row.screenshot_interval_minutes,
         "screenshots_per_interval": settings_row.screenshots_per_interval,
-        "idle_threshold_minutes": IDLE_THRESHOLD_MINUTES,
+        "idle_threshold_minutes": settings_row.idle_threshold_minutes,
         "capture_during_idle": settings_row.capture_during_idle,
         "offline_threshold_minutes": settings_row.offline_threshold_minutes,
         "screenshot_retention_days": settings_row.screenshot_retention_days,
@@ -37,7 +38,7 @@ def get_or_create_tracking_settings(db: Session, company_id) -> TrackingSettings
         company_id=company_id,
         screenshot_interval_minutes=settings.default_screenshot_interval_minutes,
         screenshots_per_interval=settings.default_screenshots_per_interval,
-        idle_threshold_minutes=IDLE_THRESHOLD_MINUTES,
+        idle_threshold_minutes=settings.default_idle_threshold_minutes,
         offline_threshold_minutes=settings.default_offline_threshold_minutes,
         screenshot_retention_days=settings.default_screenshot_retention_days,
     )

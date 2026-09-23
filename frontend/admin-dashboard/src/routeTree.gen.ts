@@ -18,6 +18,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as AppTimesheetsRouteImport } from './routes/_app.timesheets'
 import { Route as AppTimeAdjustmentsRouteImport } from './routes/_app.time-adjustments'
 import { Route as AppTeamsRouteImport } from './routes/_app.teams'
+import { Route as AppShiftReschedulesRouteImport } from './routes/_app.shift-reschedules'
 import { Route as AppScreenshotsRouteImport } from './routes/_app.screenshots'
 import { Route as AppReportsRouteImport } from './routes/_app.reports'
 import { Route as AppProjectsRouteImport } from './routes/_app.projects'
@@ -26,6 +27,7 @@ import { Route as AppPeopleRouteImport } from './routes/_app.people'
 import { Route as AppPayrollRouteImport } from './routes/_app.payroll'
 import { Route as AppNotificationsRouteImport } from './routes/_app.notifications'
 import { Route as AppMonitoringRouteImport } from './routes/_app.monitoring'
+import { Route as AppMeetingsRouteImport } from './routes/_app.meetings'
 import { Route as AppLiveActivityRouteImport } from './routes/_app.live-activity'
 import { Route as AppHolidayRequestsRouteImport } from './routes/_app.holiday-requests'
 import { Route as AppHistoryRouteImport } from './routes/_app.history'
@@ -35,6 +37,7 @@ import { Route as AppDashboardRouteImport } from './routes/_app.dashboard'
 import { Route as AppBreaksRouteImport } from './routes/_app.breaks'
 import { Route as AppAuditLogRouteImport } from './routes/_app.audit-log'
 import { Route as AppAttendanceRouteImport } from './routes/_app.attendance'
+import { Route as AppArchivedEmployeesRouteImport } from './routes/_app.archived-employees'
 import { Route as AppTeamsTeamIdRouteImport } from './routes/_app.teams.$teamId'
 import { Route as AppSettingsTrackingRouteImport } from './routes/_app.settings.tracking'
 import { Route as AppProjectsProjectIdRouteImport } from './routes/_app.projects.$projectId'
@@ -85,6 +88,11 @@ const AppTeamsRoute = AppTeamsRouteImport.update({
   path: '/teams',
   getParentRoute: () => AppRoute,
 } as any)
+const AppShiftReschedulesRoute = AppShiftReschedulesRouteImport.update({
+  id: '/shift-reschedules',
+  path: '/shift-reschedules',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppScreenshotsRoute = AppScreenshotsRouteImport.update({
   id: '/screenshots',
   path: '/screenshots',
@@ -123,6 +131,11 @@ const AppNotificationsRoute = AppNotificationsRouteImport.update({
 const AppMonitoringRoute = AppMonitoringRouteImport.update({
   id: '/monitoring',
   path: '/monitoring',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppMeetingsRoute = AppMeetingsRouteImport.update({
+  id: '/meetings',
+  path: '/meetings',
   getParentRoute: () => AppRoute,
 } as any)
 const AppLiveActivityRoute = AppLiveActivityRouteImport.update({
@@ -170,6 +183,11 @@ const AppAttendanceRoute = AppAttendanceRouteImport.update({
   path: '/attendance',
   getParentRoute: () => AppRoute,
 } as any)
+const AppArchivedEmployeesRoute = AppArchivedEmployeesRouteImport.update({
+  id: '/archived-employees',
+  path: '/archived-employees',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppTeamsTeamIdRoute = AppTeamsTeamIdRouteImport.update({
   id: '/$teamId',
   path: '/$teamId',
@@ -202,6 +220,7 @@ export interface FileRoutesByFullPath {
   '/download': typeof DownloadRoute
   '/employee': typeof EmployeeRoute
   '/login': typeof LoginRoute
+  '/archived-employees': typeof AppArchivedEmployeesRoute
   '/attendance': typeof AppAttendanceRoute
   '/audit-log': typeof AppAuditLogRoute
   '/breaks': typeof AppBreaksRoute
@@ -211,6 +230,7 @@ export interface FileRoutesByFullPath {
   '/history': typeof AppHistoryRoute
   '/holiday-requests': typeof AppHolidayRequestsRoute
   '/live-activity': typeof AppLiveActivityRoute
+  '/meetings': typeof AppMeetingsRoute
   '/monitoring': typeof AppMonitoringRoute
   '/notifications': typeof AppNotificationsRoute
   '/payroll': typeof AppPayrollRoute
@@ -219,6 +239,7 @@ export interface FileRoutesByFullPath {
   '/projects': typeof AppProjectsRouteWithChildren
   '/reports': typeof AppReportsRoute
   '/screenshots': typeof AppScreenshotsRoute
+  '/shift-reschedules': typeof AppShiftReschedulesRoute
   '/teams': typeof AppTeamsRouteWithChildren
   '/time-adjustments': typeof AppTimeAdjustmentsRoute
   '/timesheets': typeof AppTimesheetsRoute
@@ -234,6 +255,7 @@ export interface FileRoutesByTo {
   '/download': typeof DownloadRoute
   '/employee': typeof EmployeeRoute
   '/login': typeof LoginRoute
+  '/archived-employees': typeof AppArchivedEmployeesRoute
   '/attendance': typeof AppAttendanceRoute
   '/audit-log': typeof AppAuditLogRoute
   '/breaks': typeof AppBreaksRoute
@@ -243,6 +265,7 @@ export interface FileRoutesByTo {
   '/history': typeof AppHistoryRoute
   '/holiday-requests': typeof AppHolidayRequestsRoute
   '/live-activity': typeof AppLiveActivityRoute
+  '/meetings': typeof AppMeetingsRoute
   '/monitoring': typeof AppMonitoringRoute
   '/notifications': typeof AppNotificationsRoute
   '/payroll': typeof AppPayrollRoute
@@ -251,6 +274,7 @@ export interface FileRoutesByTo {
   '/projects': typeof AppProjectsRouteWithChildren
   '/reports': typeof AppReportsRoute
   '/screenshots': typeof AppScreenshotsRoute
+  '/shift-reschedules': typeof AppShiftReschedulesRoute
   '/teams': typeof AppTeamsRouteWithChildren
   '/time-adjustments': typeof AppTimeAdjustmentsRoute
   '/timesheets': typeof AppTimesheetsRoute
@@ -268,6 +292,7 @@ export interface FileRoutesById {
   '/download': typeof DownloadRoute
   '/employee': typeof EmployeeRoute
   '/login': typeof LoginRoute
+  '/_app/archived-employees': typeof AppArchivedEmployeesRoute
   '/_app/attendance': typeof AppAttendanceRoute
   '/_app/audit-log': typeof AppAuditLogRoute
   '/_app/breaks': typeof AppBreaksRoute
@@ -277,6 +302,7 @@ export interface FileRoutesById {
   '/_app/history': typeof AppHistoryRoute
   '/_app/holiday-requests': typeof AppHolidayRequestsRoute
   '/_app/live-activity': typeof AppLiveActivityRoute
+  '/_app/meetings': typeof AppMeetingsRoute
   '/_app/monitoring': typeof AppMonitoringRoute
   '/_app/notifications': typeof AppNotificationsRoute
   '/_app/payroll': typeof AppPayrollRoute
@@ -285,6 +311,7 @@ export interface FileRoutesById {
   '/_app/projects': typeof AppProjectsRouteWithChildren
   '/_app/reports': typeof AppReportsRoute
   '/_app/screenshots': typeof AppScreenshotsRoute
+  '/_app/shift-reschedules': typeof AppShiftReschedulesRoute
   '/_app/teams': typeof AppTeamsRouteWithChildren
   '/_app/time-adjustments': typeof AppTimeAdjustmentsRoute
   '/_app/timesheets': typeof AppTimesheetsRoute
@@ -302,6 +329,7 @@ export interface FileRouteTypes {
     | '/download'
     | '/employee'
     | '/login'
+    | '/archived-employees'
     | '/attendance'
     | '/audit-log'
     | '/breaks'
@@ -311,6 +339,7 @@ export interface FileRouteTypes {
     | '/history'
     | '/holiday-requests'
     | '/live-activity'
+    | '/meetings'
     | '/monitoring'
     | '/notifications'
     | '/payroll'
@@ -319,6 +348,7 @@ export interface FileRouteTypes {
     | '/projects'
     | '/reports'
     | '/screenshots'
+    | '/shift-reschedules'
     | '/teams'
     | '/time-adjustments'
     | '/timesheets'
@@ -334,6 +364,7 @@ export interface FileRouteTypes {
     | '/download'
     | '/employee'
     | '/login'
+    | '/archived-employees'
     | '/attendance'
     | '/audit-log'
     | '/breaks'
@@ -343,6 +374,7 @@ export interface FileRouteTypes {
     | '/history'
     | '/holiday-requests'
     | '/live-activity'
+    | '/meetings'
     | '/monitoring'
     | '/notifications'
     | '/payroll'
@@ -351,6 +383,7 @@ export interface FileRouteTypes {
     | '/projects'
     | '/reports'
     | '/screenshots'
+    | '/shift-reschedules'
     | '/teams'
     | '/time-adjustments'
     | '/timesheets'
@@ -367,6 +400,7 @@ export interface FileRouteTypes {
     | '/download'
     | '/employee'
     | '/login'
+    | '/_app/archived-employees'
     | '/_app/attendance'
     | '/_app/audit-log'
     | '/_app/breaks'
@@ -376,6 +410,7 @@ export interface FileRouteTypes {
     | '/_app/history'
     | '/_app/holiday-requests'
     | '/_app/live-activity'
+    | '/_app/meetings'
     | '/_app/monitoring'
     | '/_app/notifications'
     | '/_app/payroll'
@@ -384,6 +419,7 @@ export interface FileRouteTypes {
     | '/_app/projects'
     | '/_app/reports'
     | '/_app/screenshots'
+    | '/_app/shift-reschedules'
     | '/_app/teams'
     | '/_app/time-adjustments'
     | '/_app/timesheets'
@@ -468,6 +504,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppTeamsRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/shift-reschedules': {
+      id: '/_app/shift-reschedules'
+      path: '/shift-reschedules'
+      fullPath: '/shift-reschedules'
+      preLoaderRoute: typeof AppShiftReschedulesRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/screenshots': {
       id: '/_app/screenshots'
       path: '/screenshots'
@@ -522,6 +565,13 @@ declare module '@tanstack/react-router' {
       path: '/monitoring'
       fullPath: '/monitoring'
       preLoaderRoute: typeof AppMonitoringRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/meetings': {
+      id: '/_app/meetings'
+      path: '/meetings'
+      fullPath: '/meetings'
+      preLoaderRoute: typeof AppMeetingsRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/live-activity': {
@@ -585,6 +635,13 @@ declare module '@tanstack/react-router' {
       path: '/attendance'
       fullPath: '/attendance'
       preLoaderRoute: typeof AppAttendanceRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/archived-employees': {
+      id: '/_app/archived-employees'
+      path: '/archived-employees'
+      fullPath: '/archived-employees'
+      preLoaderRoute: typeof AppArchivedEmployeesRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/teams/$teamId': {
@@ -674,6 +731,7 @@ const AppTeamsRouteWithChildren = AppTeamsRoute._addFileChildren(
 )
 
 interface AppRouteChildren {
+  AppArchivedEmployeesRoute: typeof AppArchivedEmployeesRoute
   AppAttendanceRoute: typeof AppAttendanceRoute
   AppAuditLogRoute: typeof AppAuditLogRoute
   AppBreaksRoute: typeof AppBreaksRoute
@@ -683,6 +741,7 @@ interface AppRouteChildren {
   AppHistoryRoute: typeof AppHistoryRoute
   AppHolidayRequestsRoute: typeof AppHolidayRequestsRoute
   AppLiveActivityRoute: typeof AppLiveActivityRoute
+  AppMeetingsRoute: typeof AppMeetingsRoute
   AppMonitoringRoute: typeof AppMonitoringRoute
   AppNotificationsRoute: typeof AppNotificationsRoute
   AppPayrollRoute: typeof AppPayrollRoute
@@ -691,6 +750,7 @@ interface AppRouteChildren {
   AppProjectsRoute: typeof AppProjectsRouteWithChildren
   AppReportsRoute: typeof AppReportsRoute
   AppScreenshotsRoute: typeof AppScreenshotsRoute
+  AppShiftReschedulesRoute: typeof AppShiftReschedulesRoute
   AppTeamsRoute: typeof AppTeamsRouteWithChildren
   AppTimeAdjustmentsRoute: typeof AppTimeAdjustmentsRoute
   AppTimesheetsRoute: typeof AppTimesheetsRoute
@@ -698,6 +758,7 @@ interface AppRouteChildren {
 }
 
 const AppRouteChildren: AppRouteChildren = {
+  AppArchivedEmployeesRoute: AppArchivedEmployeesRoute,
   AppAttendanceRoute: AppAttendanceRoute,
   AppAuditLogRoute: AppAuditLogRoute,
   AppBreaksRoute: AppBreaksRoute,
@@ -707,6 +768,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppHistoryRoute: AppHistoryRoute,
   AppHolidayRequestsRoute: AppHolidayRequestsRoute,
   AppLiveActivityRoute: AppLiveActivityRoute,
+  AppMeetingsRoute: AppMeetingsRoute,
   AppMonitoringRoute: AppMonitoringRoute,
   AppNotificationsRoute: AppNotificationsRoute,
   AppPayrollRoute: AppPayrollRoute,
@@ -715,6 +777,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppProjectsRoute: AppProjectsRouteWithChildren,
   AppReportsRoute: AppReportsRoute,
   AppScreenshotsRoute: AppScreenshotsRoute,
+  AppShiftReschedulesRoute: AppShiftReschedulesRoute,
   AppTeamsRoute: AppTeamsRouteWithChildren,
   AppTimeAdjustmentsRoute: AppTimeAdjustmentsRoute,
   AppTimesheetsRoute: AppTimesheetsRoute,

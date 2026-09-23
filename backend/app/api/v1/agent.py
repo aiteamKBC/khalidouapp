@@ -31,6 +31,7 @@ from app.models import (
     Screenshot,
     Task,
     TaskChecklistItem,
+    ShiftRescheduleRequest,
     Team,
     TeamMember,
     TimeAdjustmentRequest,
@@ -39,12 +40,22 @@ from app.schemas.agent import (
     AgentChecklistItemCreate,
     AgentChecklistItemUpdate,
     AgentLeaveRequestCreate,
+    AgentMeetingEnd,
+    AgentMeetingStart,
+    AgentShiftRescheduleCreate,
     AgentTaskCreate,
     AgentTaskUpdate,
     AgentTimeAdjustmentRequestCreate,
     AuthenticatedEnrollmentRequest,
     RefreshDeviceTokenRequest,
 )
+from app.services.meetings import (
+    auto_end_due_meetings,
+    end_meeting,
+    serialize_meeting,
+    start_meeting,
+)
+from app.models import MeetingRecord
 from app.schemas.session import (
     ActivityEventRequest,
     HeartbeatRequest,
@@ -106,6 +117,16 @@ from app.services.leave_management import (
     serialize_leave_request,
 )
 from app.services.idle_request_periods import build_idle_request_periods
+from app.services.shift_reschedules import (
+    EMPLOYEE_NOTICE_DAYS,
+    base_day_schedule,
+    cancel_employee_request,
+    create_employee_request,
+    employee_today,
+    expire_company_pending,
+    serialize_base_day,
+    serialize_shift_reschedule,
+)
 from app.services.time_adjustments import (
     create_employee_time_adjustment_request,
     serialize_time_adjustment_request,
@@ -382,7 +403,7 @@ def agent_period_summary(context: DeviceAuthContext, db: Session) -> dict:
             manual_request_status_seconds(db, employee, start, end),
         )
 
-    _, timeline = calculate_daily_attendance(
+    attendance_row, timeline = calculate_daily_attendance(
         db,
         employee=employee,
         work_date=today,
@@ -391,6 +412,7 @@ def agent_period_summary(context: DeviceAuthContext, db: Session) -> dict:
         device_id=context.device.id,
         timezone_name=device_timezone,
     )
+    attendance_sources = attendance_row.calculation_sources or {}
     today_summary = reconcile_today_summary_with_timeline(summarize(today, today), timeline)
     today_summary["eligible_idle_seconds"] = _eligible_idle_seconds(
         db,
@@ -446,6 +468,23 @@ def agent_period_summary(context: DeviceAuthContext, db: Session) -> dict:
         "today": today_summary,
         "today_timeline": timeline,
         "idle_request_periods": idle_request_periods,
+        # Same-day break-bank ledger: seconds earned by working through a
+        # scheduled break, minus what an approved delayed break already spent
+        # and what pending claims have reserved. ``remaining`` is what the
+        # employee can still claim against later automatic idle today.
+        "break_bank": {
+            "policy_active": bool(attendance_sources.get("financial_policy_active", False)),
+            "worked_break_seconds": int(attendance_sources.get("worked_break_seconds", 0)),
+            "earned_seconds": int(attendance_sources.get("earned_break_credit_seconds", 0)),
+            "approved_seconds": int(attendance_sources.get("approved_delayed_break_seconds", 0)),
+            "reserved_seconds": int(attendance_sources.get("reserved_break_credit_seconds", 0)),
+            "remaining_seconds": int(
+                attendance_sources.get("remaining_break_credit_seconds", 0)
+            ),
+            "paid_late_allowance_seconds": int(
+                attendance_sources.get("paid_late_allowance_seconds", 0)
+            ),
+        },
         "week": summarize(week_start, week_start + timedelta(days=6)),
         "month": summarize(month_start, month_end),
     }
@@ -1189,6 +1228,66 @@ def create_time_adjustment_request(
     return success_response(data=serialize_time_adjustment_request(row))
 
 
+@router.post("/meetings")
+def start_meeting_endpoint(
+    payload: AgentMeetingStart,
+    context: Annotated[DeviceAuthContext, Depends(get_current_device)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    row = start_meeting(
+        db,
+        device=context.device,
+        title=payload.title,
+        reason=payload.reason,
+        expected_end_at=payload.expected_end_at,
+        idempotency_key=payload.idempotency_key,
+        claimed_device_id=payload.device_id,
+        started_at=payload.started_at,
+        work_session_id=payload.work_session_id,
+        project_id=payload.project_id,
+        task_id=payload.task_id,
+    )
+    return success_response(data=serialize_meeting(row))
+
+
+@router.post("/meetings/end")
+def end_meeting_endpoint(
+    payload: AgentMeetingEnd,
+    context: Annotated[DeviceAuthContext, Depends(get_current_device)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    row = end_meeting(
+        db,
+        device=context.device,
+        idempotency_key=payload.idempotency_key,
+        claimed_device_id=payload.device_id,
+        ended_at=payload.ended_at,
+    )
+    return success_response(data=serialize_meeting(row))
+
+
+@router.get("/meetings")
+def list_meetings_endpoint(
+    context: Annotated[DeviceAuthContext, Depends(get_current_device)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    auto_end_due_meetings(
+        db,
+        company_id=context.device.company_id,
+        employee_id=context.device.employee_id,
+    )
+    rows = db.scalars(
+        select(MeetingRecord)
+        .where(
+            MeetingRecord.company_id == context.device.company_id,
+            MeetingRecord.employee_id == context.device.employee_id,
+        )
+        .order_by(MeetingRecord.started_at.desc())
+        .limit(20)
+    ).all()
+    return success_response(data=[serialize_meeting(row) for row in rows])
+
+
 @router.get("/leave-requests")
 def list_leave_requests(
     context: Annotated[DeviceAuthContext, Depends(get_current_device)],
@@ -1280,3 +1379,107 @@ def create_leave_request(
         ],
     )
     return success_response(data=serialize_leave_request(row))
+
+
+def _agent_employee(context: DeviceAuthContext, db: Session) -> Employee:
+    employee = db.get(Employee, context.device.employee_id)
+    if employee is None:
+        raise ApiError("EMPLOYEE_NOT_FOUND", "Employee profile was not found.", 404)
+    return employee
+
+
+@router.get("/shift-reschedules")
+def list_shift_reschedules(
+    context: Annotated[DeviceAuthContext, Depends(get_current_device)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    employee = _agent_employee(context, db)
+    expire_company_pending(db, employee.company_id, employee_id=employee.id)
+    db.commit()
+    rows = db.scalars(
+        select(ShiftRescheduleRequest)
+        .where(
+            ShiftRescheduleRequest.company_id == context.device.company_id,
+            ShiftRescheduleRequest.employee_id == employee.id,
+        )
+        .order_by(ShiftRescheduleRequest.work_date.desc(), ShiftRescheduleRequest.created_at.desc())
+        .limit(20)
+    ).all()
+    profile = get_or_create_work_profile(db, employee)
+    return success_response(
+        data={
+            "policy": {
+                "timezone": employee.timezone or "UTC",
+                "notice_days": EMPLOYEE_NOTICE_DAYS,
+                "earliest_date": (
+                    employee_today(employee) + timedelta(days=EMPLOYEE_NOTICE_DAYS)
+                ).isoformat(),
+                "working_days": profile.working_days
+                if profile.working_days is not None
+                else DEFAULT_WORKING_DAYS,
+                "weekly_off_days": profile.weekly_off_days or [],
+            },
+            "requests": [serialize_shift_reschedule(row) for row in rows],
+        }
+    )
+
+
+@router.get("/shift-reschedules/day")
+def shift_reschedule_day(
+    context: Annotated[DeviceAuthContext, Depends(get_current_device)],
+    db: Annotated[Session, Depends(get_db)],
+    work_date: date = Query(alias="date"),
+):
+    employee = _agent_employee(context, db)
+    base = base_day_schedule(db, employee, work_date)
+    db.commit()
+    return success_response(data=serialize_base_day(work_date, base))
+
+
+@router.post("/shift-reschedules")
+def create_shift_reschedule(
+    payload: AgentShiftRescheduleCreate,
+    context: Annotated[DeviceAuthContext, Depends(get_current_device)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    employee = _agent_employee(context, db)
+    row = create_employee_request(
+        db,
+        employee=employee,
+        work_date=payload.work_date,
+        requested_start=payload.requested_start,
+        requested_end=payload.requested_end,
+        reason=payload.reason,
+    )
+    db.commit()
+    db.refresh(row)
+    return success_response(data=serialize_shift_reschedule(row))
+
+
+@router.post("/shift-reschedules/{request_id}/cancel")
+def cancel_shift_reschedule(
+    request_id: UUID,
+    context: Annotated[DeviceAuthContext, Depends(get_current_device)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    employee = _agent_employee(context, db)
+    row = db.scalar(
+        select(ShiftRescheduleRequest)
+        .where(
+            ShiftRescheduleRequest.id == request_id,
+            ShiftRescheduleRequest.company_id == context.device.company_id,
+            ShiftRescheduleRequest.employee_id == employee.id,
+        )
+        .with_for_update()
+    )
+    if row is None:
+        raise ApiError("SHIFT_RESCHEDULE_NOT_FOUND", "Shift reschedule was not found.", 404)
+    try:
+        cancel_employee_request(db, employee=employee, row=row)
+    except ApiError:
+        # Persist a lazily-detected expiry before surfacing the error.
+        db.commit()
+        raise
+    db.commit()
+    db.refresh(row)
+    return success_response(data=serialize_shift_reschedule(row))

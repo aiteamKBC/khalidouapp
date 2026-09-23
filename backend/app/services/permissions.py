@@ -327,6 +327,26 @@ def require_capability(admin: AdminUser, capability: str) -> None:
         raise ApiError("FORBIDDEN", "You do not have permission to perform this action.", 403)
 
 
+def can_archive_employees(admin: AdminUser) -> bool:
+    """Archiving fired/resigned people is an HR / Super Admin decision.
+
+    It ends payroll at the last working day, so like payroll itself it is not
+    granted to General Admins or Team Leaders even with ``people.archive``.
+    """
+    return (admin.role == HR_MANAGER or is_super_admin(admin)) and has_capability(
+        admin, "people.archive"
+    )
+
+
+def require_can_archive_employees(admin: AdminUser) -> None:
+    if not can_archive_employees(admin):
+        raise ApiError(
+            "FORBIDDEN",
+            "Only HR or the Super Admin can archive or restore employees.",
+            403,
+        )
+
+
 def require_any_capability(admin: AdminUser) -> None:
     if not has_any_capability(admin):
         raise ApiError("FORBIDDEN", "You do not have permission to perform this action.", 403)

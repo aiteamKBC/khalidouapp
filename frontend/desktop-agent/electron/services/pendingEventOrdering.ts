@@ -16,7 +16,14 @@ export function sessionGroupForEndpoint(endpoint: string): string {
   // target a session are grouped by their raw endpoint, so unrelated endpoints
   // never block one another.
   const match = /\/agent\/sessions\/([^/]+)\//.exec(endpoint);
-  return match ? match[1] : endpoint;
+  if (match) return match[1];
+  // A meeting End depends on its Start even though the API uses two endpoint
+  // paths. Keep the pair in one causal queue so an offline/backed-off Start can
+  // never be overtaken by its End.
+  if (endpoint === "/agent/meetings" || endpoint === "/agent/meetings/end") {
+    return "/agent/meetings";
+  }
+  return endpoint;
 }
 
 export function orderedDuePendingEvents<

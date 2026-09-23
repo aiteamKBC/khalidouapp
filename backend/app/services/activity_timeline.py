@@ -9,7 +9,16 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.models import ActivityEvent, LeaveRequest, Project, Task, TrackingSettings, WorkSession
+from app.services.agent_versions import (
+    DEFAULT_REQUIRED_AGENT_VERSION,
+    agent_version_counters_trusted,
+)
+
+
+def _required_agent_version() -> str:
+    return settings.required_agent_version or DEFAULT_REQUIRED_AGENT_VERSION
 
 
 EVENT_STATES = {
@@ -199,10 +208,18 @@ def _counter(payload: dict | None, key: str) -> int | None:
     return max(0, int(value))
 
 
+def _payload_agent_version(payload: dict | None) -> str | None:
+    if not isinstance(payload, dict):
+        return None
+    value = payload.get("agent_version")
+    return value if isinstance(value, str) else None
+
+
 def _offline_gaps(
     heartbeats: list[tuple[datetime, dict | None]],
     *,
     freshness_limit: timedelta,
+    trusted_counter_min_version: str = DEFAULT_REQUIRED_AGENT_VERSION,
 ) -> list[tuple[datetime, datetime]]:
     """Find time where the agent itself was not running.
 
@@ -215,6 +232,16 @@ def _offline_gaps(
 
     A network-only outage is different: the local counters continue to advance,
     so the gap remains classified even though the heartbeats arrive late.
+
+    Untrusted clients are the exception. Desktop releases at or below the last
+    unsupported version credited a multi-hour sleep/hibernate freeze as active
+    work (commit 09a209b): on resume, the cumulative active counter jumps by
+    roughly the frozen duration, which would make the whole gap look observed
+    and be paid — often as overnight overtime. When the counter delta comes from
+    such a version we do not trust it: the entire gap becomes unobserved
+    (untracked), never idle. Legitimate offline work is unaffected because a
+    device that keeps running emits continuously progressing heartbeats at short
+    intervals, so no single gap exceeds the freshness limit in the first place.
     """
     result: list[tuple[datetime, datetime]] = []
     for (previous_at, previous_payload), (next_at, next_payload) in zip(
@@ -225,21 +252,30 @@ def _offline_gaps(
         gap_seconds = max(0, int((next_at - previous_at).total_seconds()))
         if gap_seconds <= int(freshness_limit.total_seconds()):
             continue
-        previous_active = _counter(previous_payload, "active_seconds")
-        next_active = _counter(next_payload, "active_seconds")
-        previous_idle = _counter(previous_payload, "idle_seconds")
-        next_idle = _counter(next_payload, "idle_seconds")
-        observed_active = (
-            max(0, next_active - previous_active)
-            if previous_active is not None and next_active is not None
-            else 0
+        # The counter delta is reported by the client running at the end of the
+        # gap. Trust it only when that release is supported.
+        counters_trusted = agent_version_counters_trusted(
+            _payload_agent_version(next_payload) or _payload_agent_version(previous_payload),
+            trusted_counter_min_version,
         )
-        observed_idle = (
-            max(0, next_idle - previous_idle)
-            if previous_idle is not None and next_idle is not None
-            else 0
-        )
-        observed_seconds = min(gap_seconds, observed_active + observed_idle)
+        if counters_trusted:
+            previous_active = _counter(previous_payload, "active_seconds")
+            next_active = _counter(next_payload, "active_seconds")
+            previous_idle = _counter(previous_payload, "idle_seconds")
+            next_idle = _counter(next_payload, "idle_seconds")
+            observed_active = (
+                max(0, next_active - previous_active)
+                if previous_active is not None and next_active is not None
+                else 0
+            )
+            observed_idle = (
+                max(0, next_idle - previous_idle)
+                if previous_idle is not None and next_idle is not None
+                else 0
+            )
+            observed_seconds = min(gap_seconds, observed_active + observed_idle)
+        else:
+            observed_seconds = 0
         unobserved_seconds = max(0, gap_seconds - observed_seconds)
         if unobserved_seconds <= int(freshness_limit.total_seconds()):
             continue
@@ -279,7 +315,7 @@ def _exclude_gaps(interval: dict, gaps: list[tuple[datetime, datetime]]) -> list
 def company_idle_threshold_seconds(db: Session, company_id: UUID) -> int:
     """The company's idle threshold, the yardstick for 'the employee left'."""
     minutes, _ = _company_tracking_settings(db, company_id)
-    return max(1, minutes or 10) * 60
+    return max(1, minutes or 15) * 60
 
 
 def sustained_work_start(
@@ -783,6 +819,7 @@ def build_workday_timeline(
         selected_date=selected_date,
         approved_leave=approved_leave,
         idle_threshold_seconds=company_idle_threshold_seconds(db, company_id),
+        trusted_counter_min_version=_required_agent_version(),
     )
 
 
@@ -801,6 +838,7 @@ def _assemble_workday_timeline(
     selected_date: date,
     approved_leave: bool,
     idle_threshold_seconds: int,
+    trusted_counter_min_version: str = DEFAULT_REQUIRED_AGENT_VERSION,
 ) -> dict:
     """Pure timeline assembly shared by the single- and batch-fetch paths.
 
@@ -820,6 +858,7 @@ def _assemble_workday_timeline(
         offline_gaps_by_session[session.id] = _offline_gaps(
             session_heartbeats,
             freshness_limit=freshness_limit,
+            trusted_counter_min_version=trusted_counter_min_version,
         )
         observation = observations[session.id]
         is_fresh = observation["is_fresh"]
@@ -1238,5 +1277,6 @@ def build_workday_timelines(
             selected_date=target_date,
             approved_leave=approved_leave,
             idle_threshold_seconds=idle_threshold_seconds,
+            trusted_counter_min_version=_required_agent_version(),
         )
     return results

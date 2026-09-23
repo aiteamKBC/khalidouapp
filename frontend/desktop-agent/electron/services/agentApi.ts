@@ -168,7 +168,7 @@ export type RequestPolicy = {
 
 export type TimeAdjustmentRequest = {
   id: string;
-  request_type: "idle_time" | "early_leave" | "manual_time";
+  request_type: "idle_time" | "early_leave" | "manual_time" | "delayed_break";
   requested_date: string;
   source_start_at: string | null;
   source_end_at: string | null;
@@ -262,6 +262,16 @@ export type AgentIdleRequestPeriod = {
   task_name: string | null;
 };
 
+export type AgentBreakBank = {
+  policy_active: boolean;
+  worked_break_seconds: number;
+  earned_seconds: number;
+  approved_seconds: number;
+  reserved_seconds: number;
+  remaining_seconds: number;
+  paid_late_allowance_seconds: number;
+};
+
 export type AgentSummary = {
   employee: { id: string; name: string; avatar_url: string | null };
   daily_target_seconds: number;
@@ -270,6 +280,7 @@ export type AgentSummary = {
   today: AgentPeriodSummary;
   today_timeline: AgentWorkdayTimeline;
   idle_request_periods?: AgentIdleRequestPeriod[];
+  break_bank?: AgentBreakBank;
   week: AgentPeriodSummary;
   month: AgentPeriodSummary;
 };
@@ -846,7 +857,7 @@ export async function createEmployeePortalHandoff() {
 export async function createTimeAdjustmentRequest(options: {
   requestedMinutes: number;
   reason: string;
-  requestType?: "idle_time" | "early_leave" | "manual_time";
+  requestType?: "idle_time" | "early_leave" | "manual_time" | "delayed_break";
   requestedDate?: string;
   workSessionId?: string;
   sourceStartAt?: string;
@@ -864,6 +875,78 @@ export async function createTimeAdjustmentRequest(options: {
       source_start_at: options.sourceStartAt,
       source_end_at: options.sourceEndAt,
       requested_leave_time: options.requestedLeaveTime,
+    },
+    { headers: getAuthHeaders() },
+  );
+  return response.data.data;
+}
+
+export type AgentMeeting = {
+  id: string;
+  idempotency_key?: string | null;
+  title: string;
+  reason: string;
+  started_at: string;
+  expected_end_at: string;
+  ended_at: string | null;
+  lifecycle_state: "active" | "ended";
+  status: "pending" | "approved" | "rejected";
+  recorded_seconds: number;
+  approved_seconds: number | null;
+};
+
+export async function listMeetings() {
+  const response = await axios.get<ApiSuccess<AgentMeeting[]>>(
+    `${getApiBaseUrl()}/agent/meetings`,
+    { headers: getAuthHeaders() },
+  );
+  return response.data.data;
+}
+
+// Start/End are delivered directly (not via the generic outbox) so the desktop
+// can capture the server's meeting record and confirm acceptance before showing
+// "synced"/"Pending review". Both are idempotent by idempotency_key on the
+// backend, so a retry or replay returns the same meeting.
+export async function startMeeting(payload: {
+  deviceId: string;
+  idempotencyKey: string;
+  title: string;
+  reason: string;
+  startedAt: string;
+  expectedEndAt: string;
+  workSessionId?: string | null;
+  projectId?: string | null;
+  taskId?: string | null;
+}) {
+  const response = await axios.post<ApiSuccess<AgentMeeting>>(
+    `${getApiBaseUrl()}/agent/meetings`,
+    {
+      device_id: payload.deviceId,
+      idempotency_key: payload.idempotencyKey,
+      title: payload.title,
+      reason: payload.reason,
+      started_at: payload.startedAt,
+      expected_end_at: payload.expectedEndAt,
+      work_session_id: payload.workSessionId ?? undefined,
+      project_id: payload.projectId ?? undefined,
+      task_id: payload.taskId ?? undefined,
+    },
+    { headers: getAuthHeaders() },
+  );
+  return response.data.data;
+}
+
+export async function endMeeting(payload: {
+  deviceId: string;
+  idempotencyKey: string;
+  endedAt: string;
+}) {
+  const response = await axios.post<ApiSuccess<AgentMeeting>>(
+    `${getApiBaseUrl()}/agent/meetings/end`,
+    {
+      device_id: payload.deviceId,
+      idempotency_key: payload.idempotencyKey,
+      ended_at: payload.endedAt,
     },
     { headers: getAuthHeaders() },
   );
@@ -892,6 +975,87 @@ export async function createLeaveRequest(options: {
       leave_type: options.leaveType,
       reason: options.reason,
     },
+    { headers: getAuthHeaders() },
+  );
+  return response.data.data;
+}
+
+export type ShiftRescheduleRequest = {
+  id: string;
+  employee_id: string;
+  work_date: string;
+  requested_start: string;
+  requested_end: string;
+  original_start: string;
+  original_end: string;
+  duration_minutes: number;
+  reason: string;
+  status: "pending" | "approved" | "rejected" | "cancelled" | "expired";
+  source: "employee" | "admin";
+  reviewed_by_name: string | null;
+  reviewed_at: string | null;
+  review_reason: string | null;
+  created_at: string | null;
+};
+
+export type ShiftReschedulesPayload = {
+  policy: {
+    timezone: string;
+    notice_days: number;
+    earliest_date: string;
+    working_days: number[];
+    weekly_off_days: number[];
+  };
+  requests: ShiftRescheduleRequest[];
+};
+
+export type ShiftRescheduleDay = {
+  date: string;
+  scheduled_day: boolean;
+  shift_start: string | null;
+  shift_end: string | null;
+  shift_minutes: number;
+};
+
+export async function listShiftReschedules() {
+  const response = await axios.get<ApiSuccess<ShiftReschedulesPayload>>(
+    `${getApiBaseUrl()}/agent/shift-reschedules`,
+    { headers: getAuthHeaders() },
+  );
+  return response.data.data;
+}
+
+export async function getShiftRescheduleDay(workDate: string) {
+  const response = await axios.get<ApiSuccess<ShiftRescheduleDay>>(
+    `${getApiBaseUrl()}/agent/shift-reschedules/day`,
+    { headers: getAuthHeaders(), params: { date: workDate } },
+  );
+  return response.data.data;
+}
+
+export async function createShiftReschedule(options: {
+  workDate: string;
+  requestedStart: string;
+  requestedEnd: string;
+  reason: string;
+}) {
+  const response = await axios.post<ApiSuccess<ShiftRescheduleRequest>>(
+    `${getApiBaseUrl()}/agent/shift-reschedules`,
+    {
+      work_date: options.workDate,
+      requested_start: options.requestedStart,
+      requested_end: options.requestedEnd,
+      reason: options.reason,
+    },
+    { headers: getAuthHeaders() },
+  );
+  return response.data.data;
+}
+
+export async function cancelShiftReschedule(requestId: string) {
+  const response = await axios.post<ApiSuccess<ShiftRescheduleRequest>>(
+    `${getApiBaseUrl()}/agent/shift-reschedules/${encodeURIComponent(requestId)}/cancel`,
+    {},
     { headers: getAuthHeaders() },
   );
   return response.data.data;

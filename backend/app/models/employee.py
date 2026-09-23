@@ -2,7 +2,7 @@ from uuid import UUID
 
 from datetime import date, datetime
 
-from sqlalchemy import Date, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Date, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database.base import Base
@@ -34,6 +34,11 @@ class Employee(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     portal_last_user_agent: Mapped[str | None] = mapped_column(String(512), nullable=True)
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     status_before_archive: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    # Offboarding details for fired/resigned employees. ``last_working_day`` is
+    # inclusive: payroll and attendance never count a day after it.
+    archive_reason: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    last_working_day: Mapped[date | None] = mapped_column(Date, nullable=True)
+    archived_by_admin_user_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
     avatar_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     start_date: Mapped[date | None] = mapped_column(Date, nullable=True, index=True)
     annual_leave_days: Mapped[int] = mapped_column(Integer, nullable=False, default=21)

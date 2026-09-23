@@ -69,11 +69,30 @@ test("sign-out / stop keeps capturing (independent company policy)", () => {
   );
 });
 
-test("no screenshot is captured after ten minutes without input", () => {
+test("no screenshot is captured after fifteen minutes without input", () => {
+  assert.equal(
+    screenshotCaptureBlockReasonForState({
+      ...activeScreenshotState,
+      systemIdleSeconds: 900,
+    }),
+    "no_user_activity",
+  );
+  // Just below the 15-minute threshold the device is still considered active.
   assert.equal(
     screenshotCaptureBlockReasonForState({
       ...activeScreenshotState,
       systemIdleSeconds: 600,
+    }),
+    null,
+  );
+});
+
+test("screenshot eligibility follows the last synced company idle threshold", () => {
+  assert.equal(
+    screenshotCaptureBlockReasonForState({
+      ...activeScreenshotState,
+      systemIdleSeconds: 420,
+      idleThresholdMinutes: 7,
     }),
     "no_user_activity",
   );

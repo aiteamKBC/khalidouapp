@@ -15,7 +15,7 @@ class TrackingSettings(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     screenshot_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     screenshot_interval_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=10)
     screenshots_per_interval: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
-    idle_threshold_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=10)
+    idle_threshold_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=15)
     capture_during_idle: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     offline_threshold_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=3)
     screenshot_retention_days: Mapped[int] = mapped_column(Integer, nullable=False, default=30)

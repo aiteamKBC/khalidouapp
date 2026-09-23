@@ -52,5 +52,6 @@ export function requiredPermissionForPath(pathname: string): PermissionKey | und
   if (pathname.startsWith("/employees")) return permissions.peopleView;
   if (pathname.startsWith("/live-activity")) return permissions.liveActivityView;
   if (pathname.startsWith("/people")) return permissions.peopleView;
+  if (pathname.startsWith("/archived-employees")) return permissions.peopleView;
   return undefined;
 }

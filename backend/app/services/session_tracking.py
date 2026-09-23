@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.exceptions import ApiError
 from app.models import (
     ActivityEvent,
@@ -29,6 +30,7 @@ from app.schemas.session import (
 from app.services.activity_timeline import (
     build_workday_timeline,
 )
+from app.services.agent_versions import is_agent_version_supported
 from app.services.projects import get_employee_task_context, list_employee_tasks
 from app.services.schedules import effective_schedule, overlap_seconds
 from app.services.task_workflow import TRACKABLE_STAGES
@@ -1065,6 +1067,13 @@ def record_heartbeat(
     received_at = utc()
     mark_device_seen(device, received_at=received_at)
     device.agent_version = payload.agent_version
+    # An unsupported agent must not silently continue payable tracking. The
+    # timeline safeguard already refuses to trust its counters across long gaps;
+    # this flag lets the desktop surface a clear update-required state. The floor
+    # is configurable via settings.required_agent_version.
+    update_required = not is_agent_version_supported(
+        payload.agent_version, settings.required_agent_version
+    )
 
     def ignored(reason: str) -> dict[str, Any]:
         db.commit()
@@ -1075,6 +1084,7 @@ def record_heartbeat(
             "restarted": False,
             "ignored": True,
             "ignore_reason": reason,
+            "update_required": update_required,
         }
 
     if session.ended_at is not None:
@@ -1099,6 +1109,7 @@ def record_heartbeat(
             "duplicate": False,
             **restarted,
             "restarted": True,
+            "update_required": update_required,
         }
 
     if heartbeat_at < utc(session.started_at):
@@ -1156,6 +1167,7 @@ def record_heartbeat(
             "duplicate": False,
             **restarted,
             "restarted": True,
+            "update_required": update_required,
         }
 
     elapsed_seconds = max(0, int((heartbeat_at - utc(session.started_at)).total_seconds()))
@@ -1198,6 +1210,7 @@ def record_heartbeat(
         "event_id": str(event.id),
         "duplicate": duplicate,
         **session_response(db, session),
+        "update_required": update_required,
     }
     db.commit()
     return response

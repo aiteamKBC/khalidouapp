@@ -79,6 +79,15 @@ export async function listDashboardWorkTrend(
     accountableIdleMinutes: toMinutes(row.idle_seconds),
     overtimeMinutes: 0,
     adjustmentMinutes: toMinutes(row.adjustment_seconds),
+    // The work-trend endpoint is a lightweight charting series and does not
+    // carry the phase-1 financial-policy breakdown; default those fields.
+    payableMinutes: toMinutes(row.total_tracked_seconds),
+    paidBreakMinutes: 0,
+    paidLateAllowanceMinutes: 0,
+    delayedBreakMinutes: 0,
+    approvedMeetingMinutes: 0,
+    pendingMeetingMinutes: 0,
+    financialPolicyActive: false,
     deductedMinutes: toMinutes(row.deducted_seconds),
     points: Math.round((row.active_seconds / 3600) * 100) / 100,
     screenshotCount: 0,

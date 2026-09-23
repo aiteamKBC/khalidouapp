@@ -1399,9 +1399,38 @@ def test_archived_person_can_be_deleted_and_email_reused(identity_client):
         f"/api/v1/people/employee/{employee_id}",
         headers=data["general_headers"],
     )
-    archived = client.post(
+    # Archiving (fired/resigned) is an HR / Super Admin decision.
+    general_archive = client.post(
         f"/api/v1/people/employee/{employee_id}/archive",
         headers=data["general_headers"],
+        json={"reason": "resigned", "last_working_day": datetime.now(UTC).date().isoformat()},
+    )
+    db: Session = data["session_factory"]()
+    try:
+        hr_admin = AdminUser(
+            company_id=data["general_admin"].company_id,
+            name="HR Archiver",
+            email="hr.archiver@kentconsultancy.co",
+            password_hash=hash_password("OldPassword123!"),
+            role="hr",
+            status="active",
+            data_scope="company",
+        )
+        db.add(hr_admin)
+        db.commit()
+        hr_token = create_jwt_token(
+            subject=hr_admin.id,
+            company_id=hr_admin.company_id,
+            token_type="access",
+            expires_delta=timedelta(minutes=30),
+            extra_claims={"role": hr_admin.role},
+        )
+    finally:
+        db.close()
+    archived = client.post(
+        f"/api/v1/people/employee/{employee_id}/archive",
+        headers={"Authorization": f"Bearer {hr_token}"},
+        json={"reason": "resigned", "last_working_day": "2026-01-31"},
     )
     deleted = client.delete(
         f"/api/v1/people/employee/{employee_id}",
@@ -1421,6 +1450,7 @@ def test_archived_person_can_be_deleted_and_email_reused(identity_client):
     )
 
     assert delete_before_archive.status_code == 409
+    assert general_archive.status_code == 403
     assert archived.status_code == 200
     assert deleted.status_code == 200
     assert deleted.json()["data"]["deleted"] is True

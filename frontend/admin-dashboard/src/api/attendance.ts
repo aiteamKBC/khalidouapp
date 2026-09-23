@@ -26,6 +26,13 @@ export type DailyAttendance = {
   unpaidBreakSeconds: number;
   recordedIdleSeconds: number;
   paidIdleGraceSeconds: number;
+  // Phase-1 financial-policy figures (0 when the policy is inactive for the day).
+  paidLateAllowanceSeconds: number;
+  earnedBreakCreditSeconds: number;
+  approvedDelayedBreakSeconds: number;
+  remainingBreakCreditSeconds: number;
+  approvedMeetingSeconds: number;
+  pendingMeetingSeconds: number;
   idleSeconds: number;
   approvedManualSeconds: number;
   approvedEarlyLeaveSeconds: number;
@@ -78,6 +85,12 @@ type BackendAttendance = {
   unpaid_break_seconds: number;
   recorded_idle_seconds?: number;
   paid_idle_grace_seconds?: number;
+  paid_late_allowance_seconds?: number;
+  earned_break_credit_seconds?: number;
+  approved_delayed_break_seconds?: number;
+  remaining_break_credit_seconds?: number;
+  approved_meeting_seconds?: number;
+  pending_meeting_seconds?: number;
   idle_seconds: number;
   approved_manual_seconds: number;
   approved_early_leave_seconds?: number;
@@ -131,6 +144,12 @@ function mapAttendance(row: BackendAttendance): DailyAttendance {
     unpaidBreakSeconds: row.unpaid_break_seconds,
     recordedIdleSeconds: row.recorded_idle_seconds ?? row.idle_seconds,
     paidIdleGraceSeconds: row.paid_idle_grace_seconds ?? 0,
+    paidLateAllowanceSeconds: row.paid_late_allowance_seconds ?? 0,
+    earnedBreakCreditSeconds: row.earned_break_credit_seconds ?? 0,
+    approvedDelayedBreakSeconds: row.approved_delayed_break_seconds ?? 0,
+    remainingBreakCreditSeconds: row.remaining_break_credit_seconds ?? 0,
+    approvedMeetingSeconds: row.approved_meeting_seconds ?? 0,
+    pendingMeetingSeconds: row.pending_meeting_seconds ?? 0,
     idleSeconds: row.idle_seconds,
     approvedManualSeconds: row.approved_manual_seconds,
     approvedEarlyLeaveSeconds: row.approved_early_leave_seconds ?? 0,
@@ -237,6 +256,40 @@ export async function deleteAttendanceCorrection(employeeId: string, day: string
     await apiFetch<BackendAttendance>(`/attendance/employee/${employeeId}/${day}/correction`, {
       method: "DELETE",
     }),
+  );
+}
+
+export type AdminSessionCloseResult = {
+  closed: boolean;
+  reason?: string;
+  session: {
+    id: string;
+    ended_at: string | null;
+    status: string;
+    work_date: string;
+  } | null;
+};
+
+/**
+ * Administratively close a still-running work session at a validated end time.
+ * Distinct from an attendance correction: this ends the live session lifecycle.
+ * Requires the devices.manage capability server-side.
+ */
+export async function adminCloseSession(
+  employeeId: string,
+  payload: { endedAt?: string | null; reason: string; sessionId?: string | null },
+) {
+  return apiFetch<AdminSessionCloseResult>(
+    `/attendance/employee/${employeeId}/sessions/close`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ended_at: payload.endedAt || null,
+        reason: payload.reason,
+        session_id: payload.sessionId || null,
+      }),
+    },
   );
 }
 

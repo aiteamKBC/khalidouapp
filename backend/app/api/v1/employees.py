@@ -69,6 +69,7 @@ from app.services.permissions import (
     require_capability,
 )
 from app.services.person_access import disable_employee_tracking
+from app.services.employee_archive import current_employee_clause
 from app.services.request_notifications import employee_manager_summaries
 from app.services.input_integrity import summarize_input_integrity
 from app.services.work_profiles import (
@@ -146,6 +147,9 @@ def list_employees(
         )
     if status:
         statement = statement.where(Employee.status == status)
+    else:
+        # Archived (fired/resigned) employees only appear when explicitly asked for.
+        statement = statement.where(current_employee_clause())
     if job_title:
         statement = statement.where(Employee.job_title == job_title)
 
@@ -203,7 +207,7 @@ def list_employee_break_rules(
         .outerjoin(EmployeeWorkProfile, EmployeeWorkProfile.employee_id == Employee.id)
         .where(
             Employee.company_id == current_admin.company_id,
-            Employee.status != "deleted",
+            current_employee_clause(),
         )
     )
     statement = apply_employee_scope(statement, db, current_admin, Employee.id, team_id)
@@ -265,6 +269,7 @@ def list_employee_overviews(
     db: Annotated[Session, Depends(get_db)],
     team_id: UUID | None = None,
     employee_id: UUID | None = None,
+    include_archived: bool = False,
 ):
     """Return the employee list and live status without per-employee API calls.
 
@@ -401,6 +406,10 @@ def list_employee_overviews(
     statement = apply_employee_scope(statement, db, current_admin, Employee.id, team_id)
     if employee_id is not None:
         statement = statement.where(Employee.id == employee_id)
+    elif not include_archived:
+        # Current views never list archived (fired/resigned) employees; the
+        # People archive and a direct employee lookup still can.
+        statement = statement.where(current_employee_clause())
     statement = statement.order_by(Employee.name)
     rows = db.execute(statement).all()
     schedule_context_candidates = []
@@ -687,7 +696,7 @@ def list_monitoring_employees(
         .outerjoin(latest_invitation, latest_invitation.c.employee_id == Employee.id)
         .where(
             Employee.company_id == current_admin.company_id,
-            Employee.status != "deleted",
+            current_employee_clause(),
         )
     )
     statement = apply_employee_scope(statement, db, current_admin, Employee.id, team_id)
@@ -1155,6 +1164,14 @@ def update_employee(
         raise ApiError(
             "EMPLOYEE_INVITATION_REQUIRED",
             "The employee must accept the invitation before the account can be activated.",
+            409,
+        )
+    if "status" in changes and employee.status == "archived" and changes["status"] != "archived":
+        # Un-archiving re-employs the person and must go through the HR restore
+        # flow, which clears the last working day.
+        raise ApiError(
+            "EMPLOYEE_ARCHIVED",
+            "This employee is archived. Restore them from Archived employees first.",
             409,
         )
     turning_inactive = changes.get("status") == "inactive" and employee.status != "inactive"

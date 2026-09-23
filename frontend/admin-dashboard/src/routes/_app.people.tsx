@@ -97,6 +97,7 @@ import {
   resendPersonInvitation,
   restorePerson,
   updatePersonRole,
+  type PersonArchiveInput,
   type PersonInvitationSummary,
   type PersonRole,
 } from "@/api/people";
@@ -120,6 +121,8 @@ import type {
   User,
 } from "@/types";
 import { LiveActivityPage } from "./_app.live-activity";
+import { ArchiveEmployeeDialog } from "@/components/people/archive-employee-dialog";
+import { canArchiveEmployees } from "@/lib/employee-archive";
 
 export const Route = createFileRoute("/_app/people")({
   validateSearch: (search: Record<string, unknown>) => ({
@@ -310,8 +313,10 @@ function PeopleDirectory({
     placeholderData: (previous) => previous,
   });
   const employees = useQuery({
-    queryKey: ["employees", scope],
-    queryFn: ({ signal }) => listEmployees(scope, signal),
+    // The directory also owns the Archived tab, so it is the one roster that
+    // asks the backend for archived (fired/resigned) employees.
+    queryKey: ["employees", scope, "with-archived"],
+    queryFn: ({ signal }) => listEmployees(scope, signal, { includeArchived: true }),
     staleTime: 20_000,
     refetchInterval: 30_000,
     refetchIntervalInBackground: false,
@@ -743,13 +748,25 @@ function PeopleDirectory({
   });
 
   const archiveMutation = useMutation({
-    mutationFn: ({ row, archived }: { row: PersonRow; archived: boolean }) =>
-      archived ? archivePerson(row.kind, row.id) : restorePerson(row.kind, row.id),
+    mutationFn: ({
+      row,
+      archived,
+      details,
+    }: {
+      row: PersonRow;
+      archived: boolean;
+      details?: PersonArchiveInput;
+    }) =>
+      archived && details
+        ? archivePerson(row.kind, row.id, details)
+        : restorePerson(row.kind, row.id),
     onSuccess: async (result) => {
       toast.success(result.archived ? "Person archived" : "Person restored");
+      setArchiveTarget(null);
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["users"] }),
         queryClient.invalidateQueries({ queryKey: ["employees"] }),
+        queryClient.invalidateQueries({ queryKey: ["archived-employees"] }),
         queryClient.invalidateQueries({ queryKey: ["teams"] }),
       ]);
     },
@@ -1215,6 +1232,7 @@ function PeopleDirectory({
                                 <>
                                   <DropdownMenuSeparator />
                                   {row.status !== "archived" ? (
+                                    canArchiveEmployees(currentUser) && (
                                     <DropdownMenuItem
                                       disabled={archiveMutation.isPending}
                                       className="text-destructive focus:text-destructive"
@@ -1223,15 +1241,18 @@ function PeopleDirectory({
                                       <Archive className="h-4 w-4" />
                                       Archive
                                     </DropdownMenuItem>
+                                    )
                                   ) : (
                                     <>
-                                      <DropdownMenuItem
-                                        disabled={archiveMutation.isPending}
-                                        onSelect={() => changeArchiveStatus(row, false)}
-                                      >
-                                        <ArchiveRestore className="h-4 w-4" />
-                                        Restore
-                                      </DropdownMenuItem>
+                                      {canArchiveEmployees(currentUser) && (
+                                        <DropdownMenuItem
+                                          disabled={archiveMutation.isPending}
+                                          onSelect={() => changeArchiveStatus(row, false)}
+                                        >
+                                          <ArchiveRestore className="h-4 w-4" />
+                                          Restore
+                                        </DropdownMenuItem>
+                                      )}
                                       {archiveOnly && (
                                         <DropdownMenuItem
                                           disabled={deleteMutation.isPending}
@@ -1979,31 +2000,16 @@ function PeopleDirectory({
         </DialogContent>
       </Dialog>
 
-      <AlertDialog
+      <ArchiveEmployeeDialog
         open={archiveTarget !== null}
+        name={archiveTarget?.name}
+        startDate={archiveTarget?.employee?.startDate}
+        pending={archiveMutation.isPending}
         onOpenChange={(open) => !open && setArchiveTarget(null)}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Archive {archiveTarget?.name}?</AlertDialogTitle>
-            <AlertDialogDescription>
-              They will lose access and new tracking will stop, but their history will be kept.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              disabled={archiveMutation.isPending}
-              onClick={() => {
-                if (archiveTarget) archiveMutation.mutate({ row: archiveTarget, archived: true });
-                setArchiveTarget(null);
-              }}
-            >
-              Archive
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+        onConfirm={(details) => {
+          if (archiveTarget) archiveMutation.mutate({ row: archiveTarget, archived: true, details });
+        }}
+      />
 
       <AlertDialog
         open={deleteTarget !== null}

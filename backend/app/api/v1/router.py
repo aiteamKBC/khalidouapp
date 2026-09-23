@@ -14,6 +14,7 @@ from app.api.v1 import (
     employees,
     health,
     leave_requests,
+    meetings,
     people,
     payroll,
     projects,
@@ -21,6 +22,7 @@ from app.api.v1 import (
     screenshots,
     sessions,
     settings,
+    shift_reschedules,
     teams,
     time_adjustments,
     timesheets,
@@ -49,8 +51,10 @@ api_router.include_router(screenshots.router)
 api_router.include_router(devices.router)
 api_router.include_router(projects.router)
 api_router.include_router(time_adjustments.router)
+api_router.include_router(meetings.router)
 api_router.include_router(leave_requests.router)
 api_router.include_router(timesheets.router)
 api_router.include_router(reports.router)
 api_router.include_router(settings.router)
+api_router.include_router(shift_reschedules.router)
 api_router.include_router(health.router, tags=["health"])

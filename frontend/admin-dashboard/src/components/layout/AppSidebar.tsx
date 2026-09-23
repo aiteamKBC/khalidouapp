@@ -19,6 +19,9 @@ import {
   Palmtree,
   CalendarCheck2,
   MonitorCheck,
+  Video,
+  CalendarClock,
+  Archive,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { BrandLogo } from "@/components/ui/brand-logo";
@@ -35,6 +38,8 @@ interface NavItem {
   icon: LucideIcon;
   roles?: Role[];
   permission?: PermissionKey;
+  /** Visible only to the protected Super Admin and HR (not team leaders). */
+  superAdminOrHr?: boolean;
 }
 
 const navGroups: { label: string; items: NavItem[] }[] = [
@@ -61,6 +66,13 @@ const navGroups: { label: string; items: NavItem[] }[] = [
       },
       { to: "/teams", label: "Teams", icon: Users, permission: permissions.teamsView },
       { to: "/people", label: "People", icon: UsersRound, permission: permissions.peopleView },
+      {
+        to: "/archived-employees",
+        label: "Archived employees",
+        icon: Archive,
+        permission: permissions.peopleView,
+        superAdminOrHr: true,
+      },
       {
         to: "/projects",
         label: "Projects & Tasks",
@@ -91,6 +103,14 @@ const navGroups: { label: string; items: NavItem[] }[] = [
         permission: permissions.timeRequestsView,
       },
       {
+        to: "/meetings",
+        label: "Meetings",
+        icon: Video,
+        // Meeting review is authorized to General Admin, HR, and team leaders
+        // (a team leader is scoped to their own team's meetings server-side).
+        roles: ["general_admin", "hr", "team_owner"],
+      },
+      {
         to: "/breaks",
         label: "Work schedules",
         icon: Coffee,
@@ -101,6 +121,12 @@ const navGroups: { label: string; items: NavItem[] }[] = [
         label: "Holiday Requests",
         icon: Palmtree,
         permission: permissions.leaveRequestsView,
+      },
+      {
+        to: "/shift-reschedules",
+        label: "Shift Reschedules",
+        icon: CalendarClock,
+        superAdminOrHr: true,
       },
       { to: "/reports", label: "Reports", icon: BarChart3, permission: permissions.reportsView },
     ],
@@ -147,6 +173,7 @@ export function AppSidebar({ onNavigate }: { onNavigate?: () => void }) {
       items: group.items.filter(
         (item) =>
           (!item.roles || (user && item.roles.includes(user.role))) &&
+          (!item.superAdminOrHr || Boolean(user && (user.isSuperAdmin || user.role === "hr"))) &&
           (!item.permission || can(item.permission)),
       ),
     }))

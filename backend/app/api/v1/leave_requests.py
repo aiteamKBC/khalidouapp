@@ -1,4 +1,5 @@
 from collections import defaultdict
+from decimal import Decimal
 from datetime import UTC, date, datetime, timedelta
 from typing import Annotated
 from uuid import UUID
@@ -21,8 +22,10 @@ from app.services.leave_management import (
     serialize_leave_request,
 )
 from app.services.work_profiles import DEFAULT_WORKING_DAYS, get_or_create_work_profile
-from app.services.permissions import require_capability
+from app.services.audit import record_audit_log
+from app.services.permissions import HR_MANAGER, is_super_admin, require_capability
 from app.services.attendance import refresh_daily_attendance_range
+from app.services.employee_archive import current_employee_clause
 
 router = APIRouter(prefix="/leave-requests", tags=["leave-requests"])
 
@@ -112,6 +115,8 @@ def list_leave_requests(
     if employee_id:
         ensure_employee_access(db, current_admin, employee_id)
         statement = statement.where(LeaveRequest.employee_id == employee_id)
+    else:
+        statement = statement.where(current_employee_clause())
     if status:
         statement = statement.where(LeaveRequest.status == status)
     total = count_for(db, statement)
@@ -266,15 +271,46 @@ def update_leave_balance(
     year: int = Query(default=datetime.now(UTC).year, ge=2000, le=2200),
 ):
     require_capability(current_admin, "leave_requests.manage")
+    # Editing holiday credit changes paid entitlement: HR and Super Admin only,
+    # even though team leaders may approve requests.
+    if not (is_super_admin(current_admin) or current_admin.role == HR_MANAGER):
+        raise ApiError(
+            "LEAVE_BALANCE_EDIT_FORBIDDEN",
+            "Only HR or the Super Admin can edit holiday balances.",
+            403,
+        )
     employee = ensure_employee_access(db, current_admin, employee_id)
-    serialize_balance(db, employee, year)
+    before = serialize_balance(db, employee, year)
     balance = db.scalar(
         select(LeaveBalance).where(
             LeaveBalance.employee_id == employee_id, LeaveBalance.year == year
         )
     )
-    balance.credit_days = payload.credit_days
+    if payload.remaining_days is not None:
+        # Remaining = credit - approved annual days, so store the credit that
+        # leaves exactly the requested days available.
+        credit = Decimal(str(payload.remaining_days)) + Decimal(before["used_days"])
+    else:
+        credit = Decimal(str(payload.credit_days))
+    balance.credit_days = credit.quantize(Decimal("0.01"))
     balance.manually_adjusted = True
     db.add(balance)
+    db.flush()
+    after = serialize_balance(db, employee, year)
+    record_audit_log(
+        db,
+        current_admin,
+        "update",
+        "leave_balance",
+        entity_id=employee.id,
+        entity_name=employee.name,
+        details={
+            "year": year,
+            "before_remaining_days": before["remaining_days"],
+            "after_remaining_days": after["remaining_days"],
+            "before_credit_days": before["credit_days"],
+            "after_credit_days": after["credit_days"],
+        },
+    )
     db.commit()
     return success_response(data=serialize_balance(db, employee, year))

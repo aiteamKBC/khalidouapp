@@ -14,6 +14,7 @@ from app.models.employee_work_profile import EmployeeWorkProfile
 from app.models.employee_invitation import EmployeeInvitation
 from app.models.leave_balance import LeaveBalance
 from app.models.leave_request import LeaveRequest
+from app.models.meeting_record import MeetingRecord
 from app.models.overtime_record import OvertimeRecord
 from app.models.pause_balance import PauseBalance
 from app.models.pause_session import PauseSession
@@ -28,6 +29,7 @@ from app.models.email_delivery import EmailDelivery
 from app.models.enrollment_code import EnrollmentCode
 from app.models.project import Project
 from app.models.screenshot import Screenshot, ScreenshotCaptureEvent
+from app.models.shift_reschedule_request import ShiftRescheduleRequest
 from app.models.task import Task
 from app.models.task_checklist_item import TaskChecklistItem
 from app.models.task_collaborator import TaskCollaborator
@@ -62,6 +64,7 @@ __all__ = [
     "EmployeeInvitation",
     "LeaveBalance",
     "LeaveRequest",
+    "MeetingRecord",
     "OvertimeRecord",
     "PauseBalance",
     "PauseSession",
@@ -73,6 +76,7 @@ __all__ = [
     "Project",
     "Screenshot",
     "ScreenshotCaptureEvent",
+    "ShiftRescheduleRequest",
     "Task",
     "TaskChecklistItem",
     "TaskCollaborator",
