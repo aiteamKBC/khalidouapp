@@ -123,6 +123,37 @@ import type {
 import { LiveActivityPage } from "./_app.live-activity";
 import { ArchiveEmployeeDialog } from "@/components/people/archive-employee-dialog";
 import { canArchiveEmployees } from "@/lib/employee-archive";
+import { BREAK_ANCHOR_LABELS, isPrayerAnchor, type BreakAnchor } from "@/lib/break-rules";
+import {
+  BreakAnchorSelect,
+  PrayerBreakHint,
+  usePrayerTimesToday,
+} from "@/components/breaks/break-anchor-select";
+
+type WizardBreak = {
+  name: string;
+  start_time: string;
+  end_time: string;
+  minutes: number;
+  paid: boolean;
+  anchor: BreakAnchor;
+};
+
+// New employees follow the prayers: Lunch from the Dhuhr adhan, a short
+// break from the Asr adhan. The clock times are only used if switched to fixed.
+function defaultWizardBreaks(): WizardBreak[] {
+  return [
+    { name: "Lunch", start_time: "13:00", end_time: "13:30", minutes: 30, paid: true, anchor: "dhuhr" },
+    {
+      name: "Short break",
+      start_time: "16:30",
+      end_time: "16:45",
+      minutes: 15,
+      paid: true,
+      anchor: "asr",
+    },
+  ];
+}
 
 export const Route = createFileRoute("/_app/people")({
   validateSearch: (search: Record<string, unknown>) => ({
@@ -368,6 +399,7 @@ function PeopleDirectory({
   const [editSalaryType, setEditSalaryType] = useState<"monthly" | "hourly">("monthly");
   const [showEditSalary, setShowEditSalary] = useState(false);
   const [editBreakRules, setEditBreakRules] = useState<NonNullable<WorkProfile["breakRules"]>>([]);
+  const prayerToday = usePrayerTimesToday();
   const [showFullPermissions, setShowFullPermissions] = useState(false);
   const canManageAccess = can(permissions.accessManage);
   const canManageTeams = can(permissions.teamsManage);
@@ -584,6 +616,13 @@ function PeopleDirectory({
 
     editBreakRules.forEach((rule, index) => {
       const label = rule.name?.trim() || `Break ${index + 1}`;
+      if (isPrayerAnchor(rule.anchor)) {
+        if (!Number.isFinite(rule.minutes) || rule.minutes < 1 || rule.minutes > 240) {
+          messages.push(`${label} must last between 1 and 240 minutes.`);
+          breakIndexes.add(index);
+        }
+        return;
+      }
       const start = rule.start_time?.slice(0, 5) ?? "";
       const end = rule.end_time?.slice(0, 5) ?? "";
       const duration = shiftMinutes(start, end);
@@ -599,6 +638,7 @@ function PeopleDirectory({
     });
 
     const orderedBreaks = editBreakRules
+      .filter((rule) => !isPrayerAnchor(rule.anchor))
       .map((rule, index) => ({
         index,
         name: rule.name?.trim() || `Break ${index + 1}`,
@@ -1644,7 +1684,7 @@ function PeopleDirectory({
                           <div
                             key={`${rule.name}-${index}`}
                             className={cn(
-                              "grid items-end gap-2 rounded-lg border border-transparent bg-muted/30 p-2 sm:grid-cols-[1fr_120px_120px_110px_auto]",
+                              "grid items-end gap-2 rounded-lg border border-transparent bg-muted/30 p-2 sm:grid-cols-[1fr_140px_110px_110px_110px_auto]",
                               editScheduleProblems.breakIndexes.has(index) &&
                                 "border-destructive/60 bg-destructive/5",
                             )}
@@ -1665,64 +1705,118 @@ function PeopleDirectory({
                               />
                             </div>
                             <div className="space-y-1">
-                              <Label>Starts</Label>
-                              <Input
-                                type="time"
-                                min={editShiftStart}
-                                max={rule.end_time?.slice(0, 5) || editShiftEnd}
-                                value={rule.start_time ?? ""}
-                                aria-invalid={editScheduleProblems.breakIndexes.has(index)}
-                                onChange={(event) => {
-                                  const nextStart = event.target.value;
-                                  const nextMinutes = Math.max(
-                                    0,
-                                    shiftMinutes(nextStart, rule.end_time?.slice(0, 5) ?? ""),
-                                  );
+                              <Label>Starts at</Label>
+                              <BreakAnchorSelect
+                                value={isPrayerAnchor(rule.anchor) ? rule.anchor : "fixed"}
+                                onChange={(anchor) =>
                                   setEditBreakRules((current) =>
-                                    current.map((item, itemIndex) =>
-                                      itemIndex === index
-                                        ? {
-                                            ...item,
-                                            start_time: nextStart,
-                                            minutes: nextMinutes,
-                                          }
-                                        : item,
-                                    ),
-                                  );
-                                }}
-                              />
-                            </div>
-                            <div className="space-y-1">
-                              <Label>Ends</Label>
-                              <Input
-                                type="time"
-                                min={rule.start_time?.slice(0, 5) || editShiftStart}
-                                max={editShiftEnd}
-                                value={rule.end_time ?? ""}
-                                aria-invalid={editScheduleProblems.breakIndexes.has(index)}
-                                onChange={(event) => {
-                                  const [startHour = 0, startMinute = 0] = String(
-                                    rule.start_time ?? "00:00",
+                                    current.map((item, itemIndex) => {
+                                      if (itemIndex !== index) return item;
+                                      if (isPrayerAnchor(anchor)) {
+                                        return { ...item, anchor, start_time: null, end_time: null };
+                                      }
+                                      const start = item.start_time?.slice(0, 5) || editShiftStart;
+                                      return {
+                                        ...item,
+                                        anchor,
+                                        start_time: start,
+                                        end_time:
+                                          item.end_time?.slice(0, 5) ||
+                                          addClockMinutes(start, item.minutes || 15),
+                                      };
+                                    }),
                                   )
-                                    .split(":")
-                                    .map(Number);
-                                  const [endHour = 0, endMinute = 0] = event.target.value
-                                    .split(":")
-                                    .map(Number);
-                                  const minutes = Math.max(
-                                    0,
-                                    endHour * 60 + endMinute - startHour * 60 - startMinute,
-                                  );
-                                  setEditBreakRules((current) =>
-                                    current.map((item, itemIndex) =>
-                                      itemIndex === index
-                                        ? { ...item, end_time: event.target.value, minutes }
-                                        : item,
-                                    ),
-                                  );
-                                }}
+                                }
                               />
                             </div>
+                            {isPrayerAnchor(rule.anchor) ? (
+                              <div className="space-y-1 sm:col-span-2">
+                                <Label>Length (minutes)</Label>
+                                <Input
+                                  type="number"
+                                  min={1}
+                                  max={240}
+                                  value={rule.minutes}
+                                  aria-invalid={editScheduleProblems.breakIndexes.has(index)}
+                                  onChange={(event) =>
+                                    setEditBreakRules((current) =>
+                                      current.map((item, itemIndex) =>
+                                        itemIndex === index
+                                          ? { ...item, minutes: Number(event.target.value) }
+                                          : item,
+                                      ),
+                                    )
+                                  }
+                                />
+                                <PrayerBreakHint
+                                  anchor={rule.anchor}
+                                  minutes={rule.minutes}
+                                  prayer={prayerToday}
+                                />
+                              </div>
+                            ) : (
+                              <>
+                                <div className="space-y-1">
+                                  <Label>Starts</Label>
+                                  <Input
+                                    type="time"
+                                    min={editShiftStart}
+                                    max={rule.end_time?.slice(0, 5) || editShiftEnd}
+                                    value={rule.start_time ?? ""}
+                                    aria-invalid={editScheduleProblems.breakIndexes.has(index)}
+                                    onChange={(event) => {
+                                      const nextStart = event.target.value;
+                                      const nextMinutes = Math.max(
+                                        0,
+                                        shiftMinutes(nextStart, rule.end_time?.slice(0, 5) ?? ""),
+                                      );
+                                      setEditBreakRules((current) =>
+                                        current.map((item, itemIndex) =>
+                                          itemIndex === index
+                                            ? {
+                                                ...item,
+                                                start_time: nextStart,
+                                                minutes: nextMinutes,
+                                              }
+                                            : item,
+                                        ),
+                                      );
+                                    }}
+                                  />
+                                </div>
+                                <div className="space-y-1">
+                                  <Label>Ends</Label>
+                                  <Input
+                                    type="time"
+                                    min={rule.start_time?.slice(0, 5) || editShiftStart}
+                                    max={editShiftEnd}
+                                    value={rule.end_time ?? ""}
+                                    aria-invalid={editScheduleProblems.breakIndexes.has(index)}
+                                    onChange={(event) => {
+                                      const [startHour = 0, startMinute = 0] = String(
+                                        rule.start_time ?? "00:00",
+                                      )
+                                        .split(":")
+                                        .map(Number);
+                                      const [endHour = 0, endMinute = 0] = event.target.value
+                                        .split(":")
+                                        .map(Number);
+                                      const minutes = Math.max(
+                                        0,
+                                        endHour * 60 + endMinute - startHour * 60 - startMinute,
+                                      );
+                                      setEditBreakRules((current) =>
+                                        current.map((item, itemIndex) =>
+                                          itemIndex === index
+                                            ? { ...item, end_time: event.target.value, minutes }
+                                            : item,
+                                        ),
+                                      );
+                                    }}
+                                  />
+                                </div>
+                              </>
+                            )}
                             <label className="flex h-10 items-center justify-between rounded-md border px-3 text-sm font-semibold">
                               Paid
                               <Switch
@@ -2078,10 +2172,8 @@ function AddPersonWizard({
   const [hourlyRate, setHourlyRate] = useState("0");
   const [salaryCurrency, setSalaryCurrency] = useState("EGP");
   const [showSalary, setShowSalary] = useState(false);
-  const [breaks, setBreaks] = useState([
-    { name: "Lunch", start_time: "13:00", end_time: "13:30", minutes: 30, paid: true },
-    { name: "Short break", start_time: "16:30", end_time: "16:45", minutes: 15, paid: true },
-  ]);
+  const [breaks, setBreaks] = useState<WizardBreak[]>(defaultWizardBreaks);
+  const prayerToday = usePrayerTimesToday();
   const canCreateTeamLeader = canAssignRole(currentUser, "team_owner");
   const canCreateHr = canAssignRole(currentUser, "hr");
   const canCreateGeneralAdmin = canAssignRole(currentUser, "general_admin");
@@ -2110,10 +2202,7 @@ function AddPersonWizard({
     setHourlyRate("0");
     setSalaryCurrency("EGP");
     setShowSalary(false);
-    setBreaks([
-      { name: "Lunch", start_time: "13:00", end_time: "13:30", minutes: 30, paid: true },
-      { name: "Short break", start_time: "16:30", end_time: "16:45", minutes: 15, paid: true },
-    ]);
+    setBreaks(defaultWizardBreaks());
     setCreatedEmployee(null);
     setCreatedInvitation(undefined);
     setInvitationEmailQueued(false);
@@ -2185,7 +2274,11 @@ function AddPersonWizard({
           workingDays: [0, 1, 2, 3, 4, 5, 6].filter((day) => !offDays.includes(day)),
           weeklyOffDays: offDays,
           requiredDailyMinutes: Math.max(60, requiredDailyMinutes),
-          breakRules: breaks,
+          breakRules: breaks.map((item) =>
+            isPrayerAnchor(item.anchor)
+              ? { ...item, start_time: null, end_time: null }
+              : { ...item, anchor: "fixed" as const },
+          ),
           lateGraceMinutes: 15,
           ...(canManagePayroll
             ? {
@@ -2293,6 +2386,7 @@ function AddPersonWizard({
         end_time: nextBreakEnd(shiftStart, 15),
         minutes: 15,
         paid: true,
+        anchor: "fixed",
       },
     ]);
   const updateBreakStart = (index: number, startTime: string) =>
@@ -2328,6 +2422,7 @@ function AddPersonWizard({
     setBreaks((rows) => {
       let changed = false;
       const normalized = rows.map((row) => {
+        if (isPrayerAnchor(row.anchor)) return row;
         const duration = Math.max(1, row.minutes || 15);
         const startMinutes = Math.max(
           shiftStartMinutes,
@@ -2706,7 +2801,7 @@ function AddPersonWizard({
               {breaks.map((item, index) => (
                 <div
                   key={index}
-                  className="grid gap-2 rounded-xl border p-3 sm:grid-cols-[1fr_130px_130px_100px_auto]"
+                  className="grid gap-2 rounded-xl border p-3 sm:grid-cols-[1fr_140px_120px_120px_100px_auto]"
                 >
                   <Input
                     value={item.name}
@@ -2718,40 +2813,74 @@ function AddPersonWizard({
                       )
                     }
                   />
-                  <Select
-                    value={item.start_time}
-                    onValueChange={(value) => updateBreakStart(index, value)}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent className="max-h-72">
-                      {breakStartOptions.map((option) => (
-                        <SelectItem key={option.value} value={option.value}>
-                          {option.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <Select
-                    value={item.end_time}
-                    onValueChange={(value) => updateBreakEnd(index, value)}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent className="max-h-72">
-                      {breakTimeOptions
-                        .filter(
-                          (option) => timeToMinutes(option.value) > timeToMinutes(item.start_time),
-                        )
-                        .map((option) => (
-                          <SelectItem key={option.value} value={option.value}>
-                            {option.label}
-                          </SelectItem>
-                        ))}
-                    </SelectContent>
-                  </Select>
+                  <BreakAnchorSelect
+                    value={item.anchor}
+                    onChange={(anchor) =>
+                      setBreaks((rows) =>
+                        rows.map((row, i) => (i === index ? { ...row, anchor } : row)),
+                      )
+                    }
+                  />
+                  {isPrayerAnchor(item.anchor) ? (
+                    <div className="sm:col-span-2">
+                      <Input
+                        type="number"
+                        min={1}
+                        max={240}
+                        aria-label="Break length in minutes"
+                        value={item.minutes}
+                        onChange={(e) =>
+                          setBreaks((rows) =>
+                            rows.map((row, i) =>
+                              i === index ? { ...row, minutes: Number(e.target.value) } : row,
+                            ),
+                          )
+                        }
+                      />
+                      <PrayerBreakHint
+                        anchor={item.anchor}
+                        minutes={item.minutes}
+                        prayer={prayerToday}
+                      />
+                    </div>
+                  ) : (
+                    <>
+                      <Select
+                        value={item.start_time}
+                        onValueChange={(value) => updateBreakStart(index, value)}
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent className="max-h-72">
+                          {breakStartOptions.map((option) => (
+                            <SelectItem key={option.value} value={option.value}>
+                              {option.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <Select
+                        value={item.end_time}
+                        onValueChange={(value) => updateBreakEnd(index, value)}
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent className="max-h-72">
+                          {breakTimeOptions
+                            .filter(
+                              (option) => timeToMinutes(option.value) > timeToMinutes(item.start_time),
+                            )
+                            .map((option) => (
+                              <SelectItem key={option.value} value={option.value}>
+                                {option.label}
+                              </SelectItem>
+                            ))}
+                        </SelectContent>
+                      </Select>
+                    </>
+                  )}
                   <label className="flex items-center gap-2 text-sm">
                     <Switch
                       checked={item.paid}
@@ -2888,9 +3017,10 @@ function AddPersonWizard({
                 disabled={
                   !startDate ||
                   shiftEnd <= shiftStart ||
-                  breaks.some(
-                    (item) =>
-                      item.start_time < shiftStart ||
+                  breaks.some((item) =>
+                    isPrayerAnchor(item.anchor)
+                      ? item.minutes < 1 || item.minutes > 240
+                      : item.start_time < shiftStart ||
                       item.end_time > shiftEnd ||
                       item.end_time <= item.start_time,
                   )
@@ -2953,9 +3083,10 @@ function AddPersonWizard({
                 <span className="text-xs text-muted-foreground">Breaks</span>
                 <p className="font-bold">
                   {breaks
-                    .map(
-                      (item) =>
-                        `${item.name} ${formatTimeOfDay(item.start_time)}–${formatTimeOfDay(item.end_time)}`,
+                    .map((item) =>
+                      isPrayerAnchor(item.anchor)
+                        ? `${item.name} from ${BREAK_ANCHOR_LABELS[item.anchor]} (${item.minutes} min)`
+                        : `${item.name} ${formatTimeOfDay(item.start_time)}–${formatTimeOfDay(item.end_time)}`,
                     )
                     .join(", ")}
                 </p>

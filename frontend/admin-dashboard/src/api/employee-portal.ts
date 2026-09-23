@@ -1,3 +1,4 @@
+import type { BreakAnchor } from "@/lib/break-rules";
 import { apiFetch, withQuery } from "./client";
 import { mapWorkdayTimeline, type BackendWorkdayTimeline } from "./workday";
 import { normalizeAiAcronym } from "@/lib/text";
@@ -73,6 +74,7 @@ export type PortalWorkProfile = {
     paid: boolean;
     start_time?: string | null;
     end_time?: string | null;
+    anchor?: BreakAnchor | null;
   }> | null;
 };
 

@@ -232,6 +232,8 @@ export type RequestPolicy = {
     paid: boolean;
     start_time?: string | null;
     end_time?: string | null;
+    // "dhuhr" / "asr": starts at today's adhan (times already filled in).
+    anchor?: "fixed" | "dhuhr" | "asr" | null;
   }>;
   approved_leave_today?: boolean;
   approved_early_leave_from?: string | null;

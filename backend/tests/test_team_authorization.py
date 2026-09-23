@@ -22,6 +22,7 @@ from app.database.session import get_db
 from app.main import app
 from app.services.activity_timeline import local_today, open_session_liveness
 from app.services.request_notifications import request_recipients
+from app.services import work_profiles as work_profiles_service
 from app.services.work_profiles import get_or_create_work_profile
 from scripts.audit_production_state import (
     _audit_screenshot_storage,
@@ -51,6 +52,21 @@ from app.models import (
     TrackingSettings,
     WorkSession,
 )
+
+
+# These tests place activity at fixed UTC clock times. The real default breaks
+# follow the prayer times and move with the date, so pin the previous fixed
+# defaults here to keep the timelines deterministic.
+@pytest.fixture(autouse=True)
+def _fixed_default_breaks(monkeypatch):
+    monkeypatch.setattr(
+        work_profiles_service,
+        "DEFAULT_BREAK_RULES",
+        [
+            {"name": "Lunch", "minutes": 30, "paid": True, "start_time": "13:00", "end_time": "13:30"},
+            {"name": "Short break", "minutes": 15, "paid": True, "start_time": "16:30", "end_time": "16:45"},
+        ],
+    )
 
 
 @pytest.fixture()

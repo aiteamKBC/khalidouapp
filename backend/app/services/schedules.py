@@ -7,6 +7,7 @@ from sqlalchemy import false, or_, select
 from sqlalchemy.orm import Session
 
 from app.models import AuditLog, Employee, EmployeeWorkProfile, TeamMember, WorkScheduleOverride
+from app.services.prayer_times import resolve_break_rules
 from app.services.work_profiles import DEFAULT_WORKING_DAYS
 
 
@@ -351,7 +352,7 @@ def _schedule_from_override(
         end_at += timedelta(days=1)
 
     breaks = []
-    for rule in break_rules:
+    for rule in resolve_break_rules(break_rules, work_date, zone):
         start_clock = _clock(rule.get("start_time"))
         end_clock = _clock(rule.get("end_time"))
         if not start_clock or not end_clock:

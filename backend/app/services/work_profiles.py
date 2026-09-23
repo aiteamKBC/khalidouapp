@@ -16,6 +16,8 @@ from app.models import (
     WorkSession,
 )
 
+from app.services.prayer_times import is_prayer_anchored, resolve_break_rules
+
 STANDARD_MONTH_DAYS = 30
 DEFAULT_WORKING_DAYS = [0, 1, 2, 3, 5, 6]
 DEFAULT_WEEKLY_OFF_DAYS = [4]
@@ -42,21 +44,11 @@ REQUIRED_PROFILE_FIELDS = (
 # paid flag until the effective-dated dry-run (scripts/dry_run_break_policy.py)
 # updates them, so a deliberately unpaid break is preserved and surfaced for
 # review rather than silently changed.
+# The two daily breaks follow the prayers: a 30-minute break from the Dhuhr
+# adhan and a 15-minute break from the Asr adhan (see services/prayer_times).
 DEFAULT_BREAK_RULES = [
-    {
-        "name": "Lunch",
-        "minutes": 30,
-        "paid": True,
-        "start_time": "13:00",
-        "end_time": "13:30",
-    },
-    {
-        "name": "Short break",
-        "minutes": 15,
-        "paid": True,
-        "start_time": "16:30",
-        "end_time": "16:45",
-    },
+    {"name": "Lunch", "minutes": 30, "paid": True, "anchor": "dhuhr"},
+    {"name": "Short break", "minutes": 15, "paid": True, "anchor": "asr"},
 ]
 DEFAULT_DEDUCTION_POLICY = {
     "mode": "review",
@@ -167,6 +159,13 @@ def _latest_day_override(
     )
 
 
+def _zone(employee: Employee) -> ZoneInfo:
+    try:
+        return ZoneInfo(employee.timezone or "UTC")
+    except (ZoneInfoNotFoundError, ValueError):
+        return ZoneInfo("UTC")
+
+
 def resolve_day_policy(
     db: Session,
     employee: Employee,
@@ -206,10 +205,12 @@ def resolve_day_policy(
             if shift_override and shift_override.shift_end
             else profile.shift_end
         ),
-        "break_rules": (
+        "break_rules": resolve_break_rules(
             break_override.break_rules
             if break_override and break_override.break_rules is not None
-            else profile.break_rules or []
+            else profile.break_rules or [],
+            work_date,
+            _zone(employee),
         ),
         "approved_leave": bool(approved_leave),
         "approved_early_leave_from": (
@@ -250,6 +251,13 @@ def validate_break_rules(
 ) -> None:
     parsed_breaks: list[tuple[time, time]] = []
     for rule in break_rules or []:
+        if is_prayer_anchored(rule):
+            # Timed from each day's adhan; only the length can be checked here.
+            if not 1 <= int(rule.get("minutes") or 0) <= 240:
+                raise ApiError(
+                    "INVALID_BREAK_DURATION", "Break length must be 1 to 240 minutes.", 400
+                )
+            continue
         start = rule.get("start_time")
         end = rule.get("end_time")
         if not start or not end:

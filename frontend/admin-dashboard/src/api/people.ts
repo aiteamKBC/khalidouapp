@@ -1,3 +1,4 @@
+import type { BreakAnchor } from "@/lib/break-rules";
 import { apiFetch, apiFetchWithMeta } from "./client";
 import { normalizeAiAcronym } from "@/lib/text";
 
@@ -21,8 +22,9 @@ export type PersonInvitationInput = {
       name: string;
       minutes: number;
       paid: boolean;
-      start_time: string;
-      end_time: string;
+      start_time?: string | null;
+      end_time?: string | null;
+      anchor?: BreakAnchor | null;
     }>;
     lateGraceMinutes: number;
     overtimeEnabled?: boolean;

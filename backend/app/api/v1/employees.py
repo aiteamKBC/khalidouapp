@@ -1,6 +1,7 @@
 from datetime import UTC, date, datetime, timedelta
 from typing import Annotated
 from uuid import UUID, uuid4
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request
 from sqlalchemy import func, or_, select
@@ -72,6 +73,7 @@ from app.services.person_access import disable_employee_tracking
 from app.services.employee_archive import current_employee_clause
 from app.services.request_notifications import employee_manager_summaries
 from app.services.input_integrity import summarize_input_integrity
+from app.services.prayer_times import prayer_times
 from app.services.work_profiles import (
     DEFAULT_BREAK_RULES,
     DEFAULT_WEEKLY_OFF_DAYS,
@@ -167,6 +169,34 @@ def list_employees(
         data=[serialize_employee(employee, invitations.get(employee.id)) for employee in employees],
         meta=pagination_meta(total, page, page_size),
     )
+
+
+@router.get("/employees/prayer-times")
+def list_prayer_times(
+    current_admin: Annotated[AdminUser, Depends(get_current_admin)],
+    start_date: date,
+    days: int = Query(default=1, ge=1, le=31),
+    timezone: str = "Africa/Cairo",
+):
+    """Dhuhr and Asr adhan times that prayer-anchored breaks start from."""
+
+    require_capability(current_admin, "breaks.view")
+    try:
+        zone = ZoneInfo(timezone)
+    except (ZoneInfoNotFoundError, ValueError) as exc:
+        raise ApiError("INVALID_TIMEZONE", "Unknown timezone.", 400) from exc
+    data = []
+    for offset in range(days):
+        day = start_date + timedelta(days=offset)
+        times = prayer_times(day, zone)
+        data.append(
+            {
+                "date": day.isoformat(),
+                "dhuhr": times["dhuhr"].strftime("%H:%M"),
+                "asr": times["asr"].strftime("%H:%M"),
+            }
+        )
+    return success_response(data=data)
 
 
 @router.get("/employees/break-rules")

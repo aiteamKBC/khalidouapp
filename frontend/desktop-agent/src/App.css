@@ -517,6 +517,50 @@ textarea:focus {
   font-variant-numeric: tabular-nums;
 }
 
+.k-break-times {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+  margin: -3px 0 10px;
+  padding: 0;
+  list-style: none;
+}
+
+.k-break-times li {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 4px 9px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  color: var(--text-3);
+  background: var(--surface-2);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.k-break-times strong {
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.k-break-times em {
+  color: var(--green);
+  font-size: 9px;
+  font-style: normal;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.k-break-times li[data-state="now"] {
+  border-color: color-mix(in srgb, var(--green) 45%, var(--border));
+  background: var(--green-weak);
+}
+
 .k-app[data-tone="overtime"] .k-shift-context {
   border-color: color-mix(in srgb, var(--overtime) 34%, var(--border));
 }

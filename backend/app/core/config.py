@@ -58,6 +58,9 @@ class Settings(BaseSettings):
         alias="DESKTOP_UPDATE_DIRECTORY",
     )
     screenshot_max_file_size_mb: int = Field(default=10, alias="SCREENSHOT_MAX_FILE_SIZE_MB")
+    # Location used to compute Dhuhr/Asr for prayer-anchored breaks (default Tanta).
+    prayer_latitude: float = Field(default=30.7865, ge=-66, le=66, alias="PRAYER_LATITUDE")
+    prayer_longitude: float = Field(default=31.0004, ge=-180, le=180, alias="PRAYER_LONGITUDE")
     screenshot_max_pixels: int = Field(
         default=80_000_000,
         ge=1,

@@ -1,3 +1,4 @@
+import type { BreakAnchor } from "@/lib/break-rules";
 import { apiFetch, apiFile, withQuery } from "@/api/client";
 
 export type PayrollStatus = "draft" | "needs_review" | "approved" | "locked" | "paid";
@@ -217,8 +218,9 @@ export function createScheduleOverride(input: {
     name: string;
     minutes: number;
     paid: boolean;
-    start_time: string;
-    end_time: string;
+    start_time?: string | null;
+    end_time?: string | null;
+    anchor?: BreakAnchor | null;
   }>;
   reason: string;
 }) {
@@ -243,6 +245,7 @@ export type ScheduleOverride = {
     paid: boolean;
     start_time?: string | null;
     end_time?: string | null;
+    anchor?: BreakAnchor | null;
   }> | null;
   shift_start?: string | null;
   shift_end?: string | null;

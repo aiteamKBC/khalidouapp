@@ -35,6 +35,15 @@ class BreakRule(BaseModel):
     paid: bool = False
     start_time: time | None = None
     end_time: time | None = None
+    # "dhuhr" / "asr": the break starts at that day's adhan and lasts `minutes`.
+    anchor: Literal["fixed", "dhuhr", "asr"] = "fixed"
+
+    @model_validator(mode="after")
+    def _anchored_breaks_have_no_fixed_times(self):
+        if self.anchor != "fixed":
+            self.start_time = None
+            self.end_time = None
+        return self
 
 
 class DeductionBracket(BaseModel):

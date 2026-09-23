@@ -33,6 +33,12 @@ import {
   type ScheduleOverride,
 } from "@/api/payroll";
 import { useAuth } from "@/lib/auth";
+import { describeBreakTiming, isPrayerAnchor, type BreakAnchor } from "@/lib/break-rules";
+import {
+  BreakAnchorSelect,
+  PrayerBreakHint,
+  usePrayerTimesToday,
+} from "@/components/breaks/break-anchor-select";
 import { permissions } from "@/lib/permissions";
 import { formatTimeOfDay } from "@/lib/format";
 import { PageHeader } from "@/components/ui/page-header";
@@ -65,16 +71,26 @@ export const Route = createFileRoute("/_app/breaks")({ component: BreaksPage });
 type BreakRule = NonNullable<WorkProfile["breakRules"]>[number];
 type BreakDraft = {
   name: string;
+  anchor: BreakAnchor;
   startTime: string;
   endTime: string;
+  // Length of a prayer-anchored break; fixed breaks use start/end instead.
+  minutes: number;
   paid: boolean;
 };
 type EditorIntent =
   { kind: "company" } | { kind: "employee"; employeeId: string } | { kind: "day" };
 
 const FALLBACK_BREAKS: BreakDraft[] = [
-  { name: "Lunch", startTime: "13:00", endTime: "13:30", paid: true },
-  { name: "Short break", startTime: "16:30", endTime: "16:45", paid: true },
+  { name: "Lunch", anchor: "dhuhr", startTime: "13:00", endTime: "13:30", minutes: 30, paid: true },
+  {
+    name: "Short break",
+    anchor: "asr",
+    startTime: "16:30",
+    endTime: "16:45",
+    minutes: 15,
+    paid: true,
+  },
 ];
 const DEFAULT_WORKING_DAYS = [0, 1, 2, 3, 5, 6];
 
@@ -88,8 +104,10 @@ function toDrafts(rules?: WorkProfile["breakRules"]): BreakDraft[] {
   if (!rules?.length) return FALLBACK_BREAKS.map((item) => ({ ...item }));
   return rules.map((rule) => ({
     name: rule.name,
+    anchor: isPrayerAnchor(rule.anchor) ? rule.anchor : "fixed",
     startTime: rule.start_time?.slice(0, 5) || "13:00",
     endTime: rule.end_time?.slice(0, 5) || "13:30",
+    minutes: rule.minutes,
     paid: rule.paid,
   }));
 }
@@ -386,14 +404,12 @@ function SummaryCard({
 }
 
 function BreakRuleRow({ rule }: { rule: BreakRule }) {
+  const prayerToday = usePrayerTimesToday();
   return (
     <div className="flex items-center justify-between gap-3 rounded-xl border bg-muted/20 px-3 py-2.5 text-sm">
       <div className="min-w-0">
         <p className="truncate font-bold">{rule.name}</p>
-        <p className="text-xs text-muted-foreground">
-          {rule.start_time?.slice(0, 5) || "—"}–{rule.end_time?.slice(0, 5) || "—"} · {rule.minutes}{" "}
-          min
-        </p>
+        <p className="text-xs text-muted-foreground">{describeBreakTiming(rule, prayerToday)}</p>
       </div>
       <span
         className={
@@ -439,6 +455,7 @@ function BreakEditorDialog({
   const [shiftStart, setShiftStart] = useState("10:00");
   const [shiftEnd, setShiftEnd] = useState("18:00");
   const [breaks, setBreaks] = useState<BreakDraft[]>(FALLBACK_BREAKS);
+  const prayerToday = usePrayerTimesToday();
   const [updateShift, setUpdateShift] = useState(true);
   const [updateBreaks, setUpdateBreaks] = useState(true);
   const [reason, setReason] = useState("");
@@ -521,13 +538,25 @@ function BreakEditorDialog({
 
   const rules = useMemo(
     () =>
-      breaks.map((item) => ({
-        name: item.name.trim(),
-        start_time: item.startTime,
-        end_time: item.endTime,
-        minutes: minutesBetween(item.startTime, item.endTime),
-        paid: item.paid,
-      })),
+      breaks.map((item) =>
+        isPrayerAnchor(item.anchor)
+          ? {
+              name: item.name.trim(),
+              anchor: item.anchor,
+              minutes: item.minutes,
+              paid: item.paid,
+              start_time: null,
+              end_time: null,
+            }
+          : {
+              name: item.name.trim(),
+              anchor: "fixed" as const,
+              start_time: item.startTime,
+              end_time: item.endTime,
+              minutes: minutesBetween(item.startTime, item.endTime),
+              paid: item.paid,
+            },
+      ),
     [breaks],
   );
   const breakProblems = useMemo(() => {
@@ -541,6 +570,16 @@ function BreakEditorDialog({
           message: `Enter a name for break ${index + 1}.`,
           indexes: [index],
         });
+      }
+      if (isPrayerAnchor(rule.anchor)) {
+        if (!Number.isFinite(rule.minutes) || rule.minutes < 1 || rule.minutes > 240) {
+          problems.push({
+            key: `duration-${index}`,
+            message: `${label} must last between 1 and 240 minutes.`,
+            indexes: [index],
+          });
+        }
+        return;
       }
       if (
         !rule.start_time ||
@@ -571,7 +610,8 @@ function BreakEditorDialog({
 
     const sortedRules = rules
       .map((rule, index) => ({ ...rule, index }))
-      .sort((a, b) => a.start_time.localeCompare(b.start_time));
+      .filter((rule) => !isPrayerAnchor(rule.anchor) && rule.start_time)
+      .sort((a, b) => (a.start_time ?? "").localeCompare(b.start_time ?? ""));
     for (let index = 1; index < sortedRules.length; index += 1) {
       const previous = sortedRules[index - 1];
       const current = sortedRules[index];
@@ -1087,7 +1127,14 @@ function BreakEditorDialog({
               onClick={() =>
                 setBreaks((current) => [
                   ...current,
-                  { name: "New break", startTime: "14:00", endTime: "14:15", paid: true },
+                  {
+                    name: "New break",
+                    anchor: "fixed",
+                    startTime: "14:00",
+                    endTime: "14:15",
+                    minutes: 15,
+                    paid: true,
+                  },
                 ])
               }
             >
@@ -1098,7 +1145,7 @@ function BreakEditorDialog({
           {breaks.map((item, index) => (
             <div
               key={index}
-              className={`grid items-end gap-2 rounded-xl border bg-card p-3 sm:grid-cols-[minmax(150px,1fr)_120px_120px_92px_auto] ${
+              className={`grid items-end gap-2 rounded-xl border bg-card p-3 sm:grid-cols-[minmax(130px,1fr)_140px_110px_110px_92px_auto] ${
                 invalidBreakIndexes.has(index) ? "border-destructive/60 bg-destructive/5" : ""
               }`}
             >
@@ -1115,34 +1162,85 @@ function BreakEditorDialog({
                   }
                 />
               </Field>
-              <Field label="Starts">
-                <Input
-                  type="time"
+              <Field label="Starts at">
+                <BreakAnchorSelect
                   disabled={!updateBreaks}
-                  value={item.startTime}
-                  onChange={(event) =>
+                  value={item.anchor}
+                  onChange={(anchor) =>
                     setBreaks((current) =>
                       current.map((row, rowIndex) =>
-                        rowIndex === index ? { ...row, startTime: event.target.value } : row,
+                        rowIndex === index
+                          ? {
+                              ...row,
+                              anchor,
+                              minutes: isPrayerAnchor(anchor)
+                                ? row.minutes
+                                : minutesBetween(row.startTime, row.endTime),
+                            }
+                          : row,
                       ),
                     )
                   }
                 />
               </Field>
-              <Field label="Ends">
-                <Input
-                  type="time"
-                  disabled={!updateBreaks}
-                  value={item.endTime}
-                  onChange={(event) =>
-                    setBreaks((current) =>
-                      current.map((row, rowIndex) =>
-                        rowIndex === index ? { ...row, endTime: event.target.value } : row,
-                      ),
-                    )
-                  }
-                />
-              </Field>
+              {isPrayerAnchor(item.anchor) ? (
+                <div className="sm:col-span-2">
+                  <Field label="Length (minutes)">
+                    <Input
+                      type="number"
+                      min={1}
+                      max={240}
+                      disabled={!updateBreaks}
+                      value={item.minutes}
+                      onChange={(event) =>
+                        setBreaks((current) =>
+                          current.map((row, rowIndex) =>
+                            rowIndex === index
+                              ? { ...row, minutes: Number(event.target.value) }
+                              : row,
+                          ),
+                        )
+                      }
+                    />
+                  </Field>
+                  <PrayerBreakHint
+                    anchor={item.anchor}
+                    minutes={item.minutes}
+                    prayer={prayerToday}
+                  />
+                </div>
+              ) : (
+                <>
+                  <Field label="Starts">
+                    <Input
+                      type="time"
+                      disabled={!updateBreaks}
+                      value={item.startTime}
+                      onChange={(event) =>
+                        setBreaks((current) =>
+                          current.map((row, rowIndex) =>
+                            rowIndex === index ? { ...row, startTime: event.target.value } : row,
+                          ),
+                        )
+                      }
+                    />
+                  </Field>
+                  <Field label="Ends">
+                    <Input
+                      type="time"
+                      disabled={!updateBreaks}
+                      value={item.endTime}
+                      onChange={(event) =>
+                        setBreaks((current) =>
+                          current.map((row, rowIndex) =>
+                            rowIndex === index ? { ...row, endTime: event.target.value } : row,
+                          ),
+                        )
+                      }
+                    />
+                  </Field>
+                </>
+              )}
               <div className="pb-2">
                 <Label className="mb-2 block text-xs">Paid</Label>
                 <div className="flex items-center gap-2">

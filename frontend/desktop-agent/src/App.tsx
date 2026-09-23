@@ -32,6 +32,7 @@ import {
 import { OperationTimeoutError, withOperationTimeout } from "./promiseTimeout";
 import { toValidDate } from "./safeDate";
 import { ShiftRescheduleCard } from "./ShiftRescheduleCard";
+import { breakStatusAt, todaysBreaks } from "./breakSchedule";
 import {
   screenshotSyncLabel,
   shouldReloadScreenshotsAfterRecovery,
@@ -2286,6 +2287,13 @@ function HomeView({
     status.requestPolicy?.timezone ??
     Intl.DateTimeFormat().resolvedOptions().timeZone ??
     "UTC";
+  const breaksToday = status.requestPolicy?.approved_leave_today
+    ? []
+    : todaysBreaks(status.requestPolicy?.break_rules);
+  const breakNow = breakStatusAt(
+    breaksToday,
+    localMinutesAt(new Date().toISOString(), workdayTimezone),
+  );
   const isAutomaticIdle =
     status.trackingStatus === "idle" &&
     !status.trackingPaused &&
@@ -2369,6 +2377,40 @@ function HomeView({
             <span>Paid shift</span>
             <strong>{paidShiftLabel}</strong>
           </div>
+          {breaksToday.length > 0 && (
+            <ul className="k-break-times" aria-label="Today's breaks">
+              {breaksToday.map((item) => {
+                const state =
+                  breakNow.current === item
+                    ? "now"
+                    : breakNow.next === item
+                      ? "next"
+                      : null;
+                return (
+                  <li
+                    key={`${item.name}-${item.start}`}
+                    data-state={state ?? undefined}
+                    title={
+                      item.prayer
+                        ? `Starts at today's ${item.prayer} adhan`
+                        : undefined
+                    }
+                  >
+                    <span>
+                      {item.name}
+                      {item.prayer ? ` · ${item.prayer}` : ""}
+                    </span>
+                    <strong>
+                      {formatScheduledTime(item.start)}–
+                      {formatScheduledTime(item.end)}
+                    </strong>
+                    {state === "now" && <em>Now</em>}
+                    {state === "next" && <em>Next</em>}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
           <span className="k-hero-pill">{heroStatusLabel}</span>
           {overtimeLabel && (
             <span className="k-overtime-pill">{overtimeLabel}</span>

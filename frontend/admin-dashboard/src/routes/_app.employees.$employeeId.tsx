@@ -98,6 +98,12 @@ import { archivePerson, restorePerson, type PersonArchiveInput } from "@/api/peo
 import { ArchiveEmployeeDialog } from "@/components/people/archive-employee-dialog";
 import { ARCHIVE_REASON_LABELS, canArchiveEmployees } from "@/lib/employee-archive";
 import { permissions } from "@/lib/permissions";
+import { isPrayerAnchor, type BreakAnchor } from "@/lib/break-rules";
+import {
+  BreakAnchorSelect,
+  PrayerBreakHint,
+  usePrayerTimesToday,
+} from "@/components/breaks/break-anchor-select";
 import { retryTransientRequest } from "@/api/client";
 
 export const Route = createFileRoute("/_app/employees/$employeeId")({
@@ -1307,8 +1313,11 @@ function EmployeeMetricCard({
 
 type EditableBreak = {
   name: string;
+  anchor: BreakAnchor;
   start_time: string;
   end_time: string;
+  // Length of a prayer-anchored break; fixed breaks use start/end instead.
+  minutes: number;
   paid: boolean;
 };
 
@@ -1329,6 +1338,7 @@ function ScheduleEditor({
   const [lateGrace, setLateGrace] = useState(15);
   const [earlyLeave, setEarlyLeave] = useState(120);
   const [breaks, setBreaks] = useState<EditableBreak[]>([]);
+  const prayerToday = usePrayerTimesToday();
 
   useEffect(() => {
     if (!profile) return;
@@ -1340,8 +1350,10 @@ function ScheduleEditor({
     setBreaks(
       (profile.breakRules ?? []).map((item) => ({
         name: item.name,
-        start_time: item.start_time ?? "",
-        end_time: item.end_time ?? "",
+        anchor: isPrayerAnchor(item.anchor) ? item.anchor : "fixed",
+        start_time: item.start_time?.slice(0, 5) ?? "",
+        end_time: item.end_time?.slice(0, 5) ?? "",
+        minutes: item.minutes,
         paid: item.paid,
       })),
     );
@@ -1357,10 +1369,21 @@ function ScheduleEditor({
         requiredDailyMinutes: minutesBetween(shiftStart, shiftEnd),
         lateGraceMinutes: lateGrace,
         weeklyEarlyLeaveMinutes: earlyLeave,
-        breakRules: breaks.map((item) => ({
-          ...item,
-          minutes: minutesBetween(item.start_time, item.end_time),
-        })),
+        breakRules: breaks.map((item) =>
+          isPrayerAnchor(item.anchor)
+            ? {
+                name: item.name,
+                anchor: item.anchor,
+                minutes: item.minutes,
+                paid: item.paid,
+                start_time: null,
+                end_time: null,
+              }
+            : {
+                ...item,
+                minutes: minutesBetween(item.start_time, item.end_time),
+              },
+        ),
       }),
     onSuccess: () => {
       toast.success("Schedule and break rules saved");
@@ -1455,7 +1478,14 @@ function ScheduleEditor({
               onClick={() =>
                 setBreaks((current) => [
                   ...current,
-                  { name: "Break", start_time: "", end_time: "", paid: true },
+                  {
+                    name: "Break",
+                    anchor: "fixed",
+                    start_time: "",
+                    end_time: "",
+                    minutes: 15,
+                    paid: true,
+                  },
                 ])
               }
             >
@@ -1468,7 +1498,7 @@ function ScheduleEditor({
           {breaks.map((item, index) => (
             <div
               key={`${index}-${item.name}`}
-              className="grid gap-3 rounded-xl border p-3 md:grid-cols-[1fr_160px_160px_auto_auto]"
+              className="grid gap-3 rounded-xl border p-3 md:grid-cols-[1fr_150px_130px_130px_auto_auto]"
             >
               <Input
                 value={item.name}
@@ -1482,30 +1512,68 @@ function ScheduleEditor({
                   )
                 }
               />
-              <Input
-                type="time"
-                value={item.start_time}
+              <BreakAnchorSelect
+                value={item.anchor}
                 disabled={!canManage}
-                onChange={(event) =>
+                onChange={(anchor) =>
                   setBreaks((current) =>
-                    current.map((row, rowIndex) =>
-                      rowIndex === index ? { ...row, start_time: event.target.value } : row,
-                    ),
+                    current.map((row, rowIndex) => (rowIndex === index ? { ...row, anchor } : row)),
                   )
                 }
               />
-              <Input
-                type="time"
-                value={item.end_time}
-                disabled={!canManage}
-                onChange={(event) =>
-                  setBreaks((current) =>
-                    current.map((row, rowIndex) =>
-                      rowIndex === index ? { ...row, end_time: event.target.value } : row,
-                    ),
-                  )
-                }
-              />
+              {isPrayerAnchor(item.anchor) ? (
+                <div className="md:col-span-2">
+                  <Input
+                    type="number"
+                    min={1}
+                    max={240}
+                    aria-label="Break length in minutes"
+                    value={item.minutes}
+                    disabled={!canManage}
+                    onChange={(event) =>
+                      setBreaks((current) =>
+                        current.map((row, rowIndex) =>
+                          rowIndex === index
+                            ? { ...row, minutes: Number(event.target.value) }
+                            : row,
+                        ),
+                      )
+                    }
+                  />
+                  <PrayerBreakHint
+                    anchor={item.anchor}
+                    minutes={item.minutes}
+                    prayer={prayerToday}
+                  />
+                </div>
+              ) : (
+                <>
+                  <Input
+                    type="time"
+                    value={item.start_time}
+                    disabled={!canManage}
+                    onChange={(event) =>
+                      setBreaks((current) =>
+                        current.map((row, rowIndex) =>
+                          rowIndex === index ? { ...row, start_time: event.target.value } : row,
+                        ),
+                      )
+                    }
+                  />
+                  <Input
+                    type="time"
+                    value={item.end_time}
+                    disabled={!canManage}
+                    onChange={(event) =>
+                      setBreaks((current) =>
+                        current.map((row, rowIndex) =>
+                          rowIndex === index ? { ...row, end_time: event.target.value } : row,
+                        ),
+                      )
+                    }
+                  />
+                </>
+              )}
               <label className="flex items-center gap-2 whitespace-nowrap text-sm">
                 <Checkbox
                   checked={item.paid}
