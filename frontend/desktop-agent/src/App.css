@@ -6013,10 +6013,6 @@ textarea:focus {
   height: 0;
 }
 
-.k-shift-reschedule {
-  margin-top: 16px;
-}
-
 .k-shift-reschedule-row > span:last-child {
   display: inline-flex;
   align-items: center;

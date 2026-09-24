@@ -11,6 +11,20 @@ export const BREAK_IDLE_THRESHOLD_SECONDS =
 export const IDLE_RETURN_VERIFICATION_SECONDS = 3 * 60;
 export const IDLE_RETURN_VERIFICATION_MS =
   IDLE_RETURN_VERIFICATION_SECONDS * 1_000;
+// The input probe reports once per second, so the Enter/click that confirmed a
+// return can still be unreported when tracking resumes. Without this window the
+// next 250ms tick sees the old inactivity and opens a second idle popup. It is
+// deliberately short: if no trusted input arrives, idle starts again as normal.
+export const IDLE_RESUME_GRACE_MS = 5_000;
+
+export function withinIdleResumeGrace(
+  resumedAt: number | null,
+  now: number,
+): boolean {
+  return (
+    resumedAt !== null && now >= resumedAt && now - resumedAt < IDLE_RESUME_GRACE_MS
+  );
+}
 
 function configuredIdleThresholdSeconds(thresholdMinutes = IDLE_THRESHOLD_MINUTES) {
   const minutes = Number.isFinite(thresholdMinutes)

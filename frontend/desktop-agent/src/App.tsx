@@ -1497,23 +1497,40 @@ function App() {
         allowEscapeKey: false,
         allowOutsideClick: false,
       });
-    } finally {
+    } catch (error) {
       window.khaliduo?.setIdleAlertAttention(false);
+      throw error;
     }
 
+    // Send the chosen action BEFORE releasing the alert. IPC messages are
+    // handled in order, so the main process leaves idle before the alert is
+    // cleared. Clearing it first left a moment where tracking was still idle
+    // with no alert pending, and the return check opened a second popup.
+    const releaseAlert = () => window.khaliduo?.setIdleAlertAttention(false);
+    let released = false;
+    const runThenRelease = async <T,>(action: () => Promise<T> | undefined) => {
+      const pending = action();
+      releaseAlert();
+      released = true;
+      return await pending;
+    };
     try {
       if (result.isConfirmed) {
-        const resumeResult = isTrackingStart
-          ? await window.khaliduo?.confirmTrackingStart()
-          : await window.khaliduo?.resumeAutomaticIdle();
+        const resumeResult = await runThenRelease(() =>
+          isTrackingStart
+            ? window.khaliduo?.confirmTrackingStart()
+            : window.khaliduo?.resumeAutomaticIdle(),
+        );
         if (resumeResult?.message)
           setTrackingControlMessage(resumeResult.message);
         const nextStatus = await window.khaliduo?.getAgentStatus();
         if (nextStatus) setStatus(nextStatus);
       } else if (result.isDenied) {
-        const pauseResult = isTrackingStart
-          ? await window.khaliduo?.declineTrackingStart()
-          : await window.khaliduo?.pauseTracking();
+        const pauseResult = await runThenRelease(() =>
+          isTrackingStart
+            ? window.khaliduo?.declineTrackingStart()
+            : window.khaliduo?.pauseTracking(),
+        );
         if (pauseResult?.message) setTrackingControlMessage(pauseResult.message);
         const nextStatus = await window.khaliduo?.getAgentStatus();
         if (nextStatus) setStatus(nextStatus);
@@ -1521,7 +1538,9 @@ function App() {
         canRequestManualTime &&
         result.dismiss === Swal.DismissReason.cancel
       ) {
-        const resumeResult = await window.khaliduo?.resumeAutomaticIdle();
+        const resumeResult = await runThenRelease(() =>
+          window.khaliduo?.resumeAutomaticIdle(),
+        );
         if (resumeResult?.message)
           setTrackingControlMessage(resumeResult.message);
         setExpandedRequest("idle");
@@ -1544,6 +1563,8 @@ function App() {
           ? error.message
           : "Could not update tracking. Please try again.",
       );
+    } finally {
+      if (!released) releaseAlert();
     }
   }
 
@@ -1926,12 +1947,13 @@ function App() {
             />
           )}
           {activeView === "requests" && (
-            <>
-            <BreakBankCard
-              status={status}
-              onSubmit={handleDelayedBreakRequest}
-            />
             <RequestCentreView
+              leadingContent={
+                <BreakBankCard
+                  status={status}
+                  onSubmit={handleDelayedBreakRequest}
+                />
+              }
               status={status}
               timeRequestReason={timeRequestReason}
               timeRequestError={timeRequestError}
@@ -1968,9 +1990,9 @@ function App() {
               }}
               onSubmitIdleTimeRequest={handleIdleTimeRequest}
               onSubmitEarlyLeaveRequest={handleEarlyLeaveRequest}
-            />
-            <ShiftRescheduleCard enrolled={status.enrolled} />
-            </>
+            >
+              <ShiftRescheduleCard enrolled={status.enrolled} />
+            </RequestCentreView>
           )}
           {activeView === "meeting" && (
             <MeetingView
@@ -3249,6 +3271,10 @@ type RequestCentreProps = {
   onExpandedRequestChange: (value: "idle" | "early" | "leave" | null) => void;
   onSubmitIdleTimeRequest: (event: FormEvent<HTMLFormElement>) => void;
   onSubmitEarlyLeaveRequest: (event: FormEvent<HTMLFormElement>) => void;
+  // Extra cards must render inside this scrolling page. Rendered as siblings
+  // they land in the app shell grid and overlap the page.
+  leadingContent?: ReactNode;
+  children?: ReactNode;
 };
 
 function RequestCentreView(props: RequestCentreProps) {
@@ -3378,6 +3404,8 @@ function RequestCentreView(props: RequestCentreProps) {
           <strong>{leaveBalance} working days</strong>
         </div>
       </section>
+
+      {props.leadingContent}
 
       <section className="k-request-centre">
         <div className="k-section-heading">
@@ -3874,6 +3902,8 @@ function RequestCentreView(props: RequestCentreProps) {
           )}
         </div>
       </section>
+
+      {props.children}
     </section>
   );
 }

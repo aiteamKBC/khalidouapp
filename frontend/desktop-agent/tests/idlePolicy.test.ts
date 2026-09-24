@@ -15,6 +15,8 @@ import {
   inputResumedAfterIdle,
   reclassifyVerifiedReturnCounters,
   shouldWaitForInputBeforeRestart,
+  withinIdleResumeGrace,
+  IDLE_RESUME_GRACE_MS,
 } from "../electron/services/idlePolicy.ts";
 
 test("idle starts only after fifteen complete minutes without input", () => {
@@ -194,4 +196,18 @@ test("an idle server close waits for input instead of opening empty sessions", (
   assert.equal(shouldWaitForInputBeforeRestart("sleeping", true), true);
   assert.equal(shouldWaitForInputBeforeRestart("active", true), false);
   assert.equal(shouldWaitForInputBeforeRestart("idle", false), false);
+});
+
+test("a confirmed return briefly blocks idle from restarting before the probe reports", () => {
+  const resumedAt = 1_000_000;
+  assert.equal(withinIdleResumeGrace(null, resumedAt), false);
+  assert.equal(withinIdleResumeGrace(resumedAt, resumedAt), true);
+  assert.equal(withinIdleResumeGrace(resumedAt, resumedAt + 1_250), true);
+  // The grace is short: with no trusted input, idle starts again afterwards.
+  assert.equal(
+    withinIdleResumeGrace(resumedAt, resumedAt + IDLE_RESUME_GRACE_MS),
+    false,
+  );
+  // A clock that moved backwards must not extend the grace.
+  assert.equal(withinIdleResumeGrace(resumedAt, resumedAt - 1), false);
 });

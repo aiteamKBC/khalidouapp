@@ -131,6 +131,7 @@ import {
   idleDurationAfterThreshold,
   idleReturnInputDetected,
   inputResumedAfterIdle,
+  withinIdleResumeGrace,
   reclassifyVerifiedReturnCounters,
   shouldWaitForInputBeforeRestart,
 } from "./services/idlePolicy.js";
@@ -449,6 +450,7 @@ let lastObservedSystemIdleSeconds: number | null = null;
 let lastObservedOperatingSystemIdleSeconds: number | null = null;
 let lastHandledIdleReturnInputAt = 0;
 let idleReturnVerification: IdleReturnVerification | null = null;
+let idleResumedAt: number | null = null;
 let waitingForInputAfterIdleSessionClose = false;
 let freshSessionStartConfirmed = false;
 let freshSessionStartPromptActive = false;
@@ -850,6 +852,7 @@ function resetForDeviceReenrollment() {
   lastObservedOperatingSystemIdleSeconds = null;
   lastHandledIdleReturnInputAt = 0;
   clearIdleReturnVerification();
+  idleResumedAt = null;
   waitingForInputAfterIdleSessionClose = false;
   freshSessionStartConfirmed = false;
   freshSessionStartPromptActive = false;
@@ -2868,6 +2871,7 @@ function finishAutomaticIdleAfterVerification(
   idleWallClockStartedAt = null;
   automaticIdleStartedDuringBreak = false;
   clearIdleReturnVerification();
+  idleResumedAt = now;
   isFinishingAutomaticIdle = true;
   runtimeStatus.locallyEndedIdleAt = automaticIdleEndedAt;
   const finishPromise = sendStateEvent(
@@ -3548,7 +3552,8 @@ function startIdleMonitor() {
         insideScheduledBreak,
         trackingConfig.idle_threshold_minutes,
       ) &&
-      runtimeStatus.trackingStatus !== "idle"
+      runtimeStatus.trackingStatus !== "idle" &&
+      !withinIdleResumeGrace(idleResumedAt, Date.now())
     ) {
       recalculateWorkedTime();
       idleSecondsBeforeCurrentIdle = runtimeStatus.idleSeconds;
@@ -5381,6 +5386,7 @@ async function resumeTracking() {
     freshSessionStartConfirmed = true;
   }
   runtimeStatus.lastIdleAlert = null;
+  idleResumedAt = Date.now();
   runtimeStatus.trackingPaused = false;
   runtimeStatus.paidPauseEndsAt = null;
   runtimeStatus.paidPauseRemainingSeconds = 0;
