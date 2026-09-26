@@ -26,6 +26,7 @@ import {
   workdayTimingState,
 } from "./timelinePresentation";
 import {
+  idleRequestKeyForIdleStart,
   requestableIdleMinutes,
   totalRequestableIdleMinutes,
 } from "./idleRequests";
@@ -1538,18 +1539,63 @@ function App() {
         canRequestManualTime &&
         result.dismiss === Swal.DismissReason.cancel
       ) {
+        // "idle_started" alerts are raised the moment idle begins, so the idle
+        // period runs from the alert until this click. An "idle_return" alert
+        // already carries the away time measured when input came back.
+        const alertAt = Date.parse(alert.endedAt);
+        const idleStartedAt = isIdleStarted
+          ? alertAt
+          : alertAt - alert.lostSeconds * 1000;
+        const idleSecondsInShift = isIdleStarted
+          ? Math.floor((Date.now() - alertAt) / 1000)
+          : alert.eligibleLostSeconds;
         const resumeResult = await runThenRelease(() =>
           window.khaliduo?.resumeAutomaticIdle(),
         );
         if (resumeResult?.message)
           setTrackingControlMessage(resumeResult.message);
-        setExpandedRequest("idle");
-        setActiveView("requests");
+        if (idleSecondsInShift < 60) {
+          // Nothing was lost: the minutes before the popup already counted as
+          // work and idle lasted under a minute. Opening the form here showed an
+          // empty period list with a disabled Submit button.
+          await Swal.fire({
+            icon: "success",
+            title: "Tracking resumed",
+            text: "Less than a minute was counted as idle, so there is nothing to explain. The time before this popup already counted as work.",
+            confirmButtonColor: "#1f7a4d",
+          });
+          return;
+        }
+        setTimeRequestError(null);
+        setTimeRequestSuccess(null);
         setTimeRequestReason(
           "Offline meeting or work completed while away from the computer.",
         );
+        setExpandedRequest("idle");
+        setActiveView("requests");
+        // The period is listed once the server has the idle end. Online, the
+        // resume above already waited for that; retry briefly for slow links.
+        let periodKey: string | null = null;
+        for (let attempt = 0; attempt < 6 && !periodKey; attempt += 1) {
+          if (attempt === 1) await window.khaliduo?.syncNow();
+          if (attempt > 0) await new Promise((r) => window.setTimeout(r, 1500));
+          const nextStatus = await window.khaliduo?.getAgentStatus();
+          if (!nextStatus) break;
+          setStatus(nextStatus);
+          periodKey = idleRequestKeyForIdleStart(
+            nextStatus.idleRequestPeriods ?? [],
+            idleStartedAt,
+          );
+        }
+        if (periodKey) {
+          setSelectedIdleRequestKey(periodKey);
+        } else {
+          setTimeRequestError(
+            "This idle period has not synced yet. Check your connection; it will appear in the list above as soon as it syncs.",
+          );
+        }
         window.setTimeout(
-          () => document.getElementById("time-request-reason")?.focus(),
+          () => document.getElementById("idle-request-reason")?.focus(),
           50,
         );
       }
@@ -3512,6 +3558,7 @@ function RequestCentreView(props: RequestCentreProps) {
                 <label>
                   What were you doing?
                   <textarea
+                    id="idle-request-reason"
                     value={props.timeRequestReason}
                     onChange={(event) =>
                       props.onTimeRequestReasonChange(event.target.value)

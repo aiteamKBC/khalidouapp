@@ -1578,6 +1578,10 @@ textarea:focus {
 .k-page {
   display: grid;
   align-content: start;
+  /* Rows keep their full height so the page scrolls. With auto rows, a
+     fixed-height page squeezed overflow-hidden sections (Request Centre,
+     My Requests) to fit the window instead of scrolling. */
+  grid-auto-rows: max-content;
   gap: 12px;
 }
 
