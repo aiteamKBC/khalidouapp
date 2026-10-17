@@ -64,10 +64,10 @@ def test_fixed_breaks_are_unchanged():
     assert resolve_break_rules(fixed, date(2026, 6, 21), CAIRO) == fixed
 
 
-def test_anchored_breaks_validate_without_clock_times():
-    validate_break_rules(PRAYER_BREAKS, shift_start=time(10), shift_end=time(18))
+def test_new_prayer_anchored_breaks_are_rejected():
     with pytest.raises(ApiError):
-        validate_break_rules([{"name": "Bad", "minutes": 0, "anchor": "asr"}])
+        validate_break_rules(PRAYER_BREAKS, shift_start=time(10), shift_end=time(18))
+    validate_break_rules(DEFAULT_BREAK_RULES, shift_start=time(10), shift_end=time(18))
 
 
 def test_schema_drops_clock_times_from_anchored_breaks():
@@ -76,8 +76,12 @@ def test_schema_drops_clock_times_from_anchored_breaks():
     assert BreakRule(name="Fixed", minutes=15, start_time=time(16), end_time=time(16, 15)).anchor == "fixed"
 
 
-def test_new_profiles_default_to_prayer_breaks():
-    assert [rule["anchor"] for rule in DEFAULT_BREAK_RULES] == ["dhuhr", "asr"]
+def test_new_profiles_default_to_fixed_breaks():
+    assert [(rule["start_time"], rule["end_time"]) for rule in DEFAULT_BREAK_RULES] == [
+        ("13:00", "13:30"),
+        ("16:45", "17:00"),
+    ]
+    assert not any(rule.get("anchor") for rule in DEFAULT_BREAK_RULES)
 
 
 def test_schedule_and_day_policy_use_that_days_prayer_times():
@@ -141,6 +145,26 @@ def test_migration_converts_only_the_standard_breaks():
     assert restored[0]["start_time"] == "13:00" and "anchor" not in restored[0]
 
 
+def test_fixed_time_migration_restores_clock_times_and_lengths():
+    path = Path(__file__).resolve().parents[1] / "alembic/versions/20261017_000061_fixed_time_breaks.py"
+    spec = importlib.util.spec_from_file_location("fixed_breaks_migration", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    restored = module._fix_rules(
+        [
+            {"name": "Lunch", "minutes": 30, "paid": True, "anchor": "dhuhr"},
+            {"name": "Short break", "minutes": 20, "paid": True, "anchor": "asr"},
+            {"name": "Tea", "minutes": 10, "paid": False, "start_time": "11:00", "end_time": "11:10"},
+        ]
+    )
+    assert restored[0] == {"name": "Lunch", "minutes": 30, "paid": True, "start_time": "13:00", "end_time": "13:30"}
+    assert (restored[1]["start_time"], restored[1]["end_time"]) == ("16:45", "17:05")
+    assert restored[2]["start_time"] == "11:00"
+    validate_break_rules(restored, shift_start=time(10), shift_end=time(18))
+    assert module._fix_rules([{"name": "Tea", "minutes": 10, "start_time": "11:00", "end_time": "11:10"}]) is None
+
+
 def _length(rule: dict) -> int:
     start = datetime.strptime(rule["start_time"], "%H:%M")
     end = datetime.strptime(rule["end_time"], "%H:%M")
@@ -152,56 +176,3 @@ def _local(day: date, clock: time) -> datetime:
 
     return datetime.combine(day, clock, tzinfo=ZoneInfo(CAIRO)).astimezone(UTC)
 
-
-def test_prayer_times_endpoint_lists_each_day():
-    from datetime import timedelta
-
-    from fastapi.testclient import TestClient
-
-    from app.core.security import create_jwt_token
-    from app.database.session import get_db
-    from app.main import app
-    from app.models import AdminUser
-
-    engine = create_engine(
-        "sqlite+pysqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(engine)
-    factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
-    db = factory()
-    company = Company(name="Prayer API Co", status="active")
-    db.add(company)
-    db.flush()
-    admin = AdminUser(
-        company_id=company.id, name="HR", email="hr-prayer@example.com", password_hash="x",
-        role="hr", status="active", data_scope="company",
-    )
-    db.add(admin)
-    db.commit()
-
-    def override_get_db():
-        session = factory()
-        try:
-            yield session
-        finally:
-            session.close()
-
-    app.dependency_overrides[get_db] = override_get_db
-    try:
-        token = create_jwt_token(
-            subject=admin.id, company_id=admin.company_id, token_type="access",
-            expires_delta=timedelta(minutes=30), extra_claims={"role": admin.role},
-        )
-        response = TestClient(app).get(
-            "/api/v1/employees/prayer-times",
-            params={"start_date": "2026-06-21", "days": 2},
-            headers={"Authorization": f"Bearer {token}"},
-        )
-    finally:
-        app.dependency_overrides.pop(get_db, None)
-    assert response.status_code == 200, response.text
-    rows = response.json()["data"]
-    assert [row["date"] for row in rows] == ["2026-06-21", "2026-06-22"]
-    assert rows[0]["dhuhr"] == prayer_times(date(2026, 6, 21), CAIRO)["dhuhr"].strftime("%H:%M")

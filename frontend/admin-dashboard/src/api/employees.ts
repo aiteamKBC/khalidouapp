@@ -1,4 +1,4 @@
-import type { BreakAnchor, PrayerTimesDay } from "@/lib/break-rules";
+import type { BreakAnchor } from "@/lib/break-rules";
 import { apiFetch, toMinutes, withQuery } from "./client";
 import { normalizeAiAcronym } from "@/lib/text";
 import type { Employee, EmployeeAccountStatus, EmployeeStatus, TeamMemberRole } from "@/types";
@@ -529,12 +529,4 @@ export async function getEmployeeChangeHistory(
     actorName: row.actor_name,
     details: row.details,
   }));
-}
-
-/** Dhuhr and Asr adhan times (local clock) that prayer-anchored breaks start from. */
-export function getPrayerTimes(startDate: string, days = 1, signal?: AbortSignal) {
-  return apiFetch<PrayerTimesDay[]>(
-    withQuery("/employees/prayer-times", { start_date: startDate, days }),
-    { signal },
-  );
 }

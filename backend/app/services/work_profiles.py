@@ -44,11 +44,11 @@ REQUIRED_PROFILE_FIELDS = (
 # paid flag until the effective-dated dry-run (scripts/dry_run_break_policy.py)
 # updates them, so a deliberately unpaid break is preserved and surfaced for
 # review rather than silently changed.
-# The two daily breaks follow the prayers: a 30-minute break from the Dhuhr
-# adhan and a 15-minute break from the Asr adhan (see services/prayer_times).
+# Breaks run at fixed clock times that admins edit on the Breaks page; they no
+# longer follow the prayer times.
 DEFAULT_BREAK_RULES = [
-    {"name": "Lunch", "minutes": 30, "paid": True, "anchor": "dhuhr"},
-    {"name": "Short break", "minutes": 15, "paid": True, "anchor": "asr"},
+    {"name": "Lunch", "minutes": 30, "paid": True, "start_time": "13:00", "end_time": "13:30"},
+    {"name": "Short break", "minutes": 15, "paid": True, "start_time": "16:45", "end_time": "17:00"},
 ]
 DEFAULT_DEDUCTION_POLICY = {
     "mode": "review",
@@ -252,12 +252,10 @@ def validate_break_rules(
     parsed_breaks: list[tuple[time, time]] = []
     for rule in break_rules or []:
         if is_prayer_anchored(rule):
-            # Timed from each day's adhan; only the length can be checked here.
-            if not 1 <= int(rule.get("minutes") or 0) <= 240:
-                raise ApiError(
-                    "INVALID_BREAK_DURATION", "Break length must be 1 to 240 minutes.", 400
-                )
-            continue
+            # Prayer-anchored breaks were retired; new breaks need fixed times.
+            raise ApiError(
+                "INVALID_BREAK", "Breaks use a fixed start and end time.", 400
+            )
         start = rule.get("start_time")
         end = rule.get("end_time")
         if not start or not end:
