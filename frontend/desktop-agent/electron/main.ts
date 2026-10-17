@@ -222,7 +222,11 @@ const __dirname = path.dirname(__filename);
 // file transport, dotenv, or requestSingleInstanceLock — the lock file lives
 // under userData, so a distinct dev path yields a distinct lock.
 if (!app.isPackaged) {
-  const devUserData = path.join(app.getPath("appData"), `${app.getName()}-dev`);
+  // The E2E harness gives every run a throwaway profile so tests never adopt
+  // (or sign out) the developer's real dev identity.
+  const devUserData =
+    process.env.KHALIDUO_E2E_USER_DATA_DIR ||
+    path.join(app.getPath("appData"), `${app.getName()}-dev`);
   app.setPath("userData", devUserData);
 }
 

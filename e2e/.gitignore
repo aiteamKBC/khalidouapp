@@ -1,0 +1,9 @@
+node_modules/
+.runtime/
+test-results/
+playwright-report/
+journey-run.log
+full-run.log
+web-run.log
+test-results-web/
+full-run.clean.log

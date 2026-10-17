@@ -1,0 +1,19 @@
+{
+  "name": "khaliduo-e2e",
+  "private": true,
+  "type": "module",
+  "description": "End-to-end tests: backend + website + Electron desktop app against a throwaway local Postgres.",
+  "scripts": {
+    "e2e": "playwright test",
+    "e2e:web": "playwright test --project=web",
+    "e2e:desktop": "playwright test --project=desktop",
+    "e2e:journey": "playwright test --project=journey",
+    "e2e:report": "playwright show-report",
+    "build:desktop": "npm --prefix ../frontend/desktop-agent run build"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0",
+    "@types/node": "^24.13.3",
+    "typescript": "^5.9.3"
+  }
+}

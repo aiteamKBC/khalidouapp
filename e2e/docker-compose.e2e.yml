@@ -1,0 +1,22 @@
+# Throwaway Postgres for the E2E suite. Data lives on tmpfs, so every run
+# starts from an empty database. Deliberately NOT backend/docker-compose.dev.yml:
+# that file's API service loads backend/.env, which points at production.
+name: khaliduo-e2e
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: khaliduo-e2e-postgres
+    environment:
+      POSTGRES_DB: khaliduo_e2e
+      POSTGRES_USER: khaliduo_e2e
+      POSTGRES_PASSWORD: khaliduo_e2e_password
+    ports:
+      - "127.0.0.1:55432:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U khaliduo_e2e -d khaliduo_e2e"]
+      interval: 1s
+      timeout: 3s
+      retries: 60
