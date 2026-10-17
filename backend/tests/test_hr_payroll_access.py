@@ -120,3 +120,19 @@ def test_admin_profile_payload_exposes_scope_and_mode(db_session):
     assert payload["data_scope"] == "company"
     assert payload["permission_mode"] == "role"
     assert set(PAYROLL_PERMISSION_KEYS) <= set(payload["permissions"])
+
+
+def test_hr_general_admin_and_super_admin_can_switch_the_break_policy(db_session):
+    from app.api.v1.payroll import _require_policy_switcher
+    from app.core.exceptions import ApiError
+
+    company = _company(db_session)
+    for admin in (
+        _admin(db_session, company, "hr"),
+        _admin(db_session, company, "general_admin"),
+        _admin(db_session, company, "team_owner", is_super_admin=True),
+    ):
+        _require_policy_switcher(admin)
+    with pytest.raises(ApiError) as exc:
+        _require_policy_switcher(_admin(db_session, company, "team_owner"))
+    assert exc.value.code == "FINANCIAL_POLICY_FORBIDDEN"

@@ -1,7 +1,7 @@
 """Phase-1 financial policy accounting.
 
 Covers the paid-scheduled-break / worked-break bank / paid-late-allowance
-behaviors gated by ``CompanyPayrollSettings.financial_policy_effective_date``.
+behaviors gated by ``FinancialPolicyPeriod`` (the dashboard on/off switch).
 Every scenario uses an explicit date, a 09:00-17:00 shift with 45 minutes of
 paid scheduled breaks (lunch 12:00-12:30, short 15:00-15:15), and asserts to the
 second. The final test proves that with the policy inactive the accounting is
@@ -28,8 +28,13 @@ from app.models import (
     TimeAdjustmentRequest,
     WorkSession,
 )
-from app.models.payroll import CompanyPayrollSettings
+from app.models.payroll import FinancialPolicyPeriod
 from app.services.attendance import DELAYED_BREAK_REQUEST, calculate_daily_attendance
+from app.services.financial_policy import (
+    financial_policy_active,
+    financial_policy_status,
+    set_financial_policy_enabled,
+)
 from app.services.time_adjustments import create_employee_time_adjustment_request
 
 WORK_DATE = date(2026, 9, 10)
@@ -94,10 +99,8 @@ def ctx():
         engine.dispose()
 
 
-def _activate_policy(db, company, *, effective=WORK_DATE):
-    db.add(
-        CompanyPayrollSettings(company_id=company.id, financial_policy_effective_date=effective)
-    )
+def _activate_policy(db, company, *, effective=WORK_DATE, ends_on=None):
+    db.add(FinancialPolicyPeriod(company_id=company.id, starts_on=effective, ends_on=ends_on))
     db.commit()
 
 
@@ -212,10 +215,120 @@ def test_working_through_lunch_earns_bank_and_is_not_a_consumed_break(ctx):
     assert sources["remaining_break_credit_seconds"] == 20 * 60
 
 
-def test_delayed_break_claim_pays_later_idle_once_and_zeroes_the_bank(ctx):
+def test_saved_break_covers_later_idle_automatically_and_zeroes_the_bank(ctx):
     db, company, employee, device = ctx
     _activate_policy(db, company)
-    # Work 20m of lunch (earn 20m), then a 20m idle rest later at 16:00-16:20.
+    # Work 20m of lunch (save 20m), then a 20m idle rest later at 16:00-16:20.
+    _session_with_events(
+        db, employee, device, start=_dt(9), end=_dt(17),
+        idle_windows=[
+            (_dt(12, 20), _dt(12, 30)),
+            (_dt(15), _dt(15, 15)),
+            (_dt(16), _dt(16, 20)),
+        ],
+    )
+    row = _calc(db, employee)
+    sources = row.calculation_sources
+    assert sources["approved_delayed_break_seconds"] == 20 * 60
+    assert sources["remaining_break_credit_seconds"] == 0
+    assert row.idle_seconds == 0  # the 20m idle is covered by the saved break
+    assert row.total_payable_seconds == SHIFT  # no duplicate lunch credit
+    timesheet = timesheet_rows(
+        db,
+        company.id,
+        WORK_DATE,
+        WORK_DATE,
+        employee_id=employee.id,
+        include_screenshot_counts=False,
+    )[0]
+    assert timesheet["adjustment_seconds"] == 0  # covered rest is not manual active work
+    assert timesheet["approved_delayed_break_seconds"] == 20 * 60
+    assert timesheet["payable_seconds"] == SHIFT
+
+
+def test_saved_break_cover_never_exceeds_what_was_saved(ctx):
+    db, company, employee, device = ctx
+    _activate_policy(db, company)
+    # Save 20m, then idle 40m later: 20m covered, the other 20m stays idle.
+    _session_with_events(
+        db, employee, device, start=_dt(9), end=_dt(17),
+        idle_windows=[
+            (_dt(12, 20), _dt(12, 30)),
+            (_dt(15), _dt(15, 15)),
+            (_dt(16), _dt(16, 40)),
+        ],
+    )
+    row = _calc(db, employee)
+    assert row.calculation_sources["approved_delayed_break_seconds"] == 20 * 60
+    assert row.calculation_sources["remaining_break_credit_seconds"] == 0
+    # 20m left uncovered: the 15m daily idle grace pays part, 5m stays deductible.
+    assert row.idle_seconds == 5 * 60
+
+
+def test_saved_break_spreads_over_several_later_idle_periods(ctx):
+    db, company, employee, device = ctx
+    _activate_policy(db, company)
+    _session_with_events(
+        db, employee, device, start=_dt(9), end=_dt(17),
+        idle_windows=[
+            (_dt(12, 20), _dt(12, 30)),
+            (_dt(13), _dt(13, 10)),
+            (_dt(15), _dt(15, 15)),
+            (_dt(16), _dt(16, 15)),
+        ],
+    )
+    row = _calc(db, employee)
+    # 10m at 13:00 and the first 10m at 16:00 use the 20m; the last 5m falls
+    # under the daily idle grace.
+    assert row.calculation_sources["approved_delayed_break_seconds"] == 20 * 60
+    assert row.calculation_sources["remaining_break_credit_seconds"] == 0
+    assert row.idle_seconds == 0
+    assert row.total_payable_seconds == SHIFT
+
+
+def test_saved_break_does_not_cover_idle_before_it_was_saved(ctx):
+    db, company, employee, device = ctx
+    _activate_policy(db, company)
+    # Idle 11:00-11:10 happens before lunch, where the 20m is saved.
+    _session_with_events(
+        db, employee, device, start=_dt(9), end=_dt(17),
+        idle_windows=[
+            (_dt(11), _dt(11, 10)),
+            (_dt(12, 20), _dt(12, 30)),
+            (_dt(15), _dt(15, 15)),
+        ],
+    )
+    sources = _calc(db, employee).calculation_sources
+    assert sources["earned_break_credit_seconds"] == 20 * 60
+    assert sources["approved_delayed_break_seconds"] == 0
+    assert sources["remaining_break_credit_seconds"] == 20 * 60
+
+
+def test_saved_break_requests_are_no_longer_accepted(ctx):
+    db, company, employee, device = ctx
+    _activate_policy(db, company)
+    session = _session_with_events(
+        db, employee, device, start=_dt(9), end=_dt(17),
+        idle_windows=[(_dt(12, 20), _dt(12, 30)), (_dt(16), _dt(16, 10))],
+    )
+    with pytest.raises(ApiError) as exc:
+        create_employee_time_adjustment_request(
+            db,
+            device=device,
+            requested_date=WORK_DATE,
+            requested_minutes=10,
+            reason="Claiming my saved break by hand",
+            request_type=DELAYED_BREAK_REQUEST,
+            work_session_id=session.id,
+            source_start_at=_dt(16),
+            source_end_at=_dt(16, 10),
+        )
+    assert exc.value.code == "BREAK_CREDIT_AUTOMATIC"
+
+
+def test_legacy_approved_request_does_not_pay_idle_twice(ctx):
+    db, company, employee, device = ctx
+    _activate_policy(db, company)
     session = _session_with_events(
         db, employee, device, start=_dt(9), end=_dt(17),
         idle_windows=[
@@ -237,133 +350,64 @@ def test_delayed_break_claim_pays_later_idle_once_and_zeroes_the_bank(ctx):
             status="approved",
             source_start_at=_dt(16),
             source_end_at=_dt(16, 20),
-            reason="Used my saved lunch break at 16:00.",
+            reason="Approved before saved breaks became automatic.",
         )
     )
     db.commit()
     row = _calc(db, employee)
-    sources = row.calculation_sources
-    assert sources["approved_delayed_break_seconds"] == 20 * 60
-    assert sources["remaining_break_credit_seconds"] == 0
-    assert row.idle_seconds == 0  # the 20m idle is reclassified as paid rest
-    assert row.total_payable_seconds == SHIFT  # no duplicate lunch credit
-    timesheet = timesheet_rows(
-        db,
-        company.id,
-        WORK_DATE,
-        WORK_DATE,
-        employee_id=employee.id,
-        include_screenshot_counts=False,
-    )[0]
-    assert timesheet["adjustment_seconds"] == 0  # paid rest is not manual active work
-    assert timesheet["approved_delayed_break_seconds"] == 20 * 60
-    assert timesheet["payable_seconds"] == SHIFT
-
-
-def test_delayed_break_cannot_overdraw_the_bank(ctx):
-    db, company, employee, device = ctx
-    _activate_policy(db, company)
-    # Earn only 20m but an (erroneously) approved 40m claim exists.
-    session = _session_with_events(
-        db, employee, device, start=_dt(9), end=_dt(17),
-        idle_windows=[
-            (_dt(12, 20), _dt(12, 30)),
-            (_dt(15), _dt(15, 15)),
-            (_dt(16), _dt(16, 40)),
-        ],
-    )
-    db.add(
-        TimeAdjustmentRequest(
-            company_id=employee.company_id,
-            employee_id=employee.id,
-            device_id=device.id,
-            work_session_id=session.id,
-            request_type=DELAYED_BREAK_REQUEST,
-            requested_date=WORK_DATE,
-            requested_seconds=40 * 60,
-            approved_seconds=40 * 60,
-            status="approved",
-            source_start_at=_dt(16),
-            source_end_at=_dt(16, 40),
-            reason="Trying to claim more than earned.",
-        )
-    )
-    db.commit()
-    row = _calc(db, employee)
-    # Only the 20m actually earned is honored; the rest stays idle (grace applies).
     assert row.calculation_sources["approved_delayed_break_seconds"] == 20 * 60
+    assert row.total_payable_seconds == SHIFT
 
 
-def test_pending_delayed_break_reservation_blocks_a_second_overdraw(ctx):
+def test_day_after_switching_off_uses_old_accounting(ctx):
     db, company, employee, device = ctx
-    _activate_policy(db, company)
-    session = _session_with_events(
-        db,
-        employee,
-        device,
-        start=_dt(9),
-        end=_dt(17),
-        idle_windows=[
-            (_dt(12, 20), _dt(12, 30)),
-            (_dt(15), _dt(15, 15)),
-            (_dt(16), _dt(16, 10)),
-            (_dt(16, 20), _dt(16, 35)),
-        ],
+    # Switched on until the day before WORK_DATE: WORK_DATE is outside the period.
+    _activate_policy(db, company, effective=date(2026, 9, 1), ends_on=date(2026, 9, 9))
+    _session_with_events(
+        db, employee, device, start=_dt(9), end=_dt(17),
+        idle_windows=[(_dt(12, 20), _dt(12, 30)), (_dt(16), _dt(16, 20))],
     )
-    create_employee_time_adjustment_request(
-        db,
-        device=device,
-        requested_date=WORK_DATE,
-        requested_minutes=10,
-        reason="First saved break claim",
-        request_type=DELAYED_BREAK_REQUEST,
-        work_session_id=session.id,
-        source_start_at=_dt(16),
-        source_end_at=_dt(16, 10),
-    )
-    with pytest.raises(ApiError) as exc:
-        create_employee_time_adjustment_request(
-            db,
-            device=device,
-            requested_date=WORK_DATE,
-            requested_minutes=15,
-            reason="Second saved break claim",
-            request_type=DELAYED_BREAK_REQUEST,
-            work_session_id=session.id,
-            source_start_at=_dt(16, 20),
-            source_end_at=_dt(16, 35),
-        )
-    assert exc.value.code == "BREAK_CREDIT_TOO_LOW"
+    sources = _calc(db, employee).calculation_sources
+    assert sources["financial_policy_active"] is False
+    assert sources["approved_delayed_break_seconds"] == 0
 
 
-def test_delayed_break_cannot_spend_credit_before_it_is_earned(ctx):
-    db, company, employee, device = ctx
-    _activate_policy(db, company)
-    session = _session_with_events(
-        db,
-        employee,
-        device,
-        start=_dt(9),
-        end=_dt(17),
-        idle_windows=[
-            (_dt(11), _dt(11, 10)),
-            (_dt(12, 20), _dt(12, 30)),
-            (_dt(15), _dt(15, 15)),
-        ],
-    )
-    with pytest.raises(ApiError) as exc:
-        create_employee_time_adjustment_request(
-            db,
-            device=device,
-            requested_date=WORK_DATE,
-            requested_minutes=10,
-            reason="Claim before lunch credit",
-            request_type=DELAYED_BREAK_REQUEST,
-            work_session_id=session.id,
-            source_start_at=_dt(11),
-            source_end_at=_dt(11, 10),
+def test_switch_periods_never_backfill_or_roll_back(ctx):
+    db, company, _employee, _device = ctx
+    nov1, dec15, feb1 = date(2026, 11, 1), date(2026, 12, 15), date(2027, 2, 1)
+
+    assert set_financial_policy_enabled(db, company.id, True, admin_user_id=None, today=nov1)
+    assert not set_financial_policy_enabled(db, company.id, True, admin_user_id=None, today=nov1)
+    assert set_financial_policy_enabled(db, company.id, False, admin_user_id=None, today=dec15)
+    assert set_financial_policy_enabled(db, company.id, True, admin_user_id=None, today=feb1)
+    db.commit()
+
+    status = financial_policy_status(db, company.id)
+    assert status["enabled"] is True
+    assert status["active_since"] == "2027-02-01"
+    periods = tuple(
+        (
+            date.fromisoformat(row["starts_on"]),
+            date.fromisoformat(row["ends_on"]) if row["ends_on"] else None,
         )
-    assert exc.value.code == "BREAK_CREDIT_NOT_YET_EARNED"
+        for row in status["periods"]
+    )
+    assert financial_policy_active(periods, date(2026, 10, 31)) is False  # no back-fill
+    assert financial_policy_active(periods, nov1) is True
+    assert financial_policy_active(periods, dec15) is True  # the off day itself stays covered
+    assert financial_policy_active(periods, date(2026, 12, 16)) is False
+    assert financial_policy_active(periods, date(2027, 1, 31)) is False
+    assert financial_policy_active(periods, feb1) is True
+
+
+def test_switching_back_on_the_next_day_continues_the_same_period(ctx):
+    db, company, _employee, _device = ctx
+    set_financial_policy_enabled(db, company.id, True, admin_user_id=None, today=date(2026, 11, 1))
+    set_financial_policy_enabled(db, company.id, False, admin_user_id=None, today=date(2026, 11, 5))
+    set_financial_policy_enabled(db, company.id, True, admin_user_id=None, today=date(2026, 11, 6))
+    db.commit()
+    status = financial_policy_status(db, company.id)
+    assert status["periods"] == [{"starts_on": "2026-11-01", "ends_on": None}]
 
 
 def test_arriving_ten_minutes_late_credits_a_ten_minute_paid_allowance(ctx):

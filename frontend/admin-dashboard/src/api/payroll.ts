@@ -204,6 +204,24 @@ export function updatePayrollSettings(input: PayrollSettings) {
   });
 }
 
+/** Saved breaks, paid breaks and the paid late allowance: on/off in periods. */
+export type FinancialPolicyStatus = {
+  enabled: boolean;
+  active_since: string | null;
+  periods: Array<{ starts_on: string; ends_on: string | null }>;
+};
+
+export function getFinancialPolicy(signal?: AbortSignal) {
+  return apiFetch<FinancialPolicyStatus>("/payroll/financial-policy", { signal });
+}
+
+export function setFinancialPolicyEnabled(enabled: boolean) {
+  return apiFetch<FinancialPolicyStatus>("/payroll/financial-policy", {
+    method: "PUT",
+    body: JSON.stringify({ enabled }),
+  });
+}
+
 export function createScheduleOverride(input: {
   scope: "employee" | "employees" | "team" | "company";
   override_type: "shift" | "breaks" | "both";

@@ -556,6 +556,10 @@ textarea:focus {
   text-transform: uppercase;
 }
 
+.k-break-times li[data-state="saved"] {
+  border-color: color-mix(in srgb, var(--overtime) 40%, var(--border));
+}
+
 .k-break-times li[data-state="now"] {
   border-color: color-mix(in srgb, var(--green) 45%, var(--border));
   background: var(--green-weak);
@@ -2517,7 +2521,7 @@ textarea:focus {
 
 .k-break-bank-stats {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
   margin: 12px 0;
 }

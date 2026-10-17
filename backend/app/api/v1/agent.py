@@ -468,14 +468,15 @@ def agent_period_summary(context: DeviceAuthContext, db: Session) -> dict:
         "today": today_summary,
         "today_timeline": timeline,
         "idle_request_periods": idle_request_periods,
-        # Same-day break-bank ledger: seconds earned by working through a
-        # scheduled break, minus what an approved delayed break already spent
-        # and what pending claims have reserved. ``remaining`` is what the
-        # employee can still claim against later automatic idle today.
+        # Same-day saved-break ledger: seconds saved by working through a
+        # scheduled break, what later idle already used automatically, and what
+        # is left to cover idle later today. ``approved_seconds`` and
+        # ``reserved_seconds`` are kept for older desktop builds.
         "break_bank": {
             "policy_active": bool(attendance_sources.get("financial_policy_active", False)),
             "worked_break_seconds": int(attendance_sources.get("worked_break_seconds", 0)),
             "earned_seconds": int(attendance_sources.get("earned_break_credit_seconds", 0)),
+            "used_seconds": int(attendance_sources.get("approved_delayed_break_seconds", 0)),
             "approved_seconds": int(attendance_sources.get("approved_delayed_break_seconds", 0)),
             "reserved_seconds": int(attendance_sources.get("reserved_break_credit_seconds", 0)),
             "remaining_seconds": int(

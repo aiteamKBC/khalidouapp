@@ -13,7 +13,6 @@ from app.services.idle_request_periods import (
     idle_request_period_matches,
 )
 from app.services.session_tracking import get_current_session
-from app.services.schedules import effective_schedule
 from app.services.work_profiles import (
     DEFAULT_WORKING_DAYS,
     get_or_create_work_profile,
@@ -85,10 +84,13 @@ def create_employee_time_adjustment_request(
     reason = reason.strip()
     timezone_name = device.timezone or employee.timezone or "UTC"
     if request_type == DELAYED_BREAK_REQUEST:
-        # Serialize same-employee claims before reading idle availability or the
-        # break bank. On PostgreSQL the second device waits for the first commit,
-        # then sees its reservation and cannot overdraw the same balance.
-        db.execute(select(Employee.id).where(Employee.id == employee.id).with_for_update())
+        # Saved break time now covers later idle automatically; there is
+        # nothing left to claim by hand.
+        raise ApiError(
+            "BREAK_CREDIT_AUTOMATIC",
+            "Saved break time is applied to your idle time automatically.",
+            422,
+        )
     if request_type in IDLE_BACKED_REQUESTS and len(reason) < 10:
         raise ApiError(
             "IDLE_DESCRIPTION_REQUIRED",
@@ -223,86 +225,6 @@ def create_employee_time_adjustment_request(
             raise ApiError(
                 "IDLE_REQUEST_TOO_LONG",
                 "Requested idle time is more than the remaining available idle period.",
-                422,
-            )
-
-    if request_type == DELAYED_BREAK_REQUEST:
-        # A delayed break can only spend the same-day break bank the employee
-        # earned by working through a scheduled break. Reserve against the
-        # remaining balance so approved usage plus pending reservations never
-        # exceed what was earned (no silent overdraw).
-        from app.services.attendance import calculate_daily_attendance
-
-        attendance_row, _ = calculate_daily_attendance(
-            db,
-            employee=employee,
-            work_date=requested_date,
-            persist=False,
-        )
-        remaining_credit = int(
-            (attendance_row.calculation_sources or {}).get("remaining_break_credit_seconds", 0)
-        )
-        if remaining_credit <= 0:
-            raise ApiError(
-                "NO_BREAK_CREDIT",
-                "You have no saved break time to claim for this day.",
-                422,
-            )
-        if requested_seconds > remaining_credit:
-            raise ApiError(
-                "BREAK_CREDIT_TOO_LOW",
-                "Requested time is more than your remaining saved break balance.",
-                422,
-            )
-
-        # Saved break time can only fund a later idle period. Bound the usable
-        # credit to real worked overlap in scheduled breaks that ended before the
-        # chosen idle began; future same-day break work cannot fund earlier idle.
-        profile = get_or_create_work_profile(db, employee)
-        schedule = effective_schedule(
-            db,
-            employee,
-            profile,
-            requested_date,
-            timezone_name=timezone_name,
-        )
-
-        def overlap_seconds(
-            left_start: datetime,
-            left_end: datetime,
-            right_start: datetime,
-            right_end: datetime,
-        ) -> int:
-            return max(
-                0,
-                int((min(left_end, right_end) - max(left_start, right_start)).total_seconds()),
-            )
-
-        earned_before_claim = 0
-        for scheduled_break in schedule["breaks"]:
-            eligible_break_end = min(scheduled_break["end_at"], source_start_at)
-            if eligible_break_end <= scheduled_break["start_at"]:
-                continue
-            for interval in timeline.get("intervals", []):
-                if interval.get("type") != "worked" or not interval.get("ended_at"):
-                    continue
-                worked_start = _as_utc(datetime.fromisoformat(interval["started_at"]))
-                worked_end = _as_utc(datetime.fromisoformat(interval["ended_at"]))
-                earned_before_claim += overlap_seconds(
-                    worked_start,
-                    worked_end,
-                    scheduled_break["start_at"],
-                    eligible_break_end,
-                )
-
-        sources = attendance_row.calculation_sources or {}
-        total_earned = int(sources.get("earned_break_credit_seconds", 0))
-        already_spent_or_reserved = max(0, total_earned - remaining_credit)
-        available_before_claim = max(0, earned_before_claim - already_spent_or_reserved)
-        if requested_seconds > available_before_claim:
-            raise ApiError(
-                "BREAK_CREDIT_NOT_YET_EARNED",
-                "Choose an idle period after the scheduled break where this time was saved.",
                 422,
             )
 

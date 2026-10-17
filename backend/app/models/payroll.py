@@ -197,9 +197,29 @@ class CompanyPayrollSettings(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     cycle_start_day: Mapped[int] = mapped_column(Integer, nullable=False, default=26)
     cycle_end_day: Mapped[int] = mapped_column(Integer, nullable=False, default=25)
     timezone: Mapped[str] = mapped_column(String(80), nullable=False, default="Africa/Cairo")
-    # Phase-1 financial policies (paid scheduled breaks, paid late allowance,
-    # break-bank / delayed-break credit) activate on and after this employee-local
-    # date. Null means the new policies are inactive, so historical and frozen
-    # payroll are computed exactly as before. Applied prospectively; never used to
-    # retroactively recalculate earlier days.
-    financial_policy_effective_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+
+
+class FinancialPolicyPeriod(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """One switched-on stretch of the phase-1 financial policies.
+
+    Paid scheduled breaks, the paid late allowance and the saved-break bank apply
+    to employee-local days from ``starts_on`` through ``ends_on`` (inclusive; null
+    while still switched on). Each period stands on its own: switching on never
+    back-fills earlier days and switching off never rolls back days already
+    covered, because a day's accounting only depends on whether it falls inside
+    a period.
+    """
+
+    __tablename__ = "financial_policy_periods"
+
+    company_id: Mapped[UUID] = mapped_column(
+        ForeignKey("companies.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    starts_on: Mapped[date] = mapped_column(Date, nullable=False)
+    ends_on: Mapped[date | None] = mapped_column(Date, nullable=True)
+    started_by_admin_user_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("admin_users.id", ondelete="SET NULL"), nullable=True
+    )
+    ended_by_admin_user_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("admin_users.id", ondelete="SET NULL"), nullable=True
+    )

@@ -20,6 +20,7 @@ from app.models.pause_balance import PauseBalance
 from app.models.pause_session import PauseSession
 from app.models.payroll import (
     CompanyPayrollSettings,
+    FinancialPolicyPeriod,
     PayrollAdjustment,
     PayrollEntry,
     PayrollRun,
@@ -56,6 +57,7 @@ __all__ = [
     "AttendanceCorrection",
     "Company",
     "CompanyPayrollSettings",
+    "FinancialPolicyPeriod",
     "DailyAttendance",
     "Device",
     "DeviceToken",

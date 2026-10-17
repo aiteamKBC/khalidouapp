@@ -3,8 +3,8 @@
 Reports what activating the phase-1 financial policies (paid scheduled breaks,
 paid late allowance, break bank) would change, WITHOUT writing anything:
 
-* which companies have set ``financial_policy_effective_date`` (and which have
-  not, so the new behavior is still inactive there);
+* which companies have the policies switched on (an open
+  ``FinancialPolicyPeriod``) and which have not;
 * per employee-work-profile, whether the scheduled breaks are currently unpaid.
   An explicitly unpaid break is treated as an intentional override: it is
   PRESERVED and only flagged here for a human to review break-by-break. This
@@ -28,7 +28,7 @@ from sqlalchemy.orm import Session
 
 from app.database.session import get_sessionmaker
 from app.models import Company, EmployeeWorkProfile
-from app.models.payroll import CompanyPayrollSettings
+from app.models.payroll import FinancialPolicyPeriod
 from app.models.tracking_settings import TrackingSettings
 from app.services.attendance import DAILY_PAID_IDLE_GRACE_SECONDS
 
@@ -54,8 +54,10 @@ def _break_summary(break_rules: list[dict] | None) -> dict[str, Any]:
 def dry_run(db: Session) -> dict[str, Any]:
     companies = {c.id: c for c in db.scalars(select(Company)).all()}
     effective_by_company = {
-        row.company_id: row.financial_policy_effective_date
-        for row in db.scalars(select(CompanyPayrollSettings)).all()
+        row.company_id: row.starts_on
+        for row in db.scalars(
+            select(FinancialPolicyPeriod).where(FinancialPolicyPeriod.ends_on.is_(None))
+        ).all()
     }
     idle_threshold_by_company = {
         row.company_id: row.idle_threshold_minutes
@@ -86,7 +88,7 @@ def dry_run(db: Session) -> dict[str, Any]:
             {
                 "company_id": str(company_id),
                 "company_name": company.name,
-                "financial_policy_effective_date": (
+                "financial_policy_active_since": (
                     effective.isoformat() if effective else None
                 ),
                 "policy_active": effective is not None,
@@ -100,15 +102,15 @@ def dry_run(db: Session) -> dict[str, Any]:
     return {
         "summary": {
             "companies": len(companies),
-            "companies_with_effective_date": sum(
+            "companies_with_policy_on": sum(
                 1 for v in effective_by_company.values() if v is not None
             ),
             "profiles_with_unpaid_breaks": total_profiles_needing_update,
             "note": (
                 "This dry run made no changes. Explicitly unpaid scheduled "
                 "breaks are preserved and only flagged for review — the rollout "
-                "never auto-flips them. Set financial_policy_effective_date per "
-                "company, and flip any listed unpaid break to paid only if a "
+                "never auto-flips them. Switch the policy on per company from the "
+                "dashboard, and flip any listed unpaid break to paid only if a "
                 "reviewer decides it was not an intentional override; earlier "
                 "days and frozen payroll are never recomputed."
             ),

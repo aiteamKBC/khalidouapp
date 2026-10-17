@@ -11,6 +11,7 @@ import {
   EyeOff,
   TriangleAlert,
   Pencil,
+  PiggyBank,
   Plus,
   RotateCcw,
   Trash2,
@@ -31,11 +32,13 @@ import {
   deleteScheduleOverride,
   listScheduleOverrides,
   type ScheduleOverride,
+  getFinancialPolicy,
+  setFinancialPolicyEnabled,
 } from "@/api/payroll";
 import { useAuth } from "@/lib/auth";
 import { describeBreakTiming } from "@/lib/break-rules";
-import { permissions } from "@/lib/permissions";
-import { formatTimeOfDay } from "@/lib/format";
+import { hasHrAuthority, permissions } from "@/lib/permissions";
+import { formatDate, formatTimeOfDay } from "@/lib/format";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -191,6 +194,8 @@ function BreaksPage() {
           ) : undefined
         }
       />
+
+      {hasHrAuthority(user) && <SavedBreakPolicyCard />}
 
       {!rows.isLoading && !rows.isError && people.length > 0 && (
         <div className="mb-4 grid gap-3 sm:grid-cols-3">
@@ -1236,6 +1241,68 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
       </Label>
       {children}
     </div>
+  );
+}
+
+/**
+ * HR / General Admin / Super Admin switch for saved breaks. On applies from
+ * today, off from tomorrow; days inside an earlier on-period keep their pay.
+ */
+function SavedBreakPolicyCard() {
+  const queryClient = useQueryClient();
+  const policy = useQuery({
+    queryKey: ["financial-policy"],
+    queryFn: ({ signal }) => getFinancialPolicy(signal),
+  });
+  const toggle = useMutation({
+    mutationFn: setFinancialPolicyEnabled,
+    onSuccess: (data) => {
+      queryClient.setQueryData(["financial-policy"], data);
+      toast.success(
+        data.enabled
+          ? "Saved breaks are on from today"
+          : "Saved breaks are off from tomorrow. Today keeps what was already saved.",
+      );
+    },
+    onError: showError,
+  });
+  const enabled = policy.data?.enabled ?? false;
+  const lastEnded = policy.data?.periods.find((period) => period.ends_on)?.ends_on;
+
+  return (
+    <Card className="mb-4 flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex min-w-0 gap-3">
+        <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary">
+          <PiggyBank className="h-5 w-5" />
+        </span>
+        <div className="min-w-0">
+          <p className="font-extrabold">Saved breaks</p>
+          <p className="text-sm text-muted-foreground">
+            Minutes worked during a scheduled break are saved and automatically cover idle time
+            later that day. Paid breaks and the 15-minute paid late allowance follow the same
+            switch.
+          </p>
+          <p className="mt-1 text-xs font-semibold text-muted-foreground">
+            {policy.isLoading
+              ? "Loading…"
+              : enabled
+                ? `On since ${formatDate(policy.data?.active_since ?? undefined)}`
+                : lastEnded
+                  ? `Off. Last day covered: ${formatDate(lastEnded)}`
+                  : "Off"}
+          </p>
+        </div>
+      </div>
+      <label className="flex shrink-0 items-center gap-2 text-sm font-bold">
+        <Switch
+          checked={enabled}
+          disabled={policy.isLoading || policy.isError || toggle.isPending}
+          onCheckedChange={(next) => toggle.mutate(next)}
+          aria-label="Saved breaks"
+        />
+        {enabled ? "On" : "Off"}
+      </label>
+    </Card>
   );
 }
 

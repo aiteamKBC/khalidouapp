@@ -56,7 +56,12 @@ from app.services.payroll import (
     serialize_run,
 )
 from app.services.permissions import require_capability
-from app.services.permissions import has_company_data_scope
+from app.services.permissions import has_company_data_scope, has_hr_authority
+from app.services.financial_policy import (
+    company_today,
+    financial_policy_status,
+    set_financial_policy_enabled,
+)
 from app.services.work_profiles import (
     get_or_create_work_profile,
     refresh_profile_completed_at,
@@ -296,6 +301,63 @@ def update_payroll_settings(
     )
     db.commit()
     return success_response(data=_settings_data(settings))
+
+
+class FinancialPolicyUpdate(BaseModel):
+    enabled: bool
+
+
+def _require_policy_switcher(admin: AdminUser) -> None:
+    if not has_hr_authority(admin):
+        raise ApiError(
+            "FINANCIAL_POLICY_FORBIDDEN",
+            "Only HR, General Admins or the Super Admin can change the break policy.",
+            403,
+        )
+
+
+@router.get("/financial-policy")
+def get_financial_policy(
+    current_admin: Annotated[AdminUser, Depends(get_current_admin)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    _require_policy_switcher(current_admin)
+    return success_response(data=financial_policy_status(db, current_admin.company_id))
+
+
+@router.put("/financial-policy")
+def update_financial_policy(
+    payload: FinancialPolicyUpdate,
+    request: Request,
+    current_admin: Annotated[AdminUser, Depends(get_current_admin)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    """Switch saved breaks, paid breaks and the paid late allowance on or off.
+
+    On applies from today; off applies from tomorrow. Days inside an earlier
+    on-period keep their accounting, so nothing is back-filled or rolled back.
+    """
+    _require_policy_switcher(current_admin)
+    company_id = current_admin.company_id
+    changed = set_financial_policy_enabled(
+        db,
+        company_id,
+        payload.enabled,
+        admin_user_id=current_admin.id,
+        today=company_today(db, company_id),
+    )
+    data = financial_policy_status(db, company_id)
+    if changed:
+        record_audit_log(
+            db,
+            current_admin,
+            "enabled" if payload.enabled else "disabled",
+            "financial_policy",
+            details=data,
+            request=request,
+        )
+    db.commit()
+    return success_response(data=data)
 
 
 def _entry_or_404(db: Session, company_id: UUID, entry_id: UUID) -> PayrollEntry:

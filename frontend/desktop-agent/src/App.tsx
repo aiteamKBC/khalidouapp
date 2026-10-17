@@ -128,6 +128,13 @@ function initialTheme(): "light" | "dark" {
     : "dark";
 }
 
+/** "12m" or "1h 05m" for the saved-break counter. */
+function formatSavedMinutes(totalSeconds: number) {
+  const minutes = Math.floor(Math.max(0, totalSeconds) / 60);
+  if (minutes < 60) return `${minutes}m`;
+  return `${Math.floor(minutes / 60)}h ${String(minutes % 60).padStart(2, "0")}m`;
+}
+
 function formatDuration(totalSeconds: number) {
   const safeSeconds = Math.max(0, Math.floor(totalSeconds));
   const hours = Math.floor(safeSeconds / 3600)
@@ -997,40 +1004,6 @@ function App() {
       );
     } finally {
       setIsSubmittingTimeRequest(false);
-    }
-  }
-
-  async function handleDelayedBreakRequest(input: {
-    requestedMinutes: number;
-    reason: string;
-    idle: IdleRequestOption;
-  }): Promise<{ success: boolean; message?: string }> {
-    if (!window.khaliduo || !status.enrolled) {
-      return {
-        success: false,
-        message: "Device must be enrolled before sending a request.",
-      };
-    }
-    try {
-      const result = await window.khaliduo.createTimeAdjustmentRequest({
-        requestedMinutes: input.requestedMinutes,
-        reason: input.reason,
-        requestType: "delayed_break",
-        requestedDate: status.todayTimeline?.date ?? localDateKey(),
-        workSessionId: input.idle.sessionId,
-        sourceStartAt: input.idle.startedAt,
-        sourceEndAt: input.idle.endedAt,
-      });
-      if (result.success && result.status) setStatus(result.status);
-      return result;
-    } catch (error) {
-      return {
-        success: false,
-        message: ipcErrorMessage(
-          error,
-          "The claim could not be sent. Please try again.",
-        ),
-      };
     }
   }
 
@@ -1995,10 +1968,7 @@ function App() {
           {activeView === "requests" && (
             <RequestCentreView
               leadingContent={
-                <BreakBankCard
-                  status={status}
-                  onSubmit={handleDelayedBreakRequest}
-                />
+                <BreakBankCard status={status} />
               }
               status={status}
               timeRequestReason={timeRequestReason}
@@ -2358,6 +2328,7 @@ function HomeView({
   const breaksToday = status.requestPolicy?.approved_leave_today
     ? []
     : todaysBreaks(status.requestPolicy?.break_rules);
+  const savedBreak = status.breakBank?.policy_active ? status.breakBank : null;
   const breakNow = breakStatusAt(
     breaksToday,
     localMinutesAt(new Date().toISOString(), workdayTimezone),
@@ -2445,7 +2416,7 @@ function HomeView({
             <span>Paid shift</span>
             <strong>{paidShiftLabel}</strong>
           </div>
-          {breaksToday.length > 0 && (
+          {(breaksToday.length > 0 || savedBreak) && (
             <ul className="k-break-times" aria-label="Today's breaks">
               {breaksToday.map((item) => {
                 const state =
@@ -2477,6 +2448,15 @@ function HomeView({
                   </li>
                 );
               })}
+              {savedBreak && (
+                <li
+                  data-state="saved"
+                  title={`Saved today ${formatSavedMinutes(savedBreak.earned_seconds)} · used on idle ${formatSavedMinutes(savedBreak.used_seconds ?? savedBreak.approved_seconds)}`}
+                >
+                  <span>Saved break</span>
+                  <strong>{formatSavedMinutes(savedBreak.remaining_seconds)}</strong>
+                </li>
+              )}
             </ul>
           )}
           <span className="k-hero-pill">{heroStatusLabel}</span>
@@ -3996,126 +3976,35 @@ function meetingStateKind(
   return status;
 }
 
-function BreakBankCard({
-  status,
-  onSubmit,
-}: {
-  status: AgentStatus;
-  onSubmit: (input: {
-    requestedMinutes: number;
-    reason: string;
-    idle: IdleRequestOption;
-  }) => Promise<{ success: boolean; message?: string }>;
-}) {
+function BreakBankCard({ status }: { status: AgentStatus }) {
   const bank = status.breakBank;
-  const idleOptions = useMemo<IdleRequestOption[]>(() => {
-    return (status.idleRequestPeriods ?? [])
-      .map((period) => ({
-        key: `${period.work_session_id}|${period.started_at}|${period.ended_at}`,
-        sessionId: period.work_session_id,
-        startedAt: period.started_at,
-        endedAt: period.ended_at,
-        durationSeconds: period.duration_seconds,
-        availableSeconds: period.available_seconds,
-        projectName: period.project_name,
-        taskName: period.task_name,
-      }))
-      .filter((option) => option.availableSeconds >= 60)
-      .reverse();
-  }, [status.idleRequestPeriods]);
-
-  const [selectedKey, setSelectedKey] = useState("");
-  const [reason, setReason] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!idleOptions.length) {
-      setSelectedKey("");
-      return;
-    }
-    if (!selectedKey || !idleOptions.some((o) => o.key === selectedKey)) {
-      setSelectedKey(idleOptions[0].key);
-    }
-  }, [idleOptions, selectedKey]);
-
-  // The break bank is a phase-1 financial-policy feature; hide it entirely
-  // until the company has an active effective date so nothing new appears
-  // for companies still on the previous behavior.
+  // Saved breaks are switched on per company from the dashboard; nothing new
+  // appears while the company has them switched off.
   if (!bank || !bank.policy_active) {
     return null;
   }
-
-  const selected =
-    idleOptions.find((o) => o.key === selectedKey) ?? idleOptions[0] ?? null;
-  const remainingMinutes = Math.floor(bank.remaining_seconds / 60);
-  const claimableMinutes = selected
-    ? Math.min(remainingMinutes, Math.floor(selected.availableSeconds / 60))
-    : 0;
-
-  async function handleClaim(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setError(null);
-    setSuccess(null);
-    if (!selected) {
-      setError("You need a later idle period to apply saved break time to.");
-      return;
-    }
-    if (claimableMinutes < 1) {
-      setError("No whole minutes are available to claim right now.");
-      return;
-    }
-    if (reason.trim().length < 10) {
-      setError(
-        "Describe what you were doing during this idle time (at least 10 characters).",
-      );
-      return;
-    }
-    setSubmitting(true);
-    try {
-      const result = await onSubmit({
-        requestedMinutes: claimableMinutes,
-        reason: reason.trim(),
-        idle: selected,
-      });
-      if (!result.success) {
-        setError(result.message ?? "The claim could not be sent.");
-        return;
-      }
-      setReason("");
-      setSuccess(
-        `Claimed ${claimableMinutes} minute${claimableMinutes === 1 ? "" : "s"} of saved break time for review.`,
-      );
-    } finally {
-      setSubmitting(false);
-    }
-  }
+  const used = bank.used_seconds ?? bank.approved_seconds;
 
   return (
     <section className="k-panel k-break-bank">
       <h2>Saved break time</h2>
       <p>
-        You earn saved break time when you work through a scheduled break. Claim
-        it against a later idle period today — approved time is paid and does not
-        double-count the work you already did.
+        When you work through a scheduled break, those minutes are saved. Idle
+        time later today is covered from them automatically. There is nothing to
+        claim. Saved minutes do not carry over to the next day.
       </p>
       <div className="k-break-bank-stats">
         <div>
-          <span className="k-break-bank-label">Remaining</span>
+          <span className="k-break-bank-label">Left today</span>
           <strong>{formatDuration(bank.remaining_seconds)}</strong>
         </div>
         <div>
-          <span className="k-break-bank-label">Earned today</span>
+          <span className="k-break-bank-label">Saved today</span>
           <strong>{formatDuration(bank.earned_seconds)}</strong>
         </div>
         <div>
-          <span className="k-break-bank-label">Approved</span>
-          <strong>{formatDuration(bank.approved_seconds)}</strong>
-        </div>
-        <div>
-          <span className="k-break-bank-label">Pending claims</span>
-          <strong>{formatDuration(bank.reserved_seconds)}</strong>
+          <span className="k-break-bank-label">Used on idle</span>
+          <strong>{formatDuration(used)}</strong>
         </div>
       </div>
       {bank.paid_late_allowance_seconds > 0 && (
@@ -4124,64 +4013,6 @@ function BreakBankCard({
           {formatDuration(bank.paid_late_allowance_seconds)}.
         </p>
       )}
-
-      {bank.remaining_seconds < 60 ? (
-        <p className="k-break-bank-hint">
-          No saved break time is available to claim right now.
-        </p>
-      ) : idleOptions.length === 0 ? (
-        <p className="k-break-bank-hint">
-          You have {formatDuration(bank.remaining_seconds)} saved. It can be
-          claimed once you have a later idle period today.
-        </p>
-      ) : (
-        <form className="k-form" onSubmit={handleClaim}>
-          <label>
-            Apply to idle period
-            <select
-              value={selected?.key ?? ""}
-              onChange={(event) => setSelectedKey(event.target.value)}
-              disabled={submitting}
-            >
-              {idleOptions.map((option) => (
-                <option key={option.key} value={option.key}>
-                  {new Date(option.startedAt).toLocaleTimeString([], {
-                    hour: "2-digit",
-                    minute: "2-digit",
-                  })}{" "}
-                  · {formatDuration(option.availableSeconds)} idle
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Reason
-            <textarea
-              value={reason}
-              onChange={(event) => setReason(event.target.value)}
-              placeholder="What were you doing during this time?"
-              maxLength={1000}
-              minLength={10}
-              disabled={submitting}
-              required
-            />
-          </label>
-          <p className="k-break-bank-hint">
-            This claim will request {claimableMinutes} minute
-            {claimableMinutes === 1 ? "" : "s"} (limited by your saved balance
-            and the selected idle period).
-          </p>
-          <button
-            type="submit"
-            className="k-primary"
-            disabled={submitting || claimableMinutes < 1}
-          >
-            {submitting ? "Sending…" : "Claim saved break time"}
-          </button>
-        </form>
-      )}
-      {error && <p className="k-error">{error}</p>}
-      {success && <p className="k-success">{success}</p>}
     </section>
   );
 }

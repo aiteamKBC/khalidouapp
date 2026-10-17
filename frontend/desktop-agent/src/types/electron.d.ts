@@ -88,6 +88,8 @@ export type BreakBank = {
   policy_active: boolean;
   worked_break_seconds: number;
   earned_seconds: number;
+  /** Saved seconds already used to cover idle (missing on older servers). */
+  used_seconds?: number;
   approved_seconds: number;
   reserved_seconds: number;
   remaining_seconds: number;

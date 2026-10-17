@@ -31,7 +31,8 @@ from app.services.activity_timeline import (
 from app.services.employee_archive import cap_to_employment_end
 from app.services.financial_policy import (
     LATE_ALLOWANCE_CAP_SECONDS,
-    company_financial_policy_effective_date,
+    PolicyPeriods,
+    company_financial_policy_periods,
     financial_policy_active,
 )
 from app.services.schedules import (
@@ -64,12 +65,50 @@ class DailyAttendanceInputs:
     correction: AttendanceCorrection | None
     leave: LeaveRequest | None
     overtime_rows: list[OvertimeRecord]
-    financial_policy_effective_date: date | None = None
+    financial_policy_periods: PolicyPeriods = ()
     meetings: list = field(default_factory=list)
 
 
 def _utc(value: datetime) -> datetime:
     return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+
+
+def _automatic_break_cover(
+    intervals: list,
+    break_credits: list[tuple[datetime, int]],
+    break_windows: list[tuple[datetime, datetime]],
+    shift_start: datetime,
+    shift_end: datetime,
+) -> int:
+    """Seconds of in-shift automatic idle covered by saved break time.
+
+    Idle is spent in time order, and only minutes saved in a break that has
+    already ended can cover it. Manual pauses and idle inside a scheduled break
+    are never covered.
+    """
+    segments: list[tuple[datetime, datetime]] = []
+    for item, interval_start, interval_end in intervals:
+        if item["type"] != "idle" or item.get("source") == "manual_pause":
+            continue
+        pieces = [(max(interval_start, shift_start), min(interval_end, shift_end))]
+        for window_start, window_end in break_windows:
+            next_pieces = []
+            for piece_start, piece_end in pieces:
+                if piece_end <= window_start or piece_start >= window_end:
+                    next_pieces.append((piece_start, piece_end))
+                    continue
+                if piece_start < window_start:
+                    next_pieces.append((piece_start, window_start))
+                if piece_end > window_end:
+                    next_pieces.append((window_end, piece_end))
+            pieces = next_pieces
+        segments.extend(piece for piece in pieces if piece[1] > piece[0])
+    covered = 0
+    for segment_start, segment_end in sorted(segments):
+        saved = sum(seconds for ended_at, seconds in break_credits if ended_at <= segment_start)
+        take = min(int((segment_end - segment_start).total_seconds()), max(0, saved - covered))
+        covered += take
+    return covered
 
 
 def _parsed(value: str | None) -> datetime | None:
@@ -187,7 +226,7 @@ def calculate_daily_attendance_bulk(
     if not requests:
         return {}
     calculation_now = _utc(now or datetime.now(UTC))
-    financial_policy_effective_date = company_financial_policy_effective_date(db, company_id)
+    financial_policy_periods = company_financial_policy_periods(db, company_id)
     profiles = dict(profiles or {})
     employees_by_id: dict[UUID, Employee] = {}
     for employee, _ in requests:
@@ -316,7 +355,7 @@ def calculate_daily_attendance_bulk(
             correction=correction_by_key.get(key),
             leave=leave,
             overtime_rows=overtime_by_key.get(key, []),
-            financial_policy_effective_date=financial_policy_effective_date,
+            financial_policy_periods=financial_policy_periods,
             meetings=meetings_by_key.get(key, []),
         )
         # Compute in memory here; persist once for the whole batch below so a
@@ -463,10 +502,10 @@ def calculate_daily_attendance(
             )
         ).all()
     if prefetched is not None:
-        policy_effective_date = prefetched.financial_policy_effective_date
+        policy_periods = prefetched.financial_policy_periods
     else:
-        policy_effective_date = company_financial_policy_effective_date(db, employee.company_id)
-    policy_active = financial_policy_active(policy_effective_date, work_date)
+        policy_periods = company_financial_policy_periods(db, employee.company_id)
+    policy_active = financial_policy_active(policy_periods, work_date)
     start_at = schedule["start_at"]
     end_at = schedule["end_at"]
     timeline = scope_timeline_to_schedule(
@@ -608,10 +647,9 @@ def calculate_daily_attendance(
             if item.get("source") == "manual_pause":
                 manual_pause_idle += idle_in_shift
 
-    # Delayed-break claims are accounted separately below: they reclassify a
-    # later eligible idle interval as paid rather than adding brand-new time, and
-    # are bounded by the same-day break-bank credit. Keeping them out of the
-    # generic manual buckets prevents paying the reclassified interval twice.
+    # Saved break time now covers later idle automatically (below). Legacy
+    # delayed-break requests stay out of the generic manual buckets so they can
+    # never pay the same idle a second time.
     approved_manual_requested = sum(
         int(row.approved_seconds or row.requested_seconds)
         for row in adjustments
@@ -627,44 +665,6 @@ def calculate_daily_attendance(
         int(row.requested_seconds)
         for row in adjustments
         if row.status == "rejected" and row.request_type != DELAYED_BREAK_REQUEST
-    )
-    def _delayed_break_idle_coverage(row: TimeAdjustmentRequest) -> int:
-        """Return approved seconds that still overlap the request's source idle."""
-        if (
-            row.work_session_id is None
-            or row.source_start_at is None
-            or row.source_end_at is None
-        ):
-            return 0
-        source_start = _utc(row.source_start_at)
-        source_end = _utc(row.source_end_at)
-        remaining = max(0, int(row.approved_seconds or row.requested_seconds))
-        covered = 0
-        for item, interval_start, interval_end in intervals:
-            if (
-                remaining <= 0
-                or item["type"] != "idle"
-                or item.get("source") == "manual_pause"
-                or str(item.get("session_id") or "") != str(row.work_session_id)
-            ):
-                continue
-            overlap = min(
-                remaining,
-                overlap_seconds(interval_start, interval_end, source_start, source_end),
-            )
-            covered += overlap
-            remaining -= overlap
-        return covered
-
-    approved_delayed_break_requested = sum(
-        _delayed_break_idle_coverage(row)
-        for row in adjustments
-        if row.status == "approved" and row.request_type == DELAYED_BREAK_REQUEST
-    )
-    pending_delayed_break_seconds = sum(
-        int(row.requested_seconds)
-        for row in adjustments
-        if row.status == "pending" and row.request_type == DELAYED_BREAK_REQUEST
     )
     approved_early_leave = next(
         (
@@ -743,6 +743,8 @@ def calculate_daily_attendance(
     paid_break = 0
     unpaid_break = 0
     earned_break_credit = 0
+    # (break end, seconds saved) per scheduled break, for the automatic cover.
+    break_credits: list[tuple[datetime, int]] = []
     if first_at and last_at:
         for scheduled_break in schedule["breaks"]:
             attended_break_seconds = overlap_seconds(
@@ -769,6 +771,8 @@ def calculate_daily_attendance(
                 # Earning requires real activity evidence and can never exceed the
                 # worked overlap with the scheduled break window.
                 earned_break_credit += worked_through
+                if worked_through:
+                    break_credits.append((scheduled_break["end_at"], worked_through))
             else:
                 rested_break_seconds = attended_break_seconds
             if scheduled_break["paid"]:
@@ -839,14 +843,23 @@ def calculate_daily_attendance(
     )
     raw_eligible_idle = eligible_idle
     automatic_idle = max(0, raw_eligible_idle - manual_pause_idle)
-    # An approved delayed break reclassifies later automatic (non-pause) idle as
-    # paid rest, bounded by the same-day break-bank credit actually earned by
-    # working through a scheduled break. It can never reclassify more idle than
-    # exists, so the same second is paid once and the idle-grace pool is
-    # recomputed on the remaining automatic idle (no duplicate credit).
-    approved_delayed_break = min(
-        approved_delayed_break_requested, earned_break_credit, automatic_idle
-    )
+    # Saved break time automatically covers automatic (non-pause) idle that
+    # happens after the break it was saved in, same day only. It can never cover
+    # more idle than exists or more than was saved, so the same second is paid
+    # once and the idle-grace pool is recomputed on the remaining idle.
+    approved_delayed_break = 0
+    if policy_active and break_credits and automatic_idle and start_at and effective_expected_end:
+        approved_delayed_break = min(
+            _automatic_break_cover(
+                intervals,
+                break_credits,
+                [(item["start_at"], item["end_at"]) for item in schedule["breaks"]],
+                start_at,
+                effective_expected_end,
+            ),
+            earned_break_credit,
+            automatic_idle,
+        )
     idle_after = max(0, automatic_idle - approved_delayed_break)
     # Approval is itself bounded attendance evidence, so it can pay a recorded
     # in-shift meeting even when no WorkSession/idle row reached the server. Only
@@ -861,13 +874,9 @@ def calculate_daily_attendance(
     idle_after = max(0, idle_after - pending_meeting_idle_seconds)
     paid_idle_grace = min(idle_after, DAILY_PAID_IDLE_GRACE_SECONDS)
     deductible_idle = manual_pause_idle + max(0, idle_after - paid_idle_grace)
-    # Same-day, no carryover: remaining bank an employee may still claim later.
-    reserved_break_credit = min(
-        max(0, earned_break_credit - approved_delayed_break), pending_delayed_break_seconds
-    )
-    remaining_break_credit = max(
-        0, earned_break_credit - approved_delayed_break - reserved_break_credit
-    )
+    # Same-day, no carryover: what is left to cover idle later today.
+    reserved_break_credit = 0
+    remaining_break_credit = max(0, earned_break_credit - approved_delayed_break)
 
     if prefetched is not None:
         overtime_rows = prefetched.overtime_rows

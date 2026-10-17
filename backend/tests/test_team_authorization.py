@@ -2816,11 +2816,12 @@ def test_desktop_summary_matches_employee_periods_and_profile(team_client):
             "manual_pending_seconds",
             "manual_rejected_seconds",
         }.issubset(period)
-    # The break-bank ledger is surfaced so the desktop can show saved break
-    # time and gate the delayed-break claim.
+    # The saved-break ledger is surfaced so the desktop can show saved break
+    # time and what later idle already used.
     assert {
         "policy_active",
         "earned_seconds",
+        "used_seconds",
         "approved_seconds",
         "reserved_seconds",
         "remaining_seconds",
