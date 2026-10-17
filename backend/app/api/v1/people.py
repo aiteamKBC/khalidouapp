@@ -215,7 +215,7 @@ def invite_person(
             )
         work_profile_changes = payload.work_profile.model_dump(exclude_unset=True, mode="json")
         # General admins may onboard staff and configure attendance/overtime
-        # eligibility, but only HR or the Super Admin may assign compensation.
+        # eligibility; assigning compensation needs payroll.manage.
         # A zero salary is the neutral placeholder used until HR completes it.
         protected_compensation_requested = (
             "salary_amount" in work_profile_changes

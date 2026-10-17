@@ -9,6 +9,10 @@ GENERAL_ADMIN = "general_admin"
 TEAM_MANAGER = "team_owner"
 HR_MANAGER = "hr"
 
+# Roles that hold HR authority: payroll, holiday balance edits, archiving and
+# shift reschedule reviews. The protected Super Admin always has it too.
+HR_AUTHORITY_ROLES = frozenset({HR_MANAGER, GENERAL_ADMIN})
+
 ROLE_RANKS: dict[str, int] = {
     TEAM_MANAGER: 1,
     HR_MANAGER: 2,
@@ -301,10 +305,14 @@ def capabilities_for_admin(admin: AdminUser) -> list[str]:
         else:
             effective.discard(key)
     # Salary and payroll data are restricted even if a custom permission was
-    # accidentally granted. Only HR and the protected Super Admin may access it.
-    if admin.role != HR_MANAGER and not bool(getattr(admin, "is_super_admin", False)):
+    # accidentally granted. Only HR, General Admins and the Super Admin may access it.
+    if not has_hr_authority(admin):
         effective.difference_update(PAYROLL_PERMISSION_KEYS)
     return sorted(effective)
+
+
+def has_hr_authority(admin: AdminUser) -> bool:
+    return admin.role in HR_AUTHORITY_ROLES or bool(getattr(admin, "is_super_admin", False))
 
 
 def has_capability(admin: AdminUser, capability: str) -> bool:
@@ -328,12 +336,12 @@ def require_capability(admin: AdminUser, capability: str) -> None:
 
 
 def can_archive_employees(admin: AdminUser) -> bool:
-    """Archiving fired/resigned people is an HR / Super Admin decision.
+    """Archiving fired/resigned people is an HR / General Admin / Super Admin decision.
 
     It ends payroll at the last working day, so like payroll itself it is not
-    granted to General Admins or Team Leaders even with ``people.archive``.
+    granted to Team Leaders even with ``people.archive``.
     """
-    return (admin.role == HR_MANAGER or is_super_admin(admin)) and has_capability(
+    return has_hr_authority(admin) and has_capability(
         admin, "people.archive"
     )
 
@@ -342,7 +350,7 @@ def require_can_archive_employees(admin: AdminUser) -> None:
     if not can_archive_employees(admin):
         raise ApiError(
             "FORBIDDEN",
-            "Only HR or the Super Admin can archive or restore employees.",
+            "Only HR, General Admins or the Super Admin can archive or restore employees.",
             403,
         )
 
@@ -434,7 +442,7 @@ def permission_catalog_payload() -> dict:
     role_presets = {
         role: sorted(
             (keys & MANAGED_PERMISSION_KEYS)
-            - (PAYROLL_PERMISSION_KEYS if role != HR_MANAGER else frozenset())
+            - (PAYROLL_PERMISSION_KEYS if role not in HR_AUTHORITY_ROLES else frozenset())
         )
         for role, keys in ROLE_CAPABILITIES.items()
     }

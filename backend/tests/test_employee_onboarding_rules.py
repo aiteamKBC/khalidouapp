@@ -142,22 +142,22 @@ def test_team_manager_can_review_leave_without_inheriting_payroll():
     assert "leave_requests.manage" in leader
 
 
-def test_salary_access_is_limited_to_hr_and_the_protected_super_admin():
+def test_salary_access_is_limited_to_hr_general_admin_and_super_admin():
     general_admin = AdminUser(role="general_admin", is_super_admin=False, permission_mode="role")
     super_admin = AdminUser(role="general_admin", is_super_admin=True, permission_mode="role")
     hr = AdminUser(role="hr", is_super_admin=False, permission_mode="role")
+    leader = AdminUser(role="team_owner", is_super_admin=False, permission_mode="role")
 
-    assert "payroll.view" not in capabilities_for_admin(general_admin)
-    assert "payroll.manage" not in capabilities_for_admin(general_admin)
-    assert "payroll.view" in capabilities_for_admin(super_admin)
-    assert "payroll.manage" in capabilities_for_admin(super_admin)
-    assert "payroll.view" in capabilities_for_admin(hr)
-    assert "payroll.manage" in capabilities_for_admin(hr)
+    for admin in (general_admin, super_admin, hr):
+        assert "payroll.view" in capabilities_for_admin(admin)
+        assert "payroll.manage" in capabilities_for_admin(admin)
+    assert "payroll.view" not in capabilities_for_admin(leader)
+    assert "payroll.manage" not in capabilities_for_admin(leader)
 
 
-def test_custom_permissions_cannot_grant_salary_access_to_general_admin():
-    general_admin = AdminUser(
-        role="general_admin",
+def test_custom_permissions_cannot_grant_salary_access_to_team_leader():
+    leader = AdminUser(
+        role="team_owner",
         is_super_admin=False,
         permission_mode="custom",
         permission_overrides=[
@@ -166,8 +166,8 @@ def test_custom_permissions_cannot_grant_salary_access_to_general_admin():
         ],
     )
 
-    assert "payroll.view" not in capabilities_for_admin(general_admin)
-    assert "payroll.manage" not in capabilities_for_admin(general_admin)
+    assert "payroll.view" not in capabilities_for_admin(leader)
+    assert "payroll.manage" not in capabilities_for_admin(leader)
 
 
 def test_all_scheduled_breaks_stay_inside_salary_shift_hours():

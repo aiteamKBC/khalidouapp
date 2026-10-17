@@ -37,6 +37,7 @@ import {
 import { listEmployees } from "@/api/employees";
 import { useAuth } from "@/lib/auth";
 import { formatDate, formatDateTime } from "@/lib/format";
+import { hasHrAuthority } from "@/lib/permissions";
 
 export const Route = createFileRoute("/_app/shift-reschedules")({
   component: ShiftReschedulesPage,
@@ -74,8 +75,8 @@ function invalidateScheduleViews(queryClient: ReturnType<typeof useQueryClient>)
 
 function ShiftReschedulesPage() {
   const { user } = useAuth();
-  // Matches the server: only the Super Admin and HR review shift reschedules.
-  const canReview = Boolean(user && (user.isSuperAdmin || user.role === "hr"));
+  // Matches the server: Super Admin, HR and General Admins review shift reschedules.
+  const canReview = hasHrAuthority(user);
   const queryClient = useQueryClient();
   const [status, setStatus] = useState<ShiftRescheduleStatus | "all">("pending");
   const [reviewing, setReviewing] = useState<Record<string, "approved" | "rejected">>({});

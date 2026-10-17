@@ -924,7 +924,7 @@ function PeopleDirectory({
       editPermissionMode === "custom"
         ? editPermissions
         : (catalog.data.rolePresets?.[editRole] ?? []);
-    return editRole === "hr" || isProtectedOwner
+    return editRole === "hr" || editRole === "general_admin" || isProtectedOwner
       ? keys
       : keys.filter((key) => !key.startsWith("payroll."));
   }, [catalog.data, editPermissionMode, editPermissions, editRole, isProtectedOwner]);
@@ -932,7 +932,10 @@ function PeopleDirectory({
     () =>
       (catalog.data?.permissions ?? []).filter(
         (permission) =>
-          editRole === "hr" || isProtectedOwner || !permission.key.startsWith("payroll."),
+          editRole === "hr" ||
+          editRole === "general_admin" ||
+          isProtectedOwner ||
+          !permission.key.startsWith("payroll."),
       ),
     [catalog.data?.permissions, editRole, isProtectedOwner],
   );

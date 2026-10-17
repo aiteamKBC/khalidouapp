@@ -34,7 +34,7 @@ import {
 import { listTimeAdjustmentRequests, reviewTimeAdjustmentRequest } from "@/api/timeAdjustments";
 import { listEmployees } from "@/api/employees";
 import { useAuth } from "@/lib/auth";
-import { permissions } from "@/lib/permissions";
+import { hasHrAuthority, permissions } from "@/lib/permissions";
 import { formatDate, formatDateTime, formatMinutes } from "@/lib/format";
 import type { TimeAdjustmentStatus } from "@/types";
 
@@ -56,7 +56,7 @@ function HolidayRequestsPage() {
   } | null>(null);
   const { can, scopedTeamIds, user } = useAuth();
   // Matches the server: only HR and the Super Admin may change holiday credit.
-  const canEditBalances = Boolean(user && (user.isSuperAdmin || user.role === "hr"));
+  const canEditBalances = hasHrAuthority(user);
   const scope = scopedTeamIds();
   const queryClient = useQueryClient();
   const requests = useQuery({

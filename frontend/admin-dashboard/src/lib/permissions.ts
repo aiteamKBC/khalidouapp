@@ -31,6 +31,11 @@ export const permissions = {
   reportsExport: "reports.export",
 } as const;
 
+/** Mirrors backend has_hr_authority: payroll, holiday balances, archiving, reschedules. */
+export function hasHrAuthority(user?: { role: string; isSuperAdmin: boolean } | null) {
+  return Boolean(user && (user.isSuperAdmin || user.role === "hr" || user.role === "general_admin"));
+}
+
 export type PermissionKey = (typeof permissions)[keyof typeof permissions];
 
 export function requiredPermissionForPath(pathname: string): PermissionKey | undefined {

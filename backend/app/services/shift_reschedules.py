@@ -31,7 +31,7 @@ from app.models import (
     WorkScheduleOverride,
     WorkSession,
 )
-from app.services.permissions import HR_MANAGER, is_super_admin
+from app.services.permissions import has_hr_authority
 from app.services.schedules import effective_schedule, timezone_for
 from app.services.work_profiles import get_or_create_work_profile
 
@@ -41,8 +41,8 @@ OVERRIDE_REASON_PREFIX = "Shift reschedule"
 
 
 def can_review_shift_reschedules(admin: AdminUser) -> bool:
-    """Only the protected Super Admin and HR review reschedules (not team leaders)."""
-    return is_super_admin(admin) or admin.role == HR_MANAGER
+    """Super Admin, HR and General Admins review reschedules (not team leaders)."""
+    return has_hr_authority(admin)
 
 
 def require_shift_reschedule_reviewer(admin: AdminUser) -> None:

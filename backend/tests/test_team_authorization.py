@@ -1097,7 +1097,7 @@ def test_protected_super_admin_keeps_company_wide_schedule_and_payroll_access(te
     assert salary_update.json()["data"]["salary_amount"] == 50000.0
 
 
-def test_plain_general_admin_cannot_read_or_change_salary_data(team_client):
+def test_plain_general_admin_can_read_and_change_salary_data(team_client):
     client, data = team_client
     db: Session = data["session_factory"]()
     try:
@@ -1135,10 +1135,10 @@ def test_plain_general_admin_cannot_read_or_change_salary_data(team_client):
         headers=headers,
     )
 
-    assert payroll.status_code == 403
+    assert payroll.status_code == 200
     assert rules.status_code == 200
-    assert all("salary_amount" not in row for row in rules.json()["data"])
-    assert salary_update.status_code == 403
+    assert all("salary_amount" in row for row in rules.json()["data"])
+    assert salary_update.status_code == 200
 
 
 def test_group_schedule_override_validates_every_employee_company(team_client):

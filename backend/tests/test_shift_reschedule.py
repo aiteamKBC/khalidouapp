@@ -248,11 +248,11 @@ def test_request_not_allowed_on_approved_leave_day(env):
 # ---- review gating ------------------------------------------------------------
 
 
-def test_only_super_admin_and_hr_can_review(env):
+def test_team_leader_cannot_review(env):
     client, data = env
     created = _request(client, data, TODAY + timedelta(days=3), "10:00", "18:00")
     request_id = created.json()["data"]["id"]
-    for key in ("general", "leader"):
+    for key in ("leader",):
         listing = client.get("/api/v1/shift-reschedules", headers=data["headers"][key])
         assert listing.status_code == 403, key
         review = client.patch(
@@ -576,7 +576,7 @@ def test_emergency_rejects_past_date(env):
 def test_emergency_today_over_http_updates_attendance_and_desktop_config(env):
     client, data = env
     today = TODAY
-    for key in ("general", "leader"):
+    for key in ("leader",):
         forbidden = client.post(
             "/api/v1/shift-reschedules/emergency",
             headers=data["headers"][key],

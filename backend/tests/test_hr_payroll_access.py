@@ -91,6 +91,13 @@ def test_non_hr_non_super_admin_cannot_hold_payroll(db_session):
     assert not (PAYROLL_PERMISSION_KEYS & caps)
 
 
+def test_general_admin_holds_payroll_capabilities(db_session):
+    company = _company(db_session)
+    general = _admin(db_session, company, "general_admin")
+    caps = set(capabilities_for_admin(general))
+    assert PAYROLL_PERMISSION_KEYS <= caps
+
+
 def test_admin_profile_payload_exposes_scope_and_mode(db_session):
     company = _company(db_session)
     hr = _admin(db_session, company, "hr")

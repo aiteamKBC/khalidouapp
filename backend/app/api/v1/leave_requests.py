@@ -23,7 +23,7 @@ from app.services.leave_management import (
 )
 from app.services.work_profiles import DEFAULT_WORKING_DAYS, get_or_create_work_profile
 from app.services.audit import record_audit_log
-from app.services.permissions import HR_MANAGER, is_super_admin, require_capability
+from app.services.permissions import has_hr_authority, require_capability
 from app.services.attendance import refresh_daily_attendance_range
 from app.services.employee_archive import current_employee_clause
 
@@ -271,12 +271,12 @@ def update_leave_balance(
     year: int = Query(default=datetime.now(UTC).year, ge=2000, le=2200),
 ):
     require_capability(current_admin, "leave_requests.manage")
-    # Editing holiday credit changes paid entitlement: HR and Super Admin only,
-    # even though team leaders may approve requests.
-    if not (is_super_admin(current_admin) or current_admin.role == HR_MANAGER):
+    # Editing holiday credit changes paid entitlement: HR, General Admin and
+    # Super Admin only, even though team leaders may approve requests.
+    if not has_hr_authority(current_admin):
         raise ApiError(
             "LEAVE_BALANCE_EDIT_FORBIDDEN",
-            "Only HR or the Super Admin can edit holiday balances.",
+            "Only HR, General Admins or the Super Admin can edit holiday balances.",
             403,
         )
     employee = ensure_employee_access(db, current_admin, employee_id)

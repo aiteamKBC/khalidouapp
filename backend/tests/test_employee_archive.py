@@ -275,22 +275,19 @@ def test_archive_revokes_desktop_and_portal_access(archive_context):
         db.close()
 
 
-def test_only_hr_or_super_admin_can_archive_and_restore(archive_context):
+def test_general_admin_can_archive_and_restore(archive_context):
     client, data = archive_context
     employee_id = data["employee"].id
 
-    forbidden = _archive(client, data["general"], employee_id)
-    assert forbidden.status_code == 403
-
-    assert _archive(client, data["super_admin"], employee_id).status_code == 200
+    assert _archive(client, data["general"], employee_id).status_code == 200
     general_restore = client.post(
         f"/api/v1/people/employee/{employee_id}/restore", headers=_token(data["general"])
     )
-    assert general_restore.status_code == 403
+    assert general_restore.status_code == 200
     listing = client.get(
         "/api/v1/people/archived-employees", headers=_token(data["general"])
     )
-    assert listing.json()["meta"]["can_restore"] is False
+    assert listing.json()["meta"]["can_restore"] is True
 
 
 def test_archive_requires_reason_and_valid_last_working_day(archive_context):

@@ -30,7 +30,7 @@ import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { cn } from "@/lib/utils";
 import type { Role } from "@/types";
 import type { LucideIcon } from "lucide-react";
-import { permissions, type PermissionKey } from "@/lib/permissions";
+import { hasHrAuthority, permissions, type PermissionKey } from "@/lib/permissions";
 
 interface NavItem {
   to: string;
@@ -38,7 +38,7 @@ interface NavItem {
   icon: LucideIcon;
   roles?: Role[];
   permission?: PermissionKey;
-  /** Visible only to the protected Super Admin and HR (not team leaders). */
+  /** Visible only to the Super Admin, HR and General Admins (not team leaders). */
   superAdminOrHr?: boolean;
 }
 
@@ -173,7 +173,7 @@ export function AppSidebar({ onNavigate }: { onNavigate?: () => void }) {
       items: group.items.filter(
         (item) =>
           (!item.roles || (user && item.roles.includes(user.role))) &&
-          (!item.superAdminOrHr || Boolean(user && (user.isSuperAdmin || user.role === "hr"))) &&
+          (!item.superAdminOrHr || hasHrAuthority(user)) &&
           (!item.permission || can(item.permission)),
       ),
     }))

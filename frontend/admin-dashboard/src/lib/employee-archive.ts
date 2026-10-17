@@ -1,5 +1,5 @@
 import type { ArchiveReason } from "@/api/people";
-import { permissions } from "@/lib/permissions";
+import { hasHrAuthority, permissions } from "@/lib/permissions";
 import type { User } from "@/types";
 
 export const ARCHIVE_REASON_LABELS: Record<ArchiveReason, string> = {
@@ -7,11 +7,8 @@ export const ARCHIVE_REASON_LABELS: Record<ArchiveReason, string> = {
   resigned: "Resigned",
 };
 
-/** Archiving ends payroll at the last working day: HR / Super Admin only. */
+/** Archiving ends payroll at the last working day: HR / General Admin / Super Admin only. */
 export function canArchiveEmployees(user?: User | null) {
   if (!user) return false;
-  return (
-    (user.role === "hr" || user.isSuperAdmin) &&
-    user.permissions.includes(permissions.peopleArchive)
-  );
+  return hasHrAuthority(user) && user.permissions.includes(permissions.peopleArchive);
 }
