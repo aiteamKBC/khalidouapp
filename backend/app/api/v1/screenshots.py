@@ -33,7 +33,7 @@ from app.models import AdminUser, Device, Employee, Screenshot, ScreenshotCaptur
 from app.services.audit import record_audit_log
 from app.services.permissions import require_capability
 from app.services.projects import get_project_or_404, get_task_or_404
-from app.services.attendance import calculate_daily_attendance
+from app.services.screenshot_deletion import delete_screenshot_with_time
 from app.services.screenshots import (
     available_screenshot_preview_path,
     build_thumbnail,
@@ -751,45 +751,7 @@ def delete_screenshot(
 ):
     require_capability(current_admin, "screenshots.manage")
     screenshot = get_accessible_screenshot_or_404(db, current_admin, screenshot_id)
-    from datetime import UTC, datetime
-
-    screenshot.deleted_at = datetime.now(UTC)
-    screenshot.status = "deleted"
-    session = db.scalar(
-        select(WorkSession).where(
-            WorkSession.id == screenshot.session_id,
-            WorkSession.company_id == screenshot.company_id,
-        )
-    )
-    deducted_seconds = 0
-    if session is not None and screenshot.deleted_time_seconds == 0:
-        effective_active = max(0, session.active_seconds - session.deducted_seconds)
-        deducted_seconds = min(effective_active, max(0, screenshot.tracked_seconds))
-        session.deducted_seconds += deducted_seconds
-        screenshot.deleted_time_seconds = deducted_seconds
-        db.add(session)
-    db.add(screenshot)
-    db.commit()
-    # Force the affected day's canonical attendance to recompute now so the
-    # deduction reaches payroll and timesheets immediately, instead of relying on
-    # a past day's immutable cache (W3). The day is the session's local start day,
-    # matching how the timeline attributes the deduction.
-    if session is not None and deducted_seconds:
-        employee = db.get(Employee, screenshot.employee_id)
-        if employee is not None:
-            try:
-                zone = ZoneInfo(session.timezone or employee.timezone or "UTC")
-            except (ZoneInfoNotFoundError, ValueError):
-                zone = ZoneInfo("UTC")
-            started_at = session.started_at
-            if started_at.tzinfo is None:
-                started_at = started_at.replace(tzinfo=UTC)
-            work_date = started_at.astimezone(zone).date()
-            calculate_daily_attendance(db, employee=employee, work_date=work_date)
-            db.commit()
-    LocalScreenshotStorage().delete(screenshot.storage_path)
-    if screenshot.thumbnail_path:
-        LocalScreenshotStorage().delete(screenshot.thumbnail_path)
+    deducted_seconds = delete_screenshot_with_time(db, screenshot)
     record_audit_log(
         db,
         current_admin,

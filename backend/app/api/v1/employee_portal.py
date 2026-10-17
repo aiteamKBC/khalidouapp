@@ -5,7 +5,7 @@ from uuid import UUID, uuid4
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Query, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Query, Request, UploadFile
 from fastapi.responses import FileResponse
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
@@ -17,6 +17,7 @@ from app.core.exceptions import ApiError
 from app.core.responses import success_response
 from app.database.session import get_db
 from app.models import (
+    AuditLog,
     Device,
     AdminUser,
     Employee,
@@ -59,7 +60,9 @@ from app.services.task_workflow import (
     validate_employee_stage_change,
     stop_task_tracking,
 )
+from app.services.screenshot_deletion import delete_screenshot_with_time
 from app.services.screenshots import build_thumbnail, serialize_screenshot
+from app.services.audit import request_ip
 from app.storage.local import LocalScreenshotStorage
 from app.services.activity_timeline import local_today
 from app.services.attendance import calculate_daily_attendance, serialize_daily_attendance
@@ -906,6 +909,41 @@ def _employee_screenshot_or_404(
     if screenshot is None:
         raise ApiError("SCREENSHOT_NOT_FOUND", "Screenshot was not found.", 404)
     return screenshot
+
+
+@router.delete("/screenshots/{screenshot_id}")
+def delete_own_screenshot(
+    screenshot_id: UUID,
+    request: Request,
+    current_employee: Annotated[Employee, Depends(get_current_employee)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    """Delete one of the employee's own screenshots and the time it tracked.
+
+    Not allowed once the day is inside an approved, locked or paid payroll run.
+    """
+    screenshot = _employee_screenshot_or_404(db, current_employee, screenshot_id)
+    captured_at = screenshot.captured_at
+    deducted_seconds = delete_screenshot_with_time(db, screenshot, require_open_payroll=True)
+    db.add(
+        AuditLog(
+            company_id=current_employee.company_id,
+            admin_user_id=None,
+            action="deleted_by_employee",
+            entity_type="screenshot",
+            entity_id=screenshot.id,
+            entity_name=screenshot.storage_path,
+            ip_address=request_ip(request),
+            details={
+                "employee_id": str(current_employee.id),
+                "employee_name": current_employee.name,
+                "captured_at": captured_at.isoformat(),
+                "deducted_seconds": deducted_seconds,
+            },
+        )
+    )
+    db.commit()
+    return success_response(data={"deleted": True, "deducted_seconds": deducted_seconds})
 
 
 @router.get("/screenshots/{screenshot_id}/file")

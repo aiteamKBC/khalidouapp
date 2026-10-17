@@ -14,7 +14,9 @@ import {
   MessageSquare,
   Paperclip,
   CameraIcon,
+  Trash2,
 } from "lucide-react";
+import { toast } from "sonner";
 import { BrandLogo } from "@/components/ui/brand-logo";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -51,12 +53,23 @@ import {
   updateEmployeeProfile,
   employeeLeaveRequests,
   createEmployeeLeaveRequest,
+  deleteEmployeeScreenshot,
   type PortalPeriod,
   type PortalScreenshot,
 } from "@/api/employee-portal";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { WorkdayTimeline } from "@/components/workday-timeline";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { ProtectedImage } from "@/components/ProtectedImage";
 import { retryTransientRequest } from "@/api/client";
 import {
@@ -341,6 +354,26 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
   });
   const [minutes, setMinutes] = useState(30);
   const [previewScreenshot, setPreviewScreenshot] = useState<PortalScreenshot | null>(null);
+  const [screenshotToDelete, setScreenshotToDelete] = useState<PortalScreenshot | null>(null);
+  const deleteScreenshot = useMutation({
+    mutationFn: (shot: PortalScreenshot) => deleteEmployeeScreenshot(token, shot.id),
+    onSuccess: async (result, shot) => {
+      setScreenshotToDelete(null);
+      if (previewScreenshot?.id === shot.id) setPreviewScreenshot(null);
+      const minutes = Math.round(result.deducted_seconds / 60);
+      toast.success(
+        minutes > 0
+          ? `Screenshot deleted. ${minutes} minute${minutes === 1 ? "" : "s"} removed from your tracked time.`
+          : "Screenshot deleted.",
+      );
+      // The summary, timesheet and payable time all change with the deduction.
+      await queryClient.invalidateQueries({ queryKey: employeePortalQueryKey });
+    },
+    onError: (error) => {
+      setScreenshotToDelete(null);
+      toast.error(error instanceof Error ? error.message : "The screenshot could not be deleted.");
+    },
+  });
   const [requestedDate, setRequestedDate] = useState(() => localDateKey());
   const [reason, setReason] = useState("");
   const [leaveStart, setLeaveStart] = useState("");
@@ -1158,8 +1191,18 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
                         className="aspect-video w-full object-cover transition hover:opacity-90"
                       />
                     </button>
-                    <figcaption className="p-2 text-xs text-muted-foreground">
-                      {formatDateTime(shot.captured_at)}
+                    <figcaption className="flex items-center justify-between gap-2 p-2 text-xs text-muted-foreground">
+                      <span>{formatDateTime(shot.captured_at)}</span>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 px-2 text-destructive hover:text-destructive"
+                        onClick={() => setScreenshotToDelete(shot)}
+                        aria-label={`Delete screenshot from ${formatDateTime(shot.captured_at)}`}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
                     </figcaption>
                   </figure>
                 ))}
@@ -1189,13 +1232,52 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
                 alt="Full work screenshot preview"
                 className="max-h-[78vh] w-full rounded-lg object-contain ring-1 ring-border"
               />
-              <p className="text-xs text-muted-foreground">
-                {formatDateTime(previewScreenshot.captured_at)}
-              </p>
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-xs text-muted-foreground">
+                  {formatDateTime(previewScreenshot.captured_at)}
+                </p>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="text-destructive hover:text-destructive"
+                  onClick={() => setScreenshotToDelete(previewScreenshot)}
+                >
+                  <Trash2 className="mr-1 h-4 w-4" /> Delete screenshot
+                </Button>
+              </div>
             </div>
           )}
         </DialogContent>
       </Dialog>
+      <AlertDialog
+        open={screenshotToDelete !== null}
+        onOpenChange={(open) => !open && !deleteScreenshot.isPending && setScreenshotToDelete(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete this screenshot?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {screenshotToDelete && screenshotToDelete.tracked_seconds >= 60
+                ? `Deleting it also removes about ${Math.round(screenshotToDelete.tracked_seconds / 60)} minutes of tracked time from ${formatDateTime(screenshotToDelete.captured_at)}. Those minutes will not be paid. This cannot be undone.`
+                : "Deleting it also removes the tracked time it covers. This cannot be undone."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteScreenshot.isPending}>Keep it</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={deleteScreenshot.isPending}
+              onClick={(event) => {
+                event.preventDefault();
+                if (screenshotToDelete) deleteScreenshot.mutate(screenshotToDelete);
+              }}
+            >
+              {deleteScreenshot.isPending ? "Deleting…" : "Delete screenshot and time"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       {notePromptDialog}
     </main>
   );
