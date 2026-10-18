@@ -23,6 +23,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { DateInput } from "@/components/ui/date-input";
 import { PageHeader } from "@/components/ui/page-header";
 import {
   Select,
@@ -225,7 +226,7 @@ function AttendancePage() {
           </div>
           <Card className="mb-4 p-4">
             <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
-              <Input type="date" value={day} onChange={(event) => setDay(event.target.value)} />
+              <DateInput value={day} onChange={(event) => setDay(event.target.value)} />
               <Input
                 placeholder="Search employee…"
                 value={q}
@@ -460,8 +461,7 @@ function AttendancePage() {
             <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
               <div>
                 <p className="mb-1 text-xs font-bold text-muted-foreground">From</p>
-                <Input
-                  type="date"
+                <DateInput
                   value={historyStartDate}
                   max={historyEndDate}
                   onChange={(event) => setHistoryStartDate(event.target.value)}
@@ -469,8 +469,7 @@ function AttendancePage() {
               </div>
               <div>
                 <p className="mb-1 text-xs font-bold text-muted-foreground">Through</p>
-                <Input
-                  type="date"
+                <DateInput
                   value={historyEndDate}
                   min={historyStartDate}
                   max={today()}

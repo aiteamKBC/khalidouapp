@@ -7,6 +7,7 @@ import { PageHeader } from "@/components/ui/page-header";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { DateInput } from "@/components/ui/date-input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -358,9 +359,8 @@ function EmergencyRescheduleCard({
         </div>
         <div className="space-y-1">
           <Label htmlFor="emergency-date">Day</Label>
-          <Input
+          <DateInput
             id="emergency-date"
-            type="date"
             min={localDateKey()}
             value={workDate}
             onChange={(event) => setWorkDate(event.target.value)}

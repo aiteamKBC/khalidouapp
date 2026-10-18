@@ -45,6 +45,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
+import { DateInput } from "@/components/ui/date-input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
@@ -763,8 +764,7 @@ function BreakEditorDialog({
             </Field>
             {!permanent && (
               <Field label="Date">
-                <Input
-                  type="date"
+                <DateInput
                   min={todayIso()}
                   value={effectiveDate}
                   onChange={(event) => setEffectiveDate(event.target.value)}

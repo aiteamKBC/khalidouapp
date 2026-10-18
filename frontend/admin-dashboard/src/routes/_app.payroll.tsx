@@ -65,6 +65,7 @@ import { StatCard } from "@/components/ui/stat-card";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { DateInput } from "@/components/ui/date-input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
@@ -375,16 +376,14 @@ function PayrollPage() {
               Custom range
             </label>
             <Field label="Custom start">
-              <Input
-                type="date"
+              <DateInput
                 disabled={!customRange}
                 value={customStart}
                 onChange={(event) => setCustomStart(event.target.value)}
               />
             </Field>
             <Field label="Custom end">
-              <Input
-                type="date"
+              <DateInput
                 disabled={!customRange}
                 value={customEnd}
                 onChange={(event) => setCustomEnd(event.target.value)}
@@ -1815,8 +1814,7 @@ function ScheduleOverrideDialog({
           </label>
           {!permanent && (
             <Field label="Date">
-              <Input
-                type="date"
+              <DateInput
                 value={effectiveDate}
                 onChange={(event) => setEffectiveDate(event.target.value)}
               />

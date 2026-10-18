@@ -28,6 +28,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
+import { DateInput } from "@/components/ui/date-input";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/ui/status-badge";
@@ -358,24 +359,21 @@ function ScreenshotsPage() {
           </Select>
           {rangeMode ? (
             <>
-              <Input
+              <DateInput
                 aria-label="Range start"
-                type="date"
                 value={rangeStart}
                 max={rangeEnd}
                 onChange={(event) => setRangeStart(event.target.value)}
               />
-              <Input
+              <DateInput
                 aria-label="Range end"
-                type="date"
                 value={rangeEnd}
                 min={rangeStart}
                 onChange={(event) => setRangeEnd(event.target.value)}
               />
             </>
           ) : (
-            <Input
-              type="date"
+            <DateInput
               value={date}
               onChange={(event) => {
                 const nextDate = event.target.value || todayIsoDate();

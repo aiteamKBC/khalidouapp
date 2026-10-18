@@ -20,7 +20,7 @@ def test_default_schedule_has_friday_as_the_only_weekly_day_off():
     assert DEFAULT_WEEKLY_OFF_DAYS == [4]
 
 
-def test_first_leave_credit_is_prorated_after_six_months():
+def test_first_leave_credit_is_fifteen_days_after_six_months():
     employee = Employee(
         name="New employee",
         email="new@example.com",
@@ -30,11 +30,11 @@ def test_first_leave_credit_is_prorated_after_six_months():
         annual_leave_days=21,
     )
     assert entitled_credit_days(employee, 2025) == Decimal("0.00")
-    assert entitled_credit_days(employee, 2026) == Decimal("8.75")
+    assert entitled_credit_days(employee, 2026) == Decimal("15.00")
     assert entitled_credit_days(employee, 2027) == Decimal("21.00")
 
 
-def test_leave_credit_is_full_when_six_months_lands_in_new_year():
+def test_first_year_credit_applies_when_six_months_lands_in_new_year():
     employee = Employee(
         name="Mid-year employee",
         email="midyear@example.com",
@@ -44,7 +44,8 @@ def test_leave_credit_is_full_when_six_months_lands_in_new_year():
         annual_leave_days=21,
     )
     assert entitled_credit_days(employee, 2026) == Decimal("0.00")
-    assert entitled_credit_days(employee, 2027) == Decimal("21.00")
+    assert entitled_credit_days(employee, 2027) == Decimal("15.00")
+    assert entitled_credit_days(employee, 2028) == Decimal("21.00")
 
 
 def test_long_serving_employee_gets_full_current_year_leave_credit():

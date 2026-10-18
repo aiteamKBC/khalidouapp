@@ -10,6 +10,9 @@ from app.services.work_profiles import DEFAULT_WORKING_DAYS
 
 
 DEFAULT_ANNUAL_CREDIT_DAYS = 21
+# Leave earned in the calendar year the employee completes six months of
+# service; the full annual entitlement starts the following year.
+FIRST_YEAR_ANNUAL_CREDIT_DAYS = 15
 TEN_YEAR_ANNUAL_CREDIT_DAYS = 30
 
 
@@ -50,10 +53,7 @@ def entitled_credit_days(
         return Decimal("0.00")
     if year > eligible_at.year:
         return annual.quantize(Decimal("0.01"))
-    if employee.start_date.year < eligible_at.year:
-        return annual.quantize(Decimal("0.01"))
-    remaining_full_months = 12 - eligible_at.month
-    return (Decimal(remaining_full_months) * annual / Decimal(12)).quantize(Decimal("0.01"))
+    return min(annual, Decimal(FIRST_YEAR_ANNUAL_CREDIT_DAYS)).quantize(Decimal("0.01"))
 
 
 def requested_workdays(

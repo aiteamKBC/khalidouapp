@@ -317,7 +317,14 @@ def calculate_employee_metrics(
     team_ids: set[UUID] | None = None,
     stored_attendance: dict[date, DailyAttendance] | None = None,
     meeting_dates: set[date] | None = None,
+    collect_stale_days: set[date] | None = None,
 ) -> dict:
+    """Compute one employee's payroll metrics for ``first``..``last``.
+
+    With ``collect_stale_days``, nothing is recalculated: the attendance days
+    that would need a rebuild are added to the set and ``{}`` is returned, so
+    a batched caller can rebuild them all in one bulk pass first.
+    """
     zone = _timezone(employee)
     # An archived (fired/resigned) employee is paid only up to and including
     # their last working day: nothing after it counts toward attendance, time,
@@ -562,6 +569,9 @@ def calculate_employee_metrics(
             >= TODAY_ATTENDANCE_REFRESH_SECONDS
         )
         stale = stored is None or source_changed or today_expired
+        if stale and collect_stale_days is not None:
+            collect_stale_days.add(work_date)
+            continue
         if stale:
             stored, _ = calculate_daily_attendance(
                 db,
@@ -570,6 +580,9 @@ def calculate_employee_metrics(
                 now=now,
             )
         attendance_rows.append(stored)
+
+    if collect_stale_days is not None:
+        return {}
 
     if attendance_rows:
         worked_seconds = sum(item.normal_worked_seconds for item in attendance_rows)
@@ -923,17 +936,12 @@ def refresh_run_entries(db: Session, run: PayrollRun) -> list[PayrollEntry]:
         for (warmed_employee_id, warmed_date), (warmed_row, _) in warmed.items():
             stored_attendance_by_employee[warmed_employee_id][warmed_date] = warmed_row
 
-    result: list[PayrollEntry] = []
-    for employee in employees:
-        profile = profiles.get(employee.id)
-        if profile is None:
-            profile = get_or_create_work_profile(db, employee)
-            profiles[employee.id] = profile
-        metrics = calculate_employee_metrics(
+    def employee_metrics(employee: Employee, collect_stale_days: set[date] | None = None):
+        return calculate_employee_metrics(
             db,
             company_id=run.company_id,
             employee=employee,
-            profile=profile,
+            profile=profiles[employee.id],
             first=first,
             last=last,
             overrides=overrides,
@@ -942,9 +950,38 @@ def refresh_run_entries(db: Session, run: PayrollRun) -> list[PayrollEntry]:
             overtime_records=overtime_by_employee[employee.id],
             approved_leave=leave_by_employee[employee.id],
             team_ids=team_ids_by_employee[employee.id],
-            stored_attendance=stored_attendance_by_employee.get(employee.id, {}),
+            stored_attendance=stored_attendance_by_employee[employee.id],
             meeting_dates=meeting_dates_by_employee.get(employee.id, set()),
+            collect_stale_days=collect_stale_days,
         )
+
+    # Rebuild every other stale attendance day in one batched pass as well. A
+    # work-profile edit (shift, breaks, policy) marks every day of the period
+    # stale for that employee; rebuilding those one day at a time took minutes
+    # over the remote database, so whoever opened payroll first after such a
+    # change hit the client timeout and then PAYROLL_BUSY on the retries.
+    stale_requests: list[tuple[Employee, date]] = []
+    for employee in employees:
+        stale_days: set[date] = set()
+        employee_metrics(employee, stale_days)
+        stale_requests.extend((employee, work_date) for work_date in sorted(stale_days))
+    if stale_requests:
+        rebuilt = calculate_daily_attendance_bulk(
+            db,
+            company_id=run.company_id,
+            requests=stale_requests,
+            profiles=profiles,
+            existing_by_key={
+                (employee.id, work_date): stored_attendance_by_employee[employee.id].get(work_date)
+                for employee, work_date in stale_requests
+            },
+        )
+        for (rebuilt_employee_id, rebuilt_date), (rebuilt_row, _) in rebuilt.items():
+            stored_attendance_by_employee[rebuilt_employee_id][rebuilt_date] = rebuilt_row
+
+    result: list[PayrollEntry] = []
+    for employee in employees:
+        metrics = employee_metrics(employee)
         entry = existing.get(employee.id)
         if entry is None:
             entry = PayrollEntry(

@@ -144,3 +144,29 @@ export function downloadCSV(filename: string, rows: Record<string, unknown>[]) {
 function isTimeOfDay(value: string) {
   return /^\d{1,2}:\d{2}(?::\d{2}(?:\.\d+)?)?$/.test(value.trim());
 }
+
+export function parseIsoDate(value?: string | null): Date | undefined {
+  if (!value) return undefined;
+  const [year, month, day] = value.split("-").map(Number);
+  if (!year || !month || !day) return undefined;
+  return new Date(year, month - 1, day);
+}
+
+export function toIsoDate(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+/** dd/mm/yyyy for a calendar date, regardless of the browser locale. */
+export function formatDisplayDate(date: Date): string {
+  const day = String(date.getDate()).padStart(2, "0");
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  return `${day}/${month}/${date.getFullYear()}`;
+}
+
+export function isoDateToDisplay(value?: string | null): string {
+  const date = parseIsoDate(value);
+  return date ? formatDisplayDate(date) : "";
+}

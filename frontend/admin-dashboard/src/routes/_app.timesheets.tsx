@@ -22,6 +22,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { DateInput } from "@/components/ui/date-input";
 import {
   Select,
   SelectContent,
@@ -174,8 +175,7 @@ function TimesheetsPage() {
               <TabsTrigger value="monthly">Monthly</TabsTrigger>
             </TabsList>
           </Tabs>
-          <Input
-            type="date"
+          <DateInput
             value={date}
             onChange={(e) => {
               setDate(e.target.value);

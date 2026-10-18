@@ -50,6 +50,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { DateInput } from "@/components/ui/date-input";
 import { PasswordInput } from "@/components/ui/password-input";
 import { Label } from "@/components/ui/label";
 import {
@@ -109,7 +110,7 @@ import {
 } from "@/api/access";
 import { useAuth } from "@/lib/auth";
 import { permissions } from "@/lib/permissions";
-import { formatDateTime, formatTimeOfDay } from "@/lib/format";
+import { formatDateTime, formatDisplayDate, formatTimeOfDay } from "@/lib/format";
 import { toast } from "sonner";
 import type {
   DataScope,
@@ -175,6 +176,8 @@ const WORK_DAYS = [
 ];
 const DEFAULT_WORKING_DAYS = [0, 1, 2, 3, 5, 6];
 const DEFAULT_WEEKLY_OFF_DAYS = [4];
+// Leave for the calendar year the employee completes six months of service.
+const FIRST_YEAR_ANNUAL_LEAVE_DAYS = 15;
 
 function todayIsoDate() {
   const now = new Date();
@@ -1396,9 +1399,8 @@ function PeopleDirectory({
                 {managedEmployeeId && (
                   <div className="space-y-1.5">
                     <Label htmlFor="edit-start-date">Employment start date</Label>
-                    <Input
+                    <DateInput
                       id="edit-start-date"
-                      type="date"
                       value={editStartDate}
                       onChange={(event) => setEditStartDate(event.target.value)}
                     />
@@ -2401,20 +2403,18 @@ function AddPersonWizard({
     const creditType =
       currentLeaveYear < eligibleYear
         ? "not_eligible"
-        : currentLeaveYear > eligibleYear || startYear < eligibleYear
+        : currentLeaveYear > eligibleYear
           ? "full"
-          : "prorated";
-    const remainingFullMonths = creditType === "prorated" ? 12 - (eligibleAt.getMonth() + 1) : 0;
+          : "first_year";
     return {
-      eligibleAt: eligibleAt.toLocaleDateString(),
+      eligibleAt: formatDisplayDate(eligibleAt),
       year: currentLeaveYear,
-      months: remainingFullMonths,
       days:
         creditType === "not_eligible"
           ? 0
           : creditType === "full"
             ? effectiveAnnualDays
-            : Number(((remainingFullMonths * effectiveAnnualDays) / 12).toFixed(2)),
+            : Math.min(effectiveAnnualDays, FIRST_YEAR_ANNUAL_LEAVE_DAYS),
       creditType,
       hasTenYearsService,
       effectiveAnnualDays,
@@ -2429,7 +2429,7 @@ function AddPersonWizard({
         ? currentYearLeaveCredit.hasTenYearsService
           ? `Full ${currentYearLeaveCredit.effectiveAnnualDays}-day entitlement for ${currentYearLeaveCredit.year} after 10 completed years of service.`
           : `Full ${currentYearLeaveCredit.effectiveAnnualDays}-day entitlement for ${currentYearLeaveCredit.year}. Eligible since ${currentYearLeaveCredit.eligibleAt}.`
-        : `First-year entitlement for ${currentYearLeaveCredit.year}: (${currentYearLeaveCredit.months} months / 12) x ${currentYearLeaveCredit.effectiveAnnualDays} = ${currentYearLeaveCredit.days} days. Eligible on ${currentYearLeaveCredit.eligibleAt}.`
+        : `First-year entitlement for ${currentYearLeaveCredit.year}: ${currentYearLeaveCredit.days} days after 6 months of service. Eligible on ${currentYearLeaveCredit.eligibleAt}.`
     : `Default: ${annualLeaveDays} days per full calendar year.`;
   const shiftMinutes = Math.max(
     0,
@@ -2635,8 +2635,7 @@ function AddPersonWizard({
             <div className="grid gap-3 sm:grid-cols-2">
               <div>
                 <Label>Employment start date</Label>
-                <Input
-                  type="date"
+                <DateInput
                   value={startDate}
                   onChange={(e) => setStartDate(e.target.value)}
                   required

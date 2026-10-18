@@ -7,6 +7,7 @@ import { PageHeader } from "@/components/ui/page-header";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { DateInput } from "@/components/ui/date-input";
 import { Label } from "@/components/ui/label";
 import { StatusBadge } from "@/components/ui/status-badge";
 import {
@@ -323,16 +324,14 @@ function HolidayRequestsPage() {
             </div>
             <div>
               <Label>From</Label>
-              <Input
-                type="date"
+              <DateInput
                 value={startDate}
                 onChange={(event) => setStartDate(event.target.value)}
               />
             </div>
             <div>
               <Label>To</Label>
-              <Input
-                type="date"
+              <DateInput
                 value={endDate}
                 onChange={(event) => setEndDate(event.target.value)}
               />

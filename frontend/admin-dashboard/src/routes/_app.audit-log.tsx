@@ -12,6 +12,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Input } from "@/components/ui/input";
+import { DateInput } from "@/components/ui/date-input";
 import {
   Select,
   SelectContent,
@@ -148,8 +149,8 @@ function AuditLogPage() {
               ))}
             </SelectContent>
           </Select>
-          <Input type="date" value={from} onChange={(e) => onFromChange(e.target.value)} />
-          <Input type="date" value={to} onChange={(e) => onToChange(e.target.value)} />
+          <DateInput value={from} onChange={(e) => onFromChange(e.target.value)} />
+          <DateInput value={to} onChange={(e) => onToChange(e.target.value)} />
           <Button
             variant="outline"
             onClick={() => {

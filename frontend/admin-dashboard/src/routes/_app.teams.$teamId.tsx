@@ -29,6 +29,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { BackButton } from "@/components/ui/back-button";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { DateInput } from "@/components/ui/date-input";
 import { Label } from "@/components/ui/label";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -1513,11 +1514,7 @@ function TeamTimesheetsPanel({
               <SelectItem value="day">Group by day</SelectItem>
             </SelectContent>
           </Select>
-          <Input
-            type="date"
-            value={dateFilter}
-            onChange={(event) => setDateFilter(event.target.value)}
-          />
+          <DateInput value={dateFilter} onChange={(event) => setDateFilter(event.target.value)} />
           <Button
             type="button"
             variant="outline"

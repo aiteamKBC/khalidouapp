@@ -10,6 +10,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { DateInput } from "@/components/ui/date-input";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -89,9 +90,8 @@ export function ArchiveEmployeeDialog({
           </div>
           <div className="grid gap-2">
             <Label htmlFor="archive-last-working-day">Last working day</Label>
-            <Input
+            <DateInput
               id="archive-last-working-day"
-              type="date"
               value={lastWorkingDay}
               min={startDate}
               max={today}

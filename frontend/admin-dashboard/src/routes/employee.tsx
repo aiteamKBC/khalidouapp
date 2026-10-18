@@ -21,6 +21,7 @@ import { BrandLogo } from "@/components/ui/brand-logo";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { DateInput } from "@/components/ui/date-input";
 import { PasswordInput } from "@/components/ui/password-input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -1026,8 +1027,7 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <Label>Date</Label>
-                    <Input
-                      type="date"
+                    <DateInput
                       value={requestedDate}
                       onChange={(e) => setRequestedDate(e.target.value)}
                     />
@@ -1083,8 +1083,7 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <Label>From</Label>
-                  <Input
-                    type="date"
+                  <DateInput
                     value={leaveStart}
                     onChange={(event) => setLeaveStart(event.target.value)}
                     required
@@ -1092,8 +1091,7 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
                 </div>
                 <div>
                   <Label>To</Label>
-                  <Input
-                    type="date"
+                  <DateInput
                     value={leaveEnd}
                     onChange={(event) => setLeaveEnd(event.target.value)}
                     required
@@ -1165,9 +1163,8 @@ function EmployeeDashboard({ token, onLogout }: { token: string; onLogout: () =>
                 </div>
                 <div className="w-full sm:w-48">
                   <Label htmlFor="employee-screenshot-day">Day</Label>
-                  <Input
+                  <DateInput
                     id="employee-screenshot-day"
-                    type="date"
                     value={screenshotDay}
                     onChange={(event) => setScreenshotDay(event.target.value)}
                   />

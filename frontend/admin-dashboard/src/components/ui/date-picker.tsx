@@ -1,25 +1,11 @@
 import { useState } from "react";
-import { format } from "date-fns";
 import { CalendarIcon, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { formatDisplayDate, parseIsoDate as parseDate, toIsoDate as dateValue } from "@/lib/format";
 import { cn } from "@/lib/utils";
-
-function parseDate(value?: string | null) {
-  if (!value) return undefined;
-  const [year, month, day] = value.split("-").map(Number);
-  if (!year || !month || !day) return undefined;
-  return new Date(year, month - 1, day);
-}
-
-function dateValue(date: Date) {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
 
 export function DatePicker({
   value,
@@ -57,7 +43,7 @@ export function DatePicker({
         >
           <CalendarIcon className="h-4 w-4 shrink-0" />
           <span className="min-w-0 flex-1 truncate">
-            {selected ? format(selected, "MMM d, yyyy") : placeholder}
+            {selected ? formatDisplayDate(selected) : placeholder}
           </span>
         </Button>
       </PopoverTrigger>

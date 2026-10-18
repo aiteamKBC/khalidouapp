@@ -18,6 +18,7 @@ import { PageHeader } from "@/components/ui/page-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { DateInput } from "@/components/ui/date-input";
 import {
   Select,
   SelectContent,
@@ -107,13 +108,8 @@ function ReportsPage() {
 
       <Card className="p-4 mb-4">
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-          <Input
-            type="date"
-            value={from}
-            onChange={(e) => setFrom(e.target.value)}
-            placeholder="From"
-          />
-          <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} placeholder="To" />
+          <DateInput value={from} onChange={(e) => setFrom(e.target.value)} placeholder="From" />
+          <DateInput value={to} onChange={(e) => setTo(e.target.value)} placeholder="To" />
           <Select value={teamId} onValueChange={setTeamId}>
             <SelectTrigger>
               <SelectValue placeholder="Team" />
