@@ -10,6 +10,9 @@ change.
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
+
 # The first release whose client counters are trusted across long gaps. Version
 # 1.1.96 added trackingTick(), which discards tick gaps > 60s, so its cumulative
 # active/idle counters no longer absorb a sleep/hibernate freeze as active work.
@@ -83,3 +86,55 @@ def is_agent_version_supported(
     if floor is None:
         return True
     return parsed >= floor
+
+
+_MANIFEST_VERSION = re.compile(r"^version:\s*['\"]?([0-9][^'\"\s]*)", re.MULTILINE)
+# (manifest path, modification time, version) of the last latest.yml read, so
+# heartbeats only stat the file instead of re-reading it every time.
+_published_version_cache: tuple[Path, float, str | None] | None = None
+
+
+def published_agent_version(update_directory: Path) -> str | None:
+    """The version in the published Windows update manifest (latest.yml)."""
+    global _published_version_cache
+    manifest = update_directory / "latest.yml"
+    try:
+        modified = manifest.stat().st_mtime
+    except OSError:
+        return None
+    cached = _published_version_cache
+    if cached is not None and cached[0] == manifest and cached[1] == modified:
+        return cached[2]
+    try:
+        match = _MANIFEST_VERSION.search(manifest.read_text(encoding="utf-8"))
+    except OSError:
+        return None
+    version = match.group(1) if match else None
+    _published_version_cache = (manifest, modified, version)
+    return version
+
+
+def update_required_minimum(
+    required: str | None,
+    *,
+    force_latest: bool,
+    update_directory: Path,
+) -> str | None:
+    """The oldest agent that is not told to update.
+
+    With ``force_latest`` every device below the published release is told to
+    update, so each release reaches every device without editing the
+    configuration. This floor only drives the update-required signal; counter
+    trust keeps using ``required`` alone (see ``agent_version_counters_trusted``),
+    so publishing a release never changes how earlier work is counted.
+    """
+    if not force_latest:
+        return required
+    published = published_agent_version(update_directory)
+    published_parts = parse_agent_version(published)
+    if published_parts is None:
+        return required
+    required_parts = parse_agent_version(required)
+    if required_parts is None or published_parts > required_parts:
+        return published
+    return required

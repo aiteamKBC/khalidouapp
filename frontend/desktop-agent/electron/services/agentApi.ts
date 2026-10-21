@@ -669,7 +669,9 @@ export async function sendHeartbeat(options: {
   inputIntegrity?: InputIntegrityObservation;
 }) {
   const response = await axios.post<
-    ApiSuccess<SessionPayload & { duplicate: boolean }>
+    ApiSuccess<
+      SessionPayload & { duplicate: boolean; update_required?: boolean }
+    >
   >(
     `${getApiBaseUrl()}/agent/sessions/${options.sessionId}/heartbeat`,
     {

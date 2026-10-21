@@ -7,6 +7,7 @@ import {
   legacyCleanupScript,
   legacyInstallDirectories,
   parseRunValue,
+  startupApprovalDisabled,
   startupEntryNeedsRepair,
 } from "../electron/services/legacyInstall.ts";
 
@@ -74,4 +75,14 @@ test("cleanup script elevates the silent all-users uninstall and relaunches", ()
   assert.match(script, /-ArgumentList '\/allusers','\/S' -Verb RunAs -Wait/);
   assert.match(script, /o''brien/);
   assert.match(script, /--autostart/);
+});
+
+test("a startup entry disabled in Task Manager is detected", () => {
+  const header =
+    "HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run";
+  const output = (bytes: string) =>
+    `\r\n${header}\r\n    Khaliduo    REG_BINARY    ${bytes}\r\n`;
+  assert.equal(startupApprovalDisabled(output("030000004A6B8C1D2E3FDB01")), true);
+  assert.equal(startupApprovalDisabled(output("020000000000000000000000")), false);
+  assert.equal(startupApprovalDisabled(""), false);
 });

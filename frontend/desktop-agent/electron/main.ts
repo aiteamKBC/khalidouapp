@@ -116,12 +116,14 @@ import {
 } from "./services/breakWindows.js";
 import {
   RUN_KEY,
+  STARTUP_APPROVED_KEY,
   STARTUP_VALUE_NAME,
   desiredStartupCommand,
   findLegacyInstall,
   legacyCleanupScript,
   legacyInstallDirectories,
   parseRunValue,
+  startupApprovalDisabled,
   startupEntryNeedsRepair,
 } from "./services/legacyInstall.js";
 import {
@@ -173,7 +175,10 @@ import {
   shouldRolloverRestoredLocalSession,
   shouldResetDailyCountersForSession,
 } from "./services/dailyCounters.js";
-import { requiresExplicitFreshSessionStart } from "./services/trackingStartPolicy.js";
+import {
+  newWorkdayStartAction,
+  requiresExplicitFreshSessionStart,
+} from "./services/trackingStartPolicy.js";
 import {
   CRASH_RECOVERY_STABLE_MS,
   crashRecoveryAttempt,
@@ -189,8 +194,13 @@ import {
   isPermanentPendingEventSyncFailure,
 } from "./services/pendingSyncPolicy.js";
 import {
+  REQUIRED_UPDATE_CHECK_INTERVAL_MINUTES,
+  installAttemptOutcome,
   shouldClearInstallRecoveryOnBeforeQuit,
+  silentInstallAllowed,
+  updateDownloadStalled,
   UPDATE_INSTALL_RECOVERY_MS,
+  type UpdateInstallAttempt,
 } from "./services/updateInstallPolicy.js";
 
 const { nativeImage, shell } = electronCommon;
@@ -295,6 +305,8 @@ type AgentRuntimeStatus = {
     | "error";
   updateVersion: string | null;
   updatePercent: number | null;
+  // The server reported this build is below the supported version.
+  updateRequired: boolean;
   activeMeeting: ActiveMeeting | null;
   meetings: MeetingSummary[];
 };
@@ -424,6 +436,7 @@ let foregroundActivitySegment: ForegroundActivitySegment | null = null;
 let pendingForegroundActivityFlush: Promise<void> | null = null;
 const inputIntegrityMonitor = new InputIntegrityMonitor();
 let lastInputProbeStartAttemptAt = 0;
+let lastInputProbeRestartAt = 0;
 let inputProbeMissingWasLogged = false;
 let idleTimer: ReturnType<typeof setInterval> | null = null;
 let idleAttentionTimer: ReturnType<typeof setTimeout> | null = null;
@@ -458,6 +471,10 @@ let idleResumedAt: number | null = null;
 let waitingForInputAfterIdleSessionClose = false;
 let freshSessionStartConfirmed = false;
 let freshSessionStartPromptActive = false;
+// Local date the new-workday watcher last saw, and whether that day still has
+// to decide between "already working" and "ask to start on the first input".
+let workdayWatchDate: string | null = null;
+let newWorkdayStartPending = false;
 let lastDurationTickAt: number | null = null;
 let workedTodayBaseSeconds = 0;
 let activeCounterDate: string | null = null;
@@ -473,6 +490,8 @@ let manualUpdateCheckRequested = false;
 let isUpdateCheckRunning = false;
 let isInstallingUpdate = false;
 let consecutiveUpdateFailures = 0;
+let lastUpdateProgressAt: number | null = null;
+let updateDownloadNotifiedVersion: string | null = null;
 let lastFullSummaryRefreshAt = 0;
 let lastMetadataRefreshAt = 0;
 let isRefreshingTrackingConfig = false;
@@ -574,6 +593,7 @@ const runtimeStatus: AgentRuntimeStatus = {
   updateStatus: "idle",
   updateVersion: null,
   updatePercent: null,
+  updateRequired: false,
   activeMeeting: null,
   meetings: [],
 };
@@ -1255,8 +1275,30 @@ function startInputIntegrityMonitoring() {
 function observedIdleSeconds(
   systemIdleSeconds = powerMonitor.getSystemIdleTime(),
 ) {
+  restartBlindInputProbe(systemIdleSeconds);
   startInputIntegrityMonitoring();
   return inputIntegrityMonitor.idleSeconds(systemIdleSeconds);
+}
+
+/**
+ * A probe whose Windows hooks were dropped keeps reporting zero events, which
+ * read as endless idle and re-opened the idle popup after every "Continue
+ * working" until Khaliduo was restarted. Restart it the same way here.
+ */
+function restartBlindInputProbe(systemIdleSeconds: number) {
+  if (!inputIntegrityMonitor.missedInput(systemIdleSeconds)) {
+    return;
+  }
+  const now = Date.now();
+  if (now - lastInputProbeRestartAt < 60_000) {
+    return;
+  }
+  lastInputProbeRestartAt = now;
+  log.warn(
+    "Input-integrity probe stopped seeing keyboard and mouse input; restarting it",
+  );
+  inputIntegrityMonitor.stop();
+  lastInputProbeStartAttemptAt = 0;
 }
 
 function inputIntegrityObservation(): InputIntegrityObservation | undefined {
@@ -1971,6 +2013,54 @@ function waitForInputAfterIdleSessionClose(
   rebuildTrayMenu();
 }
 
+/**
+ * Khaliduo left open overnight: once the local date changes and nothing is
+ * running, the first real mouse/keyboard input brings up "Start work tracking?".
+ * Yesterday's Stop, "Not working" or unpaid pause no longer blocks that prompt;
+ * a Windows-login launch already resets them the same way.
+ */
+function newWorkdayStartTick() {
+  const today = localDateKey();
+  if (workdayWatchDate === null) {
+    workdayWatchDate = today;
+    return;
+  }
+  if (workdayWatchDate !== today) {
+    workdayWatchDate = today;
+    newWorkdayStartPending = true;
+  }
+  if (!newWorkdayStartPending || isQuitting || isSigningOut) {
+    return;
+  }
+  const action = newWorkdayStartAction({
+    enrolled: runtimeStatus.enrolled,
+    hasTrackingSession: hasTrackingSession(),
+    trackingStatus: runtimeStatus.trackingStatus,
+  });
+  if (action === "wait") {
+    return;
+  }
+  newWorkdayStartPending = false;
+  if (action === "already_working") {
+    return;
+  }
+  trackingPausedByUser = false;
+  unpaidPauseActive = false;
+  freshSessionStartConfirmed = false;
+  // An unanswered prompt from yesterday is replaced by a fresh one on input.
+  freshSessionStartPromptActive = false;
+  runtimeStatus.trackingPaused = false;
+  runtimeStatus.paidPauseEndsAt = null;
+  runtimeStatus.paidPauseRemainingSeconds = 0;
+  clearPaidPauseTimer();
+  saveTrackingPreferences();
+  waitForInputAfterIdleSessionClose("idle");
+  startIdleMonitor();
+  log.info("New workday: the first input will ask the employee to start work", {
+    workDate: today,
+  });
+}
+
 function resumeAfterIdleSessionClose() {
   if (!waitingForInputAfterIdleSessionClose) {
     return false;
@@ -2381,6 +2471,7 @@ async function confirmFreshSessionStart() {
     };
   }
   const outsideScheduledShift = activeTimeBucket(new Date()) === "extra";
+  inputIntegrityMonitor.confirmPresence();
   freshSessionStartPromptActive = false;
   freshSessionStartConfirmed = true;
   trackingPausedByUser = false;
@@ -2906,6 +2997,9 @@ function finishAutomaticIdleAfterVerification(
 }
 
 async function resumeAutomaticIdle() {
+  // The click on "Continue working" is presence: restart the idle clock from it
+  // so the next popup needs a full idle threshold, not the 5-second grace.
+  inputIntegrityMonitor.confirmPresence();
   if (!hasTrackingSession()) {
     return { success: false, message: "The idle review is no longer active." };
   }
@@ -3995,6 +4089,7 @@ async function heartbeatTick(options: { refreshMetadata?: boolean } = {}) {
       }
     }
     applyPauseState(result.pause);
+    applyUpdateRequired(result.update_required === true);
     if (
       options.refreshMetadata !== false &&
       Date.now() - lastFullSummaryRefreshAt > 60 * 1000
@@ -5795,6 +5890,7 @@ async function ensureStartupEntryPointsHere(reason: string) {
   if (process.platform !== "win32" || !app.isPackaged || !runtimeStatus.enrolled) {
     return;
   }
+  await reenableStartupDisabledInTaskManager(reason);
   const current = await readStartupCommand();
   if (!startupEntryNeedsRepair(current, process.execPath)) {
     return;
@@ -5821,6 +5917,39 @@ async function ensureStartupEntryPointsHere(reason: string) {
     });
   } catch (error) {
     log.warn("Could not repair the Windows startup entry", safeErrorForLog(error));
+  }
+}
+
+/**
+ * Task Manager > Startup "Disable" leaves the Run value in place, so the check
+ * above saw nothing wrong while Windows silently skipped Khaliduo at sign-in.
+ * Removing the StartupApproved flag restores the default (enabled).
+ */
+async function reenableStartupDisabledInTaskManager(reason: string) {
+  let approval = "";
+  try {
+    ({ stdout: approval } = await execFileAsync(
+      "reg",
+      ["query", STARTUP_APPROVED_KEY, "/v", STARTUP_VALUE_NAME],
+      { windowsHide: true },
+    ));
+  } catch {
+    return; // No flag recorded: startup is enabled.
+  }
+  if (!startupApprovalDisabled(approval)) {
+    return;
+  }
+  try {
+    await execFileAsync(
+      "reg",
+      ["delete", STARTUP_APPROVED_KEY, "/v", STARTUP_VALUE_NAME, "/f"],
+      { windowsHide: true },
+    );
+    log.info("Re-enabled Khaliduo automatic startup that was disabled in Task Manager", {
+      reason,
+    });
+  } catch (error) {
+    log.warn("Could not re-enable Khaliduo automatic startup", safeErrorForLog(error));
   }
 }
 
@@ -6003,7 +6132,7 @@ function startCrashRecoveryWatchdog(attempt: number) {
   log.info("Crash recovery watchdog started", { attempt });
 }
 
-function stopCrashRecoveryWatchdog() {
+function stopCrashRecoveryWatchdog(options: { terminate?: boolean } = {}) {
   if (crashRecoveryStableTimer) {
     clearTimeout(crashRecoveryStableTimer);
     crashRecoveryStableTimer = null;
@@ -6015,7 +6144,7 @@ function stopCrashRecoveryWatchdog() {
   const child = crashRecoveryWatchdog;
   crashRecoveryWatchdog = null;
   if (!child || child.killed) return;
-  if (child.connected) {
+  if (child.connected && !options.terminate) {
     child.send({ type: "stop" });
   } else {
     child.kill();
@@ -6180,6 +6309,7 @@ function clearUpdateInstallRecoveryTimer() {
 
 function recoverFromFailedUpdateInstall(reason: string) {
   clearUpdateInstallRecoveryTimer();
+  recordFailedUpdateInstall(runtimeStatus.updateVersion);
   isInstallingUpdate = false;
   isQuitting = false;
   quitNotificationSent = false;
@@ -6194,6 +6324,120 @@ function recoverFromFailedUpdateInstall(reason: string) {
   startCrashRecoveryWatchdog(crashRecoveryAttempt(process.argv));
   startUpdateCheckSchedule();
   scheduleUpdateRetry(reason);
+}
+
+function getUpdateInstallAttemptPath() {
+  return path.join(app.getPath("userData"), "update-install-attempt.json");
+}
+
+function readUpdateInstallAttempt(): UpdateInstallAttempt | null {
+  try {
+    const parsed = JSON.parse(
+      fs.readFileSync(getUpdateInstallAttemptPath(), "utf-8"),
+    ) as Partial<UpdateInstallAttempt>;
+    if (typeof parsed.version !== "string") return null;
+    return {
+      version: parsed.version,
+      failedAttempts: Number(parsed.failedAttempts) || 0,
+      attemptedAt: String(parsed.attemptedAt ?? ""),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeUpdateInstallAttempt(attempt: UpdateInstallAttempt | null) {
+  try {
+    if (!attempt) {
+      fs.rmSync(getUpdateInstallAttemptPath(), { force: true });
+      return;
+    }
+    fs.writeFileSync(
+      getUpdateInstallAttemptPath(),
+      JSON.stringify(attempt, null, 2),
+      "utf-8",
+    );
+  } catch (error) {
+    log.warn(
+      "Could not record the update install attempt",
+      safeErrorForLog(error),
+    );
+  }
+}
+
+/** Counts an install that failed while Khaliduo kept running. */
+function recordFailedUpdateInstall(version: string | null) {
+  if (!version) return;
+  const previous = readUpdateInstallAttempt();
+  writeUpdateInstallAttempt({
+    version,
+    failedAttempts:
+      (previous?.version === version ? previous.failedAttempts : 0) + 1,
+    // Empty: this failure is already counted (see reconcileUpdateInstallAttempt).
+    attemptedAt: "",
+  });
+}
+
+/**
+ * Runs once at startup. An install started before this launch either left the
+ * new version running (done) or the old one (the installer quit silently, e.g.
+ * because a Khaliduo process could not be closed). Count the failure so later
+ * attempts switch to the visible installer.
+ */
+function reconcileUpdateInstallAttempt() {
+  const attempt = readUpdateInstallAttempt();
+  if (!attempt) return;
+  if (installAttemptOutcome(attempt, app.getVersion()) === "installed") {
+    log.info(`Khaliduo update ${attempt.version} installed successfully`);
+    writeUpdateInstallAttempt(null);
+    return;
+  }
+  if (attempt.attemptedAt === "") return;
+  const failedAttempts = attempt.failedAttempts + 1;
+  log.error(
+    `Khaliduo update ${attempt.version} did not install (still on ${app.getVersion()}, failed attempt ${failedAttempts})`,
+  );
+  // Clearing attemptedAt keeps a later ordinary launch of the old build from
+  // counting the same failure again.
+  writeUpdateInstallAttempt({ ...attempt, failedAttempts, attemptedAt: "" });
+}
+
+/**
+ * The heartbeat says whether this build is below the supported version. When it
+ * is, look for the update now and keep looking every couple of minutes instead
+ * of every 15; a downloaded update installs straight away as usual.
+ */
+function applyUpdateRequired(required: boolean) {
+  if (!app.isPackaged || runtimeStatus.updateRequired === required) return;
+  runtimeStatus.updateRequired = required;
+  startUpdateCheckSchedule();
+  notifyRendererStatus();
+  if (!required) return;
+  log.warn(
+    `Khaliduo ${app.getVersion()} is no longer supported by the server; updating now`,
+  );
+  mainWindow?.webContents.send("agent:update-required", {
+    version: runtimeStatus.updateVersion,
+  });
+  // Every device learns about a release from its next heartbeat. Spread the
+  // first check over a few minutes so they do not all start the large download
+  // from the server at the same moment.
+  if (initialUpdateCheckTimer) clearTimeout(initialUpdateCheckTimer);
+  initialUpdateCheckTimer = setTimeout(
+    runScheduledUpdatePass,
+    Math.floor(Math.random() * 3 * 60_000),
+  );
+}
+
+function notifyUpdateDownloading(version: string | null) {
+  if (!version || updateDownloadNotifiedVersion === version) return;
+  updateDownloadNotifiedVersion = version;
+  if (!Notification.isSupported()) return;
+  new Notification({
+    title: `Khaliduo update ${version}`,
+    body: "Downloading now. It installs automatically and Khaliduo restarts by itself; your tracked time is kept.",
+    icon: getAppIconPath(),
+  }).show();
 }
 
 async function installDownloadedUpdate(): Promise<UpdateActionResult> {
@@ -6226,6 +6470,30 @@ async function installDownloadedUpdate(): Promise<UpdateActionResult> {
     `Installing Khaliduo update ${runtimeStatus.updateVersion ?? ""} automatically`,
   );
   await preserveTrackingBeforeUpdate();
+  const installVersion = runtimeStatus.updateVersion;
+  const previousAttempt = readUpdateInstallAttempt();
+  const silent = silentInstallAllowed(previousAttempt, installVersion);
+  if (installVersion) {
+    writeUpdateInstallAttempt({
+      version: installVersion,
+      failedAttempts:
+        previousAttempt?.version === installVersion
+          ? previousAttempt.failedAttempts
+          : 0,
+      attemptedAt: new Date().toISOString(),
+    });
+  }
+  if (!silent) {
+    log.warn(
+      `Silent installs of ${installVersion} failed before; using the visible installer`,
+    );
+  }
+  // The installer quits silently when a process from the install folder is
+  // still running. The input probe is a separate executable there, and the
+  // crash watchdog relaunches the old app if Khaliduo exits before its "stop"
+  // message arrives, so end both before the installer starts.
+  inputIntegrityMonitor.stop();
+  stopCrashRecoveryWatchdog({ terminate: true });
   isQuitting = true;
   quitNotificationSent = true;
   // Arm recovery before quitAndInstall. Electron can emit before-quit inside
@@ -6242,7 +6510,7 @@ async function installDownloadedUpdate(): Promise<UpdateActionResult> {
     );
   }, UPDATE_INSTALL_RECOVERY_MS);
   try {
-    autoUpdater.quitAndInstall(true, true);
+    autoUpdater.quitAndInstall(silent, true);
     return { success: true };
   } catch (error) {
     recoverFromFailedUpdateInstall(
@@ -6265,6 +6533,19 @@ async function installDownloadedUpdate(): Promise<UpdateActionResult> {
  * "ready" forever and every later check short-circuits on that same status.
  */
 function runScheduledUpdatePass() {
+  if (
+    updateDownloadStalled({
+      status: runtimeStatus.updateStatus,
+      lastProgressAt: lastUpdateProgressAt,
+      now: Date.now(),
+    })
+  ) {
+    log.warn(
+      "The update download made no progress for 10 minutes; starting it again",
+    );
+    lastUpdateProgressAt = null;
+    setUpdateStatus("error", { percent: null });
+  }
   if (runtimeStatus.updateStatus === "ready" && !isInstallingUpdate) {
     void installDownloadedUpdate();
     return;
@@ -6277,6 +6558,7 @@ function configureAutoUpdater() {
     return;
   }
 
+  reconcileUpdateInstallAttempt();
   autoUpdater.logger = log;
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
@@ -6291,12 +6573,15 @@ function configureAutoUpdater() {
     setUpdateStatus("checking", { percent: null });
   });
   autoUpdater.on("update-available", (info) => {
+    lastUpdateProgressAt = Date.now();
     setUpdateStatus("available", { version: info.version, percent: 0 });
+    notifyUpdateDownloading(info.version);
     log.info(
       `Khaliduo update ${info.version} is downloading silently in the background`,
     );
   });
   autoUpdater.on("download-progress", (progress) => {
+    lastUpdateProgressAt = Date.now();
     setUpdateStatus("downloading", {
       version: runtimeStatus.updateVersion,
       percent: progress.percent,
@@ -6316,6 +6601,7 @@ function configureAutoUpdater() {
     }
   });
   autoUpdater.on("update-downloaded", (event) => {
+    lastUpdateProgressAt = null;
     setUpdateStatus("ready", { version: event.version, percent: 100 });
     consecutiveUpdateFailures = 0;
     log.info(
@@ -6362,9 +6648,11 @@ function startUpdateCheckSchedule() {
     process.env.UPDATE_CHECK_INTERVAL_MINUTES ?? "15",
     10,
   );
-  const updateCheckIntervalMinutes = Number.isFinite(configuredInterval)
-    ? Math.max(5, Math.min(1_440, configuredInterval))
-    : 15;
+  const updateCheckIntervalMinutes = runtimeStatus.updateRequired
+    ? REQUIRED_UPDATE_CHECK_INTERVAL_MINUTES
+    : Number.isFinite(configuredInterval)
+      ? Math.max(5, Math.min(1_440, configuredInterval))
+      : 15;
   if (updateCheckTimer) clearInterval(updateCheckTimer);
   updateCheckTimer = setInterval(
     runScheduledUpdatePass,
@@ -6705,6 +6993,10 @@ app.whenReady().then(async () => {
     // Meeting auto-end and delivery run for the whole app lifetime, even while
     // tracking is stopped (clearRuntimeTimers never touches this timer).
     setInterval(() => void meetingMaintenanceTick(), 15_000);
+    // Like meeting maintenance, the new-workday watcher runs even while tracking
+    // is stopped, which is exactly when an overnight Stop must be cleared.
+    newWorkdayStartTick();
+    setInterval(newWorkdayStartTick, 15_000);
     if (launchedForCrashRecovery && !crashRecoveryHasWork) {
       // Not enrolled (e.g. after logout) or explicitly stopped: nothing to
       // recover, and resuming would be wrong. Exit so no hidden process lingers.

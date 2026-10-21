@@ -3506,6 +3506,23 @@ textarea:focus {
   background: #fff5eb;
 }
 
+.k-update button {
+  margin-left: 10px;
+  padding: 4px 10px;
+  border: 1px solid currentColor;
+  border-radius: 8px;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.k-update button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
 @media (max-width: 1180px) {
   .k-app {
     grid-template-columns: 86px minmax(0, 1fr);

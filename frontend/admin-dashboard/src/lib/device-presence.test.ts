@@ -12,6 +12,7 @@ function device(id: string, employeeId: string, status: TestDevice["status"]): T
     name: id,
     os: "Windows",
     agentVersion: "1.1.93",
+    updateRequired: false,
     status,
     registeredAt: "2026-08-01T00:00:00Z",
     tokenStatus: "valid",

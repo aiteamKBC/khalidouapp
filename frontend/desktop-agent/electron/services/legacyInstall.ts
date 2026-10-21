@@ -15,6 +15,9 @@ export type LegacyInstall = {
 
 export const STARTUP_VALUE_NAME = "Khaliduo";
 export const RUN_KEY = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+// Task Manager > Startup "Disable" keeps the Run value but records the choice here.
+export const STARTUP_APPROVED_KEY =
+  "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run";
 
 function normalizeWindowsPath(value: string) {
   return value.replace(/\//g, "\\").replace(/\\+$/, "").toLowerCase();
@@ -70,6 +73,19 @@ export function parseRunValue(regQueryOutput: string): string | null {
     if (match) return match[1].trim();
   }
   return null;
+}
+
+/**
+ * Whether `reg query <STARTUP_APPROVED_KEY> /v Khaliduo` output says the startup
+ * entry was disabled. The first byte of the REG_BINARY value is even when
+ * enabled (02, 06) and odd when disabled (03, 07); no value means enabled.
+ */
+export function startupApprovalDisabled(regQueryOutput: string): boolean {
+  for (const line of regQueryOutput.split(/\r?\n/)) {
+    const match = line.match(/^\s*Khaliduo\s+REG_BINARY\s+([0-9a-f]{2})/i);
+    if (match) return (Number.parseInt(match[1], 16) & 1) === 1;
+  }
+  return false;
 }
 
 /** The executable a startup command launches (quoted or bare). */

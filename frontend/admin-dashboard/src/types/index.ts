@@ -162,6 +162,8 @@ export interface Device {
   employeeId: string;
   os: string;
   agentVersion: string;
+  /** Below the published Khaliduo release; the app is updating or stuck. */
+  updateRequired: boolean;
   status: DeviceStatus;
   lastSeen?: string;
   registeredAt: string;

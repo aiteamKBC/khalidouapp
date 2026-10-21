@@ -70,6 +70,7 @@ export type AgentStatus = {
     | "error";
   updateVersion: string | null;
   updatePercent: number | null;
+  updateRequired?: boolean;
   activeMeeting: ActiveMeeting | null;
   meetings: MeetingSummary[];
   breakBank: BreakBank | null;

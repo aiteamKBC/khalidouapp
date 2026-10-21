@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models import ActivityEvent, Device, Employee, Screenshot, TrackingSettings, WorkSession
+from app.services.agent_versions import is_agent_version_supported, update_required_minimum
 
 
 def utc_now() -> datetime:
@@ -81,6 +82,15 @@ def serialize_device(device: Device) -> dict[str, Any]:
         "installation_id": device.installation_id,
         "operating_system": device.operating_system,
         "agent_version": device.agent_version,
+        # Same rule as the heartbeat: the agent is told to update.
+        "update_required": not is_agent_version_supported(
+            device.agent_version,
+            update_required_minimum(
+                settings.required_agent_version,
+                force_latest=settings.force_latest_agent_update,
+                update_directory=settings.desktop_update_directory.resolve(),
+            ),
+        ),
         "windows_username": device.windows_username,
         "mac_address": device.mac_address,
         "last_ip_address": device.last_ip_address,

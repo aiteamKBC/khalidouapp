@@ -1472,7 +1472,9 @@ function App() {
         allowOutsideClick: false,
       });
     } catch (error) {
-      window.khaliduo?.setIdleAlertAttention(false);
+      if (shownIdleAlertId.current === alert.id) {
+        window.khaliduo?.setIdleAlertAttention(false);
+      }
       throw error;
     }
 
@@ -1480,7 +1482,15 @@ function App() {
     // handled in order, so the main process leaves idle before the alert is
     // cleared. Clearing it first left a moment where tracking was still idle
     // with no alert pending, and the return check opened a second popup.
-    const releaseAlert = () => window.khaliduo?.setIdleAlertAttention(false);
+    // A newer alert (e.g. the morning "Start work" replacing last night's
+    // unanswered popup) closes this one; releasing then would drop the newer
+    // alert's always-on-top attention, so only the current alert may release.
+    const releaseAlert = () => {
+      const current = shownIdleAlertId.current;
+      // null: the error path below cleared the guard so this alert can reappear.
+      if (current !== alert.id && current !== null) return;
+      window.khaliduo?.setIdleAlertAttention(false);
+    };
     let released = false;
     const runThenRelease = async <T,>(action: () => Promise<T> | undefined) => {
       const pending = action();
@@ -1848,9 +1858,10 @@ function App() {
         <span className="k-header-stripes" aria-hidden="true" />
       </header>
 
-      {["available", "downloading", "ready", "installing"].includes(
-        status.updateStatus,
-      ) && (
+      {(status.updateRequired ||
+        ["available", "downloading", "ready", "installing"].includes(
+          status.updateStatus,
+        )) && (
         <section className="k-update" role="status" aria-live="assertive">
           <strong>
             Required update{" "}
@@ -1863,8 +1874,24 @@ function App() {
                 ? "Downloaded and ready. Automatic installation is starting now; you can also click Install update."
                 : status.updateStatus === "downloading"
                   ? `Downloading: ${Math.round(status.updatePercent ?? 0)}%`
-                  : "Preparing the required download..."}
+                  : status.updateStatus === "available"
+                    ? "Preparing the required download..."
+                    : status.updateStatus === "error"
+                      ? "This version of Khaliduo is no longer supported and the update could not be downloaded yet. Khaliduo keeps retrying every few minutes; check the internet connection."
+                      : "This version of Khaliduo is no longer supported. Looking for the update now..."}
           </span>
+          {status.updateRequired &&
+            ["error", "idle", "up-to-date", "ready"].includes(
+              status.updateStatus,
+            ) && (
+              <button
+                type="button"
+                onClick={() => void handleUpdateButton()}
+                disabled={updateButtonDisabled}
+              >
+                {updateButtonLabel}
+              </button>
+            )}
         </section>
       )}
 

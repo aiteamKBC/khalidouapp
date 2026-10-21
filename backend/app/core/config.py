@@ -86,6 +86,10 @@ class Settings(BaseSettings):
     # update-required state. Releases <= 1.1.95 over-counted sleep/hibernate
     # freezes as active work (commit 09a209b); 1.1.96 fixed it with trackingTick.
     required_agent_version: str = Field(default="1.1.96", alias="REQUIRED_AGENT_VERSION")
+    # Tell every desktop agent older than the published installer (latest.yml in
+    # DESKTOP_UPDATE_DIRECTORY) to update now. Only affects the update-required
+    # signal, never counter trust.
+    force_latest_agent_update: bool = Field(default=True, alias="FORCE_LATEST_AGENT_UPDATE")
     default_screenshot_retention_days: int = Field(
         default=30, alias="DEFAULT_SCREENSHOT_RETENTION_DAYS"
     )

@@ -145,7 +145,17 @@ function DevicesList() {
                   <TableCell className="text-sm">{device.os}</TableCell>
                   <TableCell className="font-mono text-xs">{device.lastIpAddress ?? "-"}</TableCell>
                   <TableCell className="font-mono text-xs">{device.macAddress ?? "-"}</TableCell>
-                  <TableCell className="font-mono text-xs">v{device.agentVersion}</TableCell>
+                  <TableCell className="font-mono text-xs">
+                    v{device.agentVersion}
+                    {device.updateRequired && device.status !== "revoked" && (
+                      <div
+                        className="mt-1 w-fit rounded px-1.5 py-0.5 font-sans text-xs font-semibold bg-warning/15 text-warning-foreground"
+                        title="Older than the published Khaliduo release. If this stays after the device has been online for an hour, reinstall Khaliduo on it."
+                      >
+                        Outdated
+                      </div>
+                    )}
+                  </TableCell>
                   <TableCell>
                     <StatusBadge status={device.status} />
                   </TableCell>

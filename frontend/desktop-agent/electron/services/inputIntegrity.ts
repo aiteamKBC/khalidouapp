@@ -20,6 +20,12 @@ type ProbeReport = {
 
 const SENSOR_STALE_AFTER_MS = 5_000;
 const MAX_EVENT_COUNT = 1_000_000;
+// Windows silently removes a low-level hook whose callback runs too long (a busy
+// or sleeping machine), and the probe then keeps reporting zero events forever.
+// Every second of that looked like idle while the employee was typing, so each
+// "Continue working" was followed by another idle popup until the app restarted.
+export const PROBE_BLIND_AFTER_MS = 30_000;
+const OS_RECENT_INPUT_SECONDS = 2;
 
 function safeCount(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value)
@@ -56,6 +62,25 @@ export function effectiveTrustedIdleSeconds(options: {
   );
 }
 
+/**
+ * The probe sees injected input too, so a stretch where Windows registered input
+ * but the probe saw no event of any kind means its hooks stopped delivering
+ * (not that the input was fake). The caller restarts the probe, which
+ * re-installs the hooks and re-seeds idle time from the Windows idle clock.
+ */
+export function probeMissedInput(options: {
+  sensorAvailable: boolean;
+  lastProbeEventAt: number;
+  probeStartedAt: number;
+  systemIdleSeconds: number;
+  now: number;
+}) {
+  if (!options.sensorAvailable) return false;
+  if (options.systemIdleSeconds > OS_RECENT_INPUT_SECONDS) return false;
+  const lastSeen = Math.max(options.lastProbeEventAt, options.probeStartedAt);
+  return options.now - lastSeen >= PROBE_BLIND_AFTER_MS;
+}
+
 export function hasRealInput(
   report: Pick<ProbeReport, "real_mouse" | "real_keyboard">,
 ) {
@@ -73,6 +98,8 @@ export class InputIntegrityMonitor {
   private injectedMouseEvents = 0;
   private injectedKeyboardEvents = 0;
   private lastRealInputAt = 0;
+  private lastProbeEventAt = 0;
+  private probeStartedAt = 0;
 
   get running() {
     return Boolean(this.child && !this.child.killed);
@@ -86,6 +113,8 @@ export class InputIntegrityMonitor {
     this.lastReportAt = 0;
     this.stdoutBuffer = "";
     this.lastRealInputAt = 0;
+    this.lastProbeEventAt = 0;
+    this.probeStartedAt = now;
     try {
       const child = spawn(executablePath, [], {
         windowsHide: true,
@@ -126,6 +155,26 @@ export class InputIntegrityMonitor {
       systemIdleSeconds,
       now,
     });
+  }
+
+  /** Whether the running probe has gone blind to input Windows still sees. */
+  missedInput(systemIdleSeconds: number, now = Date.now()) {
+    return probeMissedInput({
+      sensorAvailable: this.sensorAvailable(now),
+      lastProbeEventAt: this.lastProbeEventAt,
+      probeStartedAt: this.probeStartedAt,
+      systemIdleSeconds,
+      now,
+    });
+  }
+
+  /**
+   * The employee clicked "Continue working" (or Start/Resume) in Khaliduo itself:
+   * that is presence, so the idle clock restarts from now instead of waiting for
+   * the next probe report.
+   */
+  confirmPresence(now = Date.now()) {
+    this.lastTrustedInputAt = Math.max(this.lastTrustedInputAt, now);
   }
 
   latestRealInputAt(now = Date.now()) {
@@ -171,6 +220,13 @@ export class InputIntegrityMonitor {
       this.realKeyboardEvents += report.real_keyboard;
       this.injectedMouseEvents += report.injected_mouse;
       this.injectedKeyboardEvents += report.injected_keyboard;
+      if (
+        hasRealInput(report) ||
+        report.injected_mouse > 0 ||
+        report.injected_keyboard > 0
+      ) {
+        this.lastProbeEventAt = now;
+      }
       if (hasRealInput(report)) {
         this.lastRealInputAt = now;
         // One physical mouse or keyboard event is real presence. Requiring

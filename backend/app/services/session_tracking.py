@@ -30,7 +30,7 @@ from app.schemas.session import (
 from app.services.activity_timeline import (
     build_workday_timeline,
 )
-from app.services.agent_versions import is_agent_version_supported
+from app.services.agent_versions import is_agent_version_supported, update_required_minimum
 from app.services.projects import get_employee_task_context, list_employee_tasks
 from app.services.schedules import effective_schedule, overlap_seconds
 from app.services.task_workflow import TRACKABLE_STAGES
@@ -1070,9 +1070,15 @@ def record_heartbeat(
     # An unsupported agent must not silently continue payable tracking. The
     # timeline safeguard already refuses to trust its counters across long gaps;
     # this flag lets the desktop surface a clear update-required state. The floor
-    # is configurable via settings.required_agent_version.
+    # is configurable via settings.required_agent_version, and with
+    # FORCE_LATEST_AGENT_UPDATE it rises to the published installer's version.
     update_required = not is_agent_version_supported(
-        payload.agent_version, settings.required_agent_version
+        payload.agent_version,
+        update_required_minimum(
+            settings.required_agent_version,
+            force_latest=settings.force_latest_agent_update,
+            update_directory=settings.desktop_update_directory.resolve(),
+        ),
     )
 
     def ignored(reason: str) -> dict[str, Any]:

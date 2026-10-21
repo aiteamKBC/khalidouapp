@@ -7,6 +7,7 @@ type BackendDevice = {
   device_name: string;
   operating_system: string;
   agent_version: string;
+  update_required?: boolean;
   status: string;
   last_seen_at?: string | null;
   registered_at: string;
@@ -27,6 +28,7 @@ function mapDevice(device: BackendDevice): Device {
     employeeId: device.employee_id,
     os: device.operating_system,
     agentVersion: device.agent_version,
+    updateRequired: device.update_required ?? false,
     status,
     lastSeen: device.last_seen_at ?? undefined,
     registeredAt: device.registered_at,

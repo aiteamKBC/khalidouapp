@@ -244,7 +244,11 @@ def test_new_day_non_working_heartbeat_does_not_start_a_payable_session(ctx):
     assert new_day_timeline["worked_seconds"] == 0
 
 
-def test_unsupported_version_flags_update_required(ctx):
+def test_unsupported_version_flags_update_required(ctx, monkeypatch):
+    from app.core.config import settings
+
+    # Judge only the configured floor, not whatever installer is published locally.
+    monkeypatch.setattr(settings, "force_latest_agent_update", False)
     db, company, employee, device = ctx
     started = start_or_get_session(
         db, device, SessionStartRequest(started_at=_at("2026-09-10T09:00:00")),
@@ -277,6 +281,39 @@ def test_unsupported_version_flags_update_required(ctx):
         ),
     )
     assert supported["update_required"] is False
+
+
+def test_published_release_flags_older_agents(ctx, monkeypatch, tmp_path):
+    from app.core.config import settings
+
+    (tmp_path / "latest.yml").write_text(
+        "version: 1.1.102\nfiles:\n  - url: KhaliduoSetup.exe\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(settings, "force_latest_agent_update", True)
+    monkeypatch.setattr(settings, "desktop_update_directory", tmp_path)
+    db, company, employee, device = ctx
+    started = start_or_get_session(
+        db, device, SessionStartRequest(started_at=_at("2026-09-10T09:00:00")),
+    )
+    from uuid import UUID
+
+    session_id = UUID(started["session"]["id"])
+
+    def heartbeat(minute, version):
+        return record_heartbeat(
+            db, device=device, session_id=session_id,
+            payload=HeartbeatRequest(
+                event_id=uuid4(),
+                timestamp=_at(f"2026-09-10T09:{minute:02d}:00"),
+                status="active",
+                active_seconds=minute * 60,
+                idle_seconds=0,
+                agent_version=version,
+            ),
+        )
+
+    assert heartbeat(5, "1.1.101")["update_required"] is True
+    assert heartbeat(6, "1.1.102")["update_required"] is False
 
 
 # ---- administrative session close (incident remediation) --------------------
