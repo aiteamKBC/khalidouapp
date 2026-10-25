@@ -169,6 +169,9 @@ def build_idle_request_periods(
     for interval in timeline.get("intervals", []):
         if interval.get("type") != "idle" or not interval.get("ended_at"):
             continue
+        if interval.get("saved_break_cover"):
+            # Already paid from saved break time; nothing to explain.
+            continue
         interval_start = _as_utc(datetime.fromisoformat(interval["started_at"]))
         interval_end = _as_utc(datetime.fromisoformat(interval["ended_at"]))
         eligible_start = max(interval_start, shift_start)

@@ -1312,6 +1312,15 @@ textarea:focus {
   background: color-mix(in srgb, #8b5cf6 14%, transparent);
 }
 
+.k-line-saved_break b {
+  color: #0d9488;
+}
+
+.k-line-saved_break .k-timeline-icon {
+  color: #0d9488;
+  background: color-mix(in srgb, #14b8a6 14%, transparent);
+}
+
 .k-line-manual b {
   color: var(--blue, #38bdf8);
 }
@@ -3453,6 +3462,7 @@ textarea:focus {
 .k-line-idle b,
 .k-line-untracked b,
 .k-line-break b,
+.k-line-saved_break b,
 .k-line-manual b,
 .k-line-leave b {
   color: var(--text);
@@ -4784,6 +4794,12 @@ textarea:focus {
   border-color: rgb(147 103 255 / 18%);
   color: #a981ff;
   background: rgb(147 103 255 / 8%);
+}
+
+.k-app[data-theme="dark"] .k-line-saved_break .k-timeline-icon {
+  border-color: rgb(45 212 191 / 18%);
+  color: #2dd4bf;
+  background: rgb(45 212 191 / 8%);
 }
 
 .k-app[data-theme="dark"] .k-line-locked .k-timeline-icon,

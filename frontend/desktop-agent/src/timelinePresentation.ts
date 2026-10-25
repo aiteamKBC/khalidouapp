@@ -13,7 +13,8 @@ export type TimelineDisplayType =
   | TimelineIntervalType
   | "break_work"
   | "extra"
-  | "leave";
+  | "leave"
+  | "saved_break";
 
 export const TIMELINE_LABELS: Record<TimelineDisplayType, string> = {
   worked: "Worked",
@@ -26,6 +27,7 @@ export const TIMELINE_LABELS: Record<TimelineDisplayType, string> = {
   break_work: "Worked during break",
   extra: "Overtime",
   leave: "Leave",
+  saved_break: "Saved break used",
 };
 
 export function timelineIntervalsForDisplay<T>(intervals: readonly T[]): T[] {
@@ -38,9 +40,13 @@ export function timelineDisplayType(
   intervalType: TimelineIntervalType,
   approvedLeave: boolean,
   workCategory?: TimelineWorkCategory,
+  savedBreakCover?: boolean,
 ): TimelineDisplayType {
   if (approvedLeave) {
     return intervalType === "worked" ? "extra" : "leave";
+  }
+  if (intervalType === "idle" && savedBreakCover) {
+    return "saved_break";
   }
   if (intervalType === "worked" && workCategory === "break_work") {
     return "break_work";

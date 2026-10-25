@@ -72,6 +72,8 @@ export type AgentStatus = {
   updatePercent: number | null;
   updateRequired?: boolean;
   trackingMovedToDevice?: string | null;
+  // Away while saved break minutes pay for it: no idle popup until they run out.
+  savedBreakCover?: { startedAt: string; endsAt: string } | null;
   activeMeeting: ActiveMeeting | null;
   meetings: MeetingSummary[];
   breakBank: BreakBank | null;
@@ -180,6 +182,8 @@ export type WorkdayTimeline = {
     is_current: boolean;
     work_category?: "extra" | "break_work" | null;
     break_paid?: boolean | null;
+    // Idle paid from the employee's saved break minutes.
+    saved_break_cover?: boolean;
   }>;
 };
 

@@ -16,7 +16,7 @@ import {
   formatSessionStatus,
 } from "@/lib/format";
 
-type DisplayIntervalType = WorkdayIntervalType | "break_work" | "extra" | "leave";
+type DisplayIntervalType = WorkdayIntervalType | "break_work" | "extra" | "leave" | "saved_break";
 
 const intervalStyles: Record<
   DisplayIntervalType,
@@ -44,6 +44,12 @@ const intervalStyles: Record<
     label: "Idle",
     bar: "bg-amber-400",
     badge: "bg-amber-400/15 text-amber-800",
+    icon: Coffee,
+  },
+  saved_break: {
+    label: "Saved break used",
+    bar: "bg-teal-500",
+    badge: "bg-teal-500/15 text-teal-700 dark:text-teal-300",
     icon: Coffee,
   },
   break: {
@@ -88,9 +94,13 @@ function resolveDisplayType(
   intervalType: WorkdayIntervalType,
   workCategory: "extra" | "break_work" | null | undefined,
   approvedLeave: boolean,
+  savedBreakCover?: boolean,
 ): DisplayIntervalType {
   if (approvedLeave) {
     return intervalType === "worked" ? "extra" : "leave";
+  }
+  if (intervalType === "idle" && savedBreakCover) {
+    return "saved_break";
   }
   if (intervalType === "worked" && workCategory === "break_work") {
     return "break_work";
@@ -177,9 +187,7 @@ function PayableBreakdownBar({ financials }: { financials: PayableBreakdown }) {
   );
   return (
     <div className="space-y-2">
-      <span className="block text-xs font-medium text-muted-foreground">
-        Payable adjustments
-      </span>
+      <span className="block text-xs font-medium text-muted-foreground">Payable adjustments</span>
       <div
         className="flex h-3 overflow-hidden rounded-sm bg-muted"
         aria-label="Payable adjustments bar"
@@ -201,16 +209,14 @@ function PayableBreakdownBar({ financials }: { financials: PayableBreakdown }) {
           >
             <span className={`h-2 w-2 rounded-full ${segment.bar}`} />
             {segment.label}
-            <strong className="font-mono">
-              {formatDurationSeconds(segment.seconds)}
-            </strong>
+            <strong className="font-mono">{formatDurationSeconds(segment.seconds)}</strong>
           </span>
         ))}
       </div>
       <p className="text-xs text-muted-foreground">
-        These are payable-policy overlays on the activity above: paid late
-        allowance, delayed-break claims, and approved/pending meeting time are
-        paid; excess lateness is the unpaid remainder after the allowance.
+        These are payable-policy overlays on the activity above: paid late allowance, delayed-break
+        claims, and approved/pending meeting time are paid; excess lateness is the unpaid remainder
+        after the allowance.
       </p>
     </div>
   );
@@ -298,6 +304,7 @@ export function WorkdayTimeline({
             interval.type,
             interval.workCategory,
             timeline.approvedLeave,
+            interval.savedBreakCover,
           );
           return (
             <span
@@ -324,6 +331,7 @@ export function WorkdayTimeline({
             interval.type,
             interval.workCategory,
             timeline.approvedLeave,
+            interval.savedBreakCover,
           );
           const style = intervalStyles[displayType];
           const Icon = style.icon;

@@ -79,8 +79,8 @@ def _automatic_break_cover(
     break_windows: list[tuple[datetime, datetime]],
     shift_start: datetime,
     shift_end: datetime,
-) -> int:
-    """Seconds of in-shift automatic idle covered by saved break time.
+) -> list[tuple[datetime, datetime]]:
+    """The in-shift automatic idle covered by saved break time, in time order.
 
     Idle is spent in time order, and only minutes saved in a break that has
     already ended can cover it. Manual pauses and idle inside a scheduled break
@@ -104,11 +104,87 @@ def _automatic_break_cover(
             pieces = next_pieces
         segments.extend(piece for piece in pieces if piece[1] > piece[0])
     covered = 0
+    covered_segments: list[tuple[datetime, datetime]] = []
     for segment_start, segment_end in sorted(segments):
         saved = sum(seconds for ended_at, seconds in break_credits if ended_at <= segment_start)
         take = min(int((segment_end - segment_start).total_seconds()), max(0, saved - covered))
-        covered += take
-    return covered
+        if take > 0:
+            covered += take
+            covered_segments.append((segment_start, segment_start + timedelta(seconds=take)))
+    return covered_segments
+
+
+def _limit_segments(
+    segments: list[tuple[datetime, datetime]], seconds: int
+) -> list[tuple[datetime, datetime]]:
+    """The first ``seconds`` of the segments, in time order."""
+    limited = []
+    for segment_start, segment_end in segments:
+        if seconds <= 0:
+            break
+        take = min(seconds, int((segment_end - segment_start).total_seconds()))
+        limited.append((segment_start, segment_start + timedelta(seconds=take)))
+        seconds -= take
+    return limited
+
+
+def _mark_saved_break_cover(
+    timeline: dict,
+    covered: list[tuple[datetime, datetime]],
+    now: datetime,
+) -> dict:
+    """Split idle rows so the part paid from saved break time is its own row.
+
+    Display only: the rows keep type "idle", so every total is unchanged. A
+    covered row carries ``saved_break_cover: True``.
+    """
+    if not covered:
+        return timeline
+    marked: list[dict] = []
+    for interval in timeline.get("intervals", []):
+        if interval.get("type") != "idle" or interval.get("source") == "manual_pause":
+            marked.append(interval)
+            continue
+        start = _utc(datetime.fromisoformat(interval["started_at"]))
+        end = (
+            _utc(datetime.fromisoformat(interval["ended_at"]))
+            if interval.get("ended_at")
+            else _utc(now)
+        )
+        cuts = {start, end}
+        for cover_start, cover_end in covered:
+            for point in (cover_start, cover_end):
+                if start < point < end:
+                    cuts.add(point)
+        points = sorted(cuts)
+        if len(points) == 2 and not any(
+            cover_start <= start and end <= cover_end for cover_start, cover_end in covered
+        ):
+            marked.append(interval)
+            continue
+        for piece_start, piece_end in zip(points, points[1:], strict=False):
+            last = piece_end == end
+            is_current = bool(interval.get("is_current")) and last
+            marked.append(
+                {
+                    **interval,
+                    "started_at": piece_start.isoformat(),
+                    "ended_at": None if is_current else piece_end.isoformat(),
+                    "duration_seconds": int((piece_end - piece_start).total_seconds()),
+                    "is_current": is_current,
+                    "saved_break_cover": any(
+                        cover_start <= piece_start and piece_end <= cover_end
+                        for cover_start, cover_end in covered
+                    ),
+                }
+            )
+    return {
+        **timeline,
+        "intervals": marked,
+        "saved_break_cover_seconds": sum(
+            int((cover_end - cover_start).total_seconds()) for cover_start, cover_end in covered
+        ),
+    }
 
 
 def _parsed(value: str | None) -> datetime | None:
@@ -849,16 +925,22 @@ def calculate_daily_attendance(
     # once and the idle-grace pool is recomputed on the remaining idle.
     approved_delayed_break = 0
     if policy_active and break_credits and automatic_idle and start_at and effective_expected_end:
+        cover_segments = _automatic_break_cover(
+            intervals,
+            break_credits,
+            [(item["start_at"], item["end_at"]) for item in schedule["breaks"]],
+            start_at,
+            effective_expected_end,
+        )
         approved_delayed_break = min(
-            _automatic_break_cover(
-                intervals,
-                break_credits,
-                [(item["start_at"], item["end_at"]) for item in schedule["breaks"]],
-                start_at,
-                effective_expected_end,
-            ),
+            sum(int((end - start).total_seconds()) for start, end in cover_segments),
             earned_break_credit,
             automatic_idle,
+        )
+        timeline = _mark_saved_break_cover(
+            timeline,
+            _limit_segments(cover_segments, approved_delayed_break),
+            _utc(now or datetime.now(UTC)),
         )
     idle_after = max(0, automatic_idle - approved_delayed_break)
     # Approval is itself bounded attendance evidence, so it can pay a recorded

@@ -26,30 +26,32 @@ type BreakTimelineInterval = {
   duration_seconds: number;
   is_current: boolean;
   break_paid?: boolean | null;
+  saved_break_cover?: boolean;
 };
 
 /**
- * Paid break time in today's timeline. The current break keeps growing between
- * timeline refreshes, up to the end of the break that is running now; once the
- * break is over, the next refresh turns the rest of the absence into idle.
+ * Paid break time in today's timeline: paid scheduled breaks and idle paid from
+ * saved break minutes. The current row keeps growing between timeline
+ * refreshes, up to the end of the break (or of the saved minutes) running now;
+ * after that the next refresh turns the rest of the absence into idle.
  */
 export function paidBreakSecondsToday(
   intervals: BreakTimelineInterval[],
   nowMs: number,
   runningBreakEndsAtMs: number | null,
+  savedBreakEndsAtMs: number | null = null,
 ) {
   let total = 0;
   for (const interval of intervals) {
-    if (interval.type !== "break" || interval.break_paid !== true) continue;
+    const paidBreak = interval.type === "break" && interval.break_paid === true;
+    const savedBreak = interval.type === "idle" && interval.saved_break_cover === true;
+    if (!paidBreak && !savedBreak) continue;
     let seconds = Math.max(0, interval.duration_seconds);
     const startedAtMs = Date.parse(interval.started_at);
-    if (
-      interval.is_current &&
-      runningBreakEndsAtMs !== null &&
-      Number.isFinite(startedAtMs)
-    ) {
+    const liveUntilMs = paidBreak ? runningBreakEndsAtMs : savedBreakEndsAtMs;
+    if (interval.is_current && liveUntilMs !== null && Number.isFinite(startedAtMs)) {
       const liveSeconds = Math.floor(
-        (Math.min(nowMs, runningBreakEndsAtMs) - startedAtMs) / 1000,
+        (Math.min(nowMs, liveUntilMs) - startedAtMs) / 1000,
       );
       seconds = Math.max(seconds, liveSeconds);
     }
