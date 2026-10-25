@@ -1,3 +1,4 @@
+import { Moon, Sun } from "lucide-react";
 import { BrandLogo } from "@/components/ui/brand-logo";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { WorkspaceIcon } from "./WorkspaceIcon";
@@ -5,6 +6,9 @@ import { useEffect, useRef, useState } from "react";
 import type { Employee, Notification } from "@/components/employee-workspace/model";
 
 type Props = {
+  theme: "light" | "dark";
+  onToggleTheme: () => void;
+  onOpenTracker: () => void;
   employee: Employee;
   notifications: Notification[];
   unreadCount: number;
@@ -18,6 +22,9 @@ type Props = {
 };
 
 export default function Header({
+  theme,
+  onToggleTheme,
+  onOpenTracker,
   employee,
   notifications,
   unreadCount,
@@ -56,11 +63,10 @@ export default function Header({
 
   return (
     <header className="sticky top-0 z-40">
-      <div className="k-topstrip" aria-hidden="true" />
       <div className="border-b border-ew-line bg-ew-card">
-        <div className="mx-auto flex h-[62px] w-full max-w-[1440px] items-center gap-3 px-4 md:px-6">
+        <div className="mx-auto flex h-[70px] w-full max-w-[1400px] items-center gap-3 px-4 md:px-6">
           <a href="#main" className="flex items-center gap-2.5 no-underline">
-            <BrandLogo className="h-[38px] w-8" />
+            <BrandLogo className="h-[58px] w-[49px]" />
             <span className="flex flex-col leading-none">
               <span className="font-ew-mono text-[12.5px] font-medium tracking-[0.18em] text-ew-plum">
                 KHALIDUO
@@ -80,11 +86,27 @@ export default function Header({
                 />
               </span>
               <span className="text-[11.5px] font-semibold text-ew-ink-2">
-                {trackingActive ? "Tracking active" : "Tracking paused"}
+                {trackingActive ? "Paid shift active" : "Tracking paused"}
               </span>
               <span className="k-mono text-[10.5px] text-ew-muted">{shiftLabel}</span>
             </div>
 
+            <button
+              type="button"
+              onClick={onToggleTheme}
+              aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} theme`}
+              aria-pressed={theme === "dark"}
+              className="grid h-9 w-9 place-items-center rounded-md border border-ew-line text-ew-muted"
+            >
+              {theme === "dark" ? <Sun className="size-4" /> : <Moon className="size-4" />}
+            </button>
+            <button
+              type="button"
+              onClick={onOpenTracker}
+              className="hidden rounded-md border border-ew-line px-3 py-2 text-xs font-semibold text-ew-plum sm:block"
+            >
+              Tracker
+            </button>
             <div className="relative" ref={bellRef}>
               <button
                 type="button"

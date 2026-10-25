@@ -1,3 +1,4 @@
+import SelectMenu from "../tracker-ui/SelectMenu";
 import { WorkspaceIcon } from "./WorkspaceIcon";
 import { useEffect, useState } from "react";
 import Drawer from "@/components/employee-workspace/Drawer";
@@ -83,7 +84,7 @@ export default function AddTaskDrawer({ open, onClose, onSubmit, projects, busy 
             type="button"
             onClick={submit}
             disabled={busy || projects.length === 0}
-            className="flex cursor-pointer items-center justify-center gap-1.5 rounded-md bg-ew-plum px-3.5 py-2 text-[12.5px] font-semibold text-white transition-colors hover:bg-ew-plum-2"
+            className="flex cursor-pointer items-center justify-center gap-1.5 rounded-md bg-ew-solid px-3.5 py-2 text-[12.5px] font-semibold text-white transition-colors hover:bg-ew-solid-2"
           >
             <WorkspaceIcon className="ri-send-plane-line text-[14px]" aria-hidden="true" />
             Submit task
@@ -135,19 +136,17 @@ export default function AddTaskDrawer({ open, onClose, onSubmit, projects, busy 
             <label htmlFor="new-task-project" className="k-field-label">
               Project
             </label>
-            <select
+            <SelectMenu
               id="new-task-project"
-              className="k-select"
+              ariaLabel="Project"
               value={form.project}
-              onChange={(event) => update("project", event.target.value)}
-            >
-              <option value="">Select a project</option>
-              {projects.map((project) => (
-                <option key={project.id} value={project.id}>
-                  {project.name}
-                </option>
-              ))}
-            </select>
+              options={[
+                { value: "", label: "Select a project" },
+                ...projects.map((project) => ({ value: project.id, label: project.name })),
+              ]}
+              onChange={(value) => update("project", value)}
+              disabled={busy}
+            />
           </div>
         </div>
 
@@ -156,18 +155,14 @@ export default function AddTaskDrawer({ open, onClose, onSubmit, projects, busy 
             <label htmlFor="new-task-priority" className="k-field-label">
               Priority
             </label>
-            <select
+            <SelectMenu
               id="new-task-priority"
-              className="k-select"
+              ariaLabel="Priority"
               value={form.priority}
-              onChange={(event) => update("priority", event.target.value as Priority)}
-            >
-              {PRIORITIES.map((priority) => (
-                <option key={priority} value={priority}>
-                  {priority}
-                </option>
-              ))}
-            </select>
+              options={PRIORITIES.map((priority) => ({ value: priority, label: priority }))}
+              onChange={(value) => update("priority", value as Priority)}
+              disabled={busy}
+            />
           </div>
           <div className="min-w-0">
             <label htmlFor="new-task-start" className="k-field-label">

@@ -20,7 +20,7 @@ export default function Tabs({ value, onChange, counts }: Props) {
     <div
       role="tablist"
       aria-label="Dashboard sections"
-      className="sticky top-[70px] z-30 -mx-4 flex flex-wrap items-center gap-1 border-b border-ew-line bg-ew-bg px-4 py-2 md:static md:mx-0 md:rounded-full md:border md:border-ew-line md:bg-ew-card md:px-1.5 md:py-1.5"
+      className="sticky top-[70px] z-30 -mx-4 flex flex-wrap items-center gap-1 border-b border-ew-line bg-ew-bg px-4 py-2 md:static md:mx-0 md:rounded-md md:border md:border-ew-line md:bg-ew-card md:px-1.5 md:py-1.5"
     >
       {TABS.map((tab) => {
         const active = tab.key === value;
@@ -33,8 +33,8 @@ export default function Tabs({ value, onChange, counts }: Props) {
             aria-selected={active}
             aria-controls={`panel-${tab.key}`}
             onClick={() => onChange(tab.key)}
-            className={`flex cursor-pointer items-center gap-1.5 rounded-full px-3 py-1.5 text-[12.5px] font-semibold transition-colors whitespace-nowrap ${
-              active ? "bg-ew-plum text-white" : "text-ew-ink-2 hover:bg-ew-bg-2"
+            className={`flex cursor-pointer items-center gap-1.5 rounded-md px-3 py-1.5 text-[12.5px] font-semibold transition-colors whitespace-nowrap ${
+              active ? "bg-ew-solid text-white" : "text-ew-ink-2 hover:bg-ew-bg-2"
             }`}
           >
             <span className="flex h-4 w-4 items-center justify-center">

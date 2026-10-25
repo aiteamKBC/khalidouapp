@@ -1,3 +1,4 @@
+import SelectMenu from "../tracker-ui/SelectMenu";
 import { WorkspaceIcon } from "./WorkspaceIcon";
 import { useEffect, useRef, useState } from "react";
 import Drawer from "@/components/employee-workspace/Drawer";
@@ -91,8 +92,10 @@ export default function TaskDrawer({
         <label htmlFor="task-status" className="k-label">
           Workflow status
         </label>
-        <select
+        <SelectMenu
           id="task-status"
+          ariaLabel="Workflow status"
+          value={task.status}
           disabled={
             busy ||
             !task.canUpdateStatus ||
@@ -100,20 +103,13 @@ export default function TaskDrawer({
               task.stage,
             )
           }
-          value={task.status}
-          onChange={(event) => onStatusChange(task.id, event.target.value as TaskStatus)}
-          className="k-select mt-1 bg-white"
-        >
-          {TASK_STATUSES.filter(
+          options={TASK_STATUSES.filter(
             (status) =>
               status === task.status ||
               (status !== "Completed" && (task.stage !== "blocked" || status === "In progress")),
-          ).map((status) => (
-            <option key={status} value={status}>
-              {status}
-            </option>
-          ))}
-        </select>
+          ).map((status) => ({ value: status, label: status }))}
+          onChange={(value) => onStatusChange(task.id, value as TaskStatus)}
+        />
         <p className="mt-1 text-[11px] text-ew-muted">
           Work submitted for review requires manager approval
           {task.approvalNote ? ` · ${task.approvalNote}` : ""}.
@@ -181,7 +177,7 @@ export default function TaskDrawer({
           <button
             disabled={busy}
             type="submit"
-            className="flex h-9 flex-none cursor-pointer items-center gap-1 rounded-md bg-ew-plum px-2.5 text-[12px] font-semibold text-white transition-colors hover:bg-ew-plum-2"
+            className="flex h-9 flex-none cursor-pointer items-center gap-1 rounded-md bg-ew-solid px-2.5 text-[12px] font-semibold text-white transition-colors hover:bg-ew-solid-2"
           >
             <WorkspaceIcon className="ri-add-line text-[14px]" aria-hidden="true" />
             Add

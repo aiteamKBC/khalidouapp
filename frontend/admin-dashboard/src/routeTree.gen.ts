@@ -15,6 +15,7 @@ import { Route as DownloadRouteImport } from './routes/download'
 import { Route as AcceptInvitationRouteImport } from './routes/accept-invitation'
 import { Route as AppRouteImport } from './routes/_app'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as AppIndexRouteImport } from './routes/app.index'
 import { Route as AppTimesheetsRouteImport } from './routes/_app.timesheets'
 import { Route as AppTimeAdjustmentsRouteImport } from './routes/_app.time-adjustments'
 import { Route as AppTeamsRouteImport } from './routes/_app.teams'
@@ -71,6 +72,11 @@ const AppRoute = AppRouteImport.update({
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AppIndexRoute = AppIndexRouteImport.update({
+  id: '/app/',
+  path: '/app/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AppTimesheetsRoute = AppTimesheetsRouteImport.update({
@@ -243,6 +249,7 @@ export interface FileRoutesByFullPath {
   '/teams': typeof AppTeamsRouteWithChildren
   '/time-adjustments': typeof AppTimeAdjustmentsRoute
   '/timesheets': typeof AppTimesheetsRoute
+  '/app/': typeof AppIndexRoute
   '/devices/$deviceId': typeof AppDevicesDeviceIdRoute
   '/employees/$employeeId': typeof AppEmployeesEmployeeIdRoute
   '/projects/$projectId': typeof AppProjectsProjectIdRoute
@@ -278,6 +285,7 @@ export interface FileRoutesByTo {
   '/teams': typeof AppTeamsRouteWithChildren
   '/time-adjustments': typeof AppTimeAdjustmentsRoute
   '/timesheets': typeof AppTimesheetsRoute
+  '/app': typeof AppIndexRoute
   '/devices/$deviceId': typeof AppDevicesDeviceIdRoute
   '/employees/$employeeId': typeof AppEmployeesEmployeeIdRoute
   '/projects/$projectId': typeof AppProjectsProjectIdRoute
@@ -315,6 +323,7 @@ export interface FileRoutesById {
   '/_app/teams': typeof AppTeamsRouteWithChildren
   '/_app/time-adjustments': typeof AppTimeAdjustmentsRoute
   '/_app/timesheets': typeof AppTimesheetsRoute
+  '/app/': typeof AppIndexRoute
   '/_app/devices/$deviceId': typeof AppDevicesDeviceIdRoute
   '/_app/employees/$employeeId': typeof AppEmployeesEmployeeIdRoute
   '/_app/projects/$projectId': typeof AppProjectsProjectIdRoute
@@ -352,6 +361,7 @@ export interface FileRouteTypes {
     | '/teams'
     | '/time-adjustments'
     | '/timesheets'
+    | '/app/'
     | '/devices/$deviceId'
     | '/employees/$employeeId'
     | '/projects/$projectId'
@@ -387,6 +397,7 @@ export interface FileRouteTypes {
     | '/teams'
     | '/time-adjustments'
     | '/timesheets'
+    | '/app'
     | '/devices/$deviceId'
     | '/employees/$employeeId'
     | '/projects/$projectId'
@@ -423,6 +434,7 @@ export interface FileRouteTypes {
     | '/_app/teams'
     | '/_app/time-adjustments'
     | '/_app/timesheets'
+    | '/app/'
     | '/_app/devices/$deviceId'
     | '/_app/employees/$employeeId'
     | '/_app/projects/$projectId'
@@ -437,6 +449,7 @@ export interface RootRouteChildren {
   DownloadRoute: typeof DownloadRoute
   EmployeeRoute: typeof EmployeeRoute
   LoginRoute: typeof LoginRoute
+  AppIndexRoute: typeof AppIndexRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -481,6 +494,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/app/': {
+      id: '/app/'
+      path: '/app'
+      fullPath: '/app/'
+      preLoaderRoute: typeof AppIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/_app/timesheets': {
@@ -793,6 +813,7 @@ const rootRouteChildren: RootRouteChildren = {
   DownloadRoute: DownloadRoute,
   EmployeeRoute: EmployeeRoute,
   LoginRoute: LoginRoute,
+  AppIndexRoute: AppIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
