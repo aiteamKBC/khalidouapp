@@ -1328,6 +1328,162 @@ def test_general_admin_can_reactivate_device_without_restoring_old_tokens(identi
         db.close()
 
 
+def test_revoke_then_reactivate_keeps_the_old_sign_in_revoked(identity_client):
+    client, data = identity_client
+    db: Session = data["session_factory"]()
+    try:
+        employee = Employee(
+            company_id=data["general_admin"].company_id,
+            name="Swapped Laptop Employee",
+            email="swapped.laptop@kentconsultancy.co",
+            employee_code="EMP-SWAPPED-LAPTOP",
+            job_title="Developer",
+            timezone="Africa/Cairo",
+            status="active",
+            portal_password_hash=hash_password("EmployeePassword123!"),
+        )
+        db.add(employee)
+        db.flush()
+        device = Device(
+            company_id=employee.company_id,
+            employee_id=employee.id,
+            device_name="Swapped Laptop",
+            installation_id="swapped-installation-12345",
+            operating_system="Windows 11",
+            agent_version="1.2.0",
+            status="active",
+        )
+        db.add(device)
+        db.flush()
+        live_token = DeviceToken(
+            company_id=employee.company_id,
+            device_id=device.id,
+            token_hash=hash_token("live-device-token"),
+        )
+        db.add(live_token)
+        db.commit()
+        device_id = device.id
+        live_token_id = live_token.id
+    finally:
+        db.close()
+
+    revoked = client.post(f"/api/v1/devices/{device_id}/revoke", headers=data["general_headers"])
+    assert revoked.status_code == 200
+    reactivated = client.post(
+        f"/api/v1/devices/{device_id}/reactivate", headers=data["general_headers"]
+    )
+    assert reactivated.status_code == 200
+
+    db = data["session_factory"]()
+    try:
+        assert db.get(Device, device_id).status == "active"
+        assert db.get(DeviceToken, live_token_id).revoked_at is not None
+    finally:
+        db.close()
+
+
+def test_signing_in_on_someone_elses_computer_is_logged_and_hr_can_reassign(
+    identity_client, monkeypatch
+):
+    client, data = identity_client
+    tokens = iter(
+        [
+            "swap-invitation-token-owner-with-enough-length-123456789",
+            "swap-invitation-token-borrower-with-enough-length-12345",
+        ]
+    )
+    monkeypatch.setattr(
+        "app.services.employee_invitations.secrets.token_urlsafe",
+        lambda _length: next(tokens),
+    )
+
+    def employee_token(name, email, raw_token):
+        client.post(
+            "/api/v1/people/invitations",
+            headers=data["general_headers"],
+            json={
+                "name": name,
+                "email": email,
+                "kind": "employee",
+                "team_ids": [str(data["team_a"].id)],
+                **employee_onboarding_payload(),
+            },
+        )
+        client.post(
+            f"/api/v1/people/invitations/{raw_token}",
+            json={"password": "SwapPassword123!"},
+        )
+        login = client.post(
+            "/api/v1/employee-auth/login",
+            json={"email": email, "password": "SwapPassword123!"},
+        )
+        return login.json()["data"]["access_token"]
+
+    owner = employee_token(
+        "Laptop Owner",
+        "laptop.owner@kentconsultancy.co",
+        "swap-invitation-token-owner-with-enough-length-123456789",
+    )
+    borrower = employee_token(
+        "Laptop Borrower",
+        "laptop.borrower@kentconsultancy.co",
+        "swap-invitation-token-borrower-with-enough-length-12345",
+    )
+
+    def enroll(token):
+        return client.post(
+            "/api/v1/agent/enroll-authenticated",
+            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "device": {
+                    "installation_id": "shared-laptop-installation-1",
+                    "device_name": "Shared Laptop",
+                    "operating_system": "Windows 11",
+                    "agent_version": "1.2.0",
+                    "windows_username": "kbc-user",
+                }
+            },
+        )
+
+    owned = enroll(owner)
+    assert owned.status_code == 200
+    device_id = owned.json()["data"]["device"]["id"]
+
+    for _ in range(2):
+        refused = enroll(borrower)
+        assert refused.status_code == 409
+        assert refused.json()["error"]["code"] == "DEVICE_ALREADY_ENROLLED"
+
+    attempts = client.get(
+        "/api/v1/devices/sign-in-attempts", headers=data["general_headers"]
+    ).json()["data"]
+    assert len(attempts) == 1
+    attempt = attempts[0]
+    assert attempt["employee_name"] == "Laptop Borrower"
+    assert attempt["owner_employee_name"] == "Laptop Owner"
+    assert attempt["device_name"] == "Shared Laptop"
+    assert attempt["attempt_count"] == 2
+
+    reassigned = client.post(
+        f"/api/v1/devices/{device_id}/reassign",
+        headers=data["general_headers"],
+        json={"employee_id": attempt["employee_id"]},
+    )
+    assert reassigned.status_code == 200
+    assert reassigned.json()["data"]["employee_id"] == attempt["employee_id"]
+
+    # The borrower can sign in now, the open list is empty, and the previous
+    # owner's sign-in on that computer no longer works.
+    assert enroll(borrower).status_code == 200
+    assert (
+        client.get("/api/v1/devices/sign-in-attempts", headers=data["general_headers"]).json()[
+            "data"
+        ]
+        == []
+    )
+    assert enroll(owner).status_code == 409
+
+
 def test_inviting_an_existing_active_employee_is_a_conflict(identity_client):
     client, data = identity_client
     db: Session = data["session_factory"]()

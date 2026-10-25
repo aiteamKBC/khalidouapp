@@ -23,13 +23,35 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { listDevices, reactivateDevice, revokeDevice } from "@/api/devices";
+import {
+  dismissSignInAttempt,
+  listDevices,
+  listSignInAttempts,
+  reactivateDevice,
+  reassignDevice,
+  revokeDevice,
+} from "@/api/devices";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { listEmployees } from "@/api/employees";
 import { useAuth } from "@/lib/auth";
 import { permissions } from "@/lib/permissions";
 import { formatRelative, formatDate } from "@/lib/format";
 import { toast } from "sonner";
-import { Laptop, ShieldCheck, WifiOff } from "lucide-react";
+import { Laptop, ShieldAlert, ShieldCheck, WifiOff } from "lucide-react";
 import { MetricTile } from "@/components/ui/metric-tile";
 import { findOtherOnlineDeviceForEmployee } from "@/lib/device-presence";
 
@@ -54,6 +76,39 @@ function DevicesList() {
   const emps = useQuery({
     queryKey: ["employees", scope],
     queryFn: ({ signal }) => listEmployees(scope, signal),
+  });
+  const attempts = useQuery({
+    queryKey: ["device-sign-in-attempts"],
+    queryFn: ({ signal }) => listSignInAttempts(signal),
+    enabled: canManageDevices,
+  });
+  // The computer being reassigned, and who it goes to. `employeeId` is preset
+  // when the dialog is opened from a sign-in attempt.
+  const [reassign, setReassign] = useState<{
+    deviceId: string;
+    deviceName: string;
+    ownerId: string;
+    employeeId: string;
+  } | null>(null);
+  const reassignMutation = useMutation({
+    mutationFn: ({ deviceId, employeeId }: { deviceId: string; employeeId: string }) =>
+      reassignDevice(deviceId, employeeId),
+    onSuccess: async () => {
+      toast.success("Device reassigned. The new employee can sign in on it now.");
+      setReassign(null);
+      await queryClient.invalidateQueries({ queryKey: ["devices"] });
+      await queryClient.invalidateQueries({ queryKey: ["device-sign-in-attempts"] });
+    },
+    onError: (error) =>
+      toast.error(error instanceof Error ? error.message : "Failed to reassign device"),
+  });
+  const dismissMutation = useMutation({
+    mutationFn: (id: string) => dismissSignInAttempt(id),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["device-sign-in-attempts"] });
+    },
+    onError: (error) =>
+      toast.error(error instanceof Error ? error.message : "Failed to dismiss the attempt"),
   });
   const [revokeId, setRevokeId] = useState<string | null>(null);
   const [reactivateId, setReactivateId] = useState<string | null>(null);
@@ -109,6 +164,67 @@ function DevicesList() {
           tone="amber"
         />
       </div>
+
+      {canManageDevices && (attempts.data ?? []).length > 0 && (
+        <Card className="mb-4 p-4">
+          <div className="mb-3 flex items-center gap-2">
+            <ShieldAlert className="h-4 w-4 text-warning-foreground" />
+            <h2 className="text-sm font-extrabold">
+              Sign-in attempts on another employee&apos;s computer
+            </h2>
+          </div>
+          <p className="mb-3 text-xs text-muted-foreground">
+            Khaliduo refused these sign-ins. Reassign the computer if it now belongs to the person
+            who tried, or dismiss the attempt.
+          </p>
+          <div className="space-y-2">
+            {(attempts.data ?? []).map((attempt) => (
+              <div
+                key={attempt.id}
+                className="flex flex-wrap items-center gap-3 rounded-xl border bg-card p-3"
+              >
+                <div className="min-w-0 flex-1 text-sm">
+                  <div>
+                    <span className="font-bold">{attempt.employeeName ?? "An employee"}</span> tried
+                    to sign in on{" "}
+                    <span className="font-bold">
+                      {attempt.ownerEmployeeName ?? "another employee"}
+                    </span>
+                    &apos;s computer <span className="font-bold">{attempt.deviceName}</span>
+                  </div>
+                  <div className="mt-0.5 text-xs text-muted-foreground">
+                    {attempt.attemptCount === 1 ? "Once" : `${attempt.attemptCount} times`} · last{" "}
+                    {formatRelative(attempt.lastAttemptedAt)}
+                    {attempt.ipAddress ? ` · IP ${attempt.ipAddress}` : ""}
+                    {attempt.windowsUsername ? ` · Windows user ${attempt.windowsUsername}` : ""}
+                  </div>
+                </div>
+                <Button
+                  size="sm"
+                  onClick={() =>
+                    setReassign({
+                      deviceId: attempt.deviceId,
+                      deviceName: attempt.deviceName,
+                      ownerId: attempt.currentOwnerEmployeeId,
+                      employeeId: attempt.employeeId,
+                    })
+                  }
+                >
+                  Reassign to {attempt.employeeName ?? "this employee"}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={dismissMutation.isPending}
+                  onClick={() => dismissMutation.mutate(attempt.id)}
+                >
+                  Dismiss
+                </Button>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
 
       <Card className="overflow-x-auto">
         <Table>
@@ -172,6 +288,22 @@ function DevicesList() {
                         View
                       </Link>
                     </Button>
+                    {canManageDevices && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() =>
+                          setReassign({
+                            deviceId: device.id,
+                            deviceName: device.name,
+                            ownerId: device.employeeId,
+                            employeeId: "",
+                          })
+                        }
+                      >
+                        Reassign
+                      </Button>
+                    )}
                     {canManageDevices && device.tokenStatus === "valid" && (
                       <Button
                         variant="ghost"
@@ -199,13 +331,67 @@ function DevicesList() {
         </Table>
       </Card>
 
+      <Dialog open={reassign !== null} onOpenChange={(open) => !open && setReassign(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Reassign {reassign?.deviceName}</DialogTitle>
+            <DialogDescription>
+              {(emps.data ?? []).find((employee) => employee.id === reassign?.ownerId)?.name ??
+                "The current owner"}{" "}
+              is signed out of this computer and any running session on it ends. The new employee
+              then signs in on it. Work already recorded stays with the current owner.
+            </DialogDescription>
+          </DialogHeader>
+          <Select
+            value={reassign?.employeeId ?? ""}
+            onValueChange={(employeeId) =>
+              setReassign((current) => (current ? { ...current, employeeId } : current))
+            }
+          >
+            <SelectTrigger aria-label="New owner">
+              <SelectValue placeholder="Choose the employee" />
+            </SelectTrigger>
+            <SelectContent>
+              {(emps.data ?? [])
+                .filter(
+                  (employee) =>
+                    employee.accountStatus === "active" && employee.id !== reassign?.ownerId,
+                )
+                .sort((a, b) => a.name.localeCompare(b.name))
+                .map((employee) => (
+                  <SelectItem key={employee.id} value={employee.id}>
+                    {employee.name}
+                  </SelectItem>
+                ))}
+            </SelectContent>
+          </Select>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setReassign(null)}>
+              Cancel
+            </Button>
+            <Button
+              disabled={!reassign?.employeeId || reassignMutation.isPending}
+              onClick={() =>
+                reassign?.employeeId &&
+                reassignMutation.mutate({
+                  deviceId: reassign.deviceId,
+                  employeeId: reassign.employeeId,
+                })
+              }
+            >
+              Reassign
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <AlertDialog open={revokeId !== null} onOpenChange={(open) => !open && setRevokeId(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Revoke device?</AlertDialogTitle>
             <AlertDialogDescription>
-              This will invalidate the device's token and force re-registration. The action cannot
-              be undone.
+              The employee is signed out of this computer and Khaliduo stops tracking on it. You can
+              reactivate it later; the employee then has to sign in again.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

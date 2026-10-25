@@ -71,6 +71,7 @@ export type AgentStatus = {
   updateVersion: string | null;
   updatePercent: number | null;
   updateRequired?: boolean;
+  trackingMovedToDevice?: string | null;
   activeMeeting: ActiveMeeting | null;
   meetings: MeetingSummary[];
   breakBank: BreakBank | null;
@@ -178,6 +179,7 @@ export type WorkdayTimeline = {
     task_name: string | null;
     is_current: boolean;
     work_category?: "extra" | "break_work" | null;
+    break_paid?: boolean | null;
   }>;
 };
 

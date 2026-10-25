@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.exceptions import ApiError
 from app.core.security import create_device_token, hash_token
-from app.models import Device, DeviceToken, Employee, TrackingSettings
+from app.models import Device, DeviceSignInAttempt, DeviceToken, Employee, TrackingSettings
 from app.schemas.agent import AgentDeviceInfo
 from app.services.device_location import refresh_device_location
 
@@ -65,6 +65,42 @@ def issue_device_token(db: Session, device: Device) -> str:
     return token
 
 
+def record_sign_in_attempt(
+    db: Session,
+    device: Device,
+    employee: Employee,
+    device_info: AgentDeviceInfo,
+    ip_address: str | None,
+) -> DeviceSignInAttempt:
+    """Keep one open row per employee and computer, counting repeat attempts."""
+    now = datetime.now(UTC)
+    attempt = db.scalar(
+        select(DeviceSignInAttempt).where(
+            DeviceSignInAttempt.device_id == device.id,
+            DeviceSignInAttempt.employee_id == employee.id,
+            DeviceSignInAttempt.resolved_at.is_(None),
+        )
+    )
+    if attempt is None:
+        attempt = DeviceSignInAttempt(
+            company_id=device.company_id,
+            device_id=device.id,
+            employee_id=employee.id,
+            owner_employee_id=device.employee_id,
+            first_attempted_at=now,
+            last_attempted_at=now,
+            attempt_count=1,
+        )
+        db.add(attempt)
+    else:
+        attempt.attempt_count += 1
+        attempt.last_attempted_at = now
+        attempt.owner_employee_id = device.employee_id
+    attempt.ip_address = ip_address or attempt.ip_address
+    attempt.windows_username = device_info.windows_username or attempt.windows_username
+    return attempt
+
+
 def enroll_employee_device(
     db: Session,
     employee: Employee,
@@ -107,9 +143,14 @@ def enroll_employee_device(
             403,
         )
     elif device.employee_id != employee.id:
+        record_sign_in_attempt(db, device, employee, device_info, ip_address)
+        db.commit()
         raise ApiError(
             "DEVICE_ALREADY_ENROLLED",
-            "This installation is already linked to another employee.",
+            (
+                "This computer is registered to another employee. HR has been told "
+                "you tried to sign in and can reassign it to you from Devices."
+            ),
             409,
         )
     else:

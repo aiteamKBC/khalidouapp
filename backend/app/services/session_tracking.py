@@ -180,6 +180,11 @@ def last_worked_activity_at(
     return started_at
 
 
+# The employee started tracking on another of their devices. That device now
+# owns the workday; this one must not take it back without the employee.
+MOVED_TO_OTHER_DEVICE_REASON = "Tracking moved to another device"
+
+
 def close_open_session(
     db: Session,
     *,
@@ -187,6 +192,7 @@ def close_open_session(
     session: WorkSession,
     ended_at: datetime,
     reason: str,
+    details: dict[str, Any] | None = None,
 ) -> None:
     if session.ended_at is not None:
         return
@@ -202,8 +208,25 @@ def close_open_session(
         event_type="session_ended",
         event_timestamp=ended_at,
         idempotency_key=f"session-auto-ended:{session.id}:{reason}",
-        payload={"reason": reason},
+        payload={"reason": reason, **(details or {})},
     )
+
+
+def moved_to_device_name(db: Session, session: WorkSession) -> str | None:
+    """The device that took over tracking when this session was closed, if any."""
+    if session.ended_at is None:
+        return None
+    events = db.scalars(
+        select(ActivityEvent).where(
+            ActivityEvent.session_id == session.id,
+            ActivityEvent.event_type == "session_ended",
+        )
+    ).all()
+    for event in events:
+        payload = event.payload or {}
+        if payload.get("reason") == MOVED_TO_OTHER_DEVICE_REASON:
+            return str(payload.get("moved_to_device_name") or "another device")
+    return None
 
 
 def serialize_session(session: WorkSession) -> dict[str, Any]:
@@ -846,12 +869,21 @@ def start_or_get_session(
         )
     ).all()
     for other in other_sessions:
+        moved = other.device_id != device.id
         close_open_session(
             db,
             device=device,
             session=other,
             ended_at=now,
-            reason="Superseded by a new work session",
+            reason=MOVED_TO_OTHER_DEVICE_REASON if moved else "Superseded by a new work session",
+            details=(
+                {
+                    "moved_to_device_id": str(device.id),
+                    "moved_to_device_name": device.device_name,
+                }
+                if moved
+                else None
+            ),
         )
 
     started_at = now
@@ -1094,6 +1126,16 @@ def record_heartbeat(
         }
 
     if session.ended_at is not None:
+        # The employee moved to another device. Restarting here, even on an
+        # active heartbeat, closed that device's session in turn, so two
+        # computers in use kept taking the workday from each other. Only an
+        # explicit start on this device takes it back.
+        moved_to = moved_to_device_name(db, session)
+        if moved_to is not None:
+            return {
+                **ignored("tracking_moved_to_another_device"),
+                "moved_to_device_name": moved_to,
+            }
         # Only real work reopens a workday. An unattended machine keeps sending
         # idle heartbeats, and restarting on those spawned a fresh session the
         # moment the previous one closed - which is how workdays ended up

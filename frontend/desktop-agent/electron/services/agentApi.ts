@@ -249,6 +249,7 @@ export type AgentWorkdayTimeline = {
     task_name: string | null;
     is_current: boolean;
     work_category?: "extra" | "break_work" | null;
+    break_paid?: boolean | null;
   }>;
 };
 
@@ -670,7 +671,12 @@ export async function sendHeartbeat(options: {
 }) {
   const response = await axios.post<
     ApiSuccess<
-      SessionPayload & { duplicate: boolean; update_required?: boolean }
+      SessionPayload & {
+        duplicate: boolean;
+        update_required?: boolean;
+        ignore_reason?: string;
+        moved_to_device_name?: string;
+      }
     >
   >(
     `${getApiBaseUrl()}/agent/sessions/${options.sessionId}/heartbeat`,

@@ -8,6 +8,7 @@ from app.models.attendance_correction import AttendanceCorrection
 from app.models.company import Company
 from app.models.daily_attendance import DailyAttendance
 from app.models.device import Device
+from app.models.device_sign_in_attempt import DeviceSignInAttempt
 from app.models.device_token import DeviceToken
 from app.models.employee import Employee
 from app.models.employee_work_profile import EmployeeWorkProfile
@@ -60,6 +61,7 @@ __all__ = [
     "FinancialPolicyPeriod",
     "DailyAttendance",
     "Device",
+    "DeviceSignInAttempt",
     "DeviceToken",
     "Employee",
     "EmployeeWorkProfile",
