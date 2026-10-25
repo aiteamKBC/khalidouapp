@@ -2,6 +2,14 @@
 
 Lovable dashboard merged into the local Khaliduo project and wired to the FastAPI backend.
 
+The employee portal at `/employee` uses the **Khaliduo Employee Dashboard** Readdy
+design (project `daf9820f-f19f-4eeb-98d5-07878050b82c`, preview version `15222173`).
+Its components live in `src/components/employee-workspace` and use the existing
+employee APIs for authentication, tasks, time and leave requests, profile updates,
+notifications, and protected screenshots. Desktop handoff and screenshot deletion
+with tracked-time deduction remain available. The Electron application is separate.
+Run `npm run test:employee-workspace` to check time counting and workflow mappings.
+
 ## Development
 
 ```powershell

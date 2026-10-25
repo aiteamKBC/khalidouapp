@@ -14,7 +14,8 @@
     "test:security": "node --experimental-strip-types --test src/lib/security-boundaries.test.ts",
     "test:timesheets": "node --experimental-strip-types --test src/lib/timesheet-pagination.test.ts",
     "lint": "eslint src",
-    "format": "prettier --write ."
+    "format": "prettier --write .",
+    "test:employee-workspace": "node --experimental-strip-types --test src/components/employee-workspace/adapters.test.ts"
   },
   "engines": {
     "node": ">=22 <25"
