@@ -67,3 +67,73 @@ export async function revokeDevice(id: string): Promise<void> {
 export async function reactivateDevice(id: string): Promise<Device> {
   return mapDevice(await apiFetch<BackendDevice>(`/devices/${id}/reactivate`, { method: "POST" }));
 }
+
+export type DeviceSignInAttempt = {
+  id: string;
+  deviceId: string;
+  deviceName: string;
+  deviceStatus: string;
+  employeeId: string;
+  employeeName: string | null;
+  ownerEmployeeId: string;
+  ownerEmployeeName: string | null;
+  currentOwnerEmployeeId: string;
+  firstAttemptedAt: string;
+  lastAttemptedAt: string;
+  attemptCount: number;
+  ipAddress: string | null;
+  windowsUsername: string | null;
+};
+
+type BackendSignInAttempt = {
+  id: string;
+  device_id: string;
+  device_name: string;
+  device_status: string;
+  employee_id: string;
+  employee_name: string | null;
+  owner_employee_id: string;
+  owner_employee_name: string | null;
+  current_owner_employee_id: string;
+  first_attempted_at: string;
+  last_attempted_at: string;
+  attempt_count: number;
+  ip_address: string | null;
+  windows_username: string | null;
+};
+
+/** Open attempts to sign in on a computer registered to another employee. */
+export async function listSignInAttempts(signal?: AbortSignal): Promise<DeviceSignInAttempt[]> {
+  const attempts = await apiFetch<BackendSignInAttempt[]>("/devices/sign-in-attempts", {
+    signal,
+  });
+  return attempts.map((attempt) => ({
+    id: attempt.id,
+    deviceId: attempt.device_id,
+    deviceName: attempt.device_name,
+    deviceStatus: attempt.device_status,
+    employeeId: attempt.employee_id,
+    employeeName: attempt.employee_name,
+    ownerEmployeeId: attempt.owner_employee_id,
+    ownerEmployeeName: attempt.owner_employee_name,
+    currentOwnerEmployeeId: attempt.current_owner_employee_id,
+    firstAttemptedAt: attempt.first_attempted_at,
+    lastAttemptedAt: attempt.last_attempted_at,
+    attemptCount: attempt.attempt_count,
+    ipAddress: attempt.ip_address,
+    windowsUsername: attempt.windows_username,
+  }));
+}
+
+export async function dismissSignInAttempt(id: string): Promise<void> {
+  await apiFetch(`/devices/sign-in-attempts/${id}/dismiss`, { method: "POST" });
+}
+
+export async function reassignDevice(id: string, employeeId: string): Promise<Device> {
+  return mapDevice(
+    await apiFetch<BackendDevice>(`/devices/${id}/reassign`, {
+      method: "POST",
+      body: JSON.stringify({ employee_id: employeeId }),
+    }),
+  );
+}

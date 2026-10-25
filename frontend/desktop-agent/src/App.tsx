@@ -40,6 +40,7 @@ import {
 } from "./screenshotRecovery";
 import {
   mainTimerSeconds,
+  paidBreakSecondsToday,
   reconciledNormalTodaySeconds,
 } from "./timerDisplay";
 import "sweetalert2/dist/sweetalert2.min.css";
@@ -834,6 +835,8 @@ function App() {
     ? `On break · ${status.scheduledBreak?.name ?? "Break"}`
     : isNotWorkingOutsideShift
     ? "Off shift"
+    : isPaused && status.trackingMovedToDevice
+      ? `Tracking on ${status.trackingMovedToDevice}`
     : isPaused
       ? "Paused"
       : isTracking
@@ -843,6 +846,9 @@ function App() {
             ? "Shift idle"
             : "Paid shift"
         : "No timer running";
+  const runningBreakEndsAtMs = status.scheduledBreak
+    ? Date.parse(status.scheduledBreak.endsAt)
+    : null;
   const displayedTimerSeconds = mainTimerSeconds({
     isAutomaticIdle:
       status.trackingStatus === "idle" && !isPaused && !onScheduledBreak,
@@ -850,6 +856,11 @@ function App() {
     currentIdleSeconds: status.currentIdleSeconds,
     extraSeconds,
     trackedTodaySeconds,
+    paidBreakSeconds: paidBreakSecondsToday(
+      status.todayTimeline?.intervals ?? [],
+      Date.now(),
+      Number.isFinite(runningBreakEndsAtMs) ? runningBreakEndsAtMs : null,
+    ),
   });
 
   async function refreshStatusAfterEnrollment() {

@@ -307,6 +307,8 @@ type AgentRuntimeStatus = {
   updatePercent: number | null;
   // The server reported this build is below the supported version.
   updateRequired: boolean;
+  // The employee started tracking on this other device, which ended this one.
+  trackingMovedToDevice: string | null;
   activeMeeting: ActiveMeeting | null;
   meetings: MeetingSummary[];
 };
@@ -594,6 +596,7 @@ const runtimeStatus: AgentRuntimeStatus = {
   updateVersion: null,
   updatePercent: null,
   updateRequired: false,
+  trackingMovedToDevice: null,
   activeMeeting: null,
   meetings: [],
 };
@@ -1927,6 +1930,7 @@ function syncRuntimeFromSession(session: WorkSession) {
     return;
   }
   const wasIdle = runtimeStatus.trackingStatus === "idle";
+  runtimeStatus.trackingMovedToDevice = null;
   activeCounterDate = todayCounterDate;
   currentSessionId = session.id;
   runtimeStatus.sessionStartedAt = session.started_at;
@@ -4061,6 +4065,14 @@ async function heartbeatTick(options: { refreshMetadata?: boolean } = {}) {
       });
       return;
     }
+    if (result.ignore_reason === "tracking_moved_to_another_device") {
+      runtimeStatus.connectionStatus = "online";
+      runtimeStatus.lastSuccessfulSyncAt = new Date().toISOString();
+      handleTrackingMovedToAnotherDevice(
+        result.moved_to_device_name ?? "another device",
+      );
+      return;
+    }
     const serverClosedDuringNonWorking = shouldWaitForInputBeforeRestart(
       status,
       Boolean(result.session.ended_at) ||
@@ -4174,6 +4186,39 @@ async function heartbeatTick(options: { refreshMetadata?: boolean } = {}) {
     }
     rebuildTrayMenu();
   }
+}
+
+/**
+ * The employee started tracking on another of their computers, and the server
+ * ended this one's session. Stop here like a manual stop: restarting on our own
+ * would take the workday back from the computer they are actually using. Resume
+ * on this computer moves tracking back.
+ */
+function handleTrackingMovedToAnotherDevice(deviceName: string) {
+  log.info("Tracking moved to another device; this device stops tracking", {
+    deviceName,
+  });
+  recalculateWorkedTime();
+  closeActiveLocalTrackingSession(new Date().toISOString(), "moved_to_other_device");
+  currentSessionId = null;
+  runtimeStatus.sessionStartedAt = null;
+  waitingForInputAfterIdleSessionClose = false;
+  freshSessionStartPromptActive = false;
+  trackingPausedByUser = true;
+  runtimeStatus.trackingPaused = true;
+  runtimeStatus.trackingStatus = "paused";
+  runtimeStatus.trackingMovedToDevice = deviceName;
+  if (runtimeStatus.lastIdleAlert) setIdleAlertAttention(false);
+  saveTrackingPreferences();
+  if (Notification.isSupported()) {
+    new Notification({
+      title: "Khaliduo is tracking on another computer",
+      body: `You started work on ${deviceName}, so this computer stopped tracking. Press Resume here to track on this computer instead.`,
+      icon: getAppIconPath(),
+    }).show();
+  }
+  notifyRendererStatus();
+  rebuildTrayMenu();
 }
 
 function automaticTrackingIsExpected() {

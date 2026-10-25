@@ -108,6 +108,10 @@ class DeviceUpdate(BaseModel):
     status: str | None = Field(default=None, max_length=50)
 
 
+class DeviceReassignRequest(BaseModel):
+    employee_id: UUID
+
+
 class TrackingSettingsUpdate(BaseModel):
     screenshot_enabled: bool | None = None
     screenshot_interval_minutes: int | None = Field(default=None, ge=1, le=240)
