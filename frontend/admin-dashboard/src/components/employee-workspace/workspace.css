@@ -423,6 +423,9 @@
   opacity: 0.5;
   cursor: not-allowed;
 }
+.employee-workspace.readdy-tracker-ui.dark .bg-white {
+  background-color: var(--k-card);
+}
 .employee-workspace .k-overlay {
   opacity: 0.32;
 }

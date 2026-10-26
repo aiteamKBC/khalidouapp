@@ -1,0 +1,238 @@
+/* Readdy V214 (15260569): dashboard palettes, scoped to the employee workspace. */
+.employee-workspace.readdy-tracker-ui[data-dash-skin] {
+  background: var(--k-bg);
+  color-scheme: light;
+}
+.employee-workspace.readdy-tracker-ui.dark[data-dash-skin] {
+  color-scheme: dark;
+}
+.employee-workspace .ew-skin-picker {
+  position: relative;
+}
+.employee-workspace .ew-skin-trigger {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border: 1px solid var(--k-line);
+  border-radius: 8px;
+  color: var(--k-ink-2);
+  cursor: pointer;
+}
+.employee-workspace .ew-skin-trigger:hover {
+  background: var(--k-bg-2);
+  color: var(--k-plum);
+}
+.employee-workspace .ew-skin-panel {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  z-index: 50;
+  width: min(258px, calc(100vw - 24px));
+  padding: 8px;
+  border: 1px solid var(--k-line);
+  border-radius: 12px;
+  background: var(--k-card);
+}
+.employee-workspace .ew-skin-panel header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 4px 8px;
+  color: var(--k-muted);
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+}
+.employee-workspace .ew-skin-dots {
+  display: flex;
+  gap: 4px;
+}
+.employee-workspace .ew-skin-dots i {
+  display: block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+.employee-workspace .ew-skin-choice {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 10px;
+  padding: 8px;
+  margin-top: 4px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  text-align: start;
+  color: var(--k-ink);
+  cursor: pointer;
+}
+.employee-workspace .ew-skin-choice[aria-pressed="true"] {
+  border-color: var(--k-pink);
+  background: var(--k-pink-2);
+}
+.employee-workspace .ew-skin-choice:hover {
+  background: var(--k-hover);
+}
+.employee-workspace .ew-skin-choice > svg {
+  color: var(--k-pink);
+  flex-shrink: 0;
+}
+.employee-workspace .ew-skin-swatches {
+  display: flex;
+  flex: none;
+  gap: 3px;
+}
+.employee-workspace .ew-skin-swatches i {
+  display: block;
+  width: 7px;
+  height: 16px;
+  border-radius: 2px;
+}
+.employee-workspace .ew-skin-description {
+  flex: 1;
+  min-width: 0;
+}
+.employee-workspace .ew-skin-description strong {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+.employee-workspace .ew-skin-description small {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 9.5px;
+  color: var(--k-muted);
+  margin-top: 3px;
+}
+@media (max-width: 640px) {
+  .employee-workspace .ew-skin-panel {
+    position: fixed;
+    top: 78px;
+    right: 12px;
+  }
+}
+.employee-workspace.readdy-tracker-ui[data-dash-skin] {
+  background-color: var(--k-bg);
+  transition:
+    background-color 0.28s,
+    color 0.28s;
+}
+.employee-workspace.readdy-tracker-ui[data-dash-skin="ember"] {
+  --k-bg: #fdf7f0;
+  --k-bg-2: #f8ede2;
+  --k-card: #fff;
+  --k-ink: #2b1a11;
+  --k-ink-2: #4d3425;
+  --k-muted: #8a6852;
+  --k-faint: #b99a83;
+  --k-dot: #e8d5c2;
+  --k-line: #78482429;
+  --k-line-2: #78482417;
+  --k-plum: #a4441a;
+  --k-plum-2: #c1662f;
+  --k-pink: #df7a2c;
+  --k-pink-2: #df7a2c1f;
+  --k-green: #17795a;
+  --k-green-2: #e2f3ea;
+  --k-amber: #96660f;
+  --k-amber-2: #fbeed6;
+  --k-rose: #b13a35;
+  --k-rose-2: #fbe3e0;
+  --k-solid: #b04c1c;
+  --k-solid-2: #c9611f;
+  --k-hover: #fdf2e8;
+  --k-field: #fffdfa;
+  --k-check-line: #e3cfba;
+  --k-overlay: #1a1109;
+}
+.employee-workspace.readdy-tracker-ui.dark[data-dash-skin="ember"] {
+  --k-bg: #17111c;
+  --k-bg-2: #1f1626;
+  --k-card: #241a2c;
+  --k-ink: #f9efe8;
+  --k-ink-2: #e2c8bf;
+  --k-muted: #ac93a0;
+  --k-faint: #7f6a76;
+  --k-dot: #3d2c3a;
+  --k-line: #f0c8b429;
+  --k-line-2: #f0c8b417;
+  --k-plum: #f4c8a6;
+  --k-plum-2: #d79a72;
+  --k-pink: #f0954a;
+  --k-pink-2: #f0954a21;
+  --k-green: #62d3a2;
+  --k-green-2: #62d3a221;
+  --k-amber: #e6b46a;
+  --k-amber-2: #e6b46a24;
+  --k-rose: #f0837c;
+  --k-rose-2: #f0837c24;
+  --k-solid: #b8541f;
+  --k-solid-2: #cf6a30;
+  --k-hover: #f0c8b40f;
+  --k-field: #1c1323;
+  --k-check-line: #4d3547;
+  --k-overlay: #0a0509;
+}
+.employee-workspace.readdy-tracker-ui[data-dash-skin="forest"] {
+  --k-bg: #f3faf6;
+  --k-bg-2: #e7f5ee;
+  --k-card: #fff;
+  --k-ink: #0d2620;
+  --k-ink-2: #26443b;
+  --k-muted: #577a6f;
+  --k-faint: #8fb0a5;
+  --k-dot: #cfe4db;
+  --k-line: #0d584226;
+  --k-line-2: #0d584214;
+  --k-plum: #0c5c45;
+  --k-plum-2: #17876a;
+  --k-pink: #0f9873;
+  --k-pink-2: #0f98731f;
+  --k-green: #0f8a63;
+  --k-green-2: #dff3e9;
+  --k-amber: #8a6410;
+  --k-amber-2: #fbeed6;
+  --k-rose: #a8323f;
+  --k-rose-2: #fbe3e6;
+  --k-solid: #0d6b52;
+  --k-solid-2: #12856a;
+  --k-hover: #f1fbf6;
+  --k-field: #fafffd;
+  --k-check-line: #cbe3d9;
+  --k-overlay: #061512;
+}
+.employee-workspace.readdy-tracker-ui.dark[data-dash-skin="forest"] {
+  --k-bg: #06120f;
+  --k-bg-2: #0a1d18;
+  --k-card: #0d241e;
+  --k-ink: #e8fdf4;
+  --k-ink-2: #c0e8d9;
+  --k-muted: #7fa89a;
+  --k-faint: #5a7d72;
+  --k-dot: #17352c;
+  --k-line: #7ae7c229;
+  --k-line-2: #7ae7c217;
+  --k-plum: #9ff0d1;
+  --k-plum-2: #3ecfa1;
+  --k-pink: #34d399;
+  --k-pink-2: #34d39921;
+  --k-green: #34d399;
+  --k-green-2: #34d39921;
+  --k-amber: #e0b062;
+  --k-amber-2: #e0b06224;
+  --k-rose: #f08a86;
+  --k-rose-2: #f08a8624;
+  --k-solid: #10866a;
+  --k-solid-2: #17a081;
+  --k-hover: #7ae7c20f;
+  --k-field: #081915;
+  --k-check-line: #1d4538;
+  --k-overlay: #020806;
+}
+.employee-workspace.readdy-tracker-ui[data-dash-skin="ember"] .bg-ew-solid,
+.employee-workspace.readdy-tracker-ui[data-dash-skin="forest"] .bg-ew-solid {
+  color: #fff;
+}

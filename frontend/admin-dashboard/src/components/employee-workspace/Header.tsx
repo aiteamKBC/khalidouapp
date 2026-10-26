@@ -1,4 +1,5 @@
-import { Moon, Sun } from "lucide-react";
+import SkinPicker from "./SkinPicker";
+import type { DashboardSkin, WorkspaceTheme } from "./dashboard-skins";
 import { BrandLogo } from "@/components/ui/brand-logo";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { WorkspaceIcon } from "./WorkspaceIcon";
@@ -7,7 +8,8 @@ import type { Employee, Notification } from "@/components/employee-workspace/mod
 
 type Props = {
   theme: "light" | "dark";
-  onToggleTheme: () => void;
+  skin: DashboardSkin;
+  onTheme: (skin: DashboardSkin, mode: WorkspaceTheme) => void;
   onOpenTracker: () => void;
   employee: Employee;
   notifications: Notification[];
@@ -24,7 +26,8 @@ type Props = {
 
 export default function Header({
   theme,
-  onToggleTheme,
+  skin,
+  onTheme,
   onOpenTracker,
   employee,
   notifications,
@@ -93,15 +96,7 @@ export default function Header({
               <span className="k-mono text-[10.5px] text-ew-muted">{shiftLabel}</span>
             </div>
 
-            <button
-              type="button"
-              onClick={onToggleTheme}
-              aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} theme`}
-              aria-pressed={theme === "dark"}
-              className="grid h-9 w-9 place-items-center rounded-md border border-ew-line text-ew-muted"
-            >
-              {theme === "dark" ? <Sun className="size-4" /> : <Moon className="size-4" />}
-            </button>
+            <SkinPicker skin={skin} mode={theme} onSelect={onTheme} />
             <button
               type="button"
               onClick={onOpenTracker}

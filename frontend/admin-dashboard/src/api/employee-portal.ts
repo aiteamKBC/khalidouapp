@@ -33,7 +33,14 @@ export type PortalSummary = {
   today: PortalPeriod;
   week: PortalPeriod;
   month: PortalPeriod;
-  days: Array<PortalPeriod & { date: string }>;
+  days: Array<{
+    date: string;
+    active_seconds: number;
+    idle_seconds: number;
+    adjustment_seconds: number;
+    payable_seconds: number;
+    screenshot_count: number;
+  }>;
   todayTimeline: WorkdayTimeline;
   daily_attendance: {
     status: string;
@@ -198,10 +205,7 @@ export const updateEmployeeProfile = (
     token,
   ).then(mapPortalEmployee);
 
-export async function employeeSummary(
-  token: string,
-  signal?: AbortSignal,
-): Promise<PortalSummary> {
+export async function employeeSummary(token: string, signal?: AbortSignal): Promise<PortalSummary> {
   const result = await apiFetch<
     Omit<PortalSummary, "todayTimeline"> & { today_timeline: BackendWorkdayTimeline }
   >("/employee-portal/summary", { signal }, token);
@@ -327,16 +331,8 @@ export type PortalTaskWorkspace = {
   attachments: Array<{ id: string; file_name: string; size_bytes: number; created_at: string }>;
 };
 
-export const employeeTaskWorkspace = (
-  token: string,
-  taskId: string,
-  signal?: AbortSignal,
-) =>
-  apiFetch<PortalTaskWorkspace>(
-    `/employee-portal/tasks/${taskId}/workspace`,
-    { signal },
-    token,
-  );
+export const employeeTaskWorkspace = (token: string, taskId: string, signal?: AbortSignal) =>
+  apiFetch<PortalTaskWorkspace>(`/employee-portal/tasks/${taskId}/workspace`, { signal }, token);
 
 export const createEmployeeTaskComment = (token: string, taskId: string, body: string) =>
   apiFetch(
@@ -355,11 +351,7 @@ export const uploadEmployeeTaskAttachment = (token: string, taskId: string, file
 };
 
 export const employeeTimeRequests = (token: string, signal?: AbortSignal) =>
-  apiFetch<PortalTimeRequest[]>(
-    "/employee-portal/time-adjustment-requests",
-    { signal },
-    token,
-  );
+  apiFetch<PortalTimeRequest[]>("/employee-portal/time-adjustment-requests", { signal }, token);
 
 export const createEmployeeTimeRequest = (
   token: string,

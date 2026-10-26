@@ -5,6 +5,8 @@ import AnimatedText from "@/components/motion/AnimatedText";
 import HeroRays from "@/components/motion/HeroRays";
 import StarButton from "@/components/motion/StarButton";
 import { useWorkspaceTheme } from "./useWorkspaceTheme";
+import { useDashboardSkin } from "./useDashboardSkin";
+import "./dashboard-skins.css";
 import { useEffect, useMemo, useState } from "react";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -36,6 +38,8 @@ import { WorkdayTimeline } from "@/components/workday-timeline";
 import Header from "./Header";
 import Tabs, { type TabKey } from "./Tabs";
 import TimeSummaryCards from "./TimeSummaryCards";
+import OverviewHub from "./OverviewHub";
+import ActivityCard from "./ActivityCard";
 import BreakdownDrawer from "./BreakdownDrawer";
 import TaskTable from "./TaskTable";
 import TaskDrawer from "./TaskDrawer";
@@ -77,7 +81,8 @@ export default function EmployeeWorkspace({
   onLogout: () => void;
   initialMode?: "dashboard" | "tracker";
 }) {
-  const { theme, toggleTheme } = useWorkspaceTheme();
+  const { theme, toggleTheme, setTheme } = useWorkspaceTheme();
+  const { skin, setSkin } = useDashboardSkin();
   const [trackerMode, setTrackerMode] = useState(initialMode === "tracker");
   const client = useQueryClient();
   const { prompt, dialog: notePromptDialog } = useNotePrompt();
@@ -419,6 +424,7 @@ export default function EmployeeWorkspace({
   return (
     <MotionPage
       className={`employee-workspace readdy-tracker-ui ${theme === "dark" ? "dark" : ""}`}
+      data-dash-skin={skin}
       scrollContainer={trackerMode ? "[data-motion-scroller]" : undefined}
     >
       {trackerMode ? (
@@ -504,7 +510,11 @@ export default function EmployeeWorkspace({
 
           <Header
             theme={theme}
-            onToggleTheme={toggleTheme}
+            skin={skin}
+            onTheme={(nextSkin, nextMode) => {
+              setSkin(nextSkin);
+              setTheme(nextMode);
+            }}
             onOpenTracker={() => setTrackerMode(true)}
             employee={profile}
             notifications={notifications}
@@ -613,7 +623,17 @@ export default function EmployeeWorkspace({
                 aria-labelledby="tab-overview"
                 className="k-enter mt-3"
               >
-                <TimeSummaryCards
+                <OverviewHub
+                  token={token}
+                  day={summaryQuery.data.todayTimeline.date}
+                  tasks={tasks}
+                  requests={requests}
+                  attendance={attendance}
+                  onOpenTab={setTab}
+                  onOpenRequest={openRequest}
+                />
+                <ActivityCard
+                  summary={summaryQuery.data}
                   summaries={summaries}
                   onBreakdown={(key) => {
                     setBreakdownScope(key);

@@ -163,6 +163,7 @@ export default function EmployeeTracker({
           onTaskChange={setTaskId}
           note={note}
           onNoteChange={setNote}
+          noteSaving={saveNote.isPending}
           onNoteSubmit={() => {
             if (taskId && note.trim() && !saveNote.isPending) saveNote.mutate();
           }}

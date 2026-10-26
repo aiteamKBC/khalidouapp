@@ -126,9 +126,13 @@ type IdleRequestOption = {
 };
 
 function initialTheme(): "light" | "dark" {
-  return window.localStorage.getItem(THEME_STORAGE_KEY) === "dark"
-    ? "dark"
-    : "light";
+  try {
+    return window.localStorage.getItem(THEME_STORAGE_KEY) === "light"
+      ? "light"
+      : "dark";
+  } catch {
+    return "dark";
+  }
 }
 
 /** "12m" or "1h 05m" for the saved-break counter. */

@@ -3,7 +3,7 @@ import type { RecentScreenshot } from "./types/electron";
 import { useState, type FormEvent, type ReactNode } from "react";
 import type { AgentStatus, AgentTask } from "./types/electron";
 
-// Native bindings for the Readdy tracker design, project daf9820f-f19f-4eeb-98d5-07878050b82c, version 15226259.
+// Native bindings for the Readdy tracker design, project daf9820f-f19f-4eeb-98d5-07878050b82c, V211 (version 15259656).
 export type DesktopView =
   "home" | "tasks" | "requests" | "meeting" | "settings";
 
