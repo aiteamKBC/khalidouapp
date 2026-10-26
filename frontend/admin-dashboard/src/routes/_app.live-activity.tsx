@@ -1,8 +1,8 @@
 import { createFileRoute, Navigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { RefreshCw } from "lucide-react";
-import { PageHeader } from "@/components/ui/page-header";
-import { Card } from "@/components/ui/card";
+import { PageHeader } from "@/components/admin/PageHeader";
+import { Card } from "@/components/admin/card";
 import {
   Table,
   TableBody,
@@ -10,8 +10,8 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table";
-import { StatusBadge } from "@/components/ui/status-badge";
+} from "@/components/admin/table";
+import { StatusBadge } from "@/components/admin/status-badge";
 import { listMonitoringEmployees } from "@/api/employees";
 import { listTeams } from "@/api/teams";
 import { listTasks } from "@/api/projects";

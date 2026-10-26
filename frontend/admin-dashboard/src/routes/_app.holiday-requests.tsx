@@ -3,20 +3,20 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CalendarDays, Check, Pencil, X } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
-import { PageHeader } from "@/components/ui/page-header";
-import { Card } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
+import { PageHeader } from "@/components/admin/PageHeader";
+import { Card } from "@/components/admin/card";
+import { Button } from "@/components/admin/button";
 import { Input } from "@/components/ui/input";
 import { DateInput } from "@/components/ui/date-input";
 import { Label } from "@/components/ui/label";
-import { StatusBadge } from "@/components/ui/status-badge";
+import { StatusBadge } from "@/components/admin/status-badge";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
+} from "@/components/admin/select";
 import {
   Table,
   TableBody,
@@ -24,7 +24,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table";
+} from "@/components/admin/table";
 import {
   listLeaveBalanceOverview,
   listLeaveRequests,
@@ -67,11 +67,14 @@ function HolidayRequestsPage() {
   const earlyLeaveRequests = useQuery({
     queryKey: ["early-leave-requests", scope, earlyLeaveStatus],
     queryFn: ({ signal }) =>
-      listTimeAdjustmentRequests({
-        scopedTeamIds: scope,
-        status: earlyLeaveStatus,
-        requestGroup: "early_leave",
-      }, signal),
+      listTimeAdjustmentRequests(
+        {
+          scopedTeamIds: scope,
+          status: earlyLeaveStatus,
+          requestGroup: "early_leave",
+        },
+        signal,
+      ),
   });
   const balances = useQuery({
     queryKey: ["leave-balances", scope, balanceYear],
@@ -121,8 +124,13 @@ function HolidayRequestsPage() {
       toast.error(error instanceof Error ? error.message : "Early leave review failed"),
   });
   const editBalance = useMutation({
-    mutationFn: ({ employeeId: id, remainingDays }: { employeeId: string; remainingDays: number }) =>
-      setRemainingLeaveDays(id, balanceYear, remainingDays),
+    mutationFn: ({
+      employeeId: id,
+      remainingDays,
+    }: {
+      employeeId: string;
+      remainingDays: number;
+    }) => setRemainingLeaveDays(id, balanceYear, remainingDays),
     onSuccess: async () => {
       toast.success("Holiday balance updated");
       setEditingBalance(null);
@@ -215,7 +223,11 @@ function HolidayRequestsPage() {
                         onSubmit={(event) => {
                           event.preventDefault();
                           const remainingDays = Number(editingBalance.value);
-                          if (!Number.isFinite(remainingDays) || remainingDays < 0 || remainingDays > 365) {
+                          if (
+                            !Number.isFinite(remainingDays) ||
+                            remainingDays < 0 ||
+                            remainingDays > 365
+                          ) {
                             toast.error("Enter a number of days between 0 and 365");
                             return;
                           }
@@ -232,13 +244,29 @@ function HolidayRequestsPage() {
                           className="h-8 w-20"
                           value={editingBalance.value}
                           onChange={(event) =>
-                            setEditingBalance({ employeeId: balance.employeeId, value: event.target.value })
+                            setEditingBalance({
+                              employeeId: balance.employeeId,
+                              value: event.target.value,
+                            })
                           }
                         />
-                        <Button type="submit" size="icon" className="h-8 w-8" disabled={editBalance.isPending} aria-label="Save">
+                        <Button
+                          type="submit"
+                          size="icon"
+                          className="h-8 w-8"
+                          disabled={editBalance.isPending}
+                          aria-label="Save"
+                        >
                           <Check className="h-4 w-4" />
                         </Button>
-                        <Button type="button" size="icon" variant="ghost" className="h-8 w-8" onClick={() => setEditingBalance(null)} aria-label="Cancel">
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="ghost"
+                          className="h-8 w-8"
+                          onClick={() => setEditingBalance(null)}
+                          aria-label="Cancel"
+                        >
                           <X className="h-4 w-4" />
                         </Button>
                       </form>
@@ -324,17 +352,11 @@ function HolidayRequestsPage() {
             </div>
             <div>
               <Label>From</Label>
-              <DateInput
-                value={startDate}
-                onChange={(event) => setStartDate(event.target.value)}
-              />
+              <DateInput value={startDate} onChange={(event) => setStartDate(event.target.value)} />
             </div>
             <div>
               <Label>To</Label>
-              <DateInput
-                value={endDate}
-                onChange={(event) => setEndDate(event.target.value)}
-              />
+              <DateInput value={endDate} onChange={(event) => setEndDate(event.target.value)} />
             </div>
             <div>
               <Label>Reason</Label>

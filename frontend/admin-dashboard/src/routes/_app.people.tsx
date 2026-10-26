@@ -1,3 +1,5 @@
+import { AdminPagination } from "@/components/admin/pagination";
+import { useAdminPagination } from "@/components/admin/useAdminPagination";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState, type FocusEvent, type FormEvent } from "react";
@@ -29,7 +31,7 @@ import {
   EyeOff,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import { PageHeader } from "@/components/ui/page-header";
+import { PageHeader } from "@/components/admin/PageHeader";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -39,8 +41,8 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
-import { Card } from "@/components/ui/card";
+} from "@/components/admin/alert-dialog";
+import { Card } from "@/components/admin/card";
 import {
   Dialog,
   DialogContent,
@@ -48,7 +50,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
+} from "@/components/admin/dialog";
 import { Input } from "@/components/ui/input";
 import { DateInput } from "@/components/ui/date-input";
 import { PasswordInput } from "@/components/ui/password-input";
@@ -59,14 +61,14 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
+} from "@/components/admin/select";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+} from "@/components/admin/dropdown-menu";
 import {
   Table,
   TableBody,
@@ -74,12 +76,12 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table";
-import { Button } from "@/components/ui/button";
+} from "@/components/admin/table";
+import { Button } from "@/components/admin/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
-import { StatusBadge } from "@/components/ui/status-badge";
+import { StatusBadge } from "@/components/admin/status-badge";
 import { cn } from "@/lib/utils";
 import {
   getEmployee,
@@ -276,9 +278,10 @@ function PeopleHubPage() {
         title="People"
         description="Manage people, employee tracking, and live workforce activity from one place."
       />
-      <div className="studio-card mb-5 flex w-fit max-w-full gap-1 overflow-x-auto rounded-xl border bg-card p-1">
+      <div className="admin-directory-tabs studio-card mb-5 flex w-fit max-w-full gap-1 overflow-x-auto rounded-xl border bg-card p-1">
         <Button
           variant="ghost"
+          aria-pressed={tab === "directory"}
           className={`rounded-lg border-0 px-4 ${tab === "directory" ? "bg-[#fce3ec] text-[#e5185d] dark:bg-[#38142b] dark:text-[#f0538b]" : "text-muted-foreground"}`}
           onClick={() => navigate({ to: "/people", search: { tab: "directory" }, replace: true })}
         >
@@ -286,6 +289,7 @@ function PeopleHubPage() {
         </Button>
         <Button
           variant="ghost"
+          aria-pressed={tab === "archived"}
           className={`rounded-lg border-0 px-4 ${tab === "archived" ? "bg-[#fce3ec] text-[#e5185d] dark:bg-[#38142b] dark:text-[#f0538b]" : "text-muted-foreground"}`}
           onClick={() => navigate({ to: "/people", search: { tab: "archived" }, replace: true })}
         >
@@ -294,6 +298,7 @@ function PeopleHubPage() {
         {can(permissions.liveActivityView) && (
           <Button
             variant="ghost"
+            aria-pressed={tab === "live"}
             className={`rounded-lg border-0 px-4 ${tab === "live" ? "bg-[#fce3ec] text-[#e5185d] dark:bg-[#38142b] dark:text-[#f0538b]" : "text-muted-foreground"}`}
             onClick={() => navigate({ to: "/people", search: { tab: "live" }, replace: true })}
           >
@@ -587,6 +592,11 @@ function PeopleDirectory({
     archiveOnly,
     q,
   ]);
+
+  const directoryPage = useAdminPagination(
+    rows,
+    JSON.stringify([q, typeFilter, roleFilter, teamFilter, statusFilter, archiveOnly]),
+  );
 
   const editScheduleProblems = useMemo(() => {
     const messages: string[] = [];
@@ -1078,7 +1088,7 @@ function PeopleDirectory({
         )}
       </Card>
 
-      <Card className="overflow-x-auto">
+      <Card className="admin-people-table overflow-x-auto">
         <Table>
           <TableHeader>
             <TableRow>
@@ -1121,7 +1131,7 @@ function PeopleDirectory({
                     </TableCell>
                   </TableRow>
                 ))
-              : rows.map((row) => (
+              : directoryPage.items.map((row) => (
                   <TableRow key={`${row.kind}-${row.id}`}>
                     <TableCell className="font-medium">{row.name}</TableCell>
                     <TableCell className="text-sm text-muted-foreground">{row.email}</TableCell>
@@ -1255,14 +1265,14 @@ function PeopleDirectory({
                                   <DropdownMenuSeparator />
                                   {row.status !== "archived" ? (
                                     canArchiveEmployees(currentUser) && (
-                                    <DropdownMenuItem
-                                      disabled={archiveMutation.isPending}
-                                      className="text-destructive focus:text-destructive"
-                                      onSelect={() => changeArchiveStatus(row, true)}
-                                    >
-                                      <Archive className="h-4 w-4" />
-                                      Archive
-                                    </DropdownMenuItem>
+                                      <DropdownMenuItem
+                                        disabled={archiveMutation.isPending}
+                                        className="text-destructive focus:text-destructive"
+                                        onSelect={() => changeArchiveStatus(row, true)}
+                                      >
+                                        <Archive className="h-4 w-4" />
+                                        Archive
+                                      </DropdownMenuItem>
                                     )
                                   ) : (
                                     <>
@@ -1309,6 +1319,7 @@ function PeopleDirectory({
             )}
           </TableBody>
         </Table>
+        {!directoryLoading && <AdminPagination {...directoryPage} label="People" />}
       </Card>
 
       <AddPersonWizard
@@ -2028,7 +2039,8 @@ function PeopleDirectory({
         pending={archiveMutation.isPending}
         onOpenChange={(open) => !open && setArchiveTarget(null)}
         onConfirm={(details) => {
-          if (archiveTarget) archiveMutation.mutate({ row: archiveTarget, archived: true, details });
+          if (archiveTarget)
+            archiveMutation.mutate({ row: archiveTarget, archived: true, details });
         }}
       />
 

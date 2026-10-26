@@ -1,4 +1,7 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import AnimatedText from "@/components/motion/AnimatedText";
+import AnimatedNumber from "@/components/motion/AnimatedNumber";
+import HeroRays from "@/components/motion/HeroRays";
 import TimerDisplay from "./TimerFaces";
 import { clock, isTimerStyle, type TimerStyle } from "./timer-style";
 import TimerStylePicker from "./TimerStylePicker";
@@ -182,7 +185,9 @@ export function TrackerFrame({
             </div>
           </header>
           <div className="tracker-mobile-nav">{nav}</div>
-          <div className="tracker-content">{children}</div>
+          <div className="tracker-content" data-motion-scroller="">
+            {children}
+          </div>
           <footer className="app-statusbar tracker-statusbar">
             <span>
               <i className={running ? "tracker-live-dot" : "tracker-paused-dot"} />
@@ -294,9 +299,13 @@ export function TrackerStage({
     activityPct === null ? "—" : `${Math.min(100, Math.max(0, Math.round(activityPct)))}%`;
   return (
     <>
-      <div className="tracker-heading">
+      <div className="tracker-heading motion-hero">
+        <HeroRays />
         <h1>
-          Welcome back <span>{name.split(/\s+/)[0]}</span>
+          <AnimatedText text="Welcome back" />{" "}
+          <span className="tracker-person">
+            <AnimatedText text={name.split(/\s+/)[0]} />
+          </span>
         </h1>
         <p>Your work, tasks and captured time, together in one workspace.</p>
       </div>
@@ -487,13 +496,13 @@ export function TrackerStage({
       </div>
       <div className="tracker-summary-cards">
         {[
-          { label: "Today", value: clock(counted) },
-          { label: "This week", value: clock(weekSeconds) },
-          { label: "Session", value: clock(sessionSeconds) },
+          { label: "Today", value: <AnimatedNumber value={counted} format={clock} /> },
+          { label: "This week", value: <AnimatedNumber value={weekSeconds} format={clock} /> },
+          { label: "Session", value: <AnimatedNumber value={sessionSeconds} format={clock} /> },
           { label: "Activity", value: activity },
-          { label: "Idle", value: clock(idleSeconds) },
+          { label: "Idle", value: <AnimatedNumber value={idleSeconds} format={clock} /> },
         ].map((item) => (
-          <div key={item.label} className="app-card">
+          <div key={item.label} className="app-card" data-motion-reveal="">
             <small>{item.label}</small>
             <strong className="app-num">{item.value}</strong>
           </div>

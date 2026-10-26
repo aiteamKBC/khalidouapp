@@ -23,9 +23,9 @@ import {
 import { listEmployees } from "@/api/employees";
 import { listTeams } from "@/api/teams";
 import { BackButton } from "@/components/ui/back-button";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Button } from "@/components/admin/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/admin/card";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/admin/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
@@ -35,8 +35,8 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
-import { StatusBadge } from "@/components/ui/status-badge";
+} from "@/components/admin/select";
+import { StatusBadge } from "@/components/admin/status-badge";
 import {
   Table,
   TableBody,
@@ -44,7 +44,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table";
+} from "@/components/admin/table";
 import { Textarea } from "@/components/ui/textarea";
 import { formatDateTime, formatMinutes } from "@/lib/format";
 import { projectProgressTasks, projectWorkflowProgress } from "@/lib/project-progress";

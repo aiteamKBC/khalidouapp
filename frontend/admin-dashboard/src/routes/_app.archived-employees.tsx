@@ -4,9 +4,9 @@ import { useState } from "react";
 import { Archive, ArchiveRestore } from "lucide-react";
 import { toast } from "sonner";
 
-import { PageHeader } from "@/components/ui/page-header";
-import { Card } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
+import { PageHeader } from "@/components/admin/PageHeader";
+import { Card } from "@/components/admin/card";
+import { Button } from "@/components/admin/button";
 import { Input } from "@/components/ui/input";
 import { EmptyState } from "@/components/ui/empty-state";
 import {
@@ -16,7 +16,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table";
+} from "@/components/admin/table";
 import { listArchivedEmployees, restorePerson, type ArchivedEmployee } from "@/api/people";
 import { ARCHIVE_REASON_LABELS } from "@/lib/employee-archive";
 import { formatDate, formatDateTime } from "@/lib/format";

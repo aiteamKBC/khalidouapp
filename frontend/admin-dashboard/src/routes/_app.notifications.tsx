@@ -2,9 +2,9 @@ import { useState } from "react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Bell, CheckCheck, Inbox, ListChecks } from "lucide-react";
-import { PageHeader } from "@/components/ui/page-header";
-import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
+import { PageHeader } from "@/components/admin/PageHeader";
+import { Button } from "@/components/admin/button";
+import { Card } from "@/components/admin/card";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -12,7 +12,7 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
+} from "@/components/admin/select";
 import {
   approveTaskRequest,
   approveTaskReview,
@@ -28,7 +28,7 @@ import {
 import { useAuth } from "@/lib/auth";
 import type { Task } from "@/types";
 import { toast } from "sonner";
-import { MetricTile } from "@/components/ui/metric-tile";
+import { MetricTile } from "@/components/admin/MetricTile";
 import { formatDateTime } from "@/lib/format";
 
 export const Route = createFileRoute("/_app/notifications")({ component: NotificationsPage });
@@ -114,7 +114,7 @@ function NotificationsPage() {
           </Button>
         }
       />
-      <div className="grid gap-3 sm:grid-cols-3">
+      <div className="admin-metrics grid gap-3 sm:grid-cols-3">
         <MetricTile
           icon={Inbox}
           value={(notifications.data ?? []).length}

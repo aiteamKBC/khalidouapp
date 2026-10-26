@@ -19,20 +19,20 @@ import { listTeams } from "@/api/teams";
 import { AttendanceStatusBadges } from "@/components/attendance/attendance-status-badges";
 import { EmployeeAttendanceHistoryDialog } from "@/components/attendance/employee-attendance-history-dialog";
 import { WorkdayTimeline } from "@/components/workday-timeline";
-import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Button } from "@/components/admin/button";
+import { Card } from "@/components/admin/card";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/admin/dialog";
 import { Input } from "@/components/ui/input";
 import { DateInput } from "@/components/ui/date-input";
-import { PageHeader } from "@/components/ui/page-header";
+import { PageHeader } from "@/components/admin/PageHeader";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
-import { StatusBadge } from "@/components/ui/status-badge";
+} from "@/components/admin/select";
+import { StatusBadge } from "@/components/admin/status-badge";
 import {
   Table,
   TableBody,
@@ -40,8 +40,8 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+} from "@/components/admin/table";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/admin/tabs";
 import { useAuth } from "@/lib/auth";
 import {
   formatAttendanceStart,
@@ -749,8 +749,7 @@ function AttendancePage() {
                 financials={{
                   paidLateAllowanceSeconds: detail.data.paidLateAllowanceSeconds,
                   deductibleLateSeconds: detail.data.deductibleLateSeconds,
-                  approvedDelayedBreakSeconds:
-                    detail.data.approvedDelayedBreakSeconds,
+                  approvedDelayedBreakSeconds: detail.data.approvedDelayedBreakSeconds,
                   approvedMeetingSeconds: detail.data.approvedMeetingSeconds,
                   pendingMeetingSeconds: detail.data.pendingMeetingSeconds,
                 }}

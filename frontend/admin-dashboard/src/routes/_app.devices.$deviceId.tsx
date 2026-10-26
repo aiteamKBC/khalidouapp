@@ -1,9 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { BackButton } from "@/components/ui/back-button";
-import { PageHeader } from "@/components/ui/page-header";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { StatusBadge } from "@/components/ui/status-badge";
+import { PageHeader } from "@/components/admin/PageHeader";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/admin/card";
+import { StatusBadge } from "@/components/admin/status-badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { getDevice, listDevices } from "@/api/devices";
 import { listEmployees } from "@/api/employees";

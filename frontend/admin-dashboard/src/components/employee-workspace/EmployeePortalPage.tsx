@@ -1,9 +1,11 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
+import { useNavigate } from "@tanstack/react-router";
+import { useAuth } from "@/lib/auth";
 import EmployeeWorkspace from "@/components/employee-workspace/EmployeeWorkspace";
 import { BrandLogo } from "@/components/ui/brand-logo";
 import { Card } from "@/components/ui/card";
-import WorkspaceLogin from "@/components/auth/WorkspaceLogin";
+import WorkspaceLogin, { type LoginRole } from "@/components/auth/WorkspaceLogin";
 import {
   clearEmployeeToken,
   employeeLogin,
@@ -93,10 +95,31 @@ function EmployeeLogin({
   initialError?: string | null;
 }) {
   const queryClient = useQueryClient();
+  const { login: adminLogin } = useAuth();
+  const navigate = useNavigate();
   const login = useMutation({
-    mutationFn: ({ email, password }: { email: string; password: string }) =>
-      employeeLogin(email, password),
+    mutationFn: async ({
+      email,
+      password,
+      remember,
+      role,
+    }: {
+      email: string;
+      password: string;
+      remember: boolean;
+      role: LoginRole;
+    }) => {
+      if (role === "admin") {
+        await adminLogin(email, password, remember);
+        return null;
+      }
+      return employeeLogin(email, password);
+    },
     onSuccess: (result) => {
+      if (!result) {
+        void navigate({ to: "/dashboard", replace: true });
+        return;
+      }
       queryClient.removeQueries({ queryKey: ["employee-portal"] });
       queryClient.removeQueries({ queryKey: ["protected-image", "employee"] });
       saveEmployeeToken(result.access_token);
@@ -108,11 +131,13 @@ function EmployeeLogin({
       role="employee"
       pending={login.isPending}
       error={login.error?.message ?? initialError}
-      onSubmit={(email, password) => {
-        clearEmployeeToken();
-        queryClient.removeQueries({ queryKey: ["employee-portal"] });
-        queryClient.removeQueries({ queryKey: ["protected-image", "employee"] });
-        login.mutate({ email, password });
+      onSubmit={(email, password, remember, role) => {
+        if (role === "employee") {
+          clearEmployeeToken();
+          queryClient.removeQueries({ queryKey: ["employee-portal"] });
+          queryClient.removeQueries({ queryKey: ["protected-image", "employee"] });
+        }
+        login.mutate({ email, password, remember, role });
       }}
     />
   );

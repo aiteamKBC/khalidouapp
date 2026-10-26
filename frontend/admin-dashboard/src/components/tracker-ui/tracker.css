@@ -250,7 +250,7 @@
   letter-spacing: -0.035em;
   line-height: 1.15;
 }
-.readdy-tracker-ui.readdy-tracker-ui .tracker-heading h1 span {
+.readdy-tracker-ui.readdy-tracker-ui .tracker-heading h1 > .tracker-person {
   color: var(--k-plum);
 }
 .readdy-tracker-ui.readdy-tracker-ui .tracker-heading p {

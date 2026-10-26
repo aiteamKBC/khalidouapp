@@ -12,6 +12,7 @@ import { jwtSubjectScopeKey } from "@/lib/private-query-scope";
 import { retryTransientRequest } from "@/api/client";
 import { TrackerFrame, TrackerStage } from "../tracker-ui/TrackerWorkspace";
 import type { Employee, TimeSummary } from "./model";
+import { WorkspaceIcon } from "./WorkspaceIcon";
 import { countedSeconds } from "./model";
 
 export default function EmployeeTracker({
@@ -27,6 +28,7 @@ export default function EmployeeTracker({
   onDashboard,
   onLogout,
   onProfile,
+  onQuotes,
   onRequestTime,
   panels,
   refreshError,
@@ -43,6 +45,7 @@ export default function EmployeeTracker({
   onDashboard: () => void;
   onLogout: () => void;
   onProfile: () => void;
+  onQuotes: () => void;
   onRequestTime: () => void;
   panels: Record<"tasks" | "screenshots" | "attendance" | "insights" | "requests", ReactNode>;
   refreshError: boolean;
@@ -120,6 +123,15 @@ export default function EmployeeTracker({
       onDashboard={onDashboard}
       headerControls={
         <>
+          <button
+            className="app-nav-btn"
+            type="button"
+            onClick={onQuotes}
+            aria-label="Quote reminders"
+            title="Quote reminders"
+          >
+            <WorkspaceIcon className="ri-notification-3-line" aria-hidden="true" />
+          </button>
           <button
             className="app-nav-btn"
             type="button"

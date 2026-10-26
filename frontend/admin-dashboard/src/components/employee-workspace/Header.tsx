@@ -15,6 +15,7 @@ type Props = {
   shiftLabel: string;
   trackingActive: boolean;
   onOpenProfile: () => void;
+  onOpenQuotes: () => void;
   onDownloadApp: () => void;
   onLogout: () => void;
   onMarkAllRead: () => void;
@@ -31,6 +32,7 @@ export default function Header({
   shiftLabel,
   trackingActive,
   onOpenProfile,
+  onOpenQuotes,
   onDownloadApp,
   onLogout,
   onMarkAllRead,
@@ -240,6 +242,20 @@ export default function Header({
                         <WorkspaceIcon className="ri-user-settings-line" aria-hidden="true" />
                       </span>
                       Edit profile
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setMenuOpen(false);
+                        onOpenQuotes();
+                      }}
+                      className="flex w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-[12.5px] text-ew-ink transition-colors hover:bg-ew-bg-2"
+                    >
+                      <span className="flex h-4 w-4 items-center justify-center text-ew-muted">
+                        <WorkspaceIcon className="ri-notification-3-line" aria-hidden="true" />
+                      </span>
+                      Quote reminders
                     </button>
                     <button
                       type="button"

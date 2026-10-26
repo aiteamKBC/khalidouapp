@@ -183,6 +183,7 @@
   padding: 28px;
 }
 .workspace-login .login-roles {
+  position: relative;
   display: flex;
   gap: 2px;
   border: 1px solid var(--login-line);
@@ -190,7 +191,22 @@
   padding: 4px;
   background: var(--login-soft);
 }
-.workspace-login .login-roles a {
+.workspace-login .login-role-thumb {
+  position: absolute;
+  z-index: 0;
+  top: 4px;
+  bottom: 4px;
+  left: 4px;
+  width: calc(50% - 5px);
+  border: 1px solid var(--login-line);
+  border-radius: 999px;
+  background: var(--login-card);
+  transition: transform 0.38s cubic-bezier(0.34, 1.26, 0.4, 1);
+  box-shadow: 0 1px 2px #1711280f;
+}
+.workspace-login .login-roles button {
+  position: relative;
+  z-index: 1;
   display: flex;
   flex: 1;
   min-width: 0;
@@ -204,11 +220,29 @@
   text-decoration: none;
   font-size: 12.5px;
   font-weight: 600;
+  background: transparent;
+  transition:
+    color 0.2s,
+    transform 0.2s;
 }
-.workspace-login .login-roles a[aria-current="page"] {
-  background: var(--login-card);
-  border-color: var(--login-line);
+.workspace-login .login-roles button:active {
+  transform: scale(0.97);
+}
+.workspace-login .login-roles button[aria-selected="true"] {
   color: var(--login-plum);
+}
+.workspace-login .login-role-copy {
+  animation: login-role-swap 0.36s cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}
+@keyframes login-role-swap {
+  from {
+    opacity: 0;
+    transform: translateY(7px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 .workspace-login .login-card h1 {
   margin: 20px 0 0;
@@ -220,10 +254,17 @@
   color: var(--login-plum);
 }
 .workspace-login .login-subtitle {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
   margin: 6px 0 0;
   font-size: 12.5px;
   line-height: 1.625;
   color: var(--login-muted);
+}
+.workspace-login .login-subtitle svg {
+  margin-top: 3px;
+  color: #9d145e;
 }
 .workspace-login form {
   display: flex;
@@ -409,5 +450,14 @@
   }
   .workspace-login .login-card h1 {
     font-size: 23px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .workspace-login .login-role-thumb,
+  .workspace-login .login-roles button {
+    transition: none;
+  }
+  .workspace-login .login-role-copy {
+    animation: none;
   }
 }

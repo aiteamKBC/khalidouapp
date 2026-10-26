@@ -1,5 +1,9 @@
 import SelectMenu from "../tracker-ui/SelectMenu";
 import EmployeeTracker from "./EmployeeTracker";
+import MotionPage from "@/components/motion/MotionPage";
+import AnimatedText from "@/components/motion/AnimatedText";
+import HeroRays from "@/components/motion/HeroRays";
+import StarButton from "@/components/motion/StarButton";
 import { useWorkspaceTheme } from "./useWorkspaceTheme";
 import { useEffect, useMemo, useState } from "react";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -46,6 +50,7 @@ import {
   type ManualTimePayload,
 } from "./RequestDrawers";
 import ProfileDrawer from "./ProfileDrawer";
+import QuoteReminders from "./QuoteReminders";
 import ScreenshotsPanel from "./ScreenshotsPanel";
 import { WorkspaceIcon } from "./WorkspaceIcon";
 import { fmtDate, fmtSeconds } from "./format";
@@ -84,6 +89,7 @@ export default function EmployeeWorkspace({
       : "overview",
   );
   const [drawer, setDrawer] = useState<DrawerState>("none");
+  const [quotesOpen, setQuotesOpen] = useState(false);
   const [breakdownScope, setBreakdownScope] = useState<SummaryKey>("today");
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const [activeRequestId, setActiveRequestId] = useState<string | null>(null);
@@ -411,7 +417,10 @@ export default function EmployeeWorkspace({
   // the application's existing employee APIs and server approval rules.
 
   return (
-    <div className={`employee-workspace readdy-tracker-ui ${theme === "dark" ? "dark" : ""}`}>
+    <MotionPage
+      className={`employee-workspace readdy-tracker-ui ${theme === "dark" ? "dark" : ""}`}
+      scrollContainer={trackerMode ? "[data-motion-scroller]" : undefined}
+    >
       {trackerMode ? (
         <EmployeeTracker
           refreshError={sectionErrors.length > 0}
@@ -427,6 +436,7 @@ export default function EmployeeWorkspace({
           onDashboard={() => setTrackerMode(false)}
           onLogout={handleLogout}
           onProfile={() => setDrawer("profile")}
+          onQuotes={() => setQuotesOpen(true)}
           onRequestTime={() => setDrawer("manual")}
           panels={{
             screenshots: <ScreenshotsPanel token={token} />,
@@ -502,6 +512,7 @@ export default function EmployeeWorkspace({
             shiftLabel={`${attendance.shiftStart} – ${attendance.shiftEnd}`}
             trackingActive={attendance.status === "active"}
             onOpenProfile={() => setDrawer("profile")}
+            onOpenQuotes={() => setQuotesOpen(true)}
             onDownloadApp={() => {
               window.location.assign("/download");
             }}
@@ -514,11 +525,12 @@ export default function EmployeeWorkspace({
             id="main"
             className="relative z-10 mx-auto w-full max-w-[1400px] px-4 pb-14 pt-4 md:px-6"
           >
-            <div className="flex flex-wrap items-end justify-between gap-3">
+            <div className="motion-hero flex flex-wrap items-end justify-between gap-3">
+              <HeroRays />
               <div className="min-w-0">
                 <p className="k-label">{dateLabel}</p>
                 <h1 className="mt-1 font-ew-heading text-[22px] font-semibold leading-tight text-ew-plum md:text-[26px]">
-                  {greeting}, {profile.firstName}
+                  <AnimatedText text={`${greeting}, ${profile.firstName}`} />
                 </h1>
                 <div className="mt-2 flex flex-wrap items-center gap-1.5">
                   <span className="inline-flex items-center gap-1 rounded-full border border-ew-line bg-ew-card px-2 py-[3px] text-[11px] font-semibold text-ew-ink-2">
@@ -546,7 +558,7 @@ export default function EmployeeWorkspace({
               </div>
 
               <div className="flex flex-wrap items-center gap-1.5">
-                <button
+                <StarButton
                   type="button"
                   onClick={() => setDrawer("manual")}
                   className="flex cursor-pointer items-center gap-1.5 rounded-md bg-ew-solid px-3 py-2 text-[12.5px] font-semibold text-white transition-colors hover:bg-ew-solid-2"
@@ -555,7 +567,7 @@ export default function EmployeeWorkspace({
                     <WorkspaceIcon className="ri-timer-line text-[13px]" aria-hidden="true" />
                   </span>
                   Request time
-                </button>
+                </StarButton>
                 <button
                   type="button"
                   onClick={() => setDrawer("holiday")}
@@ -1004,6 +1016,12 @@ export default function EmployeeWorkspace({
         onSave={handleProfileSave}
       />
 
+      <QuoteReminders
+        key={me.data.id}
+        employeeId={me.data.id}
+        open={quotesOpen}
+        onClose={() => setQuotesOpen(false)}
+      />
       {notePromptDialog}
       {toast ? (
         <div
@@ -1025,6 +1043,6 @@ export default function EmployeeWorkspace({
           </button>
         </div>
       ) : null}
-    </div>
+    </MotionPage>
   );
 }

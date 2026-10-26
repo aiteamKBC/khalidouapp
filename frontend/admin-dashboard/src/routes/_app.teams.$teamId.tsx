@@ -22,12 +22,12 @@ import {
   UserPlus,
   Users,
 } from "lucide-react";
-import { PageHeader } from "@/components/ui/page-header";
+import { PageHeader } from "@/components/admin/PageHeader";
 import { ProtectedImage } from "@/components/ProtectedImage";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/admin/card";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/admin/tabs";
 import { BackButton } from "@/components/ui/back-button";
-import { Button } from "@/components/ui/button";
+import { Button } from "@/components/admin/button";
 import { Input } from "@/components/ui/input";
 import { DateInput } from "@/components/ui/date-input";
 import { Label } from "@/components/ui/label";
@@ -39,15 +39,15 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
+} from "@/components/admin/dialog";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
-import { StatusBadge } from "@/components/ui/status-badge";
+} from "@/components/admin/select";
+import { StatusBadge } from "@/components/admin/status-badge";
 import {
   addTeamMember,
   addTeamOwner,

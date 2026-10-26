@@ -1,4 +1,5 @@
 import { WorkspaceIcon } from "./WorkspaceIcon";
+import AnimatedNumber from "@/components/motion/AnimatedNumber";
 import {
   countedSeconds,
   type SummaryKey,
@@ -23,7 +24,7 @@ export default function TimeSummaryCards({ summaries, onBreakdown }: Props) {
             : 0,
         );
         return (
-          <article key={summary.key} className="k-card flex flex-col p-3.5">
+          <article key={summary.key} className="k-card flex flex-col p-3.5" data-motion-reveal="">
             <div className="flex items-baseline justify-between gap-2">
               <p className="k-label">{summary.label}</p>
               <p className="font-ew-mono text-[10px] text-ew-faint">{summary.range}</p>
@@ -31,7 +32,7 @@ export default function TimeSummaryCards({ summaries, onBreakdown }: Props) {
 
             <div className="mt-1.5 flex items-end gap-1.5">
               <p className="font-ew-heading text-[27px] font-semibold leading-none text-ew-plum">
-                {fmtSeconds(counted, true)}
+                <AnimatedNumber value={counted} format={(seconds) => fmtSeconds(seconds, true)} />
               </p>
               <span className="pb-0.5 text-[11.5px] font-medium text-ew-muted">counted</span>
             </div>
@@ -53,7 +54,11 @@ export default function TimeSummaryCards({ summaries, onBreakdown }: Props) {
                   <WorkspaceIcon className="ri-award-line text-[11px]" aria-hidden="true" />
                 </span>
                 <span className="font-ew-mono text-[11px] font-medium text-ew-ink-2">
-                  {fmtNumber(summary.breakdown.points)}
+                  {summary.breakdown.points === null ? (
+                    fmtNumber(null)
+                  ) : (
+                    <AnimatedNumber value={summary.breakdown.points} format={fmtNumber} />
+                  )}
                 </span>
                 pts
               </span>
@@ -63,7 +68,11 @@ export default function TimeSummaryCards({ summaries, onBreakdown }: Props) {
                   <WorkspaceIcon className="ri-image-line text-[11px]" aria-hidden="true" />
                 </span>
                 <span className="font-ew-mono text-[11px] font-medium text-ew-ink-2">
-                  {fmtNumber(summary.breakdown.screenshots)}
+                  {summary.breakdown.screenshots === null ? (
+                    fmtNumber(null)
+                  ) : (
+                    <AnimatedNumber value={summary.breakdown.screenshots} format={fmtNumber} />
+                  )}
                 </span>
                 shots
               </span>

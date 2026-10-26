@@ -11,16 +11,16 @@ import {
   RefreshCw,
   TimerReset,
 } from "lucide-react";
-import { PageHeader } from "@/components/ui/page-header";
-import { Card } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
+import { PageHeader } from "@/components/admin/PageHeader";
+import { Card } from "@/components/admin/card";
+import { Button } from "@/components/admin/button";
 import {
   Dialog,
   DialogContent,
   DialogDescription,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
+} from "@/components/admin/dialog";
 import { Input } from "@/components/ui/input";
 import { DateInput } from "@/components/ui/date-input";
 import {
@@ -29,9 +29,9 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { StatusBadge } from "@/components/ui/status-badge";
+} from "@/components/admin/select";
+import { Tabs, TabsList, TabsTrigger } from "@/components/admin/tabs";
+import { StatusBadge } from "@/components/admin/status-badge";
 import { WorkdayTimeline } from "@/components/workday-timeline";
 import { getDailyAttendance } from "@/api/attendance";
 import { listTimesheetEmployeeOptions, listTimesheets } from "@/api/timesheets";

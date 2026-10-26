@@ -39,10 +39,10 @@ import { useAuth } from "@/lib/auth";
 import { describeBreakTiming } from "@/lib/break-rules";
 import { hasHrAuthority, permissions } from "@/lib/permissions";
 import { formatDate, formatTimeOfDay } from "@/lib/format";
-import { PageHeader } from "@/components/ui/page-header";
-import { Card } from "@/components/ui/card";
+import { PageHeader } from "@/components/admin/PageHeader";
+import { Card } from "@/components/admin/card";
 import { EmptyState } from "@/components/ui/empty-state";
-import { Button } from "@/components/ui/button";
+import { Button } from "@/components/admin/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { DateInput } from "@/components/ui/date-input";
@@ -56,14 +56,14 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
+} from "@/components/admin/dialog";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
+} from "@/components/admin/select";
 
 export const Route = createFileRoute("/_app/breaks")({ component: BreaksPage });
 

@@ -34,9 +34,9 @@ function AppLayout() {
           <WifiOff className="mx-auto h-12 w-12 text-muted-foreground" />
           <h1 className="mt-4 text-2xl font-semibold">Can’t reach the server</h1>
           <p className="mt-2 text-sm text-muted-foreground">
-            We couldn’t restore your session because the server is unreachable. Your
-            sign-in is still saved — this will retry automatically, or you can retry now.
-            No need to sign in again.
+            We couldn’t restore your session because the server is unreachable. Your sign-in is
+            still saved — this will retry automatically, or you can retry now. No need to sign in
+            again.
           </p>
           <button
             type="button"

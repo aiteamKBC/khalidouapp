@@ -30,22 +30,22 @@ import { employeeDisplayStatus, listMonitoringEmployees } from "@/api/employees"
 import { listMonitoringTeams } from "@/api/teams";
 import { WorkdayTimeline } from "@/components/workday-timeline";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/admin/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/admin/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
 import { DateInput } from "@/components/ui/date-input";
 import { Label } from "@/components/ui/label";
-import { PageHeader } from "@/components/ui/page-header";
+import { PageHeader } from "@/components/admin/PageHeader";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
-import { StatusBadge } from "@/components/ui/status-badge";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+} from "@/components/admin/select";
+import { StatusBadge } from "@/components/admin/status-badge";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/admin/tabs";
 import { useAuth } from "@/lib/auth";
 import {
   buildAttendanceNotices,

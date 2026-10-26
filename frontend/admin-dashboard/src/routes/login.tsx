@@ -7,7 +7,9 @@ import { BrandLogo } from "@/components/ui/brand-logo";
 import { useAuth } from "@/lib/auth";
 import { toast } from "sonner";
 import { resetPassword } from "@/api/auth";
-import WorkspaceLogin from "@/components/auth/WorkspaceLogin";
+import { employeeLogin, saveEmployeeToken } from "@/api/employee-portal";
+import { useQueryClient } from "@tanstack/react-query";
+import WorkspaceLogin, { type LoginRole } from "@/components/auth/WorkspaceLogin";
 
 export const Route = createFileRoute("/login")({
   validateSearch: (search: Record<string, unknown>) => ({
@@ -21,6 +23,7 @@ function LoginPage() {
   const { login, user } = useAuth();
   const { resetToken } = Route.useSearch();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -95,10 +98,18 @@ function LoginPage() {
     );
   }
 
-  async function onSubmit(email: string, password: string, remember: boolean) {
+  async function onSubmit(email: string, password: string, remember: boolean, role: LoginRole) {
     setError(null);
     setSubmitting(true);
     try {
+      if (role === "employee") {
+        const result = await employeeLogin(email, password);
+        queryClient.removeQueries({ queryKey: ["employee-portal"] });
+        queryClient.removeQueries({ queryKey: ["protected-image", "employee"] });
+        saveEmployeeToken(result.access_token);
+        void navigate({ to: "/app", replace: true });
+        return;
+      }
       await login(email, password, remember);
       toast.success("Signed in");
       void navigate({ to: "/dashboard", replace: true });

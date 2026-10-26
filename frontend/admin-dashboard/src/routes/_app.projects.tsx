@@ -1,3 +1,5 @@
+import { AdminPagination } from "@/components/admin/pagination";
+import { useAdminPagination } from "@/components/admin/useAdminPagination";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -46,10 +48,10 @@ import {
   UserPlus,
   Users,
 } from "lucide-react";
-import { PageHeader } from "@/components/ui/page-header";
-import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { PageHeader } from "@/components/admin/PageHeader";
+import { Button } from "@/components/admin/button";
+import { Card } from "@/components/admin/card";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/admin/dialog";
 import { useNotePrompt } from "@/components/note-prompt-dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -59,7 +61,7 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
+} from "@/components/admin/select";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Table,
@@ -68,8 +70,8 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table";
-import { StatusBadge } from "@/components/ui/status-badge";
+} from "@/components/admin/table";
+import { StatusBadge } from "@/components/admin/status-badge";
 import { EmptyState } from "@/components/ui/empty-state";
 import {
   Sheet,
@@ -77,12 +79,12 @@ import {
   SheetDescription,
   SheetHeader,
   SheetTitle,
-} from "@/components/ui/sheet";
+} from "@/components/admin/sheet";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Progress } from "@/components/ui/progress";
 import { DatePicker } from "@/components/ui/date-picker";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/admin/popover";
 import {
   Command,
   CommandEmpty,
@@ -174,8 +176,7 @@ function ProjectsPage() {
   });
   const taskMetrics = useQuery({
     queryKey: ["task-metrics", scope],
-    queryFn: ({ signal }) =>
-      listTaskMetrics(scope?.length === 1 ? scope[0] : undefined, signal),
+    queryFn: ({ signal }) => listTaskMetrics(scope?.length === 1 ? scope[0] : undefined, signal),
   });
   const employees = useQuery({
     queryKey: ["employees", scope],
@@ -447,6 +448,11 @@ function ProjectsPage() {
     [tasks.data, q, teamId, projectId, assigneeId],
   );
 
+  const taskListPage = useAdminPagination(
+    filteredTasks,
+    JSON.stringify([q, teamId, projectId, assigneeId, view]),
+  );
+
   function openTaskDialog(stage: string = DEFAULT_STAGE) {
     setNewTaskStage(stage);
     setNewTaskProjectId(projectId !== "all" ? projectId : "");
@@ -619,6 +625,7 @@ function ProjectsPage() {
       return false;
     return true;
   });
+  const projectPage = useAdminPagination(projectRows, JSON.stringify([q, teamId, projectStatus]));
   const kanbanTasks = filteredTasks.filter((task) => task.status === "active");
   const selectedTaskProject = activeProjects.find((project) => project.id === newTaskProjectId);
   const assigneeCandidates = (employees.data ?? []).filter(
@@ -760,7 +767,7 @@ function ProjectsPage() {
               </div>
             </Card>
 
-            <Card className="flex items-center gap-1 p-1">
+            <Card className="admin-view-switch flex items-center gap-1 p-1">
               <Button
                 variant={view === "projects" ? "default" : "ghost"}
                 size="sm"
@@ -1053,7 +1060,7 @@ function ProjectsPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filteredTasks.map((task) => (
+                  {taskListPage.items.map((task) => (
                     <TableRow
                       key={task.id}
                       className="cursor-pointer"
@@ -1107,6 +1114,7 @@ function ProjectsPage() {
                   )}
                 </TableBody>
               </Table>
+              <AdminPagination {...taskListPage} label="Tasks" />
             </Card>
           )}
 
@@ -1156,7 +1164,7 @@ function ProjectsPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {projectRows.map((project) => {
+                  {projectPage.items.map((project) => {
                     const team = (teams.data ?? []).find((item) => item.id === project.teamId);
                     const projectTasks = (tasks.data ?? []).filter(
                       (task) => task.projectId === project.id,
@@ -1293,6 +1301,7 @@ function ProjectsPage() {
                   )}
                 </TableBody>
               </Table>
+              <AdminPagination {...projectPage} label="Projects" />
             </Card>
           )}
         </>

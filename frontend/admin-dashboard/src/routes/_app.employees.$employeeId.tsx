@@ -27,12 +27,12 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { toast } from "sonner";
-import { PageHeader } from "@/components/ui/page-header";
+import { PageHeader } from "@/components/admin/PageHeader";
 import { ProtectedImage } from "@/components/ProtectedImage";
 import { SCREENSHOT_REFRESH_INTERVAL_MS } from "@/lib/screenshot-display";
 import { BackButton } from "@/components/ui/back-button";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/admin/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/admin/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -42,9 +42,9 @@ import {
   DialogDescription,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { StatusBadge } from "@/components/ui/status-badge";
+} from "@/components/admin/dialog";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/admin/tabs";
+import { StatusBadge } from "@/components/admin/status-badge";
 import { AttendanceStatusBadges } from "@/components/attendance/attendance-status-badges";
 import { DatePicker } from "@/components/ui/date-picker";
 import {
@@ -54,7 +54,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table";
+} from "@/components/admin/table";
 import { WorkdayTimeline } from "@/components/workday-timeline";
 import { ApplicationHistoryPanel } from "@/components/application-history-panel";
 import {

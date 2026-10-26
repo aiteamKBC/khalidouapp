@@ -1,0 +1,40 @@
+.motion-hero-rays {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+  opacity: 0.18;
+  border-radius: inherit;
+}
+.motion-hero {
+  position: relative;
+  isolation: isolate;
+}
+.motion-hero > .motion-hero-rays {
+  z-index: -1;
+}
+.motion-blur-text {
+  font: inherit;
+  letter-spacing: inherit;
+}
+.motion-number {
+  display: inline-grid;
+}
+.motion-number > span {
+  grid-area: 1 / 1;
+}
+.motion-number .motion-number-reserve {
+  visibility: hidden;
+}
+@media (prefers-reduced-motion: reduce) {
+  .motion-hero-rays {
+    display: none;
+  }
+  [data-motion-page] .login-role-copy {
+    animation: none;
+  }
+  [data-motion-page] .login-role-thumb {
+    transition: none;
+  }
+}
