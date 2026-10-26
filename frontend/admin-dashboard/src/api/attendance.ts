@@ -279,18 +279,15 @@ export async function adminCloseSession(
   employeeId: string,
   payload: { endedAt?: string | null; reason: string; sessionId?: string | null },
 ) {
-  return apiFetch<AdminSessionCloseResult>(
-    `/attendance/employee/${employeeId}/sessions/close`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        ended_at: payload.endedAt || null,
-        reason: payload.reason,
-        session_id: payload.sessionId || null,
-      }),
-    },
-  );
+  return apiFetch<AdminSessionCloseResult>(`/attendance/employee/${employeeId}/sessions/close`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      ended_at: payload.endedAt || null,
+      reason: payload.reason,
+      session_id: payload.sessionId || null,
+    }),
+  });
 }
 
 export type EmployeeAttendanceRange = {
@@ -360,4 +357,23 @@ export async function getEmployeeAttendanceRange(
     },
     rows: result.rows.map(mapAttendance),
   };
+}
+
+/** Activity timelines for every worked day in a period, keyed by YYYY-MM-DD. */
+export async function getEmployeeAttendanceTimelines(
+  employeeId: string,
+  startDate: string,
+  endDate: string,
+  signal?: AbortSignal,
+): Promise<Record<string, WorkdayTimeline>> {
+  const result = await apiFetch<{ timelines: Record<string, BackendWorkdayTimeline> }>(
+    `/attendance/timelines/employee/${employeeId}?${new URLSearchParams({
+      start_date: startDate,
+      end_date: endDate,
+    }).toString()}`,
+    { signal },
+  );
+  return Object.fromEntries(
+    Object.entries(result.timelines).map(([day, timeline]) => [day, mapWorkdayTimeline(timeline)]),
+  );
 }

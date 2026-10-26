@@ -6,10 +6,11 @@ import { History, Images } from "lucide-react";
 import {
   getDailyAttendance,
   getEmployeeAttendanceRange,
+  getEmployeeAttendanceTimelines,
   type DailyAttendance,
 } from "@/api/attendance";
 import { AttendanceStatusBadges } from "@/components/attendance/attendance-status-badges";
-import { WorkdayTimeline } from "@/components/workday-timeline";
+import { WorkdayActivityBar, WorkdayTimeline } from "@/components/workday-timeline";
 import { CorrectAttendanceButton } from "@/components/attendance/attendance-correction-dialog";
 import { Button } from "@/components/ui/button";
 import {
@@ -32,7 +33,9 @@ import {
   formatClock,
   formatDurationSeconds as formatDuration,
   formatSessionStatus,
+  parseIsoDate,
 } from "@/lib/format";
+import type { WorkdayTimeline as WorkdayTimelineData } from "@/types";
 
 type EmployeeAttendanceHistoryDialogProps = {
   employeeId: string | null;
@@ -62,6 +65,15 @@ export function EmployeeAttendanceHistoryDialog({
     queryKey: ["attendance-employee-history", employeeId, startDate, endDate],
     queryFn: ({ signal }) => getEmployeeAttendanceRange(employeeId!, startDate, endDate, signal),
     enabled: open && Boolean(employeeId),
+    staleTime: 5 * 60_000,
+    placeholderData: (previous) => previous,
+  });
+  // Bars load after the ledger so the table appears without waiting for them.
+  const timelines = useQuery({
+    queryKey: ["attendance-employee-history-timelines", employeeId, startDate, endDate],
+    queryFn: ({ signal }) =>
+      getEmployeeAttendanceTimelines(employeeId!, startDate, endDate, signal),
+    enabled: open && Boolean(employeeId) && history.isSuccess,
     staleTime: 5 * 60_000,
     placeholderData: (previous) => previous,
   });
@@ -156,7 +168,13 @@ export function EmployeeAttendanceHistoryDialog({
                   </TableHeader>
                   <TableBody>
                     {rows.map((row) => (
-                      <AttendanceDayRow key={row.id} row={row} onSelectDay={setSelectedDay} />
+                      <AttendanceDayRow
+                        key={row.id}
+                        row={row}
+                        timeline={timelines.data?.[row.date]}
+                        timelineLoading={timelines.isLoading}
+                        onSelectDay={setSelectedDay}
+                      />
                     ))}
                     {rows.length === 0 && (
                       <TableRow>
@@ -282,11 +300,9 @@ export function EmployeeAttendanceHistoryDialog({
               <WorkdayTimeline
                 timeline={dayDetail.data.timeline}
                 financials={{
-                  paidLateAllowanceSeconds:
-                    dayDetail.data.paidLateAllowanceSeconds,
+                  paidLateAllowanceSeconds: dayDetail.data.paidLateAllowanceSeconds,
                   deductibleLateSeconds: dayDetail.data.deductibleLateSeconds,
-                  approvedDelayedBreakSeconds:
-                    dayDetail.data.approvedDelayedBreakSeconds,
+                  approvedDelayedBreakSeconds: dayDetail.data.approvedDelayedBreakSeconds,
                   approvedMeetingSeconds: dayDetail.data.approvedMeetingSeconds,
                   pendingMeetingSeconds: dayDetail.data.pendingMeetingSeconds,
                 }}
@@ -316,13 +332,23 @@ export function EmployeeAttendanceHistoryDialog({
   );
 }
 
+function weekdayName(isoDate: string) {
+  return parseIsoDate(isoDate)?.toLocaleDateString("en-US", { weekday: "long" }) ?? "";
+}
+
 function AttendanceDayRow({
   row,
+  timeline,
+  timelineLoading,
   onSelectDay,
 }: {
   row: DailyAttendance;
+  timeline?: WorkdayTimelineData;
+  timelineLoading: boolean;
   onSelectDay: (day: string) => void;
 }) {
+  const hasActivity = Boolean(timeline && timeline.intervals.length > 0);
+  const showTimelineRow = hasActivity || (timelineLoading && Boolean(row.actualFirstActivityAt));
   const overtimeNotes = [
     row.status === "worked_off_day" ? "Extra day" : null,
     row.approvedOvertimeSeconds > 0
@@ -334,79 +360,105 @@ function AttendanceDayRow({
   ].filter(Boolean);
 
   return (
-    <TableRow>
-      <TableCell className="whitespace-nowrap font-semibold">
-        <button
-          type="button"
-          className="rounded text-left text-info underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          onClick={() => onSelectDay(row.date)}
-        >
-          {row.date}
-        </button>
-      </TableCell>
-      <TableCell className="whitespace-nowrap text-xs">
-        {formatClock(row.scheduledStartAt, row.timezone)} –{" "}
-        {formatClock(row.scheduledEndAt, row.timezone)}
-      </TableCell>
-      <TableCell className="whitespace-nowrap text-xs">
-        Started{" "}
-        {formatAttendanceStart(
-          row.actualFirstActivityAt,
-          row.timezone,
-          row.continuedFromPreviousDay,
-          row.continuedSessionStartedAt,
-        )}{" "}
-        · Last activity {formatClock(row.actualLastActivityAt, row.timezone)}
-        <span
-          className={`block text-[10px] ${
-            row.isRunning ? "font-semibold text-emerald-700" : "text-muted-foreground"
-          }`}
-        >
-          {formatSessionStatus(row.isRunning, row.actualSignOutAt, row.timezone)}
-        </span>
-      </TableCell>
-      <TableCell>{formatDuration(row.normalWorkedSeconds)}</TableCell>
-      <TableCell>
-        {formatDuration(row.recordedIdleSeconds)}
-        <span className="block text-[10px] text-muted-foreground">
-          {formatDuration(row.idleSeconds)} deductible
-        </span>
-      </TableCell>
-      <TableCell>
-        {formatDuration(row.deductibleLateSeconds)}
-        <span className="block text-[10px] text-muted-foreground">
-          {formatDuration(row.rawLateSeconds)} raw
-        </span>
-      </TableCell>
-      <TableCell className="font-semibold">{formatDuration(row.totalPayableSeconds)}</TableCell>
-      <TableCell className="whitespace-nowrap">
-        <span
-          className={
-            row.recordedOvertimeSeconds > 0 ? "font-semibold text-info" : "text-muted-foreground"
-          }
-        >
-          {formatDuration(row.recordedOvertimeSeconds)}
-        </span>
-        <span className="block text-[10px] text-muted-foreground">
-          {overtimeNotes.length ? overtimeNotes.join(" · ") : "No extra time"}
-        </span>
-      </TableCell>
-      <TableCell>
-        <AttendanceStatusBadges
-          status={row.status}
-          deductibleLateSeconds={row.deductibleLateSeconds}
-          earlyLeaveSeconds={row.earlyLeaveSeconds}
-        />
-      </TableCell>
-      <TableCell className="text-right">
-        <Button type="button" size="sm" variant="outline" asChild>
-          <Link to="/screenshots" search={{ employeeId: row.employeeId, day: row.date }}>
-            <Images className="mr-1 h-4 w-4" />
-            {row.screenshotCount} screenshots
-          </Link>
-        </Button>
-      </TableCell>
-    </TableRow>
+    <>
+      <TableRow className={showTimelineRow ? "border-b-0" : undefined}>
+        <TableCell className="whitespace-nowrap font-semibold">
+          <button
+            type="button"
+            className="rounded text-left text-info underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            onClick={() => onSelectDay(row.date)}
+          >
+            {row.date}
+          </button>
+          <span className="block text-[11px] font-medium text-muted-foreground">
+            {weekdayName(row.date)}
+          </span>
+        </TableCell>
+        <TableCell className="whitespace-nowrap text-xs">
+          {formatClock(row.scheduledStartAt, row.timezone)} –{" "}
+          {formatClock(row.scheduledEndAt, row.timezone)}
+        </TableCell>
+        <TableCell className="whitespace-nowrap text-xs">
+          Started{" "}
+          {formatAttendanceStart(
+            row.actualFirstActivityAt,
+            row.timezone,
+            row.continuedFromPreviousDay,
+            row.continuedSessionStartedAt,
+          )}{" "}
+          · Last activity {formatClock(row.actualLastActivityAt, row.timezone)}
+          <span
+            className={`block text-[10px] ${
+              row.isRunning ? "font-semibold text-emerald-700" : "text-muted-foreground"
+            }`}
+          >
+            {formatSessionStatus(row.isRunning, row.actualSignOutAt, row.timezone)}
+          </span>
+        </TableCell>
+        <TableCell>{formatDuration(row.normalWorkedSeconds)}</TableCell>
+        <TableCell>
+          {formatDuration(row.recordedIdleSeconds)}
+          <span className="block text-[10px] text-muted-foreground">
+            {formatDuration(row.idleSeconds)} deductible
+          </span>
+        </TableCell>
+        <TableCell>
+          {formatDuration(row.deductibleLateSeconds)}
+          <span className="block text-[10px] text-muted-foreground">
+            {formatDuration(row.rawLateSeconds)} raw
+          </span>
+        </TableCell>
+        <TableCell className="font-semibold">{formatDuration(row.totalPayableSeconds)}</TableCell>
+        <TableCell className="whitespace-nowrap">
+          <span
+            className={
+              row.recordedOvertimeSeconds > 0 ? "font-semibold text-info" : "text-muted-foreground"
+            }
+          >
+            {formatDuration(row.recordedOvertimeSeconds)}
+          </span>
+          <span className="block text-[10px] text-muted-foreground">
+            {overtimeNotes.length ? overtimeNotes.join(" · ") : "No extra time"}
+          </span>
+        </TableCell>
+        <TableCell>
+          <AttendanceStatusBadges
+            status={row.status}
+            deductibleLateSeconds={row.deductibleLateSeconds}
+            earlyLeaveSeconds={row.earlyLeaveSeconds}
+          />
+        </TableCell>
+        <TableCell className="text-right">
+          <Button type="button" size="sm" variant="outline" asChild>
+            <Link to="/screenshots" search={{ employeeId: row.employeeId, day: row.date }}>
+              <Images className="mr-1 h-4 w-4" />
+              {row.screenshotCount} screenshots
+            </Link>
+          </Button>
+        </TableCell>
+      </TableRow>
+      {showTimelineRow && (
+        <TableRow className="hover:bg-transparent">
+          <TableCell colSpan={10} className="pb-3 pt-0">
+            {timeline && hasActivity ? (
+              <div className="flex items-center gap-3">
+                <span className="w-12 shrink-0 font-mono text-[11px] text-muted-foreground">
+                  {formatClock(timeline.intervals[0].startedAt, timeline.timezone)}
+                </span>
+                <WorkdayActivityBar timeline={timeline} className="h-3 flex-1" />
+                <span className="w-12 shrink-0 text-right font-mono text-[11px] text-muted-foreground">
+                  {timeline.intervals.at(-1)?.endedAt
+                    ? formatClock(timeline.intervals.at(-1)?.endedAt, timeline.timezone)
+                    : "Now"}
+                </span>
+              </div>
+            ) : (
+              <div className="mx-[60px] h-3 animate-pulse rounded-sm bg-muted" />
+            )}
+          </TableCell>
+        </TableRow>
+      )}
+    </>
   );
 }
 
