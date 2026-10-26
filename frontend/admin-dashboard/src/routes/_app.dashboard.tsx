@@ -14,19 +14,19 @@ import {
   Users,
 } from "lucide-react";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis } from "recharts";
-import { PageHeader } from "@/components/ui/page-header";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { PageHeader } from "@/components/admin/PageHeader";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/admin/card";
 import {
   Dialog,
   DialogContent,
   DialogDescription,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
+} from "@/components/admin/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Button } from "@/components/ui/button";
-import { MetricTile } from "@/components/ui/metric-tile";
-import { StatusBadge } from "@/components/ui/status-badge";
+import { Button } from "@/components/admin/button";
+import { MetricTile } from "@/components/admin/MetricTile";
+import { StatusBadge } from "@/components/admin/status-badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { ProtectedImage } from "@/components/ProtectedImage";
 import { SCREENSHOT_REFRESH_INTERVAL_MS } from "@/lib/screenshot-display";
@@ -346,7 +346,12 @@ function DashboardPage() {
   const classified = [
     { label: "Active work", minutes: activeWork, className: "bg-success", color: "#28c879" },
     { label: "Idle", minutes: idle, className: "bg-slate-400", color: "#94a3b8" },
-    { label: "Manual (approved)", minutes: manual, className: "bg-info", color: "#60a5fa" },
+    {
+      label: "Manual (approved)",
+      minutes: manual,
+      className: "bg-info",
+      color: "var(--admin-pink)",
+    },
   ];
   const classifiedTotal = Math.max(1, activeWork + idle + manual);
   const classificationTrend = series.map((day) => ({
@@ -480,7 +485,7 @@ function DashboardPage() {
         }
       />
 
-      <div className="mb-4 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
+      <div className="admin-metrics mb-4 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
         <MetricTile
           onClick={() => setAttentionOpen(true)}
           value={attentionLoading || hasDataError ? "—" : attentionCount}
@@ -857,6 +862,7 @@ function DashboardPage() {
                     key={filter}
                     type="button"
                     onClick={() => setActivityFilter(filter)}
+                    data-admin-filter-active={activityFilter === filter}
                     className={`rounded-full border px-3 py-1.5 text-[11px] font-bold capitalize transition ${activityFilter === filter ? "border-[#e5185d] bg-[#fce3ec] text-[#e5185d] dark:bg-[#38142b] dark:text-[#f0538b]" : "bg-card text-muted-foreground hover:border-[#e5185d]/40"}`}
                   >
                     {filter}
@@ -917,54 +923,57 @@ function DashboardPage() {
                     <span className="truncate text-[12.5px] font-bold">{employee.name}</span>
                     <StatusBadge status={employee.status} className="ml-auto shrink-0" />
                   </Link>
-                  <div className="grid grid-cols-3 gap-2 p-3">
-                    {activityMediaLoading &&
-                      Array.from({ length: 3 }).map((_, index) => (
-                        <Skeleton key={index} className="aspect-video w-full rounded-[12px]" />
-                      ))}
-                    {!activityMediaLoading && shots.isError && !shots.data && (
-                      <div className="col-span-3 flex min-h-24 flex-col items-center justify-center rounded-[13px] border border-destructive/30 bg-destructive/5 px-4 text-center">
-                        <p className="text-xs text-muted-foreground">
-                          Screenshot previews are temporarily unavailable.
-                        </p>
-                        <Button
-                          className="mt-2"
-                          variant="outline"
-                          size="sm"
-                          onClick={() => shots.refetch()}
-                        >
-                          Retry previews
-                        </Button>
-                      </div>
-                    )}
-                    {!activityMediaLoading &&
-                      !(shots.isError && !shots.data) &&
-                      images.length === 0 && (
-                        <p className="col-span-3 flex min-h-24 items-center justify-center rounded-[13px] border border-dashed bg-muted/20 px-4 text-center text-xs text-muted-foreground">
-                          No screenshots captured today.
-                        </p>
+                  <details className="admin-capture-details">
+                    <summary>Recent captures ({images.length})</summary>
+                    <div className="grid grid-cols-3 gap-2 p-3">
+                      {activityMediaLoading &&
+                        Array.from({ length: 3 }).map((_, index) => (
+                          <Skeleton key={index} className="aspect-video w-full rounded-[12px]" />
+                        ))}
+                      {!activityMediaLoading && shots.isError && !shots.data && (
+                        <div className="col-span-3 flex min-h-24 flex-col items-center justify-center rounded-[13px] border border-destructive/30 bg-destructive/5 px-4 text-center">
+                          <p className="text-xs text-muted-foreground">
+                            Screenshot previews are temporarily unavailable.
+                          </p>
+                          <Button
+                            className="mt-2"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => shots.refetch()}
+                          >
+                            Retry previews
+                          </Button>
+                        </div>
                       )}
-                    {!activityMediaLoading &&
-                      images.map((shot) => (
-                        <Link
-                          key={shot.id}
-                          to="/screenshots"
-                          className="group relative overflow-hidden rounded-[12px] border border-border bg-background transition hover:border-primary/40 hover:shadow-md"
-                        >
-                          <ProtectedImage
-                            src={shot.thumbnailUrl}
-                            alt={`Screenshot from ${employee.name}`}
-                            className="aspect-video w-full object-cover transition-transform group-hover:scale-[1.04]"
-                          />
-                          <span className="absolute bottom-1 right-1 rounded-md bg-black/70 px-1.5 py-0.5 text-[9px] font-bold text-white">
-                            {new Date(shot.capturedAt).toLocaleTimeString([], {
-                              hour: "2-digit",
-                              minute: "2-digit",
-                            })}
-                          </span>
-                        </Link>
-                      ))}
-                  </div>
+                      {!activityMediaLoading &&
+                        !(shots.isError && !shots.data) &&
+                        images.length === 0 && (
+                          <p className="col-span-3 flex min-h-24 items-center justify-center rounded-[13px] border border-dashed bg-muted/20 px-4 text-center text-xs text-muted-foreground">
+                            No screenshots captured today.
+                          </p>
+                        )}
+                      {!activityMediaLoading &&
+                        images.map((shot) => (
+                          <Link
+                            key={shot.id}
+                            to="/screenshots"
+                            className="group relative overflow-hidden rounded-[12px] border border-border bg-background transition hover:border-primary/40 hover:shadow-md"
+                          >
+                            <ProtectedImage
+                              src={shot.thumbnailUrl}
+                              alt={`Screenshot from ${employee.name}`}
+                              className="aspect-video w-full object-cover transition-transform group-hover:scale-[1.04]"
+                            />
+                            <span className="absolute bottom-1 right-1 rounded-md bg-black/70 px-1.5 py-0.5 text-[9px] font-bold text-white">
+                              {new Date(shot.capturedAt).toLocaleTimeString([], {
+                                hour: "2-digit",
+                                minute: "2-digit",
+                              })}
+                            </span>
+                          </Link>
+                        ))}
+                    </div>
+                  </details>
                 </div>
               ))}
             </CardContent>
@@ -1014,7 +1023,7 @@ function DashboardPage() {
                       </span>
                     </div>
 
-                    <div className="mt-4 h-[176px] overflow-hidden rounded-[18px] border border-[#2563eb]/20 bg-[#0f3568] p-3 shadow-inner dark:border-[#2e58a4]/40 dark:bg-[#102a58]">
+                    <div className="admin-classification-chart mt-4 h-[176px] overflow-hidden rounded-[14px] border p-3">
                       <ResponsiveContainer width="100%" height="100%">
                         <AreaChart
                           data={classificationTrend}
@@ -1022,25 +1031,29 @@ function DashboardPage() {
                         >
                           <defs>
                             <linearGradient id="classification-trend" x1="0" y1="0" x2="0" y2="1">
-                              <stop offset="0%" stopColor="#60a5fa" stopOpacity={0.58} />
-                              <stop offset="100%" stopColor="#60a5fa" stopOpacity={0.08} />
+                              <stop offset="0%" stopColor="var(--admin-pink)" stopOpacity={0.58} />
+                              <stop
+                                offset="100%"
+                                stopColor="var(--admin-pink)"
+                                stopOpacity={0.08}
+                              />
                             </linearGradient>
                           </defs>
-                          <CartesianGrid stroke="#2f72c9" strokeOpacity={0.72} />
+                          <CartesianGrid stroke="var(--admin-line)" strokeOpacity={0.72} />
                           <XAxis
                             dataKey="day"
                             axisLine={false}
                             tickLine={false}
-                            tick={{ fill: "#bfdbfe", fontSize: 10, fontWeight: 700 }}
+                            tick={{ fill: "var(--admin-muted)", fontSize: 10, fontWeight: 700 }}
                             dy={5}
                           />
                           <Tooltip
-                            cursor={{ stroke: "#bfdbfe", strokeOpacity: 0.4 }}
+                            cursor={{ stroke: "var(--admin-muted)", strokeOpacity: 0.4 }}
                             contentStyle={{
-                              background: "#0b1635",
-                              border: "1px solid rgba(96,165,250,.35)",
+                              background: "var(--admin-card)",
+                              border: "1px solid var(--admin-line)",
                               borderRadius: 12,
-                              color: "#fff",
+                              color: "var(--admin-ink)",
                               fontSize: 12,
                             }}
                             formatter={(value: number) => [`${Math.round(value)}%`, "Activity"]}
@@ -1048,10 +1061,15 @@ function DashboardPage() {
                           <Area
                             type="monotone"
                             dataKey="activity"
-                            stroke="#bfdbfe"
+                            stroke="var(--admin-muted)"
                             strokeWidth={3}
                             fill="url(#classification-trend)"
-                            dot={{ r: 3.5, fill: "#ffffff", stroke: "#60a5fa", strokeWidth: 2 }}
+                            dot={{
+                              r: 3.5,
+                              fill: "#ffffff",
+                              stroke: "var(--admin-pink)",
+                              strokeWidth: 2,
+                            }}
                             activeDot={{ r: 5, fill: "#ffffff", stroke: "#e5185d", strokeWidth: 2 }}
                             isAnimationActive={false}
                           />
@@ -1289,9 +1307,9 @@ function HeroCard({
       className="group rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
     >
       <Card className="studio-card h-full overflow-hidden rounded-2xl shadow-none transition duration-200 group-hover:-translate-y-0.5 group-hover:border-primary/25">
-        <CardContent className="relative min-h-[152px] px-6 pb-5 pt-6 sm:px-6 sm:pb-5 sm:pt-6">
+        <CardContent className="admin-hero-metric">
           <span
-            className="absolute right-6 top-6 grid h-9 w-9 place-items-center rounded-xl border"
+            className="admin-hero-icon"
             style={{
               backgroundColor: `color-mix(in srgb, ${color} 10%, transparent)`,
               borderColor: `color-mix(in srgb, ${color} 24%, transparent)`,
@@ -1310,14 +1328,12 @@ function HeroCard({
             </p>
           </div>
 
-          <div className="mt-6 grid grid-cols-[minmax(0,1fr)_132px] items-end gap-5">
+          <div className="admin-hero-body">
             <div className="min-w-0">
-              <p className="font-mono-numeric truncate text-[34px] font-extrabold leading-none tracking-tight">
-                {value}
-              </p>
-              <div className="mt-2 overflow-hidden">{trend}</div>
+              <p className="admin-hero-value">{value}</p>
+              <div className="admin-hero-trend">{trend}</div>
             </div>
-            <div className="h-16 w-[132px] justify-self-end">
+            <div className="admin-hero-sparkline">
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={data} margin={{ top: 4, right: 0, bottom: 0, left: 0 }}>
                   <defs>

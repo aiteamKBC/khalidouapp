@@ -1,8 +1,10 @@
+import { AdminPagination } from "@/components/admin/pagination";
+import { useAdminPagination } from "@/components/admin/useAdminPagination";
 import { createFileRoute, Link, Outlet, useRouterState } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { PageHeader } from "@/components/ui/page-header";
-import { Card } from "@/components/ui/card";
+import { PageHeader } from "@/components/admin/PageHeader";
+import { Card } from "@/components/admin/card";
 import {
   Table,
   TableBody,
@@ -10,9 +12,9 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table";
-import { Button } from "@/components/ui/button";
-import { StatusBadge } from "@/components/ui/status-badge";
+} from "@/components/admin/table";
+import { Button } from "@/components/admin/button";
+import { StatusBadge } from "@/components/admin/status-badge";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -22,7 +24,7 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
+} from "@/components/admin/alert-dialog";
 import {
   dismissSignInAttempt,
   listDevices,
@@ -38,21 +40,21 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
+} from "@/components/admin/dialog";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
+} from "@/components/admin/select";
 import { listEmployees } from "@/api/employees";
 import { useAuth } from "@/lib/auth";
 import { permissions } from "@/lib/permissions";
 import { formatRelative, formatDate } from "@/lib/format";
 import { toast } from "sonner";
 import { Laptop, ShieldAlert, ShieldCheck, WifiOff } from "lucide-react";
-import { MetricTile } from "@/components/ui/metric-tile";
+import { MetricTile } from "@/components/admin/MetricTile";
 import { findOtherOnlineDeviceForEmployee } from "@/lib/device-presence";
 
 export const Route = createFileRoute("/_app/devices")({
@@ -133,11 +135,13 @@ function DevicesList() {
       toast.error(error instanceof Error ? error.message : "Failed to reactivate device"),
   });
 
+  const devicePage = useAdminPagination(devs.data ?? []);
+
   return (
     <div className="studio-page">
       <PageHeader title="Devices" description="Managed devices reporting to Khaliduo." />
 
-      <div className="mb-4 grid gap-3 sm:grid-cols-3">
+      <div className="admin-metrics mb-4 grid gap-3 sm:grid-cols-3">
         <MetricTile
           icon={Laptop}
           value={(devs.data ?? []).length}
@@ -244,7 +248,7 @@ function DevicesList() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {(devs.data ?? []).map((device) => {
+            {devicePage.items.map((device) => {
               const emp = (emps.data ?? []).find((employee) => employee.id === device.employeeId);
               const otherOnlineDevice = findOtherOnlineDeviceForEmployee(devs.data ?? [], device);
               return (
@@ -329,6 +333,7 @@ function DevicesList() {
             })}
           </TableBody>
         </Table>
+        <AdminPagination {...devicePage} label="Devices" />
       </Card>
 
       <Dialog open={reassign !== null} onOpenChange={(open) => !open && setReassign(null)}>

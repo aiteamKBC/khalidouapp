@@ -18,20 +18,20 @@ import {
   RefreshCw,
   Trash2,
 } from "lucide-react";
-import { PageHeader } from "@/components/ui/page-header";
-import { Card } from "@/components/ui/card";
+import { PageHeader } from "@/components/admin/PageHeader";
+import { Card } from "@/components/admin/card";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
+} from "@/components/admin/select";
 import { Input } from "@/components/ui/input";
 import { DateInput } from "@/components/ui/date-input";
-import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
-import { StatusBadge } from "@/components/ui/status-badge";
+import { Dialog, DialogContent, DialogTitle } from "@/components/admin/dialog";
+import { Button } from "@/components/admin/button";
+import { StatusBadge } from "@/components/admin/status-badge";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ProtectedImage } from "@/components/ProtectedImage";
 import { SCREENSHOT_REFRESH_INTERVAL_MS } from "@/lib/screenshot-display";
@@ -151,15 +151,18 @@ function ScreenshotsPage() {
       folderStatus,
     ],
     queryFn: ({ signal }) =>
-      listScreenshotFolderPage({
-        scopedTeamIds: scope,
-        page: folderPage,
-        employeeId: empId,
-        teamId,
-        day: date,
-        workCategory,
-        folderStatus,
-      }, signal),
+      listScreenshotFolderPage(
+        {
+          scopedTeamIds: scope,
+          page: folderPage,
+          employeeId: empId,
+          teamId,
+          day: date,
+          workCategory,
+          folderStatus,
+        },
+        signal,
+      ),
     enabled: !rangeMode,
     staleTime: isLiveDay ? SCREENSHOT_REFRESH_INTERVAL_MS : 5 * 60_000,
     refetchInterval: isLiveDay ? SCREENSHOT_REFRESH_INTERVAL_MS : false,
@@ -181,17 +184,20 @@ function ScreenshotsPage() {
       workCategory,
     ],
     queryFn: ({ signal }) =>
-      listScreenshotPage({
-        scopedTeamIds: scope,
-        page: screenshotPage,
-        pageSize: 24,
-        employeeId: selectedFolderId && selectedFolderId !== "all" ? selectedFolderId : undefined,
-        teamId,
-        day: rangeMode ? undefined : date,
-        startDate: rangeMode ? rangeStart : undefined,
-        endDate: rangeMode ? rangeEnd : undefined,
-        workCategory,
-      }, signal),
+      listScreenshotPage(
+        {
+          scopedTeamIds: scope,
+          page: screenshotPage,
+          pageSize: 24,
+          employeeId: selectedFolderId && selectedFolderId !== "all" ? selectedFolderId : undefined,
+          teamId,
+          day: rangeMode ? undefined : date,
+          startDate: rangeMode ? rangeStart : undefined,
+          endDate: rangeMode ? rangeEnd : undefined,
+          workCategory,
+        },
+        signal,
+      ),
     enabled: selectedFolderId !== null && validRange,
     staleTime: isLiveDay ? SCREENSHOT_REFRESH_INTERVAL_MS : 5 * 60_000,
     refetchInterval:
@@ -205,11 +211,14 @@ function ScreenshotsPage() {
   const captureAudit = useQuery({
     queryKey: ["screenshot-capture-audit", scope, empId, date],
     queryFn: ({ signal }) =>
-      listScreenshotCaptureEvents({
-        employeeId: empId === "all" ? undefined : empId,
-        day: date || undefined,
-        pageSize: 75,
-      }, signal),
+      listScreenshotCaptureEvents(
+        {
+          employeeId: empId === "all" ? undefined : empId,
+          day: date || undefined,
+          pageSize: 75,
+        },
+        signal,
+      ),
     enabled: auditOpen,
     staleTime: 5 * 60_000,
     retry: retryTransientRequest,

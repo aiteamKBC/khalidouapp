@@ -4,7 +4,7 @@ import { Loader2 } from "lucide-react";
 
 export function GlobalActivityIndicator() {
   const routeIsLoading = useRouterState({
-    select: (state) => state.isLoading || state.isTransitioning,
+    select: (state) => state.isLoading || state.status === "pending",
   });
   const foregroundFetches = useIsFetching({
     predicate: (query) =>

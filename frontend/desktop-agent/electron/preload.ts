@@ -4,6 +4,8 @@ const { contextBridge, ipcRenderer } = electronRenderer;
 
 contextBridge.exposeInMainWorld("khaliduo", {
   getAgentStatus: () => ipcRenderer.invoke("agent:get-status"),
+  getAppearance: (scope: string) => ipcRenderer.invoke("agent:get-appearance", scope),
+  setAppearance: (scope: string, patch: { skin?: "orbit" | "ember" | "forest"; mode?: "light" | "dark" }) => ipcRenderer.invoke("agent:set-appearance", scope, patch),
   syncNow: () => ipcRenderer.invoke("agent:sync-now"),
   onStatusChanged: (callback: (status: unknown) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, status: unknown) =>
@@ -13,9 +15,10 @@ contextBridge.exposeInMainWorld("khaliduo", {
   },
   enrollWithCredentials: (email: string, password: string) =>
     ipcRenderer.invoke("agent:enroll-with-credentials", email, password),
-  pauseTracking: (options?: { requestedMinutes?: number; reason?: string }) =>
+  pauseTracking: (options?: { requestedMinutes?: number; reason?: string; takeBreak?: boolean }) =>
     ipcRenderer.invoke("agent:pause-tracking", options),
   resumeTracking: () => ipcRenderer.invoke("agent:resume-tracking"),
+  endShift: () => ipcRenderer.invoke("agent:end-shift"),
   resumeAutomaticIdle: () => ipcRenderer.invoke("agent:resume-automatic-idle"),
   startMeeting: (input: {
     title: string;
@@ -80,7 +83,8 @@ contextBridge.exposeInMainWorld("khaliduo", {
     leaveType?: "annual" | "sick" | "unpaid";
     reason?: string;
   }) => ipcRenderer.invoke("agent:create-leave-request", input),
-  listShiftReschedules: () => ipcRenderer.invoke("agent:list-shift-reschedules"),
+  listShiftReschedules: () =>
+    ipcRenderer.invoke("agent:list-shift-reschedules"),
   getShiftRescheduleDay: (workDate: string) =>
     ipcRenderer.invoke("agent:get-shift-reschedule-day", workDate),
   createShiftReschedule: (input: {

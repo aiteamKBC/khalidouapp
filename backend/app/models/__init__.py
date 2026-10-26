@@ -11,6 +11,7 @@ from app.models.device import Device
 from app.models.device_sign_in_attempt import DeviceSignInAttempt
 from app.models.device_token import DeviceToken
 from app.models.employee import Employee
+from app.models.employee_appearance import EmployeeAppearance
 from app.models.employee_work_profile import EmployeeWorkProfile
 from app.models.employee_invitation import EmployeeInvitation
 from app.models.leave_balance import LeaveBalance
@@ -49,6 +50,7 @@ from app.models.tracking_settings import TrackingSettings
 from app.models.work_session import WorkSession
 
 __all__ = [
+    "EmployeeAppearance",
     "ActivityEvent",
     "AuditLog",
     "AdminRefreshToken",

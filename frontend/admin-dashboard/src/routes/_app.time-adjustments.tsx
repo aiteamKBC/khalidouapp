@@ -2,8 +2,8 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, CheckCheck, X } from "lucide-react";
 import { useState } from "react";
-import { PageHeader } from "@/components/ui/page-header";
-import { Card } from "@/components/ui/card";
+import { PageHeader } from "@/components/admin/PageHeader";
+import { Card } from "@/components/admin/card";
 import {
   Table,
   TableBody,
@@ -11,16 +11,16 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table";
-import { Button } from "@/components/ui/button";
+} from "@/components/admin/table";
+import { Button } from "@/components/admin/button";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
-import { StatusBadge } from "@/components/ui/status-badge";
+} from "@/components/admin/select";
+import { StatusBadge } from "@/components/admin/status-badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   AlertDialog,
@@ -31,7 +31,7 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
+} from "@/components/admin/alert-dialog";
 import { listEmployees } from "@/api/employees";
 import { listTeams } from "@/api/teams";
 import {
@@ -87,13 +87,16 @@ function TimeAdjustmentsPage() {
   const requests = useQuery({
     queryKey: ["time-adjustments", scope, teamId, employeeId, status],
     queryFn: ({ signal }) =>
-      listTimeAdjustmentRequests({
-        scopedTeamIds: scope,
-        teamId,
-        employeeId,
-        status,
-        requestGroup: "time",
-      }, signal),
+      listTimeAdjustmentRequests(
+        {
+          scopedTeamIds: scope,
+          teamId,
+          employeeId,
+          status,
+          requestGroup: "time",
+        },
+        signal,
+      ),
   });
 
   const reviewMutation = useMutation({

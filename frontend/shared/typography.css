@@ -1,0 +1,30 @@
+@font-face {
+  font-family: "Roboto";
+  src: url("/fonts/RobotoVariable.ttf") format("truetype");
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+}
+
+:root {
+  --font: "Roboto", "Segoe UI", Arial, sans-serif;
+  --font-sans: "Roboto", "Segoe UI", Arial, sans-serif;
+  --font-ew-heading: "Roboto", "Segoe UI", Arial, sans-serif;
+  --font-ew-mono: "Roboto", "Segoe UI", Arial, sans-serif;
+}
+
+body,
+button,
+input,
+textarea,
+select,
+option {
+  font-family: "Roboto", "Segoe UI", Arial, sans-serif;
+}
+
+/* Override the older design's heading and timer faces, including inline fonts. */
+:is(.readdy-tracker-ui, .employee-workspace, .workspace-login, .k-app, .swal2-container),
+:is(.readdy-tracker-ui, .employee-workspace, .workspace-login, .k-app, .swal2-container)
+  :where(div, span, h1, h2, h3, h4, h5, h6, p, a, button, input, textarea, select, option, label, legend, strong, small, b, em, summary, li, td, th, dt, dd, time, kbd, output, text) {
+  font-family: "Roboto", "Segoe UI", Arial, sans-serif !important;
+}

@@ -60,23 +60,23 @@ import {
 } from "@/lib/format";
 import { WorkdayTimeline } from "@/components/workday-timeline";
 import { AttendanceStatusBadges } from "@/components/attendance/attendance-status-badges";
-import { PageHeader } from "@/components/ui/page-header";
+import { PageHeader } from "@/components/admin/PageHeader";
 import { StatCard } from "@/components/ui/stat-card";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/admin/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/admin/card";
 import { Input } from "@/components/ui/input";
 import { DateInput } from "@/components/ui/date-input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
-import { StatusBadge } from "@/components/ui/status-badge";
+import { StatusBadge } from "@/components/admin/status-badge";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
+} from "@/components/admin/select";
 import {
   Table,
   TableBody,
@@ -84,7 +84,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table";
+} from "@/components/admin/table";
 import {
   Sheet,
   SheetContent,
@@ -92,7 +92,7 @@ import {
   SheetFooter,
   SheetHeader,
   SheetTitle,
-} from "@/components/ui/sheet";
+} from "@/components/admin/sheet";
 import {
   Dialog,
   DialogContent,
@@ -100,7 +100,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
+} from "@/components/admin/dialog";
 
 export const Route = createFileRoute("/_app/payroll")({
   validateSearch: (search: Record<string, unknown>): { employeeId?: string; month?: string } => ({

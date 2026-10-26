@@ -4,17 +4,17 @@ import { useEffect, useState } from "react";
 import { History } from "lucide-react";
 import { listEmployees } from "@/api/employees";
 import { ApplicationHistoryPanel } from "@/components/application-history-panel";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/admin/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Label } from "@/components/ui/label";
-import { PageHeader } from "@/components/ui/page-header";
+import { PageHeader } from "@/components/admin/PageHeader";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
+} from "@/components/admin/select";
 import { useAuth } from "@/lib/auth";
 
 export const Route = createFileRoute("/_app/history")({

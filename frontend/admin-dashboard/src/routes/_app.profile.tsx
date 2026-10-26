@@ -4,11 +4,11 @@ import { toast } from "sonner";
 import { Camera } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/admin/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/admin/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { PageHeader } from "@/components/ui/page-header";
+import { PageHeader } from "@/components/admin/PageHeader";
 import { PasswordInput } from "@/components/ui/password-input";
 
 export const Route = createFileRoute("/_app/profile")({ component: ProfilePage });

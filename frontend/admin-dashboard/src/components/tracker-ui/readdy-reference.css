@@ -1,0 +1,6870 @@
+/* Readdy project daf9820f-f19f-4eeb-98d5-07878050b82c, V211 (15259656). Scoped for the employee workspace. */
+@layer base {
+  .readdy-tracker-ui.readdy-tracker-ui *,
+  .readdy-tracker-ui.readdy-tracker-ui :before,
+  .readdy-tracker-ui.readdy-tracker-ui :after,
+  .readdy-tracker-ui.readdy-tracker-ui ::backdrop {
+    --tw-border-spacing-x: 0;
+    --tw-border-spacing-y: 0;
+    --tw-translate-x: 0;
+    --tw-translate-y: 0;
+    --tw-rotate: 0;
+    --tw-skew-x: 0;
+    --tw-skew-y: 0;
+    --tw-scale-x: 1;
+    --tw-scale-y: 1;
+    --tw-pan-x: ;
+    --tw-pan-y: ;
+    --tw-pinch-zoom: ;
+    --tw-scroll-snap-strictness: proximity;
+    --tw-gradient-from-position: ;
+    --tw-gradient-via-position: ;
+    --tw-gradient-to-position: ;
+    --tw-ordinal: ;
+    --tw-slashed-zero: ;
+    --tw-numeric-figure: ;
+    --tw-numeric-spacing: ;
+    --tw-numeric-fraction: ;
+    --tw-ring-inset: ;
+    --tw-ring-offset-width: 0px;
+    --tw-ring-offset-color: #fff;
+    --tw-ring-color: #3b82f680;
+    --tw-ring-offset-shadow: 0 0 #0000;
+    --tw-ring-shadow: 0 0 #0000;
+    --tw-shadow: 0 0 #0000;
+    --tw-shadow-colored: 0 0 #0000;
+    --tw-blur: ;
+    --tw-brightness: ;
+    --tw-contrast: ;
+    --tw-grayscale: ;
+    --tw-hue-rotate: ;
+    --tw-invert: ;
+    --tw-saturate: ;
+    --tw-sepia: ;
+    --tw-drop-shadow: ;
+    --tw-backdrop-blur: ;
+    --tw-backdrop-brightness: ;
+    --tw-backdrop-contrast: ;
+    --tw-backdrop-grayscale: ;
+    --tw-backdrop-hue-rotate: ;
+    --tw-backdrop-invert: ;
+    --tw-backdrop-opacity: ;
+    --tw-backdrop-saturate: ;
+    --tw-backdrop-sepia: ;
+    --tw-contain-size: ;
+    --tw-contain-layout: ;
+    --tw-contain-paint: ;
+    --tw-contain-style: ;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui *,
+  .readdy-tracker-ui.readdy-tracker-ui :before,
+  .readdy-tracker-ui.readdy-tracker-ui :after {
+    box-sizing: border-box;
+    border: 0 solid #e5e7eb;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui :before,
+  .readdy-tracker-ui.readdy-tracker-ui :after {
+    --tw-content: "";
+  }
+  .readdy-tracker-ui.readdy-tracker-ui,
+  .readdy-tracker-ui.readdy-tracker-ui {
+    -webkit-text-size-adjust: 100%;
+    tab-size: 4;
+    font-feature-settings: normal;
+    font-variation-settings: normal;
+    -webkit-tap-highlight-color: transparent;
+    font-family:
+      Inter,
+      IBM Plex Sans Arabic,
+      system-ui,
+      sans-serif;
+    line-height: 1.5;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui {
+    line-height: inherit;
+    margin: 0;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui hr {
+    height: 0;
+    color: inherit;
+    border-top-width: 1px;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui abbr:where([title]) {
+    -webkit-text-decoration: underline dotted;
+    text-decoration: underline dotted;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui h1,
+  .readdy-tracker-ui.readdy-tracker-ui h2,
+  .readdy-tracker-ui.readdy-tracker-ui h3,
+  .readdy-tracker-ui.readdy-tracker-ui h4,
+  .readdy-tracker-ui.readdy-tracker-ui h5,
+  .readdy-tracker-ui.readdy-tracker-ui h6 {
+    font-size: inherit;
+    font-weight: inherit;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui a {
+    color: inherit;
+    -webkit-text-decoration: inherit;
+    text-decoration: inherit;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui b,
+  .readdy-tracker-ui.readdy-tracker-ui strong {
+    font-weight: bolder;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui code,
+  .readdy-tracker-ui.readdy-tracker-ui kbd,
+  .readdy-tracker-ui.readdy-tracker-ui samp,
+  .readdy-tracker-ui.readdy-tracker-ui pre {
+    font-feature-settings: normal;
+    font-variation-settings: normal;
+    font-family:
+      Inter,
+      IBM Plex Sans Arabic,
+      system-ui,
+      sans-serif;
+    font-size: 1em;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui small {
+    font-size: 80%;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui sub,
+  .readdy-tracker-ui.readdy-tracker-ui sup {
+    vertical-align: baseline;
+    font-size: 75%;
+    line-height: 0;
+    position: relative;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui sub {
+    bottom: -0.25em;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui sup {
+    top: -0.5em;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui table {
+    text-indent: 0;
+    border-color: inherit;
+    border-collapse: collapse;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui button,
+  .readdy-tracker-ui.readdy-tracker-ui input,
+  .readdy-tracker-ui.readdy-tracker-ui optgroup,
+  .readdy-tracker-ui.readdy-tracker-ui select,
+  .readdy-tracker-ui.readdy-tracker-ui textarea {
+    font-feature-settings: inherit;
+    font-variation-settings: inherit;
+    font-family: inherit;
+    font-size: 100%;
+    font-weight: inherit;
+    line-height: inherit;
+    letter-spacing: inherit;
+    color: inherit;
+    margin: 0;
+    padding: 0;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui button,
+  .readdy-tracker-ui.readdy-tracker-ui select {
+    text-transform: none;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui button,
+  .readdy-tracker-ui.readdy-tracker-ui input:where([type="button"]),
+  .readdy-tracker-ui.readdy-tracker-ui input:where([type="reset"]),
+  .readdy-tracker-ui.readdy-tracker-ui input:where([type="submit"]) {
+    -webkit-appearance: button;
+    background-color: #0000;
+    background-image: none;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui :-moz-focusring {
+    outline: auto;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui :-moz-ui-invalid {
+    box-shadow: none;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui progress {
+    vertical-align: baseline;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui ::-webkit-inner-spin-button {
+    height: auto;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui ::-webkit-outer-spin-button {
+    height: auto;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui [type="search"] {
+    -webkit-appearance: textfield;
+    outline-offset: -2px;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui ::-webkit-search-decoration {
+    -webkit-appearance: none;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui ::-webkit-file-upload-button {
+    -webkit-appearance: button;
+    font: inherit;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui summary {
+    display: list-item;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui blockquote,
+  .readdy-tracker-ui.readdy-tracker-ui dl,
+  .readdy-tracker-ui.readdy-tracker-ui dd,
+  .readdy-tracker-ui.readdy-tracker-ui h1,
+  .readdy-tracker-ui.readdy-tracker-ui h2,
+  .readdy-tracker-ui.readdy-tracker-ui h3,
+  .readdy-tracker-ui.readdy-tracker-ui h4,
+  .readdy-tracker-ui.readdy-tracker-ui h5,
+  .readdy-tracker-ui.readdy-tracker-ui h6,
+  .readdy-tracker-ui.readdy-tracker-ui hr,
+  .readdy-tracker-ui.readdy-tracker-ui figure,
+  .readdy-tracker-ui.readdy-tracker-ui p,
+  .readdy-tracker-ui.readdy-tracker-ui pre {
+    margin: 0;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui fieldset {
+    margin: 0;
+    padding: 0;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui legend {
+    padding: 0;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui ol,
+  .readdy-tracker-ui.readdy-tracker-ui ul,
+  .readdy-tracker-ui.readdy-tracker-ui menu {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui dialog {
+    padding: 0;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui textarea {
+    resize: vertical;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui input::-moz-placeholder {
+    opacity: 1;
+    color: #9ca3af;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui textarea::-moz-placeholder {
+    opacity: 1;
+    color: #9ca3af;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui input::placeholder,
+  .readdy-tracker-ui.readdy-tracker-ui textarea::placeholder {
+    opacity: 1;
+    color: #9ca3af;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui button,
+  .readdy-tracker-ui.readdy-tracker-ui [role="button"] {
+    cursor: pointer;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui :disabled {
+    cursor: default;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui img,
+  .readdy-tracker-ui.readdy-tracker-ui svg,
+  .readdy-tracker-ui.readdy-tracker-ui video,
+  .readdy-tracker-ui.readdy-tracker-ui canvas,
+  .readdy-tracker-ui.readdy-tracker-ui audio,
+  .readdy-tracker-ui.readdy-tracker-ui iframe,
+  .readdy-tracker-ui.readdy-tracker-ui embed,
+  .readdy-tracker-ui.readdy-tracker-ui object {
+    vertical-align: middle;
+    display: block;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui img,
+  .readdy-tracker-ui.readdy-tracker-ui video {
+    max-width: 100%;
+    height: auto;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui [hidden]:where(:not([hidden="until-found"])) {
+    display: none;
+  }
+}
+.readdy-tracker-ui.readdy-tracker-ui .sr-only {
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border-width: 0;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  position: absolute;
+  overflow: hidden;
+}
+.readdy-tracker-ui.readdy-tracker-ui .pointer-events-none {
+  pointer-events: none;
+}
+.readdy-tracker-ui.readdy-tracker-ui .pointer-events-auto {
+  pointer-events: auto;
+}
+.readdy-tracker-ui.readdy-tracker-ui .visible {
+  visibility: visible;
+}
+.readdy-tracker-ui.readdy-tracker-ui .static {
+  position: static;
+}
+.readdy-tracker-ui.readdy-tracker-ui .fixed {
+  position: fixed;
+}
+.readdy-tracker-ui.readdy-tracker-ui .absolute {
+  position: absolute;
+}
+.readdy-tracker-ui.readdy-tracker-ui .relative {
+  position: relative;
+}
+.readdy-tracker-ui.readdy-tracker-ui .sticky {
+  position: sticky;
+}
+.readdy-tracker-ui.readdy-tracker-ui .inset-0 {
+  inset: 0;
+}
+.readdy-tracker-ui.readdy-tracker-ui .inset-4 {
+  inset: 1rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .inset-6 {
+  inset: 1.5rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .inset-x-0 {
+  left: 0;
+  right: 0;
+}
+.readdy-tracker-ui.readdy-tracker-ui .inset-y-0 {
+  top: 0;
+  bottom: 0;
+}
+.readdy-tracker-ui.readdy-tracker-ui .-right-1 {
+  right: -0.25rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .-top-1 {
+  top: -0.25rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .bottom-0 {
+  bottom: 0;
+}
+.readdy-tracker-ui.readdy-tracker-ui .bottom-1 {
+  bottom: 0.25rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .bottom-4 {
+  bottom: 1rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .bottom-6 {
+  bottom: 1.5rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .left-0 {
+  left: 0;
+}
+.readdy-tracker-ui.readdy-tracker-ui .left-1 {
+  left: 0.25rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .left-1\/2 {
+  left: 50%;
+}
+.readdy-tracker-ui.readdy-tracker-ui .left-2 {
+  left: 0.5rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .left-2\.5 {
+  left: 0.625rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .left-3 {
+  left: 0.75rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .left-\[3px\] {
+  left: 3px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .right-0 {
+  right: 0;
+}
+.readdy-tracker-ui.readdy-tracker-ui .right-1 {
+  right: 0.25rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .right-1\.5 {
+  right: 0.375rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .right-2 {
+  right: 0.5rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .top-0 {
+  top: 0;
+}
+.readdy-tracker-ui.readdy-tracker-ui .top-1 {
+  top: 0.25rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .top-1\.5 {
+  top: 0.375rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .top-1\/2 {
+  top: 50%;
+}
+.readdy-tracker-ui.readdy-tracker-ui .top-2 {
+  top: 0.5rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .top-3 {
+  top: 0.75rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .top-4 {
+  top: 1rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .top-\[5px\] {
+  top: 5px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .top-\[70px\] {
+  top: 70px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .top-\[86px\] {
+  top: 86px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .top-\[calc\(100\%\+10px\)\] {
+  top: calc(100% + 10px);
+}
+.readdy-tracker-ui.readdy-tracker-ui .top-\[calc\(100\%\+8px\)\] {
+  top: calc(100% + 8px);
+}
+.readdy-tracker-ui.readdy-tracker-ui .z-0 {
+  z-index: 0;
+}
+.readdy-tracker-ui.readdy-tracker-ui .z-10 {
+  z-index: 10;
+}
+.readdy-tracker-ui.readdy-tracker-ui .z-30 {
+  z-index: 30;
+}
+.readdy-tracker-ui.readdy-tracker-ui .z-40 {
+  z-index: 40;
+}
+.readdy-tracker-ui.readdy-tracker-ui .z-50 {
+  z-index: 50;
+}
+.readdy-tracker-ui.readdy-tracker-ui .z-\[46\] {
+  z-index: 46;
+}
+.readdy-tracker-ui.readdy-tracker-ui .z-\[70\] {
+  z-index: 70;
+}
+.readdy-tracker-ui.readdy-tracker-ui .z-\[75\] {
+  z-index: 75;
+}
+.readdy-tracker-ui.readdy-tracker-ui .z-\[80\] {
+  z-index: 80;
+}
+.readdy-tracker-ui.readdy-tracker-ui .z-\[90\] {
+  z-index: 90;
+}
+.readdy-tracker-ui.readdy-tracker-ui .m-1 {
+  margin: 0.25rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .m-2 {
+  margin: 0.5rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .m-3 {
+  margin: 0.75rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .m-4 {
+  margin: 1rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .m-5 {
+  margin: 1.25rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .m-6 {
+  margin: 1.5rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .m-7 {
+  margin: 1.75rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .-mx-4 {
+  margin-left: -1rem;
+  margin-right: -1rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .mx-1 {
+  margin-left: 0.25rem;
+  margin-right: 0.25rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .mx-3 {
+  margin-left: 0.75rem;
+  margin-right: 0.75rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .mx-auto {
+  margin-left: auto;
+  margin-right: auto;
+}
+.readdy-tracker-ui.readdy-tracker-ui .-mb-3 {
+  margin-bottom: -0.75rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .mb-1 {
+  margin-bottom: 0.25rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .mb-1\.5 {
+  margin-bottom: 0.375rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .mb-2 {
+  margin-bottom: 0.5rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .mb-3 {
+  margin-bottom: 0.75rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .mb-5 {
+  margin-bottom: 1.25rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .mb-\[5px\] {
+  margin-bottom: 5px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .ml-0\.5 {
+  margin-left: 0.125rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .ml-1 {
+  margin-left: 0.25rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .ml-1\.5 {
+  margin-left: 0.375rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .ml-auto {
+  margin-left: auto;
+}
+.readdy-tracker-ui.readdy-tracker-ui .mr-1 {
+  margin-right: 0.25rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .mt-0\.5 {
+  margin-top: 0.125rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .mt-1 {
+  margin-top: 0.25rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .mt-1\.5 {
+  margin-top: 0.375rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .mt-2 {
+  margin-top: 0.5rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .mt-2\.5 {
+  margin-top: 0.625rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .mt-3 {
+  margin-top: 0.75rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .mt-3\.5 {
+  margin-top: 0.875rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .mt-4 {
+  margin-top: 1rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .mt-5 {
+  margin-top: 1.25rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .mt-6 {
+  margin-top: 1.5rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .mt-\[1px\] {
+  margin-top: 1px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .mt-\[2px\] {
+  margin-top: 2px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .mt-\[5px\] {
+  margin-top: 5px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .mt-auto {
+  margin-top: auto;
+}
+.readdy-tracker-ui.readdy-tracker-ui .block {
+  display: block;
+}
+.readdy-tracker-ui.readdy-tracker-ui .inline {
+  display: inline;
+}
+.readdy-tracker-ui.readdy-tracker-ui .flex {
+  display: flex;
+}
+.readdy-tracker-ui.readdy-tracker-ui .inline-flex {
+  display: inline-flex;
+}
+.readdy-tracker-ui.readdy-tracker-ui .table {
+  display: table;
+}
+.readdy-tracker-ui.readdy-tracker-ui .grid {
+  display: grid;
+}
+.readdy-tracker-ui.readdy-tracker-ui .hidden {
+  display: none;
+}
+.readdy-tracker-ui.readdy-tracker-ui .h-0 {
+  height: 0;
+}
+.readdy-tracker-ui.readdy-tracker-ui .h-1 {
+  height: 0.25rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .h-1\.5 {
+  height: 0.375rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .h-10 {
+  height: 2.5rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .h-14 {
+  height: 3.5rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .h-16 {
+  height: 4rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .h-2 {
+  height: 0.5rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .h-2\.5 {
+  height: 0.625rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .h-3 {
+  height: 0.75rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .h-3\.5 {
+  height: 0.875rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .h-4 {
+  height: 1rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .h-5 {
+  height: 1.25rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .h-6 {
+  height: 1.5rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .h-7 {
+  height: 1.75rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .h-8 {
+  height: 2rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .h-9 {
+  height: 2.25rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .h-\[132px\] {
+  height: 132px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .h-\[136px\] {
+  height: 136px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .h-\[142px\] {
+  height: 142px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .h-\[152px\] {
+  height: 152px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .h-\[18px\] {
+  height: 18px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .h-\[204px\] {
+  height: 204px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .h-\[210px\] {
+  height: 210px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .h-\[238px\] {
+  height: 238px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .h-\[252px\] {
+  height: 252px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .h-\[26px\] {
+  height: 26px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .h-\[288px\] {
+  height: 288px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .h-\[2px\] {
+  height: 2px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .h-\[300px\] {
+  height: 300px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .h-\[30px\] {
+  height: 30px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .h-\[38px\] {
+  height: 38px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .h-\[3px\] {
+  height: 3px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .h-\[42px\] {
+  height: 42px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .h-\[46px\] {
+  height: 46px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .h-\[4px\] {
+  height: 4px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .h-\[54px\] {
+  height: 54px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .h-\[58px\] {
+  height: 58px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .h-\[60px\] {
+  height: 60px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .h-\[6px\] {
+  height: 6px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .h-\[70px\] {
+  height: 70px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .h-\[76px\] {
+  height: 76px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .h-\[7px\] {
+  height: 7px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .h-\[92px\] {
+  height: 92px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .h-\[calc\(100\%\+6px\)\] {
+  height: calc(100% + 6px);
+}
+.readdy-tracker-ui.readdy-tracker-ui .h-full {
+  height: 100%;
+}
+.readdy-tracker-ui.readdy-tracker-ui .h-px {
+  height: 1px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .h-screen {
+  height: 100vh;
+}
+.readdy-tracker-ui.readdy-tracker-ui .max-h-\[300px\] {
+  max-height: 300px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .max-h-\[70vh\] {
+  max-height: 70vh;
+}
+.readdy-tracker-ui.readdy-tracker-ui .max-h-\[72vh\] {
+  max-height: 72vh;
+}
+.readdy-tracker-ui.readdy-tracker-ui .min-h-0 {
+  min-height: 0;
+}
+.readdy-tracker-ui.readdy-tracker-ui .min-h-\[100dvh\] {
+  min-height: 100dvh;
+}
+.readdy-tracker-ui.readdy-tracker-ui .min-h-\[110px\] {
+  min-height: 110px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .min-h-\[30px\] {
+  min-height: 30px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .min-h-\[62px\] {
+  min-height: 62px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .min-h-screen {
+  min-height: 100vh;
+}
+.readdy-tracker-ui.readdy-tracker-ui .w-1 {
+  width: 0.25rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .w-1\.5 {
+  width: 0.375rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .w-10 {
+  width: 2.5rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .w-16 {
+  width: 4rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .w-2 {
+  width: 0.5rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .w-2\.5 {
+  width: 0.625rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .w-3 {
+  width: 0.75rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .w-3\.5 {
+  width: 0.875rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .w-4 {
+  width: 1rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .w-5 {
+  width: 1.25rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .w-6 {
+  width: 1.5rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .w-7 {
+  width: 1.75rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .w-8 {
+  width: 2rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .w-9 {
+  width: 2.25rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .w-\[1\.5px\] {
+  width: 1.5px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .w-\[104px\] {
+  width: 104px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .w-\[118px\] {
+  width: 118px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .w-\[124px\] {
+  width: 124px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .w-\[132px\] {
+  width: 132px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .w-\[150px\] {
+  width: 150px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .w-\[186px\] {
+  width: 186px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .w-\[18px\] {
+  width: 18px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .w-\[1px\] {
+  width: 1px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .w-\[204px\] {
+  width: 204px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .w-\[210px\] {
+  width: 210px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .w-\[218px\] {
+  width: 218px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .w-\[236px\] {
+  width: 236px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .w-\[240px\] {
+  width: 240px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .w-\[252px\] {
+  width: 252px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .w-\[26px\] {
+  width: 26px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .w-\[280px\] {
+  width: 280px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .w-\[288px\] {
+  width: 288px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .w-\[320px\] {
+  width: 320px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .w-\[32px\] {
+  width: 32px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .w-\[3px\] {
+  width: 3px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .w-\[40px\] {
+  width: 40px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .w-\[46px\] {
+  width: 46px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .w-\[48px\] {
+  width: 48px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .w-\[49px\] {
+  width: 49px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .w-\[52px\] {
+  width: 52px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .w-\[60px\] {
+  width: 60px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .w-\[62px\] {
+  width: 62px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .w-\[64px\] {
+  width: 64px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .w-\[70px\] {
+  width: 70px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .w-\[74px\] {
+  width: 74px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .w-\[76px\] {
+  width: 76px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .w-\[78px\] {
+  width: 78px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .w-\[7px\] {
+  width: 7px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .w-\[80px\] {
+  width: 80px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .w-\[86px\] {
+  width: 86px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .w-\[92px\] {
+  width: 92px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .w-\[min\(92vw\,26rem\)\] {
+  width: min(92vw, 26rem);
+}
+.readdy-tracker-ui.readdy-tracker-ui .w-fit {
+  width: fit-content;
+}
+.readdy-tracker-ui.readdy-tracker-ui .w-full {
+  width: 100%;
+}
+.readdy-tracker-ui.readdy-tracker-ui .w-px {
+  width: 1px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .min-w-0 {
+  min-width: 0;
+}
+.readdy-tracker-ui.readdy-tracker-ui .min-w-4 {
+  min-width: 1rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .min-w-\[150px\] {
+  min-width: 150px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .max-w-3xl {
+  max-width: 48rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .max-w-5xl {
+  max-width: 64rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .max-w-\[1240px\] {
+  max-width: 1240px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .max-w-\[1400px\] {
+  max-width: 1400px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .max-w-\[150px\] {
+  max-width: 150px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .max-w-\[160px\] {
+  max-width: 160px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .max-w-\[190px\] {
+  max-width: 190px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .max-w-\[280px\] {
+  max-width: 280px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .max-w-\[320px\] {
+  max-width: 320px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .max-w-\[356px\] {
+  max-width: 356px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .max-w-\[380px\] {
+  max-width: 380px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .max-w-\[400px\] {
+  max-width: 400px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .max-w-\[420px\] {
+  max-width: 420px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .max-w-\[430px\] {
+  max-width: 430px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .max-w-\[440px\] {
+  max-width: 440px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .max-w-\[460px\] {
+  max-width: 460px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .max-w-\[520px\] {
+  max-width: 520px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .max-w-\[560px\] {
+  max-width: 560px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .max-w-\[604px\] {
+  max-width: 604px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .max-w-full {
+  max-width: 100%;
+}
+.readdy-tracker-ui.readdy-tracker-ui .flex-1 {
+  flex: 1;
+}
+.readdy-tracker-ui.readdy-tracker-ui .flex-none {
+  flex: none;
+}
+.readdy-tracker-ui.readdy-tracker-ui .basis-\[210px\] {
+  flex-basis: 210px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .-translate-x-1\/2 {
+  --tw-translate-x: -50%;
+  transform: translate(var(--tw-translate-x), var(--tw-translate-y)) rotate(var(--tw-rotate))
+    skewX(var(--tw-skew-x)) skewY(var(--tw-skew-y)) scaleX(var(--tw-scale-x))
+    scaleY(var(--tw-scale-y));
+}
+.readdy-tracker-ui.readdy-tracker-ui .-translate-y-1\/2 {
+  --tw-translate-y: -50%;
+  transform: translate(var(--tw-translate-x), var(--tw-translate-y)) rotate(var(--tw-rotate))
+    skewX(var(--tw-skew-x)) skewY(var(--tw-skew-y)) scaleX(var(--tw-scale-x))
+    scaleY(var(--tw-scale-y));
+}
+.readdy-tracker-ui.readdy-tracker-ui .-translate-y-\[41px\] {
+  --tw-translate-y: -41px;
+  transform: translate(var(--tw-translate-x), var(--tw-translate-y)) rotate(var(--tw-rotate))
+    skewX(var(--tw-skew-x)) skewY(var(--tw-skew-y)) scaleX(var(--tw-scale-x))
+    scaleY(var(--tw-scale-y));
+}
+.readdy-tracker-ui.readdy-tracker-ui .translate-y-\[27px\] {
+  --tw-translate-y: 27px;
+  transform: translate(var(--tw-translate-x), var(--tw-translate-y)) rotate(var(--tw-rotate))
+    skewX(var(--tw-skew-x)) skewY(var(--tw-skew-y)) scaleX(var(--tw-scale-x))
+    scaleY(var(--tw-scale-y));
+}
+.readdy-tracker-ui.readdy-tracker-ui .scale-105 {
+  --tw-scale-x: 1.05;
+  --tw-scale-y: 1.05;
+  transform: translate(var(--tw-translate-x), var(--tw-translate-y)) rotate(var(--tw-rotate))
+    skewX(var(--tw-skew-x)) skewY(var(--tw-skew-y)) scaleX(var(--tw-scale-x))
+    scaleY(var(--tw-scale-y));
+}
+.readdy-tracker-ui.readdy-tracker-ui .transform {
+  transform: translate(var(--tw-translate-x), var(--tw-translate-y)) rotate(var(--tw-rotate))
+    skewX(var(--tw-skew-x)) skewY(var(--tw-skew-y)) scaleX(var(--tw-scale-x))
+    scaleY(var(--tw-scale-y));
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.readdy-tracker-ui.readdy-tracker-ui .animate-spin {
+  animation: 1s linear infinite spin;
+}
+.readdy-tracker-ui.readdy-tracker-ui .cursor-default {
+  cursor: default;
+}
+.readdy-tracker-ui.readdy-tracker-ui .cursor-grab {
+  cursor: grab;
+}
+.readdy-tracker-ui.readdy-tracker-ui .cursor-pointer {
+  cursor: pointer;
+}
+.readdy-tracker-ui.readdy-tracker-ui .touch-pan-y {
+  --tw-pan-y: pan-y;
+  touch-action: var(--tw-pan-x) var(--tw-pan-y) var(--tw-pinch-zoom);
+}
+.readdy-tracker-ui.readdy-tracker-ui .select-none {
+  -webkit-user-select: none;
+  user-select: none;
+}
+.readdy-tracker-ui.readdy-tracker-ui .resize {
+  resize: both;
+}
+.readdy-tracker-ui.readdy-tracker-ui .snap-x {
+  scroll-snap-type: x var(--tw-scroll-snap-strictness);
+}
+.readdy-tracker-ui.readdy-tracker-ui .snap-start {
+  scroll-snap-align: start;
+}
+.readdy-tracker-ui.readdy-tracker-ui .scroll-mt-28 {
+  scroll-margin-top: 7rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .grid-cols-1 {
+  grid-template-columns: repeat(1, minmax(0, 1fr));
+}
+.readdy-tracker-ui.readdy-tracker-ui .grid-cols-2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.readdy-tracker-ui.readdy-tracker-ui .grid-cols-3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.readdy-tracker-ui.readdy-tracker-ui .flex-col {
+  flex-direction: column;
+}
+.readdy-tracker-ui.readdy-tracker-ui .flex-col-reverse {
+  flex-direction: column-reverse;
+}
+.readdy-tracker-ui.readdy-tracker-ui .flex-wrap {
+  flex-wrap: wrap;
+}
+.readdy-tracker-ui.readdy-tracker-ui .items-start {
+  align-items: flex-start;
+}
+.readdy-tracker-ui.readdy-tracker-ui .items-end {
+  align-items: flex-end;
+}
+.readdy-tracker-ui.readdy-tracker-ui .items-center {
+  align-items: center;
+}
+.readdy-tracker-ui.readdy-tracker-ui .items-baseline {
+  align-items: baseline;
+}
+.readdy-tracker-ui.readdy-tracker-ui .items-stretch {
+  align-items: stretch;
+}
+.readdy-tracker-ui.readdy-tracker-ui .justify-end {
+  justify-content: flex-end;
+}
+.readdy-tracker-ui.readdy-tracker-ui .justify-center {
+  justify-content: center;
+}
+.readdy-tracker-ui.readdy-tracker-ui .justify-between {
+  justify-content: space-between;
+}
+.readdy-tracker-ui.readdy-tracker-ui .gap-0\.5 {
+  gap: 0.125rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .gap-1 {
+  gap: 0.25rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .gap-1\.5 {
+  gap: 0.375rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .gap-2 {
+  gap: 0.5rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .gap-2\.5 {
+  gap: 0.625rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .gap-3 {
+  gap: 0.75rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .gap-4 {
+  gap: 1rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .gap-5 {
+  gap: 1.25rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .gap-\[3px\] {
+  gap: 3px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .gap-x-2 {
+  -moz-column-gap: 0.5rem;
+  column-gap: 0.5rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .gap-x-3 {
+  -moz-column-gap: 0.75rem;
+  column-gap: 0.75rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .gap-x-4 {
+  -moz-column-gap: 1rem;
+  column-gap: 1rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .gap-y-0\.5 {
+  row-gap: 0.125rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .gap-y-1 {
+  row-gap: 0.25rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .gap-y-1\.5 {
+  row-gap: 0.375rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .gap-y-2 {
+  row-gap: 0.5rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .space-y-1 > :not([hidden]) ~ :not([hidden]) {
+  --tw-space-y-reverse: 0;
+  margin-top: calc(0.25rem * calc(1 - var(--tw-space-y-reverse)));
+  margin-bottom: calc(0.25rem * var(--tw-space-y-reverse));
+}
+.readdy-tracker-ui.readdy-tracker-ui .space-y-1\.5 > :not([hidden]) ~ :not([hidden]) {
+  --tw-space-y-reverse: 0;
+  margin-top: calc(0.375rem * calc(1 - var(--tw-space-y-reverse)));
+  margin-bottom: calc(0.375rem * var(--tw-space-y-reverse));
+}
+.readdy-tracker-ui.readdy-tracker-ui .space-y-2 > :not([hidden]) ~ :not([hidden]) {
+  --tw-space-y-reverse: 0;
+  margin-top: calc(0.5rem * calc(1 - var(--tw-space-y-reverse)));
+  margin-bottom: calc(0.5rem * var(--tw-space-y-reverse));
+}
+.readdy-tracker-ui.readdy-tracker-ui .space-y-2\.5 > :not([hidden]) ~ :not([hidden]) {
+  --tw-space-y-reverse: 0;
+  margin-top: calc(0.625rem * calc(1 - var(--tw-space-y-reverse)));
+  margin-bottom: calc(0.625rem * var(--tw-space-y-reverse));
+}
+.readdy-tracker-ui.readdy-tracker-ui .space-y-3 > :not([hidden]) ~ :not([hidden]) {
+  --tw-space-y-reverse: 0;
+  margin-top: calc(0.75rem * calc(1 - var(--tw-space-y-reverse)));
+  margin-bottom: calc(0.75rem * var(--tw-space-y-reverse));
+}
+.readdy-tracker-ui.readdy-tracker-ui .divide-y > :not([hidden]) ~ :not([hidden]) {
+  --tw-divide-y-reverse: 0;
+  border-top-width: calc(1px * calc(1 - var(--tw-divide-y-reverse)));
+  border-bottom-width: calc(1px * var(--tw-divide-y-reverse));
+}
+.readdy-tracker-ui.readdy-tracker-ui .divide-line > :not([hidden]) ~ :not([hidden]) {
+  border-color: var(--k-line);
+}
+.readdy-tracker-ui.readdy-tracker-ui .divide-line-2 > :not([hidden]) ~ :not([hidden]) {
+  border-color: var(--k-line-2);
+}
+.readdy-tracker-ui.readdy-tracker-ui .overflow-hidden {
+  overflow: hidden;
+}
+.readdy-tracker-ui.readdy-tracker-ui .overflow-x-auto {
+  overflow-x: auto;
+}
+.readdy-tracker-ui.readdy-tracker-ui .overflow-y-auto {
+  overflow-y: auto;
+}
+.readdy-tracker-ui.readdy-tracker-ui .truncate {
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.readdy-tracker-ui.readdy-tracker-ui .whitespace-nowrap {
+  white-space: nowrap;
+}
+.readdy-tracker-ui.readdy-tracker-ui .break-all {
+  word-break: break-all;
+}
+.readdy-tracker-ui.readdy-tracker-ui .rounded {
+  border-radius: 0.25rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .rounded-\[10px\] {
+  border-radius: 10px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .rounded-\[11px\] {
+  border-radius: 11px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .rounded-\[18px\] {
+  border-radius: 18px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .rounded-\[22px\] {
+  border-radius: 22px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .rounded-\[2px\] {
+  border-radius: 2px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .rounded-\[4px\] {
+  border-radius: 4px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .rounded-\[5px\] {
+  border-radius: 5px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .rounded-\[7px\] {
+  border-radius: 7px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .rounded-full {
+  border-radius: 9999px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .rounded-lg {
+  border-radius: 0.5rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .rounded-md {
+  border-radius: 0.375rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .rounded-sm {
+  border-radius: 0.125rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .rounded-xl {
+  border-radius: 0.75rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .border {
+  border-width: 1px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .border-2 {
+  border-width: 2px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .border-b {
+  border-bottom-width: 1px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .border-l {
+  border-left-width: 1px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .border-r {
+  border-right-width: 1px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .border-t {
+  border-top-width: 1px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .border-solid {
+  border-style: solid;
+}
+.readdy-tracker-ui.readdy-tracker-ui .border-dashed {
+  border-style: dashed;
+}
+.readdy-tracker-ui.readdy-tracker-ui .border-bad {
+  border-color: var(--k-rose);
+}
+.readdy-tracker-ui.readdy-tracker-ui .border-dot {
+  border-color: var(--k-dot);
+}
+.readdy-tracker-ui.readdy-tracker-ui .border-line {
+  border-color: var(--k-line);
+}
+.readdy-tracker-ui.readdy-tracker-ui .border-line-2 {
+  border-color: var(--k-line-2);
+}
+.readdy-tracker-ui.readdy-tracker-ui .border-navy {
+  border-color: var(--k-navy);
+}
+.readdy-tracker-ui.readdy-tracker-ui .border-navy-line {
+  border-color: var(--k-navy-line);
+}
+.readdy-tracker-ui.readdy-tracker-ui .border-ok {
+  border-color: var(--k-green);
+}
+.readdy-tracker-ui.readdy-tracker-ui .border-pink {
+  border-color: var(--k-pink);
+}
+.readdy-tracker-ui.readdy-tracker-ui .border-plum-2 {
+  border-color: var(--k-plum-2);
+}
+.readdy-tracker-ui.readdy-tracker-ui .border-solid {
+  border-color: var(--k-solid);
+}
+.readdy-tracker-ui.readdy-tracker-ui .border-transparent {
+  border-color: #0000;
+}
+.readdy-tracker-ui.readdy-tracker-ui .border-warn {
+  border-color: var(--k-amber);
+}
+.readdy-tracker-ui.readdy-tracker-ui .border-warn-2 {
+  border-color: var(--k-amber-2);
+}
+.readdy-tracker-ui.readdy-tracker-ui .border-white\/20 {
+  border-color: #fff3;
+}
+.readdy-tracker-ui.readdy-tracker-ui .border-white\/25 {
+  border-color: #ffffff40;
+}
+.readdy-tracker-ui.readdy-tracker-ui .bg-\[\#171128\] {
+  --tw-bg-opacity: 1;
+  background-color: rgb(23 17 40 / var(--tw-bg-opacity, 1));
+}
+.readdy-tracker-ui.readdy-tracker-ui .bg-\[color-mix\(in_srgb\,var\(--k-pink\)_12\%\,\#ffffff\)\] {
+  background-color: color-mix(in srgb, var(--k-pink) 12%, #fff);
+}
+.readdy-tracker-ui.readdy-tracker-ui .bg-\[var\(--k-hero-accent\)\] {
+  background-color: var(--k-hero-accent);
+}
+.readdy-tracker-ui.readdy-tracker-ui .bg-\[var\(--k-hero-mute\)\] {
+  background-color: var(--k-hero-mute);
+}
+.readdy-tracker-ui.readdy-tracker-ui .bg-\[var\(--k-track\)\] {
+  background-color: var(--k-track);
+}
+.readdy-tracker-ui.readdy-tracker-ui .bg-\[var\(--k-track-2\)\] {
+  background-color: var(--k-track-2);
+}
+.readdy-tracker-ui.readdy-tracker-ui .bg-bad {
+  background-color: var(--k-rose);
+}
+.readdy-tracker-ui.readdy-tracker-ui .bg-bad-2 {
+  background-color: var(--k-rose-2);
+}
+.readdy-tracker-ui.readdy-tracker-ui .bg-bg {
+  background-color: var(--k-bg);
+}
+.readdy-tracker-ui.readdy-tracker-ui .bg-bg-2 {
+  background-color: var(--k-bg-2);
+}
+.readdy-tracker-ui.readdy-tracker-ui .bg-black\/45 {
+  background-color: #00000073;
+}
+.readdy-tracker-ui.readdy-tracker-ui .bg-black\/55 {
+  background-color: #0000008c;
+}
+.readdy-tracker-ui.readdy-tracker-ui .bg-black\/60 {
+  background-color: #0009;
+}
+.readdy-tracker-ui.readdy-tracker-ui .bg-black\/65 {
+  background-color: #000000a6;
+}
+.readdy-tracker-ui.readdy-tracker-ui .bg-black\/80 {
+  background-color: #000c;
+}
+.readdy-tracker-ui.readdy-tracker-ui .bg-black\/85 {
+  background-color: #000000d9;
+}
+.readdy-tracker-ui.readdy-tracker-ui .bg-card {
+  background-color: var(--k-card);
+}
+.readdy-tracker-ui.readdy-tracker-ui .bg-dot {
+  background-color: var(--k-dot);
+}
+.readdy-tracker-ui.readdy-tracker-ui .bg-faint {
+  background-color: var(--k-faint);
+}
+.readdy-tracker-ui.readdy-tracker-ui .bg-hover {
+  background-color: var(--k-hover);
+}
+.readdy-tracker-ui.readdy-tracker-ui .bg-line {
+  background-color: var(--k-line);
+}
+.readdy-tracker-ui.readdy-tracker-ui .bg-line-2 {
+  background-color: var(--k-line-2);
+}
+.readdy-tracker-ui.readdy-tracker-ui .bg-navy {
+  background-color: var(--k-navy);
+}
+.readdy-tracker-ui.readdy-tracker-ui .bg-navy-line {
+  background-color: var(--k-navy-line);
+}
+.readdy-tracker-ui.readdy-tracker-ui .bg-navy-soft {
+  background-color: var(--k-navy-soft);
+}
+.readdy-tracker-ui.readdy-tracker-ui .bg-ok {
+  background-color: var(--k-green);
+}
+.readdy-tracker-ui.readdy-tracker-ui .bg-ok-2 {
+  background-color: var(--k-green-2);
+}
+.readdy-tracker-ui.readdy-tracker-ui .bg-pink {
+  background-color: var(--k-pink);
+}
+.readdy-tracker-ui.readdy-tracker-ui .bg-pink-2 {
+  background-color: var(--k-pink-2);
+}
+.readdy-tracker-ui.readdy-tracker-ui .bg-plum {
+  background-color: var(--k-plum);
+}
+.readdy-tracker-ui.readdy-tracker-ui .bg-plum-2 {
+  background-color: var(--k-plum-2);
+}
+.readdy-tracker-ui.readdy-tracker-ui .bg-solid {
+  background-color: var(--k-solid);
+}
+.readdy-tracker-ui.readdy-tracker-ui .bg-solid-2 {
+  background-color: var(--k-solid-2);
+}
+.readdy-tracker-ui.readdy-tracker-ui .bg-transparent {
+  background-color: #0000;
+}
+.readdy-tracker-ui.readdy-tracker-ui .bg-warn {
+  background-color: var(--k-amber);
+}
+.readdy-tracker-ui.readdy-tracker-ui .bg-warn-2 {
+  background-color: var(--k-amber-2);
+}
+.readdy-tracker-ui.readdy-tracker-ui .bg-white {
+  --tw-bg-opacity: 1;
+  background-color: rgb(255 255 255 / var(--tw-bg-opacity, 1));
+}
+.readdy-tracker-ui.readdy-tracker-ui .bg-white\/10 {
+  background-color: #ffffff1a;
+}
+.readdy-tracker-ui.readdy-tracker-ui .bg-white\/20 {
+  background-color: #fff3;
+}
+.readdy-tracker-ui.readdy-tracker-ui .bg-white\/25 {
+  background-color: #ffffff40;
+}
+.readdy-tracker-ui.readdy-tracker-ui .bg-white\/40 {
+  background-color: #fff6;
+}
+.readdy-tracker-ui.readdy-tracker-ui .bg-gradient-to-r {
+  background-image: linear-gradient(to right, var(--tw-gradient-stops));
+}
+.readdy-tracker-ui.readdy-tracker-ui .bg-gradient-to-t {
+  background-image: linear-gradient(to top, var(--tw-gradient-stops));
+}
+.readdy-tracker-ui.readdy-tracker-ui .from-faint {
+  --tw-gradient-from: var(--k-faint) var(--tw-gradient-from-position);
+  --tw-gradient-to: #fff0 var(--tw-gradient-to-position);
+  --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to);
+}
+.readdy-tracker-ui.readdy-tracker-ui .from-ok {
+  --tw-gradient-from: var(--k-green) var(--tw-gradient-from-position);
+  --tw-gradient-to: #fff0 var(--tw-gradient-to-position);
+  --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to);
+}
+.readdy-tracker-ui.readdy-tracker-ui .from-plum {
+  --tw-gradient-from: var(--k-plum) var(--tw-gradient-from-position);
+  --tw-gradient-to: #fff0 var(--tw-gradient-to-position);
+  --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to);
+}
+.readdy-tracker-ui.readdy-tracker-ui .from-warn {
+  --tw-gradient-from: var(--k-amber) var(--tw-gradient-from-position);
+  --tw-gradient-to: #fff0 var(--tw-gradient-to-position);
+  --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to);
+}
+.readdy-tracker-ui.readdy-tracker-ui .to-amber-300 {
+  --tw-gradient-to: #fcd34d var(--tw-gradient-to-position);
+}
+.readdy-tracker-ui.readdy-tracker-ui .to-dot {
+  --tw-gradient-to: var(--k-dot) var(--tw-gradient-to-position);
+}
+.readdy-tracker-ui.readdy-tracker-ui .to-emerald-400 {
+  --tw-gradient-to: #34d399 var(--tw-gradient-to-position);
+}
+.readdy-tracker-ui.readdy-tracker-ui .to-pink {
+  --tw-gradient-to: var(--k-pink) var(--tw-gradient-to-position);
+}
+.readdy-tracker-ui.readdy-tracker-ui .object-contain {
+  -o-object-fit: contain;
+  object-fit: contain;
+}
+.readdy-tracker-ui.readdy-tracker-ui .object-cover {
+  -o-object-fit: cover;
+  object-fit: cover;
+}
+.readdy-tracker-ui.readdy-tracker-ui .object-center {
+  -o-object-position: center;
+  object-position: center;
+}
+.readdy-tracker-ui.readdy-tracker-ui .object-top {
+  -o-object-position: top;
+  object-position: top;
+}
+.readdy-tracker-ui.readdy-tracker-ui .p-1 {
+  padding: 0.25rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .p-1\.5 {
+  padding: 0.375rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .p-2 {
+  padding: 0.5rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .p-2\.5 {
+  padding: 0.625rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .p-3 {
+  padding: 0.75rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .p-3\.5 {
+  padding: 0.875rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .p-4 {
+  padding: 1rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .p-\[3px\] {
+  padding: 3px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .p-\[6px\] {
+  padding: 6px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .px-1 {
+  padding-left: 0.25rem;
+  padding-right: 0.25rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .px-1\.5 {
+  padding-left: 0.375rem;
+  padding-right: 0.375rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .px-2 {
+  padding-left: 0.5rem;
+  padding-right: 0.5rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .px-2\.5 {
+  padding-left: 0.625rem;
+  padding-right: 0.625rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .px-3 {
+  padding-left: 0.75rem;
+  padding-right: 0.75rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .px-3\.5 {
+  padding-left: 0.875rem;
+  padding-right: 0.875rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .px-4 {
+  padding-left: 1rem;
+  padding-right: 1rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .px-5 {
+  padding-left: 1.25rem;
+  padding-right: 1.25rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .px-8 {
+  padding-left: 2rem;
+  padding-right: 2rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .py-1 {
+  padding-top: 0.25rem;
+  padding-bottom: 0.25rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .py-1\.5 {
+  padding-top: 0.375rem;
+  padding-bottom: 0.375rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .py-10 {
+  padding-top: 2.5rem;
+  padding-bottom: 2.5rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .py-12 {
+  padding-top: 3rem;
+  padding-bottom: 3rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .py-14 {
+  padding-top: 3.5rem;
+  padding-bottom: 3.5rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .py-2 {
+  padding-top: 0.5rem;
+  padding-bottom: 0.5rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .py-2\.5 {
+  padding-top: 0.625rem;
+  padding-bottom: 0.625rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .py-3 {
+  padding-top: 0.75rem;
+  padding-bottom: 0.75rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .py-3\.5 {
+  padding-top: 0.875rem;
+  padding-bottom: 0.875rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .py-4 {
+  padding-top: 1rem;
+  padding-bottom: 1rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .py-6 {
+  padding-top: 1.5rem;
+  padding-bottom: 1.5rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .py-7 {
+  padding-top: 1.75rem;
+  padding-bottom: 1.75rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .py-8 {
+  padding-top: 2rem;
+  padding-bottom: 2rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .py-\[1px\] {
+  padding-top: 1px;
+  padding-bottom: 1px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .py-\[2px\] {
+  padding-top: 2px;
+  padding-bottom: 2px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .py-\[3px\] {
+  padding-top: 3px;
+  padding-bottom: 3px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .py-\[7px\] {
+  padding-top: 7px;
+  padding-bottom: 7px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .pb-0\.5 {
+  padding-bottom: 0.125rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .pb-1 {
+  padding-bottom: 0.25rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .pb-1\.5 {
+  padding-bottom: 0.375rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .pb-14 {
+  padding-bottom: 3.5rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .pb-2 {
+  padding-bottom: 0.5rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .pb-2\.5 {
+  padding-bottom: 0.625rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .pb-3 {
+  padding-bottom: 0.75rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .pb-4 {
+  padding-bottom: 1rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .pb-5 {
+  padding-bottom: 1.25rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .pb-8 {
+  padding-bottom: 2rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .pl-1 {
+  padding-left: 0.25rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .pl-2 {
+  padding-left: 0.5rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .pl-4 {
+  padding-left: 1rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .pl-7 {
+  padding-left: 1.75rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .pr-2 {
+  padding-right: 0.5rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .pt-0\.5 {
+  padding-top: 0.125rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .pt-1 {
+  padding-top: 0.25rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .pt-2 {
+  padding-top: 0.5rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .pt-2\.5 {
+  padding-top: 0.625rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .pt-3 {
+  padding-top: 0.75rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .pt-4 {
+  padding-top: 1rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .pt-5 {
+  padding-top: 1.25rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .pt-8 {
+  padding-top: 2rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .pt-\[1px\] {
+  padding-top: 1px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .pt-\[5px\] {
+  padding-top: 5px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .text-left {
+  text-align: left;
+}
+.readdy-tracker-ui.readdy-tracker-ui .text-center {
+  text-align: center;
+}
+.readdy-tracker-ui.readdy-tracker-ui .text-right {
+  text-align: right;
+}
+.readdy-tracker-ui.readdy-tracker-ui .font-heading,
+.readdy-tracker-ui.readdy-tracker-ui .font-mono {
+  font-family:
+    Inter,
+    IBM Plex Sans Arabic,
+    system-ui,
+    sans-serif;
+}
+.readdy-tracker-ui.readdy-tracker-ui .text-9xl {
+  font-size: 8rem;
+  line-height: 1;
+}
+.readdy-tracker-ui.readdy-tracker-ui .text-\[10\.5px\] {
+  font-size: 10.5px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .text-\[10px\] {
+  font-size: 10px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .text-\[11\.5px\] {
+  font-size: 11.5px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .text-\[11px\] {
+  font-size: 11px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .text-\[12\.5px\] {
+  font-size: 12.5px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .text-\[12px\] {
+  font-size: 12px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .text-\[13\.5px\] {
+  font-size: 13.5px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .text-\[13px\] {
+  font-size: 13px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .text-\[14\.5px\] {
+  font-size: 14.5px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .text-\[14px\] {
+  font-size: 14px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .text-\[15px\] {
+  font-size: 15px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .text-\[16px\] {
+  font-size: 16px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .text-\[17px\] {
+  font-size: 17px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .text-\[18px\] {
+  font-size: 18px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .text-\[19px\] {
+  font-size: 19px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .text-\[20px\] {
+  font-size: 20px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .text-\[22px\] {
+  font-size: 22px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .text-\[23px\] {
+  font-size: 23px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .text-\[24px\] {
+  font-size: 24px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .text-\[26px\] {
+  font-size: 26px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .text-\[27px\] {
+  font-size: 27px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .text-\[28px\] {
+  font-size: 28px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .text-\[30px\] {
+  font-size: 30px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .text-\[32px\] {
+  font-size: 32px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .text-\[33px\] {
+  font-size: 33px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .text-\[34px\] {
+  font-size: 34px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .text-\[36px\] {
+  font-size: 36px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .text-\[40px\] {
+  font-size: 40px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .text-\[48px\] {
+  font-size: 48px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .text-\[7\.5px\] {
+  font-size: 7.5px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .text-\[7px\] {
+  font-size: 7px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .text-\[8\.5px\] {
+  font-size: 8.5px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .text-\[8px\] {
+  font-size: 8px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .text-\[9\.5px\] {
+  font-size: 9.5px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .text-\[9px\] {
+  font-size: 9px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .text-base {
+  font-size: 1rem;
+  line-height: 1.5rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .text-lg {
+  font-size: 1.125rem;
+  line-height: 1.75rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .text-xl {
+  font-size: 1.25rem;
+  line-height: 1.75rem;
+}
+.readdy-tracker-ui.readdy-tracker-ui .font-black {
+  font-weight: 900;
+}
+.readdy-tracker-ui.readdy-tracker-ui .font-bold {
+  font-weight: 700;
+}
+.readdy-tracker-ui.readdy-tracker-ui .font-medium {
+  font-weight: 500;
+}
+.readdy-tracker-ui.readdy-tracker-ui .font-normal {
+  font-weight: 400;
+}
+.readdy-tracker-ui.readdy-tracker-ui .font-semibold {
+  font-weight: 600;
+}
+.readdy-tracker-ui.readdy-tracker-ui .uppercase {
+  text-transform: uppercase;
+}
+.readdy-tracker-ui.readdy-tracker-ui .capitalize {
+  text-transform: capitalize;
+}
+.readdy-tracker-ui.readdy-tracker-ui .normal-case {
+  text-transform: none;
+}
+.readdy-tracker-ui.readdy-tracker-ui .leading-\[1\.05\] {
+  line-height: 1.05;
+}
+.readdy-tracker-ui.readdy-tracker-ui .leading-\[1\.6\] {
+  line-height: 1.6;
+}
+.readdy-tracker-ui.readdy-tracker-ui .leading-none {
+  line-height: 1;
+}
+.readdy-tracker-ui.readdy-tracker-ui .leading-relaxed {
+  line-height: 1.625;
+}
+.readdy-tracker-ui.readdy-tracker-ui .leading-snug {
+  line-height: 1.375;
+}
+.readdy-tracker-ui.readdy-tracker-ui .leading-tight {
+  line-height: 1.25;
+}
+.readdy-tracker-ui.readdy-tracker-ui .tracking-\[-0\.01em\] {
+  letter-spacing: -0.01em;
+}
+.readdy-tracker-ui.readdy-tracker-ui .tracking-\[-0\.025em\] {
+  letter-spacing: -0.025em;
+}
+.readdy-tracker-ui.readdy-tracker-ui .tracking-\[-0\.02em\] {
+  letter-spacing: -0.02em;
+}
+.readdy-tracker-ui.readdy-tracker-ui .tracking-\[-0\.035em\] {
+  letter-spacing: -0.035em;
+}
+.readdy-tracker-ui.readdy-tracker-ui .tracking-\[0\.01em\] {
+  letter-spacing: 0.01em;
+}
+.readdy-tracker-ui.readdy-tracker-ui .tracking-\[0\.03em\] {
+  letter-spacing: 0.03em;
+}
+.readdy-tracker-ui.readdy-tracker-ui .tracking-\[0\.04em\] {
+  letter-spacing: 0.04em;
+}
+.readdy-tracker-ui.readdy-tracker-ui .tracking-\[0\.06em\] {
+  letter-spacing: 0.06em;
+}
+.readdy-tracker-ui.readdy-tracker-ui .tracking-\[0\.08em\] {
+  letter-spacing: 0.08em;
+}
+.readdy-tracker-ui.readdy-tracker-ui .tracking-\[0\.12em\] {
+  letter-spacing: 0.12em;
+}
+.readdy-tracker-ui.readdy-tracker-ui .tracking-\[0\.14em\] {
+  letter-spacing: 0.14em;
+}
+.readdy-tracker-ui.readdy-tracker-ui .tracking-\[0\.16em\] {
+  letter-spacing: 0.16em;
+}
+.readdy-tracker-ui.readdy-tracker-ui .tracking-\[0\.18em\] {
+  letter-spacing: 0.18em;
+}
+.readdy-tracker-ui.readdy-tracker-ui .tracking-\[0\.1em\] {
+  letter-spacing: 0.1em;
+}
+.readdy-tracker-ui.readdy-tracker-ui .tracking-\[0\.22em\] {
+  letter-spacing: 0.22em;
+}
+.readdy-tracker-ui.readdy-tracker-ui .tracking-\[0\.28em\] {
+  letter-spacing: 0.28em;
+}
+.readdy-tracker-ui.readdy-tracker-ui .tracking-\[0\.2em\] {
+  letter-spacing: 0.2em;
+}
+.readdy-tracker-ui.readdy-tracker-ui .tracking-\[0\.34em\] {
+  letter-spacing: 0.34em;
+}
+.readdy-tracker-ui.readdy-tracker-ui .tracking-normal {
+  letter-spacing: 0;
+}
+.readdy-tracker-ui.readdy-tracker-ui .tracking-tight {
+  letter-spacing: -0.025em;
+}
+.readdy-tracker-ui.readdy-tracker-ui .tracking-wide {
+  letter-spacing: 0.025em;
+}
+.readdy-tracker-ui.readdy-tracker-ui .text-\[var\(--k-hero-1\)\] {
+  color: var(--k-hero-1);
+}
+.readdy-tracker-ui.readdy-tracker-ui .text-\[var\(--k-hero-accent\)\] {
+  color: var(--k-hero-accent);
+}
+.readdy-tracker-ui.readdy-tracker-ui .text-\[var\(--k-hero-mute\)\] {
+  color: var(--k-hero-mute);
+}
+.readdy-tracker-ui.readdy-tracker-ui .text-bad {
+  color: var(--k-rose);
+}
+.readdy-tracker-ui.readdy-tracker-ui .text-faint {
+  color: var(--k-faint);
+}
+.readdy-tracker-ui.readdy-tracker-ui .text-gray-400 {
+  --tw-text-opacity: 1;
+  color: rgb(156 163 175 / var(--tw-text-opacity, 1));
+}
+.readdy-tracker-ui.readdy-tracker-ui .text-gray-50 {
+  --tw-text-opacity: 1;
+  color: rgb(249 250 251 / var(--tw-text-opacity, 1));
+}
+.readdy-tracker-ui.readdy-tracker-ui .text-gray-500 {
+  --tw-text-opacity: 1;
+  color: rgb(107 114 128 / var(--tw-text-opacity, 1));
+}
+.readdy-tracker-ui.readdy-tracker-ui .text-ink {
+  color: var(--k-ink);
+}
+.readdy-tracker-ui.readdy-tracker-ui .text-ink-2 {
+  color: var(--k-ink-2);
+}
+.readdy-tracker-ui.readdy-tracker-ui .text-line-2 {
+  color: var(--k-line-2);
+}
+.readdy-tracker-ui.readdy-tracker-ui .text-muted {
+  color: var(--k-muted);
+}
+.readdy-tracker-ui.readdy-tracker-ui .text-navy {
+  color: var(--k-navy);
+}
+.readdy-tracker-ui.readdy-tracker-ui .text-navy-text {
+  color: var(--k-navy-text);
+}
+.readdy-tracker-ui.readdy-tracker-ui .text-ok {
+  color: var(--k-green);
+}
+.readdy-tracker-ui.readdy-tracker-ui .text-pink {
+  color: var(--k-pink);
+}
+.readdy-tracker-ui.readdy-tracker-ui .text-plum {
+  color: var(--k-plum);
+}
+.readdy-tracker-ui.readdy-tracker-ui .text-plum-2 {
+  color: var(--k-plum-2);
+}
+.readdy-tracker-ui.readdy-tracker-ui .text-transparent {
+  color: #0000;
+}
+.readdy-tracker-ui.readdy-tracker-ui .text-warn {
+  color: var(--k-amber);
+}
+.readdy-tracker-ui.readdy-tracker-ui .text-white {
+  --tw-text-opacity: 1;
+  color: rgb(255 255 255 / var(--tw-text-opacity, 1));
+}
+.readdy-tracker-ui.readdy-tracker-ui .text-white\/30 {
+  color: #ffffff4d;
+}
+.readdy-tracker-ui.readdy-tracker-ui .text-white\/45 {
+  color: #ffffff73;
+}
+.readdy-tracker-ui.readdy-tracker-ui .text-white\/55 {
+  color: #ffffff8c;
+}
+.readdy-tracker-ui.readdy-tracker-ui .text-white\/65 {
+  color: #ffffffa6;
+}
+.readdy-tracker-ui.readdy-tracker-ui .text-white\/70 {
+  color: #ffffffb3;
+}
+.readdy-tracker-ui.readdy-tracker-ui .text-white\/75 {
+  color: #ffffffbf;
+}
+.readdy-tracker-ui.readdy-tracker-ui .text-white\/80 {
+  color: #fffc;
+}
+.readdy-tracker-ui.readdy-tracker-ui .text-white\/85 {
+  color: #ffffffd9;
+}
+.readdy-tracker-ui.readdy-tracker-ui .line-through {
+  text-decoration-line: line-through;
+}
+.readdy-tracker-ui.readdy-tracker-ui .no-underline {
+  text-decoration-line: none;
+}
+.readdy-tracker-ui.readdy-tracker-ui .decoration-line-2 {
+  -webkit-text-decoration-color: var(--k-line-2);
+  text-decoration-color: var(--k-line-2);
+}
+.readdy-tracker-ui.readdy-tracker-ui .decoration-navy-line {
+  -webkit-text-decoration-color: var(--k-navy-line);
+  text-decoration-color: var(--k-navy-line);
+}
+.readdy-tracker-ui.readdy-tracker-ui .opacity-0 {
+  opacity: 0;
+}
+.readdy-tracker-ui.readdy-tracker-ui .opacity-100 {
+  opacity: 1;
+}
+.readdy-tracker-ui.readdy-tracker-ui .opacity-45 {
+  opacity: 0.45;
+}
+.readdy-tracker-ui.readdy-tracker-ui .opacity-55 {
+  opacity: 0.55;
+}
+.readdy-tracker-ui.readdy-tracker-ui .opacity-60 {
+  opacity: 0.6;
+}
+.readdy-tracker-ui.readdy-tracker-ui .opacity-75 {
+  opacity: 0.75;
+}
+.readdy-tracker-ui.readdy-tracker-ui .shadow-none {
+  --tw-shadow: 0 0 #0000;
+  --tw-shadow-colored: 0 0 #0000;
+  box-shadow:
+    var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000), var(--tw-shadow);
+}
+.readdy-tracker-ui.readdy-tracker-ui .outline-none {
+  outline-offset: 2px;
+  outline: 2px solid #0000;
+}
+.readdy-tracker-ui.readdy-tracker-ui .ring {
+  --tw-ring-offset-shadow: var(--tw-ring-inset) 0 0 0 var(--tw-ring-offset-width)
+    var(--tw-ring-offset-color);
+  --tw-ring-shadow: var(--tw-ring-inset) 0 0 0 calc(3px + var(--tw-ring-offset-width))
+    var(--tw-ring-color);
+  box-shadow: var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow, 0 0 #0000);
+}
+.readdy-tracker-ui.readdy-tracker-ui .ring-4 {
+  --tw-ring-offset-shadow: var(--tw-ring-inset) 0 0 0 var(--tw-ring-offset-width)
+    var(--tw-ring-offset-color);
+  --tw-ring-shadow: var(--tw-ring-inset) 0 0 0 calc(4px + var(--tw-ring-offset-width))
+    var(--tw-ring-color);
+  box-shadow: var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow, 0 0 #0000);
+}
+.readdy-tracker-ui.readdy-tracker-ui .blur-\[2px\] {
+  --tw-blur: blur(2px);
+  filter: var(--tw-blur) var(--tw-brightness) var(--tw-contrast) var(--tw-grayscale)
+    var(--tw-hue-rotate) var(--tw-invert) var(--tw-saturate) var(--tw-sepia) var(--tw-drop-shadow);
+}
+.readdy-tracker-ui.readdy-tracker-ui .blur-\[46px\] {
+  --tw-blur: blur(46px);
+  filter: var(--tw-blur) var(--tw-brightness) var(--tw-contrast) var(--tw-grayscale)
+    var(--tw-hue-rotate) var(--tw-invert) var(--tw-saturate) var(--tw-sepia) var(--tw-drop-shadow);
+}
+.readdy-tracker-ui.readdy-tracker-ui .grayscale {
+  --tw-grayscale: grayscale(100%);
+  filter: var(--tw-blur) var(--tw-brightness) var(--tw-contrast) var(--tw-grayscale)
+    var(--tw-hue-rotate) var(--tw-invert) var(--tw-saturate) var(--tw-sepia) var(--tw-drop-shadow);
+}
+.readdy-tracker-ui.readdy-tracker-ui .filter {
+  filter: var(--tw-blur) var(--tw-brightness) var(--tw-contrast) var(--tw-grayscale)
+    var(--tw-hue-rotate) var(--tw-invert) var(--tw-saturate) var(--tw-sepia) var(--tw-drop-shadow);
+}
+.readdy-tracker-ui.readdy-tracker-ui .backdrop-blur-sm {
+  --tw-backdrop-blur: blur(4px);
+  -webkit-backdrop-filter: var(--tw-backdrop-blur) var(--tw-backdrop-brightness)
+    var(--tw-backdrop-contrast) var(--tw-backdrop-grayscale) var(--tw-backdrop-hue-rotate)
+    var(--tw-backdrop-invert) var(--tw-backdrop-opacity) var(--tw-backdrop-saturate)
+    var(--tw-backdrop-sepia);
+  backdrop-filter: var(--tw-backdrop-blur) var(--tw-backdrop-brightness) var(--tw-backdrop-contrast)
+    var(--tw-backdrop-grayscale) var(--tw-backdrop-hue-rotate) var(--tw-backdrop-invert)
+    var(--tw-backdrop-opacity) var(--tw-backdrop-saturate) var(--tw-backdrop-sepia);
+}
+.readdy-tracker-ui.readdy-tracker-ui .transition {
+  transition-property:
+    color,
+    background-color,
+    border-color,
+    text-decoration-color,
+    fill,
+    stroke,
+    opacity,
+    box-shadow,
+    transform,
+    filter,
+    -webkit-backdrop-filter,
+    backdrop-filter;
+  transition-duration: 0.15s;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+}
+.readdy-tracker-ui.readdy-tracker-ui .transition-\[width\] {
+  transition-property: width;
+  transition-duration: 0.15s;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+}
+.readdy-tracker-ui.readdy-tracker-ui .transition-all {
+  transition-property: all;
+  transition-duration: 0.15s;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+}
+.readdy-tracker-ui.readdy-tracker-ui .transition-colors {
+  transition-property: color, background-color, border-color, text-decoration-color, fill, stroke;
+  transition-duration: 0.15s;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+}
+.readdy-tracker-ui.readdy-tracker-ui .transition-opacity {
+  transition-property: opacity;
+  transition-duration: 0.15s;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+}
+.readdy-tracker-ui.readdy-tracker-ui .transition-transform {
+  transition-property: transform;
+  transition-duration: 0.15s;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+}
+.readdy-tracker-ui.readdy-tracker-ui .duration-1000 {
+  transition-duration: 1s;
+}
+.readdy-tracker-ui.readdy-tracker-ui .duration-200 {
+  transition-duration: 0.2s;
+}
+.readdy-tracker-ui.readdy-tracker-ui .duration-300 {
+  transition-duration: 0.3s;
+}
+.readdy-tracker-ui.readdy-tracker-ui .duration-500 {
+  transition-duration: 0.5s;
+}
+.readdy-tracker-ui.readdy-tracker-ui .ease-out {
+  transition-timing-function: cubic-bezier(0, 0, 0.2, 1);
+}
+.readdy-tracker-ui.readdy-tracker-ui .\[overflow-wrap\:anywhere\] {
+  overflow-wrap: anywhere;
+}
+.readdy-tracker-ui.readdy-tracker-ui {
+  --k-brand: #412c6f;
+  --k-brand-deep: #2e2355;
+  --k-brand-accent: #9d145e;
+  --k-bg: #f5f2fa;
+  --k-bg-2: #ece6f5;
+  --k-card: #fff;
+  --k-ink: #1c1636;
+  --k-ink-2: #3a2f5c;
+  --k-muted: #6f6790;
+  --k-faint: #a497b9;
+  --k-dot: #c8bddc;
+  --k-line: #e4ddf0;
+  --k-line-2: #f0ebf7;
+  --k-plum: #2e2355;
+  --k-plum-2: #412c6f;
+  --k-pink: #9d145e;
+  --k-pink-2: #fbe6f0;
+  --k-green: #17795a;
+  --k-green-2: #e2f3ea;
+  --k-amber: #96660f;
+  --k-amber-2: #fbeed6;
+  --k-rose: #a8223f;
+  --k-rose-2: #fbe3e7;
+  --k-solid: #2e2355;
+  --k-solid-2: #412c6f;
+  --k-hover: #faf7fd;
+  --k-field: #fdfcff;
+  --k-check-line: #cdc3e0;
+  --k-overlay: #1c1636;
+}
+.readdy-tracker-ui.readdy-tracker-ui.dark {
+  --k-brand: #6a4dae;
+  --k-brand-deep: #241a3d;
+  --k-brand-accent: #b9327a;
+  --k-bg: #120f1c;
+  --k-bg-2: #1a1428;
+  --k-card: #1b1629;
+  --k-ink: #f1edfa;
+  --k-ink-2: #cdc4e0;
+  --k-muted: #9a90b6;
+  --k-faint: #6d6488;
+  --k-dot: #463c5f;
+  --k-line: #2c2440;
+  --k-line-2: #241d36;
+  --k-plum: #d9cdf7;
+  --k-plum-2: #8b6fd6;
+  --k-pink: #f472b6;
+  --k-pink-2: #35182b;
+  --k-green: #4ecfa0;
+  --k-green-2: #122e26;
+  --k-amber: #e0b062;
+  --k-amber-2: #30240f;
+  --k-rose: #ff8798;
+  --k-rose-2: #35141c;
+  --k-solid: #5b3fa0;
+  --k-solid-2: #6d4dbb;
+  --k-hover: #201a31;
+  --k-field: #171225;
+  --k-check-line: #4a4166;
+  --k-overlay: #06040d;
+}
+.readdy-tracker-ui.readdy-tracker-ui {
+  -webkit-text-size-adjust: 100%;
+  scroll-behavior: smooth;
+}
+.readdy-tracker-ui.readdy-tracker-ui {
+  background:
+    radial-gradient(1100px 420px at 8% -12%, #eae1f6 0%, #eae1f600 62%),
+    radial-gradient(900px 360px at 96% -6%, #f7e2ee 0%, #f7e2ee00 58%), var(--k-bg);
+  color: var(--k-ink);
+  font-feature-settings: "cv11", "ss01";
+  font-variation-settings: "opsz" 16;
+  -webkit-font-smoothing: antialiased;
+  background-attachment: fixed;
+  margin: 0;
+  font-family:
+    Inter,
+    IBM Plex Sans Arabic,
+    system-ui,
+    -apple-system,
+    sans-serif;
+  font-size: 14px;
+  line-height: 1.45;
+  transition:
+    background-color 0.2s,
+    color 0.2s;
+}
+.readdy-tracker-ui.readdy-tracker-ui.dark body {
+  background:
+    radial-gradient(1100px 420px at 8% -12%, #674ab247 0%, #120f1c00 62%),
+    radial-gradient(900px 360px at 96% -6%, #9e145e3d 0%, #120f1c00 58%), var(--k-bg);
+  background-attachment: fixed;
+}
+.readdy-tracker-ui.readdy-tracker-ui h1,
+.readdy-tracker-ui.readdy-tracker-ui h2,
+.readdy-tracker-ui.readdy-tracker-ui h3,
+.readdy-tracker-ui.readdy-tracker-ui h4 {
+  letter-spacing: -0.015em;
+  font-family:
+    Inter,
+    IBM Plex Sans Arabic,
+    system-ui,
+    sans-serif;
+}
+.readdy-tracker-ui.readdy-tracker-ui :lang(ar),
+.readdy-tracker-ui.readdy-tracker-ui [lang="ar"],
+.readdy-tracker-ui.readdy-tracker-ui [dir="rtl"],
+.readdy-tracker-ui.readdy-tracker-ui .font-arabic {
+  letter-spacing: 0;
+  font-family:
+    IBM Plex Sans Arabic,
+    Inter,
+    system-ui,
+    sans-serif;
+  line-height: 1.6;
+}
+.readdy-tracker-ui.readdy-tracker-ui :lang(ar) h1,
+.readdy-tracker-ui.readdy-tracker-ui :lang(ar) h2,
+.readdy-tracker-ui.readdy-tracker-ui :lang(ar) h3,
+.readdy-tracker-ui.readdy-tracker-ui :lang(ar) h4,
+.readdy-tracker-ui.readdy-tracker-ui [lang="ar"] h1,
+.readdy-tracker-ui.readdy-tracker-ui [lang="ar"] h2,
+.readdy-tracker-ui.readdy-tracker-ui [lang="ar"] h3,
+.readdy-tracker-ui.readdy-tracker-ui [lang="ar"] h4,
+.readdy-tracker-ui.readdy-tracker-ui [dir="rtl"] h1,
+.readdy-tracker-ui.readdy-tracker-ui [dir="rtl"] h2,
+.readdy-tracker-ui.readdy-tracker-ui [dir="rtl"] h3,
+.readdy-tracker-ui.readdy-tracker-ui [dir="rtl"] h4 {
+  letter-spacing: 0;
+  line-height: 1.35;
+}
+.readdy-tracker-ui.readdy-tracker-ui ::selection {
+  background: var(--k-pink);
+  color: #fff;
+}
+.readdy-tracker-ui.readdy-tracker-ui a:focus-visible,
+.readdy-tracker-ui.readdy-tracker-ui button:focus-visible,
+.readdy-tracker-ui.readdy-tracker-ui input:focus-visible,
+.readdy-tracker-ui.readdy-tracker-ui select:focus-visible,
+.readdy-tracker-ui.readdy-tracker-ui textarea:focus-visible,
+.readdy-tracker-ui.readdy-tracker-ui [tabindex]:focus-visible {
+  outline: 2px solid var(--k-pink);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-wm {
+  z-index: 0;
+  pointer-events: none;
+  aspect-ratio: 1;
+  -webkit-user-select: none;
+  user-select: none;
+  position: fixed;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-wm-flat {
+  opacity: 0.03;
+  background-color: var(--k-pink);
+  -webkit-mask-position: 50%;
+  mask-position: 50%;
+  -webkit-mask-size: contain;
+  mask-size: contain;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-wm-art {
+  opacity: 0.06;
+  mix-blend-mode: multiply;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-wm-art img {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+.readdy-tracker-ui.readdy-tracker-ui.dark .k-wm-art {
+  opacity: 0.055;
+  mix-blend-mode: normal;
+  filter: brightness(0) invert();
+}
+.readdy-tracker-ui.readdy-tracker-ui.dark .bg-pink {
+  color: #1a0f1a;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-wm-horse {
+  width: min(840px, 70vw);
+  top: 1%;
+  right: -5%;
+  transform: rotate(-4deg);
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-wm-bird {
+  width: min(800px, 66vw);
+  bottom: 1%;
+  left: -4%;
+  transform: rotate(-4deg);
+}
+@media (width<=1024px) {
+  .readdy-tracker-ui.readdy-tracker-ui .k-wm-flat {
+    opacity: 0.035;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .k-wm-art {
+    opacity: 0.055;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .k-wm-horse {
+    width: 86vw;
+    top: 2%;
+    right: -9%;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .k-wm-bird {
+    width: 82vw;
+    bottom: 2%;
+    left: -8%;
+  }
+}
+@media (width<=640px) {
+  .readdy-tracker-ui.readdy-tracker-ui .k-wm-flat {
+    opacity: 0.032;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .k-wm-art {
+    opacity: 0.05;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .k-wm-horse {
+    width: 100vw;
+    top: 3%;
+    right: -18%;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .k-wm-bird {
+    width: 94vw;
+    bottom: 3%;
+    left: -18%;
+  }
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-topstrip {
+  background: linear-gradient(
+    90deg,
+    var(--k-brand-deep) 0%,
+    var(--k-brand) 26%,
+    var(--k-brand-accent) 50%,
+    var(--k-brand) 74%,
+    var(--k-brand-deep) 100%
+  );
+  height: 8px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-card {
+  background: var(--k-card);
+  border: 1px solid var(--k-line);
+  border-radius: 14px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-stat-card,
+.readdy-tracker-ui.readdy-tracker-ui .k-mini-stat {
+  box-shadow:
+    0 1px 2px color-mix(in srgb, var(--k-plum-2) 4.5%, transparent),
+    0 7px 18px -10px color-mix(in srgb, var(--k-plum-2) 19.5%, transparent);
+  border-width: 0;
+  transition: box-shadow 0.2s;
+  position: relative;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-stat-card:hover,
+.readdy-tracker-ui.readdy-tracker-ui .k-mini-stat:hover {
+  box-shadow:
+    0 2px 4px color-mix(in srgb, var(--k-plum-2) 6.75%, transparent),
+    0 14px 28px -12px color-mix(in srgb, var(--k-plum-2) 30%, transparent);
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-stat-card:before,
+.readdy-tracker-ui.readdy-tracker-ui .k-mini-stat:before {
+  content: "";
+  border-radius: inherit;
+  --k-cell-1: color-mix(in srgb, var(--k-plum-2) 50%, #fff);
+  --k-cell-2: color-mix(in srgb, var(--k-pink) 50%, #fff);
+  background: linear-gradient(
+    135deg,
+    var(--k-cell-1) 0%,
+    var(--k-cell-2) 52%,
+    var(--k-cell-1) 100%
+  );
+  -webkit-mask-composite: xor;
+  pointer-events: none;
+  padding: 2px;
+  transition: background 0.18s;
+  position: absolute;
+  inset: 0;
+  -webkit-mask-image: linear-gradient(#000 0 0), linear-gradient(#000 0 0);
+  mask-image: linear-gradient(#000 0 0), linear-gradient(#000 0 0);
+  -webkit-mask-position:
+    0 0,
+    0 0;
+  mask-position:
+    0 0,
+    0 0;
+  -webkit-mask-size: auto, auto;
+  mask-size: auto, auto;
+  -webkit-mask-repeat: repeat, repeat;
+  mask-repeat: repeat, repeat;
+  -webkit-mask-clip: content-box, border-box;
+  mask-clip: content-box, border-box;
+  -webkit-mask-origin: content-box, border-box;
+  mask-origin: content-box, border-box;
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  -webkit-mask-source-type: auto, auto;
+  mask-mode: match-source, match-source;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-stat-card:hover:before,
+.readdy-tracker-ui.readdy-tracker-ui .k-mini-stat:hover:before {
+  background: linear-gradient(
+    135deg,
+    var(--k-cell-2) 0%,
+    var(--k-cell-1) 52%,
+    var(--k-cell-2) 100%
+  );
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-label {
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--k-muted);
+  font-family:
+    Inter,
+    IBM Plex Sans Arabic,
+    system-ui,
+    sans-serif;
+  font-size: 11.5px;
+  font-weight: 600;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-mono {
+  font-variant-numeric: tabular-nums;
+  font-family:
+    Inter,
+    IBM Plex Sans Arabic,
+    system-ui,
+    sans-serif;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-divide > * + * {
+  border-top: 1px solid var(--k-line-2);
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-table {
+  border-collapse: collapse;
+  width: 100%;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-table th {
+  text-align: left;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--k-muted);
+  border-bottom: 1px solid var(--k-line);
+  white-space: nowrap;
+  padding: 8px 10px;
+  font-family:
+    Inter,
+    IBM Plex Sans Arabic,
+    system-ui,
+    sans-serif;
+  font-size: 10px;
+  font-weight: 500;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-table td {
+  border-bottom: 1px solid var(--k-line-2);
+  vertical-align: middle;
+  padding: 9px 10px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-table tbody tr {
+  transition: background 0.14s;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-table tbody tr:hover {
+  background: var(--k-hover);
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-table tbody tr:last-child td {
+  border-bottom: none;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-bar {
+  background: var(--k-line-2);
+  border-radius: 999px;
+  height: 5px;
+  overflow: hidden;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-bar > span {
+  background: linear-gradient(90deg, var(--k-plum-2), var(--k-pink));
+  border-radius: 999px;
+  height: 100%;
+  display: block;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-overlay {
+  z-index: 60;
+  background: var(--k-overlay);
+  opacity: 0.32;
+  animation: 0.22s ease-out both kOverlayIn;
+  position: fixed;
+  inset: 0;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-drawer {
+  z-index: 61;
+  background: var(--k-card);
+  border-left: 1px solid var(--k-line);
+  flex-direction: column;
+  width: 100%;
+  max-width: 560px;
+  animation: 0.26s cubic-bezier(0.22, 0.7, 0.2, 1) both kDrawerIn;
+  display: flex;
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  right: 0;
+}
+@media (width<=640px) {
+  .readdy-tracker-ui.readdy-tracker-ui .k-drawer {
+    border-left: none;
+    border-top: 1px solid var(--k-line);
+    border-radius: 18px 18px 0 0;
+    max-width: none;
+    top: 8vh;
+  }
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-pop {
+  animation: 0.16s ease-out both kPopIn;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-toast {
+  animation: 0.22s ease-out both kToastIn;
+}
+@keyframes kDrawerIn {
+  0% {
+    opacity: 0.3;
+    transform: translate(30px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(0);
+  }
+}
+@keyframes kOverlayIn {
+  0% {
+    opacity: 0;
+  }
+  to {
+    opacity: 0.32;
+  }
+}
+@keyframes kPopIn {
+  0% {
+    opacity: 0;
+    transform: translateY(-5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes kToastIn {
+  0% {
+    opacity: 0;
+    translate: 0 10px;
+  }
+  to {
+    opacity: 1;
+    translate: 0;
+  }
+}
+@keyframes kFadeUp {
+  0% {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-input,
+.readdy-tracker-ui.readdy-tracker-ui .k-select,
+.readdy-tracker-ui.readdy-tracker-ui .k-textarea {
+  box-sizing: border-box;
+  border: 1px solid var(--k-line);
+  background: var(--k-field);
+  width: 100%;
+  min-width: 0;
+  color: var(--k-ink);
+  border-radius: 8px;
+  padding: 9px 11px;
+  font-family:
+    Inter,
+    IBM Plex Sans Arabic,
+    system-ui,
+    sans-serif;
+  font-size: 13.5px;
+  transition:
+    border-color 0.16s,
+    background 0.16s;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-input::-moz-placeholder {
+  color: var(--k-faint);
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-textarea::-moz-placeholder {
+  color: var(--k-faint);
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-input::placeholder,
+.readdy-tracker-ui.readdy-tracker-ui .k-textarea::placeholder {
+  color: var(--k-faint);
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-input:focus,
+.readdy-tracker-ui.readdy-tracker-ui .k-select:focus,
+.readdy-tracker-ui.readdy-tracker-ui .k-textarea:focus {
+  border-color: var(--k-pink);
+  background: var(--k-card);
+  outline: none;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-textarea {
+  resize: vertical;
+  min-height: 82px;
+  line-height: 1.55;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-field-label {
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--k-muted);
+  margin-bottom: 5px;
+  font-family:
+    Inter,
+    IBM Plex Sans Arabic,
+    system-ui,
+    sans-serif;
+  font-size: 10px;
+  font-weight: 600;
+  display: block;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-check {
+  appearance: none;
+  border: 1.5px solid var(--k-check-line);
+  background: var(--k-card);
+  cursor: pointer;
+  border-radius: 4px;
+  flex: none;
+  width: 16px;
+  height: 16px;
+  transition:
+    background 0.15s,
+    border-color 0.15s;
+  position: relative;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-check:checked {
+  background: var(--k-solid);
+  border-color: var(--k-solid);
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-check:checked:after {
+  content: "";
+  border-bottom: 2px solid #fff;
+  border-right: 2px solid #fff;
+  width: 5px;
+  height: 9px;
+  position: absolute;
+  top: 1px;
+  left: 4px;
+  transform: rotate(42deg);
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-dropdown {
+  min-width: 0;
+  position: relative;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-dropdown.k-dropdown-open {
+  z-index: 45;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-select-trigger {
+  box-sizing: border-box;
+  border: 1px solid var(--k-line);
+  background: var(--k-field);
+  width: 100%;
+  min-width: 0;
+  color: var(--k-ink);
+  text-align: left;
+  cursor: pointer;
+  border-radius: 8px;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 9px 9px 11px;
+  font-family:
+    Inter,
+    IBM Plex Sans Arabic,
+    system-ui,
+    sans-serif;
+  font-size: 13.5px;
+  font-weight: 400;
+  line-height: 1.35;
+  transition:
+    border-color 0.16s,
+    background 0.16s;
+  display: flex;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-select-trigger:hover {
+  border-color: color-mix(in srgb, var(--k-pink) 28%, var(--k-line));
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-select-trigger.is-open {
+  border-color: var(--k-pink);
+  background: var(--k-card);
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-select-trigger:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-select-trigger-app {
+  border-radius: 8px;
+  padding: 10px 9px 10px 12px;
+  font-size: 13px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-dropdown-value {
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: auto;
+  min-width: 0;
+  overflow: hidden;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-dropdown-caret {
+  width: 16px;
+  height: 16px;
+  color: var(--k-muted);
+  flex: none;
+  justify-content: center;
+  align-items: center;
+  transition:
+    transform 0.18s,
+    color 0.16s;
+  display: flex;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-select-trigger:hover .k-dropdown-caret,
+.readdy-tracker-ui.readdy-tracker-ui .k-select-trigger.is-open .k-dropdown-caret {
+  color: var(--k-pink);
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-select-trigger.is-open .k-dropdown-caret {
+  transform: rotate(180deg);
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-dropdown-panel {
+  z-index: 45;
+  box-sizing: border-box;
+  border: 1px solid var(--k-line);
+  background: var(--k-card);
+  scrollbar-width: thin;
+  scrollbar-color: var(--k-faint) transparent;
+  border-radius: 11px;
+  max-height: 272px;
+  padding: 5px;
+  animation: 0.14s ease-out both kMenuIn;
+  position: absolute;
+  top: calc(100% + 5px);
+  left: 0;
+  right: 0;
+  overflow-y: auto;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-dropdown-panel::-webkit-scrollbar {
+  width: 6px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-dropdown-panel::-webkit-scrollbar-thumb {
+  background: var(--k-faint);
+  border-radius: 999px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-dropdown-panel-up {
+  animation-name: kMenuInUp;
+  top: auto;
+  bottom: calc(100% + 5px);
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-dropdown-item {
+  box-sizing: border-box;
+  width: 100%;
+  color: var(--k-ink-2);
+  text-align: left;
+  cursor: pointer;
+  background: 0 0;
+  border: 1px solid #0000;
+  border-radius: 7px;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 9px;
+  font-family:
+    Inter,
+    IBM Plex Sans Arabic,
+    system-ui,
+    sans-serif;
+  font-size: 12.5px;
+  font-weight: 500;
+  transition:
+    background 0.13s,
+    color 0.13s;
+  display: flex;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-dropdown-item + .k-dropdown-item {
+  margin-top: 1px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-dropdown-item:hover {
+  background: var(--k-hover);
+  color: var(--k-plum);
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-dropdown-item[aria-selected="true"] {
+  background: var(--k-pink-2);
+  color: var(--k-pink);
+  font-weight: 600;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-dropdown-item[aria-selected="true"]:hover {
+  background: var(--k-pink-2);
+  color: var(--k-pink);
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-dropdown-item-label {
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  overflow: hidden;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-dropdown-check {
+  opacity: 0;
+  flex: none;
+  justify-content: center;
+  align-items: center;
+  width: 14px;
+  height: 14px;
+  transition: opacity 0.13s;
+  display: flex;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-dropdown-item[aria-selected="true"] .k-dropdown-check {
+  opacity: 1;
+}
+@keyframes kMenuIn {
+  0% {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes kMenuInUp {
+  0% {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: var(--k-faint) transparent;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-scroll::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-scroll::-webkit-scrollbar-thumb {
+  background: var(--k-faint);
+  border-radius: 999px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-scroll::-webkit-scrollbar-track {
+  background: 0 0;
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell {
+  --k-bg: #f7f4fb;
+  --k-bg-2: #f1ecf9;
+  --k-card: #fff;
+  --k-ink: #1c1636;
+  --k-ink-2: #3f3560;
+  --k-muted: #6f6790;
+  --k-faint: #a497b9;
+  --k-dot: #cfc5e0;
+  --k-line: #412c6f29;
+  --k-line-2: #412c6f17;
+  --k-plum: #2e2355;
+  --k-plum-2: #412c6f;
+  --k-pink: #9d145e;
+  --k-pink-2: #9d145e17;
+  --k-green: #17795a;
+  --k-green-2: #e3f3ea;
+  --k-amber: #96660f;
+  --k-amber-2: #fbeed6;
+  --k-rose: #a8223f;
+  --k-rose-2: #fbe3e7;
+  --k-solid: #2e2355;
+  --k-solid-2: #412c6f;
+  --k-hover: #f9f6fd;
+  --k-field: #fdfcff;
+  --k-check-line: #cdc3e0;
+  --k-overlay: #1c1636;
+  --k-ring-1: #2e2355;
+  --k-ring-2: #412c6f;
+  --k-ring-3: #9d145e;
+  --k-ring-4: #c0559b;
+  --k-track: #412c6f1f;
+  --k-track-2: #412c6f14;
+  --k-glow: #9d145e1a;
+  --k-cta-1: #2e2355;
+  --k-cta-2: #9d145e;
+  min-height: 100vh;
+  color: var(--k-ink);
+  --lightningcss-light: initial;
+  --lightningcss-dark: ;
+  color-scheme: light;
+  background:
+    radial-gradient(960px 460px at 50% -16%, #9d145e0f, #f7f4fb00 62%),
+    radial-gradient(820px 420px at 100% 106%, #412c6f14, #f7f4fb00 68%), #f7f4fb;
+  position: relative;
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell ::selection {
+  color: #fff;
+  background: #9d145ed9;
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell .k-card {
+  border-color: var(--k-line);
+  background: #fff;
+  border-radius: 14px;
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell.app-calm {
+  background: #fbf9fe;
+}
+.readdy-tracker-ui.readdy-tracker-ui .app-card {
+  border-radius: 14px;
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell.app-dark {
+  --k-bg: #0e0b17;
+  --k-bg-2: #171226;
+  --k-card: #191327;
+  --k-ink: #f3effd;
+  --k-ink-2: #d5cbea;
+  --k-muted: #9d93ba;
+  --k-faint: #706790;
+  --k-dot: #453b60;
+  --k-line: #c6b4ec29;
+  --k-line-2: #c6b4ec17;
+  --k-plum: #dbcff8;
+  --k-plum-2: #8f74da;
+  --k-pink: #f472b6;
+  --k-pink-2: #f472b61f;
+  --k-green: #4ecfa0;
+  --k-green-2: #4ecfa024;
+  --k-amber: #e0b062;
+  --k-amber-2: #e0b06224;
+  --k-rose: #ff8798;
+  --k-rose-2: #ff879824;
+  --k-solid: #5b3fa0;
+  --k-solid-2: #6d4dbb;
+  --k-hover: #201933;
+  --k-field: #141020;
+  --k-check-line: #4a4166;
+  --k-overlay: #06040d;
+  --k-ring-1: #6a4aa8;
+  --k-ring-2: #8f74da;
+  --k-ring-3: #f472b6;
+  --k-ring-4: #ffb7db;
+  --k-track: #c6b4ec29;
+  --k-track-2: #c6b4ec14;
+  --k-glow: #f472b629;
+  --k-cta-1: #6a4aa8;
+  --k-cta-2: #c2337f;
+  color: var(--k-ink);
+  --lightningcss-light: ;
+  --lightningcss-dark: initial;
+  color-scheme: dark;
+  background:
+    radial-gradient(960px 460px at 50% -16%, #f472b624, #0e0b1700 62%),
+    radial-gradient(820px 420px at 100% 106%, #8f74da29, #0e0b1700 68%), #0e0b17;
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell.app-dark ::selection {
+  color: #170f22;
+  background: #f472b6e6;
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell.app-dark .app-grid {
+  opacity: 0.42;
+  background-image: radial-gradient(#c6b4ec33 1px, #0000 1px);
+  -webkit-mask-image: radial-gradient(760px 540px at 12% 74%, #000 0%, #0000 74%);
+  mask-image: radial-gradient(760px 540px at 12% 74%, #000 0%, #0000 74%);
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell.app-dark .app-sidebar {
+  background: #130e20d1;
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell.app-dark .app-topbar {
+  background: #110d1ce6;
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell.app-dark .app-statusbar {
+  background: #110d1cf0;
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell.app-dark .k-card,
+.readdy-tracker-ui.readdy-tracker-ui.app-shell.app-dark .k-frame {
+  background: var(--k-card);
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell.app-dark .k-frame:before {
+  background: linear-gradient(90deg, #0000, #f472b680, #0000);
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell.app-dark .k-app-field {
+  background: var(--k-field);
+  color: var(--k-ink);
+  border-color: #c6b4ec33;
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell.app-dark .k-app-field::placeholder {
+  color: var(--k-faint);
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell.app-dark select.k-app-field option {
+  background: var(--k-card);
+  color: var(--k-ink);
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell.app-dark .app-side-link {
+  color: var(--k-muted);
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell.app-dark .app-side-link:hover {
+  color: var(--k-ink);
+  background: #c6b4ec17;
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell.app-dark .app-side-active,
+.readdy-tracker-ui.readdy-tracker-ui.app-shell.app-dark .app-side-active:hover {
+  color: #fff;
+  background: var(--k-solid);
+  border-color: var(--k-solid);
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell.app-dark .k-stripes > span {
+  background: linear-gradient(#8f74da, #f472b6);
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell.app-dark .app-nav-btn:hover {
+  color: var(--k-ink);
+  background: #c6b4ec1a;
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell.app-dark .app-nav-active:hover {
+  background: var(--k-solid-2);
+  color: #fff;
+}
+.readdy-tracker-ui.readdy-tracker-ui .app-grid {
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0.5;
+  background-image: radial-gradient(#412c6f29 1px, #0000 1px);
+  background-size: 28px 28px;
+  position: fixed;
+  inset: 0;
+  -webkit-mask-image: radial-gradient(720px 520px at 12% 74%, #000 0%, #0000 72%);
+  mask-image: radial-gradient(720px 520px at 12% 74%, #000 0%, #0000 72%);
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell.app-calm .app-grid {
+  opacity: 0.16;
+}
+.readdy-tracker-ui.readdy-tracker-ui .app-num {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.015em;
+  font-family:
+    Inter,
+    IBM Plex Sans Arabic,
+    system-ui,
+    sans-serif;
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell .k-wm-art {
+  opacity: 0.05;
+  mix-blend-mode: multiply;
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell.app-dark .k-wm-art {
+  opacity: 0.05;
+  mix-blend-mode: normal;
+  filter: brightness(0) invert();
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-glass-card {
+  -webkit-backdrop-filter: blur(20px) saturate(160%);
+  backdrop-filter: blur(20px) saturate(160%);
+  background:
+    radial-gradient(140% 130% at 0 0, #9d145e1f, #0000 58%),
+    radial-gradient(120% 130% at 100% 100%, #412c6f1a, #0000 62%),
+    linear-gradient(150deg, #fffffffa, #ffffffc2);
+  border: 1px solid #ffffffe6;
+  border-radius: 14px;
+  padding: 7px;
+  position: relative;
+  overflow: hidden;
+  box-shadow:
+    inset 0 1px #fff,
+    0 14px 34px -16px #412c6f38,
+    0 2px 10px -4px #412c6f1f;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-glass-card-bleed {
+  border-bottom: none;
+  border-left: none;
+  border-right: none;
+  border-radius: 0;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-glass-cell {
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+  background: #ffffffb8;
+  border-width: 0;
+  transition: background 0.18s;
+  position: relative;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-glass-cell:before {
+  content: "";
+  border-radius: inherit;
+  --k-cell-1: color-mix(in srgb, var(--k-plum-2) 50%, #fff);
+  --k-cell-2: color-mix(in srgb, var(--k-pink) 50%, #fff);
+  background: linear-gradient(
+    135deg,
+    var(--k-cell-1) 0%,
+    var(--k-cell-2) 52%,
+    var(--k-cell-1) 100%
+  );
+  -webkit-mask-composite: xor;
+  pointer-events: none;
+  padding: 2px;
+  transition: background 0.18s;
+  position: absolute;
+  inset: 0;
+  -webkit-mask-image: linear-gradient(#000 0 0), linear-gradient(#000 0 0);
+  mask-image: linear-gradient(#000 0 0), linear-gradient(#000 0 0);
+  -webkit-mask-position:
+    0 0,
+    0 0;
+  mask-position:
+    0 0,
+    0 0;
+  -webkit-mask-size: auto, auto;
+  mask-size: auto, auto;
+  -webkit-mask-repeat: repeat, repeat;
+  mask-repeat: repeat, repeat;
+  -webkit-mask-clip: content-box, border-box;
+  mask-clip: content-box, border-box;
+  -webkit-mask-origin: content-box, border-box;
+  mask-origin: content-box, border-box;
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  -webkit-mask-source-type: auto, auto;
+  mask-mode: match-source, match-source;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-glass-cell:hover:before {
+  background: linear-gradient(
+    135deg,
+    var(--k-cell-2) 0%,
+    var(--k-cell-1) 52%,
+    var(--k-cell-2) 100%
+  );
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-glass-cell:hover {
+  background: #ffffffe6;
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell.app-dark .k-glass-card {
+  background:
+    radial-gradient(140% 130% at 0 0, #f472b633, #0000 58%),
+    radial-gradient(120% 130% at 100% 100%, #8f74da2e, #0000 62%),
+    linear-gradient(150deg, #ffffff1f, #ffffff0a);
+  border-color: #c6b4ec42;
+  box-shadow:
+    inset 0 1px #ffffff1f,
+    0 14px 34px -16px #0009;
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell.app-dark .k-glass-cell {
+  background: #ffffff0f;
+  border-color: #c6b4ec2e;
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell.app-dark .k-glass-cell:hover {
+  background: #ffffff1c;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-side-art {
+  opacity: 0.16;
+  mix-blend-mode: multiply;
+  pointer-events: none;
+  -webkit-user-select: none;
+  user-select: none;
+  width: 76%;
+  max-width: 178px;
+  height: auto;
+  position: absolute;
+  bottom: 4px;
+  left: 50%;
+  transform: translate(-50%) rotate(-4deg);
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell.app-dark .k-side-art {
+  opacity: 0.14;
+  mix-blend-mode: normal;
+  filter: brightness(0) invert();
+}
+.readdy-tracker-ui.readdy-tracker-ui .app-logo-plate {
+  box-sizing: border-box;
+  border-radius: 10px;
+  flex: none;
+  justify-content: center;
+  align-items: center;
+  transition: background 0.2s;
+  display: flex;
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell.app-dark .app-logo-plate {
+  background: #fffffff0;
+  padding: 3px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-frame {
+  background: #fff;
+  border: 0;
+  border-radius: 14px;
+  position: relative;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-bracket {
+  pointer-events: none;
+  border: 0 solid #412c6f6b;
+  width: 13px;
+  height: 13px;
+  position: absolute;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-app-field {
+  box-sizing: border-box;
+  appearance: none;
+  border: 1px solid var(--k-line);
+  background: var(--k-field);
+  width: 100%;
+  min-width: 0;
+  color: var(--k-ink);
+  border-radius: 8px;
+  padding: 10px 36px 10px 12px;
+  font-family:
+    Inter,
+    IBM Plex Sans Arabic,
+    system-ui,
+    sans-serif;
+  font-size: 13px;
+  transition:
+    border-color 0.16s,
+    box-shadow 0.16s,
+    background 0.16s;
+}
+.readdy-tracker-ui.readdy-tracker-ui input.k-app-field,
+.readdy-tracker-ui.readdy-tracker-ui textarea.k-app-field {
+  padding-right: 12px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-app-field-icon {
+  padding-left: 32px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-app-field::placeholder {
+  color: var(--k-faint);
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-app-field:focus {
+  background: #fff;
+  border-color: #9d145e8c;
+  outline: none;
+  box-shadow: 0 0 0 3px #9d145e1a;
+}
+.readdy-tracker-ui.readdy-tracker-ui select.k-app-field option {
+  background: var(--k-card);
+  color: var(--k-ink);
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-stripes {
+  align-items: flex-end;
+  gap: 5px;
+  display: flex;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-stripes > span {
+  background: linear-gradient(#412c6f, #9d145e);
+  border-radius: 2px;
+  width: 7px;
+  height: 26px;
+  transform: skew(-22deg);
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-stripes > span:nth-child(2) {
+  opacity: 0.85;
+  height: 18px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-stripes > span:nth-child(3) {
+  height: 30px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-stripes > span:nth-child(4) {
+  opacity: 0.6;
+  height: 14px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-stripes > span:nth-child(5) {
+  opacity: 0.78;
+  height: 22px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .app-sidebar {
+  border-color: var(--k-line);
+  -webkit-backdrop-filter: blur(14px);
+  z-index: 30;
+  background: #ffffffd1;
+}
+.readdy-tracker-ui.readdy-tracker-ui .app-side-link {
+  box-sizing: border-box;
+  width: 100%;
+  color: var(--k-muted);
+  cursor: pointer;
+  border: 1px solid #0000;
+  border-radius: 6px;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 9px;
+  transition:
+    color 0.16s,
+    background 0.16s,
+    border-color 0.16s;
+  display: flex;
+  position: relative;
+}
+.readdy-tracker-ui.readdy-tracker-ui .app-side-link:hover {
+  color: var(--k-ink);
+  background: #412c6f0f;
+}
+.readdy-tracker-ui.readdy-tracker-ui .app-side-active {
+  color: #fff;
+  background: var(--k-solid);
+  border-color: var(--k-solid);
+}
+.readdy-tracker-ui.readdy-tracker-ui .app-side-active:hover {
+  color: #fff;
+  background: var(--k-solid-2);
+}
+.readdy-tracker-ui.readdy-tracker-ui .app-side-dot {
+  opacity: 0.85;
+  background: #fff;
+  border-radius: 999px;
+  flex: none;
+  width: 5px;
+  height: 5px;
+  display: block;
+}
+.readdy-tracker-ui.readdy-tracker-ui .app-topbar {
+  border-bottom: 1px solid var(--k-line);
+  -webkit-backdrop-filter: blur(16px);
+  background: #ffffffe6;
+}
+.readdy-tracker-ui.readdy-tracker-ui .app-nav-btn {
+  width: 34px;
+  height: 34px;
+  color: var(--k-muted);
+  cursor: pointer;
+  border: 1px solid #0000;
+  border-radius: 6px;
+  justify-content: center;
+  align-items: center;
+  transition:
+    color 0.16s,
+    background 0.16s,
+    border-color 0.16s;
+  display: flex;
+}
+.readdy-tracker-ui.readdy-tracker-ui .app-nav-btn:hover {
+  color: var(--k-ink);
+  background: #412c6f12;
+}
+.readdy-tracker-ui.readdy-tracker-ui .app-nav-active {
+  color: #fff;
+  background: var(--k-solid);
+  border-color: var(--k-solid);
+}
+.readdy-tracker-ui.readdy-tracker-ui .app-nav-active:hover {
+  background: var(--k-solid-2);
+}
+.readdy-tracker-ui.readdy-tracker-ui .app-pill {
+  border: 1px solid var(--k-line);
+  background: var(--k-card);
+  white-space: nowrap;
+  color: var(--k-ink-2);
+  border-radius: 6px;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  display: inline-flex;
+}
+.readdy-tracker-ui.readdy-tracker-ui .app-pill-live {
+  background: var(--k-green-2);
+  color: var(--k-green);
+  border-color: #17795a47;
+}
+.readdy-tracker-ui.readdy-tracker-ui .app-statusbar {
+  border-top: 1px solid var(--k-line);
+  -webkit-backdrop-filter: blur(12px);
+  background: #fffffff0;
+}
+.readdy-tracker-ui.readdy-tracker-ui .app-dot-live {
+  animation: 3.6s ease-in-out infinite appPulse;
+}
+.readdy-tracker-ui.readdy-tracker-ui .app-ring-glow {
+  filter: drop-shadow(0 0 5px #9d145e47);
+  transition: stroke-dashoffset 1.35s cubic-bezier(0.32, 0.72, 0.22, 1);
+}
+.readdy-tracker-ui.readdy-tracker-ui .app-avatar-ring {
+  background: linear-gradient(145deg, #9d145e73, #412c6f4d);
+}
+.readdy-tracker-ui.readdy-tracker-ui .app-scroll-x {
+  scrollbar-width: none;
+}
+.readdy-tracker-ui.readdy-tracker-ui .app-scroll-x::-webkit-scrollbar {
+  display: none;
+}
+@keyframes appPulse {
+  0%,
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.66;
+    transform: scale(0.9);
+  }
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-login-scrim {
+  pointer-events: none;
+  background:
+    radial-gradient(760px 540px at 80% 4%, #9d145e6b, #120c2000 68%),
+    radial-gradient(700px 580px at 6% 98%, #5e42a866, #120c2000 70%),
+    linear-gradient(160deg, #120c20e0 0%, #1e1434bd 48%, #30142ed6 100%);
+  position: absolute;
+  inset: 0;
+}
+.readdy-tracker-ui.readdy-tracker-ui.dark .k-login-scrim {
+  background:
+    radial-gradient(760px 540px at 80% 4%, #9d145e57, #08050e00 68%),
+    radial-gradient(700px 580px at 6% 98%, #5e42a84d, #08050e00 70%),
+    linear-gradient(160deg, #08050eeb 0%, #100b1cdb 48%, #1c0c1ae6 100%);
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-auth-panel {
+  isolation: isolate;
+  color: #f7f2ff;
+  background:
+    radial-gradient(640px 460px at 104% -8%, #9d145e9e, #1a132e00 64%),
+    radial-gradient(560px 520px at -10% 108%, #5e42a894, #1a132e00 68%),
+    linear-gradient(155deg, #241a3d 0%, #2e2355 56%, #3d1f47 100%);
+  position: relative;
+  overflow: hidden;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-auth-grid {
+  pointer-events: none;
+  opacity: 0.26;
+  background-image: radial-gradient(#ffffff29 1px, #0000 1px);
+  background-size: 30px 30px;
+  position: absolute;
+  inset: 0;
+  -webkit-mask-image: radial-gradient(620px 540px at 16% 20%, #000 0%, #0000 76%);
+  mask-image: radial-gradient(620px 540px at 16% 20%, #000 0%, #0000 76%);
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-auth-glass {
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  background: #ffffff12;
+  border: 1px solid #ffffff29;
+  border-radius: 14px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-segment {
+  border: 1px solid var(--k-line);
+  background: var(--k-bg-2);
+  border-radius: 10px;
+  gap: 2px;
+  padding: 4px;
+  display: flex;
+  position: relative;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-segment-thumb {
+  z-index: 0;
+  border: 1px solid var(--k-line);
+  background: var(--k-card);
+  will-change: transform;
+  border-radius: 6px;
+  width: calc(50% - 5px);
+  transition: transform 0.38s cubic-bezier(0.34, 1.26, 0.4, 1);
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  left: 4px;
+  box-shadow: 0 1px 2px #1711280f;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-segment-item {
+  z-index: 1;
+  min-width: 0;
+  color: var(--k-muted);
+  cursor: pointer;
+  white-space: nowrap;
+  background: 0 0;
+  border: 1px solid #0000;
+  border-radius: 6px;
+  flex: 1 1 0;
+  justify-content: center;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  font-family:
+    Inter,
+    IBM Plex Sans Arabic,
+    system-ui,
+    sans-serif;
+  font-size: 12.5px;
+  font-weight: 600;
+  transition:
+    color 0.2s,
+    transform 0.2s;
+  display: flex;
+  position: relative;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-segment-item:hover {
+  color: var(--k-ink);
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-segment-item:active {
+  transform: scale(0.97);
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-segment-item[aria-selected="true"] {
+  color: var(--k-plum);
+  background: 0 0;
+  border-color: #0000;
+}
+@keyframes k-role-swap {
+  0% {
+    opacity: 0;
+    transform: translateY(7px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-role-swap {
+  animation: 0.36s cubic-bezier(0.22, 0.61, 0.36, 1) both k-role-swap;
+}
+@keyframes k-role-field-in {
+  0% {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-role-field-in {
+  animation: 0.38s cubic-bezier(0.22, 0.61, 0.36, 1) both k-role-field-in;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-auth-input {
+  box-sizing: border-box;
+  border: 1px solid var(--k-line);
+  background: var(--k-field);
+  width: 100%;
+  min-width: 0;
+  color: var(--k-ink);
+  border-radius: 8px;
+  padding: 11px 12px 11px 36px;
+  font-family:
+    Inter,
+    IBM Plex Sans Arabic,
+    system-ui,
+    sans-serif;
+  font-size: 13.5px;
+  transition:
+    border-color 0.16s,
+    background 0.16s,
+    box-shadow 0.16s;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-auth-input::placeholder {
+  color: var(--k-faint);
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-auth-input:focus {
+  background: var(--k-card);
+  border-color: #9d145e8c;
+  outline: none;
+  box-shadow: 0 0 0 3px #9d145e1a;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-auth-input.has-toggle {
+  padding-right: 40px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-auth-card {
+  --k-role-accent: var(--k-pink);
+  --k-role-wash: #9d145e0b;
+  --k-role-ring: #9d145e24;
+  --k-role-cta: var(--k-solid);
+  isolation: isolate;
+  background-color: var(--k-card);
+  transition: background-color 0.45s;
+  position: relative;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-auth-card.is-employee {
+  --k-role-accent: var(--k-green);
+  --k-role-wash: #17795a11;
+  --k-role-ring: #17795a29;
+  --k-role-cta: #14664d;
+}
+.readdy-tracker-ui.readdy-tracker-ui.dark .k-auth-card {
+  --k-role-wash: #f472b60e;
+  --k-role-ring: #f472b62e;
+}
+.readdy-tracker-ui.readdy-tracker-ui.dark .k-auth-card.is-employee {
+  --k-role-wash: #4ecfa016;
+  --k-role-ring: #4ecfa033;
+  --k-role-cta: #1b7c5d;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-auth-card:after {
+  content: "";
+  z-index: -1;
+  border-radius: inherit;
+  background-color: var(--k-role-wash);
+  pointer-events: none;
+  transition: background-color 0.5s;
+  position: absolute;
+  inset: 0;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-auth-card:before {
+  content: "";
+  z-index: 1;
+  background-color: var(--k-role-accent);
+  opacity: 0.75;
+  pointer-events: none;
+  border-radius: 999px;
+  height: 2px;
+  transition:
+    background-color 0.5s,
+    opacity 0.4s;
+  position: absolute;
+  top: 0;
+  left: 16%;
+  right: 16%;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-role-ink {
+  color: var(--k-role-accent);
+  transition: color 0.45s;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-role-cta {
+  background-color: var(--k-role-cta);
+  transition:
+    background-color 0.45s,
+    filter 0.18s,
+    transform 0.15s;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-role-cta:hover {
+  filter: brightness(1.14);
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-role-cta:active {
+  transform: scale(0.99);
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-auth-card .k-auth-input:focus {
+  border-color: color-mix(in srgb, var(--k-role-accent) 52%, var(--k-line));
+  box-shadow: 0 0 0 3px var(--k-role-ring);
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-auth-card .k-segment-item[aria-selected="true"] {
+  color: var(--k-role-accent);
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-auth-card .k-segment-thumb {
+  border-color: color-mix(in srgb, var(--k-role-accent) 22%, var(--k-line));
+  transition:
+    transform 0.38s cubic-bezier(0.34, 1.26, 0.4, 1),
+    border-color 0.45s;
+}
+@keyframes k-login-bg-in {
+  0% {
+    opacity: 0;
+    transform: scale(1.07);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+@keyframes k-login-fade {
+  0% {
+    opacity: 0;
+    transform: translateY(-7px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes k-login-rise {
+  0% {
+    opacity: 0;
+    transform: translateY(16px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-login-bg {
+  animation: 1.15s cubic-bezier(0.22, 0.61, 0.36, 1) both k-login-bg-in;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-login-fade {
+  animation: 0.6s cubic-bezier(0.22, 0.61, 0.36, 1) 0.22s both k-login-fade;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-login-foot {
+  animation: 0.6s cubic-bezier(0.22, 0.61, 0.36, 1) 0.42s both k-login-fade;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-login-rise {
+  animation: 0.72s cubic-bezier(0.22, 0.61, 0.36, 1) 0.1s both k-login-rise;
+}
+@keyframes k-shake {
+  0%,
+  to {
+    transform: translate(0);
+  }
+  15% {
+    transform: translate(-6px);
+  }
+  30% {
+    transform: translate(5px);
+  }
+  45% {
+    transform: translate(-4px);
+  }
+  60% {
+    transform: translate(3px);
+  }
+  78% {
+    transform: translate(-2px);
+  }
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-shake {
+  animation: 0.44s cubic-bezier(0.36, 0.07, 0.19, 0.97) both k-shake;
+}
+@keyframes k-logo-in {
+  0% {
+    opacity: 0;
+    transform: translateY(8px) scale(0.86);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+@keyframes k-logo-word-in {
+  0% {
+    opacity: 0;
+    transform: translate(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(0);
+  }
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-logo-in {
+  animation: 0.62s cubic-bezier(0.34, 1.32, 0.4, 1) 0.34s both k-logo-in;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-logo-word-in {
+  animation: 0.55s cubic-bezier(0.22, 0.61, 0.36, 1) 0.46s both k-logo-word-in;
+}
+@keyframes k-notice-in {
+  0% {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-notice-in {
+  animation: 0.3s cubic-bezier(0.22, 0.61, 0.36, 1) both k-notice-in;
+}
+@keyframes k-login-out {
+  0% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-18px) scale(0.975);
+  }
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-login-out {
+  pointer-events: none;
+  animation: 0.42s cubic-bezier(0.4, 0, 0.7, 1) both k-login-out;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-role-cta.is-pressing {
+  animation: 0.24s cubic-bezier(0.3, 0.8, 0.4, 1) both k-cta-press;
+}
+@keyframes k-cta-press {
+  0% {
+    transform: scale(1);
+  }
+  40% {
+    transform: scale(0.968);
+  }
+  to {
+    transform: scale(1);
+  }
+}
+@keyframes kRiseIn {
+  0% {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-rise {
+  animation: 0.5s cubic-bezier(0.22, 0.61, 0.36, 1) both kRiseIn;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-curtain {
+  z-index: 90;
+  background:
+    radial-gradient(680px 480px at 82% 6%, #9d145e8c, #18102800 66%),
+    radial-gradient(620px 520px at 4% 96%, #5e42a880, #18102800 68%),
+    linear-gradient(158deg, #221838 0%, #2c2153 54%, #3a1e45 100%);
+  justify-content: center;
+  align-items: center;
+  display: flex;
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-curtain:before {
+  content: "";
+  pointer-events: none;
+  opacity: 0.28;
+  background-image: radial-gradient(#ffffff24 1px, #0000 1px);
+  background-size: 28px 28px;
+  position: absolute;
+  inset: 0;
+  -webkit-mask-image: radial-gradient(620px 520px, #000 0%, #0000 74%);
+  mask-image: radial-gradient(620px 520px, #000 0%, #0000 74%);
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-curtain-in {
+  animation: 0.52s cubic-bezier(0.72, 0, 0.28, 1) both k-curtain-in;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-curtain-out {
+  animation: 0.56s cubic-bezier(0.72, 0, 0.28, 1) both k-curtain-out;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-curtain-mark {
+  animation: 0.5s cubic-bezier(0.22, 0.61, 0.36, 1) 0.1s both k-curtain-mark;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-curtain-out .k-curtain-mark {
+  animation-delay: 20ms;
+}
+@keyframes k-curtain-in {
+  0% {
+    transform: translateY(101%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+@keyframes k-curtain-out {
+  0% {
+    transform: translateY(0);
+  }
+  to {
+    transform: translateY(-101%);
+  }
+}
+@keyframes k-curtain-mark {
+  0% {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-hub-card {
+  transition:
+    transform 0.22s,
+    border-color 0.22s,
+    background 0.22s;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-hub-card:hover {
+  border-color: color-mix(in srgb, var(--k-plum-2) 36%, var(--k-line));
+  transform: translateY(-2px);
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-hub-row {
+  transition:
+    background 0.16s,
+    color 0.16s;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-hub-row:hover {
+  background: var(--k-hover);
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-hub-frame {
+  border-style: solid;
+  border-width: 1px;
+  border-color: color-mix(in srgb, var(--k-line) 55%, var(--k-pink) 45%);
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-hub-frame-green {
+  border-color: color-mix(in srgb, var(--k-line) 55%, var(--k-green) 45%);
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-hub-frame-rose {
+  border-color: color-mix(in srgb, var(--k-line) 55%, var(--k-rose) 45%);
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-hub-frame-brand {
+  border-color: color-mix(in srgb, var(--k-line) 55%, var(--k-pink) 45%);
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-hub-frame:hover {
+  border-color: color-mix(in srgb, var(--k-line) 30%, var(--k-pink) 70%);
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-hub-frame-green:hover {
+  border-color: color-mix(in srgb, var(--k-line) 30%, var(--k-green) 70%);
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-hub-frame-rose:hover {
+  border-color: color-mix(in srgb, var(--k-line) 30%, var(--k-rose) 70%);
+}
+@keyframes kLivePulse {
+  0% {
+    box-shadow: 0 0 #17795a8c;
+  }
+  70% {
+    box-shadow: 0 0 0 5px #17795a00;
+  }
+  to {
+    box-shadow: 0 0 #17795a00;
+  }
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-live-dot {
+  animation: 1.9s ease-out infinite kLivePulse;
+}
+@keyframes kBarGrow {
+  0% {
+    opacity: 0.3;
+    transform: scaleY(0.04);
+  }
+  to {
+    opacity: 1;
+    transform: scaleY(1);
+  }
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-week-bar {
+  transform-origin: bottom;
+  background: linear-gradient(180deg, var(--k-plum-2), var(--k-pink));
+  border-radius: 4px 4px 2px 2px;
+  width: 100%;
+  animation: 0.6s cubic-bezier(0.22, 0.61, 0.36, 1) both kBarGrow;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-week-bar.is-rest {
+  background: var(--k-line-2);
+}
+@keyframes kChartGrow {
+  0% {
+    opacity: 0.45;
+    transform: scaleY(0.02);
+  }
+  to {
+    opacity: 1;
+    transform: scaleY(1);
+  }
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-chart-bar {
+  transform-origin: bottom;
+  animation: 0.62s cubic-bezier(0.22, 0.61, 0.36, 1) both kChartGrow;
+}
+@keyframes kRowIn {
+  0% {
+    opacity: 0;
+    transform: translate(-5px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .readdy-tracker-ui.readdy-tracker-ui *,
+  .readdy-tracker-ui.readdy-tracker-ui :before,
+  .readdy-tracker-ui.readdy-tracker-ui :after {
+    transition-duration: 0.001ms !important;
+    animation-duration: 0.001ms !important;
+  }
+}
+.readdy-tracker-ui.readdy-tracker-ui .last\:border-b-0:last-child {
+  border-bottom-width: 0;
+}
+.readdy-tracker-ui.readdy-tracker-ui .last\:pb-0:last-child {
+  padding-bottom: 0;
+}
+.readdy-tracker-ui.readdy-tracker-ui .hover\:border-bad:hover {
+  border-color: var(--k-rose);
+}
+.readdy-tracker-ui.readdy-tracker-ui .hover\:border-navy-line:hover {
+  border-color: var(--k-navy-line);
+}
+.readdy-tracker-ui.readdy-tracker-ui .hover\:border-ok:hover {
+  border-color: var(--k-green);
+}
+.readdy-tracker-ui.readdy-tracker-ui .hover\:border-plum-2:hover {
+  border-color: var(--k-plum-2);
+}
+.readdy-tracker-ui.readdy-tracker-ui .hover\:border-warn:hover {
+  border-color: var(--k-amber);
+}
+.readdy-tracker-ui.readdy-tracker-ui .hover\:bg-bad-2:hover {
+  background-color: var(--k-rose-2);
+}
+.readdy-tracker-ui.readdy-tracker-ui .hover\:bg-bg:hover {
+  background-color: var(--k-bg);
+}
+.readdy-tracker-ui.readdy-tracker-ui .hover\:bg-bg-2:hover {
+  background-color: var(--k-bg-2);
+}
+.readdy-tracker-ui.readdy-tracker-ui .hover\:bg-card:hover {
+  background-color: var(--k-card);
+}
+.readdy-tracker-ui.readdy-tracker-ui .hover\:bg-hover:hover {
+  background-color: var(--k-hover);
+}
+.readdy-tracker-ui.readdy-tracker-ui .hover\:bg-line-2:hover {
+  background-color: var(--k-line-2);
+}
+.readdy-tracker-ui.readdy-tracker-ui .hover\:bg-navy-soft:hover {
+  background-color: var(--k-navy-soft);
+}
+.readdy-tracker-ui.readdy-tracker-ui .hover\:bg-plum-2:hover {
+  background-color: var(--k-plum-2);
+}
+.readdy-tracker-ui.readdy-tracker-ui .hover\:bg-solid-2:hover {
+  background-color: var(--k-solid-2);
+}
+.readdy-tracker-ui.readdy-tracker-ui .hover\:bg-white\/10:hover {
+  background-color: #ffffff1a;
+}
+.readdy-tracker-ui.readdy-tracker-ui .hover\:bg-white\/20:hover {
+  background-color: #fff3;
+}
+.readdy-tracker-ui.readdy-tracker-ui .hover\:bg-white\/90:hover {
+  background-color: #ffffffe6;
+}
+.readdy-tracker-ui.readdy-tracker-ui .hover\:text-bad:hover {
+  color: var(--k-rose);
+}
+.readdy-tracker-ui.readdy-tracker-ui .hover\:text-ink:hover {
+  color: var(--k-ink);
+}
+.readdy-tracker-ui.readdy-tracker-ui .hover\:text-ink-2:hover {
+  color: var(--k-ink-2);
+}
+.readdy-tracker-ui.readdy-tracker-ui .hover\:text-ok:hover {
+  color: var(--k-green);
+}
+.readdy-tracker-ui.readdy-tracker-ui .hover\:text-pink:hover {
+  color: var(--k-pink);
+}
+.readdy-tracker-ui.readdy-tracker-ui .hover\:text-plum:hover {
+  color: var(--k-plum);
+}
+.readdy-tracker-ui.readdy-tracker-ui .hover\:text-warn:hover {
+  color: var(--k-amber);
+}
+.readdy-tracker-ui.readdy-tracker-ui .hover\:text-white:hover {
+  --tw-text-opacity: 1;
+  color: rgb(255 255 255 / var(--tw-text-opacity, 1));
+}
+.readdy-tracker-ui.readdy-tracker-ui .hover\:underline:hover {
+  text-decoration-line: underline;
+}
+.readdy-tracker-ui.readdy-tracker-ui .hover\:opacity-90:hover {
+  opacity: 0.9;
+}
+.readdy-tracker-ui.readdy-tracker-ui .hover\:brightness-110:hover {
+  --tw-brightness: brightness(1.1);
+  filter: var(--tw-blur) var(--tw-brightness) var(--tw-contrast) var(--tw-grayscale)
+    var(--tw-hue-rotate) var(--tw-invert) var(--tw-saturate) var(--tw-sepia) var(--tw-drop-shadow);
+}
+.readdy-tracker-ui.readdy-tracker-ui .focus-visible\:opacity-100:focus-visible {
+  opacity: 1;
+}
+.readdy-tracker-ui.readdy-tracker-ui .focus-visible\:outline-none:focus-visible {
+  outline-offset: 2px;
+  outline: 2px solid #0000;
+}
+.readdy-tracker-ui.readdy-tracker-ui .focus-visible\:ring-2:focus-visible {
+  --tw-ring-offset-shadow: var(--tw-ring-inset) 0 0 0 var(--tw-ring-offset-width)
+    var(--tw-ring-offset-color);
+  --tw-ring-shadow: var(--tw-ring-inset) 0 0 0 calc(2px + var(--tw-ring-offset-width))
+    var(--tw-ring-color);
+  box-shadow: var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow, 0 0 #0000);
+}
+.readdy-tracker-ui.readdy-tracker-ui .active\:scale-\[0\.98\]:active {
+  --tw-scale-x: 0.98;
+  --tw-scale-y: 0.98;
+  transform: translate(var(--tw-translate-x), var(--tw-translate-y)) rotate(var(--tw-rotate))
+    skewX(var(--tw-skew-x)) skewY(var(--tw-skew-y)) scaleX(var(--tw-scale-x))
+    scaleY(var(--tw-scale-y));
+}
+.readdy-tracker-ui.readdy-tracker-ui .active\:cursor-grabbing:active {
+  cursor: grabbing;
+}
+.readdy-tracker-ui.readdy-tracker-ui .disabled\:cursor-default:disabled {
+  cursor: default;
+}
+.readdy-tracker-ui.readdy-tracker-ui .disabled\:opacity-40:disabled {
+  opacity: 0.4;
+}
+.readdy-tracker-ui.readdy-tracker-ui .group:hover .group-hover\:scale-\[1\.02\] {
+  --tw-scale-x: 1.02;
+  --tw-scale-y: 1.02;
+  transform: translate(var(--tw-translate-x), var(--tw-translate-y)) rotate(var(--tw-rotate))
+    skewX(var(--tw-skew-x)) skewY(var(--tw-skew-y)) scaleX(var(--tw-scale-x))
+    scaleY(var(--tw-scale-y));
+}
+.readdy-tracker-ui.readdy-tracker-ui .group:hover .group-hover\:scale-\[1\.05\] {
+  --tw-scale-x: 1.05;
+  --tw-scale-y: 1.05;
+  transform: translate(var(--tw-translate-x), var(--tw-translate-y)) rotate(var(--tw-rotate))
+    skewX(var(--tw-skew-x)) skewY(var(--tw-skew-y)) scaleX(var(--tw-scale-x))
+    scaleY(var(--tw-scale-y));
+}
+.readdy-tracker-ui.readdy-tracker-ui .group:hover .group-hover\:opacity-100 {
+  opacity: 1;
+}
+@media (width>=640px) {
+  .readdy-tracker-ui.readdy-tracker-ui .sm\:block {
+    display: block;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .sm\:inline {
+    display: inline;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .sm\:flex {
+    display: flex;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .sm\:inline-flex {
+    display: inline-flex;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .sm\:hidden {
+    display: none;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .sm\:h-\[152px\] {
+    height: 152px;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .sm\:h-\[176px\] {
+    height: 176px;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .sm\:h-\[284px\] {
+    height: 284px;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .sm\:h-\[320px\] {
+    height: 320px;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .sm\:h-\[336px\] {
+    height: 336px;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .sm\:w-\[206px\] {
+    width: 206px;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .sm\:w-\[240px\] {
+    width: 240px;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .sm\:w-\[284px\] {
+    width: 284px;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .sm\:w-\[320px\] {
+    width: 320px;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .sm\:w-auto {
+    width: auto;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .sm\:flex-none {
+    flex: none;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .sm\:grid-cols-2 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .sm\:grid-cols-3 {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .sm\:grid-cols-4 {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .sm\:flex-row {
+    flex-direction: row;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .sm\:items-center {
+    align-items: center;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .sm\:justify-end {
+    justify-content: flex-end;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .sm\:justify-between {
+    justify-content: space-between;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .sm\:gap-2 {
+    gap: 0.5rem;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .sm\:text-\[32px\] {
+    font-size: 32px;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .sm\:text-\[34px\] {
+    font-size: 34px;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .sm\:text-\[40px\] {
+    font-size: 40px;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .sm\:text-\[44px\] {
+    font-size: 44px;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .sm\:text-\[62px\] {
+    font-size: 62px;
+  }
+}
+@media (width>=768px) {
+  .readdy-tracker-ui.readdy-tracker-ui .md\:static {
+    position: static;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .md\:mx-0 {
+    margin-left: 0;
+    margin-right: 0;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .md\:ml-1 {
+    margin-left: 0.25rem;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .md\:block {
+    display: block;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .md\:inline {
+    display: inline;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .md\:flex {
+    display: flex;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .md\:inline-flex {
+    display: inline-flex;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .md\:hidden {
+    display: none;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .md\:h-11 {
+    height: 2.75rem;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .md\:h-9 {
+    height: 2.25rem;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .md\:h-\[68px\] {
+    height: 68px;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .md\:w-9 {
+    width: 2.25rem;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .md\:w-\[38px\] {
+    width: 38px;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .md\:grid-cols-2 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .md\:flex-nowrap {
+    flex-wrap: nowrap;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .md\:gap-2 {
+    gap: 0.5rem;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .md\:gap-2\.5 {
+    gap: 0.625rem;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .md\:gap-4 {
+    gap: 1rem;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .md\:gap-5 {
+    gap: 1.25rem;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .md\:gap-6 {
+    gap: 1.5rem;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .md\:rounded-lg {
+    border-radius: 0.5rem;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .md\:border {
+    border-width: 1px;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .md\:border-line {
+    border-color: var(--k-line);
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .md\:bg-card {
+    background-color: var(--k-card);
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .md\:object-top {
+    -o-object-position: top;
+    object-position: top;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .md\:p-1 {
+    padding: 0.25rem;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .md\:p-6 {
+    padding: 1.5rem;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .md\:p-8 {
+    padding: 2rem;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .md\:px-5 {
+    padding-left: 1.25rem;
+    padding-right: 1.25rem;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .md\:px-6 {
+    padding-left: 1.5rem;
+    padding-right: 1.5rem;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .md\:px-7 {
+    padding-left: 1.75rem;
+    padding-right: 1.75rem;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .md\:px-8 {
+    padding-left: 2rem;
+    padding-right: 2rem;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .md\:py-10 {
+    padding-top: 2.5rem;
+    padding-bottom: 2.5rem;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .md\:py-7 {
+    padding-top: 1.75rem;
+    padding-bottom: 1.75rem;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .md\:pl-3 {
+    padding-left: 0.75rem;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .md\:pt-5 {
+    padding-top: 1.25rem;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .md\:pt-6 {
+    padding-top: 1.5rem;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .md\:text-2xl {
+    font-size: 1.5rem;
+    line-height: 2rem;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .md\:text-\[12\.5px\] {
+    font-size: 12.5px;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .md\:text-\[12rem\] {
+    font-size: 12rem;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .md\:text-\[26px\] {
+    font-size: 26px;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .md\:text-\[36px\] {
+    font-size: 36px;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .md\:text-xl {
+    font-size: 1.25rem;
+    line-height: 1.75rem;
+  }
+}
+@media (width>=1024px) {
+  .readdy-tracker-ui.readdy-tracker-ui .lg\:col-span-3 {
+    grid-column: span 3 / span 3;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .lg\:col-span-4 {
+    grid-column: span 4 / span 4;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .lg\:col-span-5 {
+    grid-column: span 5 / span 5;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .lg\:col-span-7 {
+    grid-column: span 7 / span 7;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .lg\:col-span-8 {
+    grid-column: span 8 / span 8;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .lg\:block {
+    display: block;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .lg\:flex {
+    display: flex;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .lg\:hidden {
+    display: none;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .lg\:h-auto {
+    height: auto;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .lg\:h-full {
+    height: 100%;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .lg\:min-h-0 {
+    min-height: 0;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .lg\:min-h-\[150px\] {
+    min-height: 150px;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .lg\:min-h-\[84px\] {
+    min-height: 84px;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .lg\:flex-1 {
+    flex: 1;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .lg\:flex-\[38\] {
+    flex: 38;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .lg\:flex-\[62\] {
+    flex: 62;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .lg\:grid-cols-12 {
+    grid-template-columns: repeat(12, minmax(0, 1fr));
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .lg\:grid-cols-3 {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .lg\:grid-cols-4 {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .lg\:grid-cols-\[1\.25fr_1fr\] {
+    grid-template-columns: 1.25fr 1fr;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .lg\:flex-row {
+    flex-direction: row;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .lg\:flex-col {
+    flex-direction: column;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .lg\:items-center {
+    align-items: center;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .lg\:gap-3 {
+    gap: 0.75rem;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .lg\:overflow-y-auto {
+    overflow-y: auto;
+  }
+}
+@media (width>=1280px) {
+  .readdy-tracker-ui.readdy-tracker-ui .xl\:flex {
+    display: flex;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .xl\:h-full {
+    height: 100%;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .xl\:min-h-0 {
+    min-height: 0;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .xl\:grid-cols-3 {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .xl\:grid-cols-6 {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .xl\:grid-cols-\[196px_minmax\(0\,1fr\)\] {
+    grid-template-columns: 196px minmax(0, 1fr);
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .xl\:grid-cols-\[minmax\(0\,1\.6fr\)_minmax\(0\,1fr\)\] {
+    grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .xl\:flex-col {
+    flex-direction: column;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .xl\:gap-2 {
+    gap: 0.5rem;
+  }
+}
+.readdy-tracker-ui.readdy-tracker-ui {
+  --k-navy: #1b2a4e;
+  --k-navy-2: #1b2a4e;
+  --k-navy-soft: #e7ecfa;
+  --k-navy-text: #22345f;
+  --k-navy-line: #c9d4ee;
+}
+.readdy-tracker-ui.readdy-tracker-ui.dark {
+  --k-navy: #33477d;
+  --k-navy-2: #3d5391;
+  --k-navy-soft: #7a96d629;
+  --k-navy-text: #b9c8ef;
+  --k-navy-line: #96ace247;
+}
+@keyframes kRiseStrong {
+  0% {
+    opacity: 0;
+    filter: blur(14px);
+    transform: translateY(46px) scale(0.935);
+  }
+  55% {
+    opacity: 1;
+    filter: blur(2px);
+  }
+  78% {
+    filter: blur();
+    transform: translateY(-4px) scale(1.004);
+  }
+  to {
+    opacity: 1;
+    filter: blur();
+    transform: translateY(0) scale(1);
+  }
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-rise {
+  will-change: transform, opacity, filter;
+  backface-visibility: hidden;
+  animation: 0.92s cubic-bezier(0.16, 0.86, 0.24, 1) both kRiseStrong;
+}
+@keyframes kHeroIn {
+  0% {
+    opacity: 0;
+    filter: blur(16px);
+    letter-spacing: 0.06em;
+    transform: translateY(34px) scale(0.955);
+  }
+  60% {
+    opacity: 1;
+    filter: blur(1px);
+    letter-spacing: 0.005em;
+  }
+  to {
+    opacity: 1;
+    filter: blur();
+    letter-spacing: normal;
+    transform: translateY(0) scale(1);
+  }
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-rise-hero {
+  will-change: transform, opacity, filter;
+  animation: 1.05s cubic-bezier(0.16, 0.86, 0.24, 1) both kHeroIn;
+}
+@keyframes kTitleIn {
+  0% {
+    opacity: 0;
+    filter: blur(10px);
+    transform: translateY(20px) scale(0.97);
+  }
+  70% {
+    opacity: 1;
+    filter: blur();
+  }
+  to {
+    opacity: 1;
+    filter: blur();
+    transform: translateY(0) scale(1);
+  }
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-title-in {
+  animation: 0.95s cubic-bezier(0.16, 0.86, 0.24, 1) 0.1s both kTitleIn;
+  display: block;
+}
+@keyframes kTopDrop {
+  0% {
+    opacity: 0;
+    transform: translateY(-104%);
+  }
+  70% {
+    opacity: 1;
+    transform: translateY(3px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-top-drop {
+  will-change: transform;
+  animation: 0.78s cubic-bezier(0.22, 0.9, 0.28, 1) both kTopDrop;
+}
+@keyframes kEnterSide {
+  0% {
+    opacity: 0;
+    filter: blur(8px);
+    transform: translate(22px) translateY(18px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    filter: blur();
+    transform: translate(0) translateY(0) scale(1);
+  }
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-enter {
+  animation: 0.62s cubic-bezier(0.16, 0.86, 0.24, 1) both kEnterSide;
+}
+@keyframes kRowInStrong {
+  0% {
+    opacity: 0;
+    transform: translate(-16px);
+  }
+  70% {
+    opacity: 1;
+    transform: translate(2px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(0);
+  }
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-row-in {
+  animation: 0.52s cubic-bezier(0.16, 0.86, 0.24, 1) both kRowInStrong;
+}
+@keyframes kTabIn {
+  0% {
+    opacity: 0;
+    filter: blur(5px);
+    transform: translateY(9px) scale(0.994);
+  }
+  to {
+    opacity: 1;
+    filter: blur();
+    transform: translateY(0) scale(1);
+  }
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-tab-in {
+  animation: 0.42s cubic-bezier(0.22, 0.9, 0.28, 1) both kTabIn;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-tab-in .k-rise,
+.readdy-tracker-ui.readdy-tracker-ui .k-tab-in .k-rise-hero,
+.readdy-tracker-ui.readdy-tracker-ui .k-tab-in .k-title-in,
+.readdy-tracker-ui.readdy-tracker-ui .k-tab-in .k-enter,
+.readdy-tracker-ui.readdy-tracker-ui .k-tab-in .k-row-in,
+.readdy-tracker-ui.readdy-tracker-ui .k-tab-in .k-hub-row {
+  filter: none !important;
+  animation: none !important;
+}
+@keyframes kBadgeBump {
+  0% {
+    transform: scale(1) rotate(0);
+  }
+  16% {
+    transform: scale(1.4) rotate(-10deg);
+  }
+  34% {
+    transform: scale(0.9) rotate(7deg);
+  }
+  52% {
+    transform: scale(1.18) rotate(-4deg);
+  }
+  70% {
+    transform: scale(0.97) rotate(2deg);
+  }
+  86% {
+    transform: scale(1.05) rotate(-1deg);
+  }
+  to {
+    transform: scale(1) rotate(0);
+  }
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-badge-bump {
+  transform-origin: 50%;
+  animation: 0.72s cubic-bezier(0.28, 0.9, 0.32, 1) both kBadgeBump;
+}
+@keyframes kBadgeHalo {
+  0% {
+    opacity: 0.55;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(2.4);
+  }
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-badge-bump:after {
+  content: "";
+  border: 1.5px solid var(--k-pink);
+  pointer-events: none;
+  border-radius: 9999px;
+  animation: 0.8s ease-out both kBadgeHalo;
+  position: absolute;
+  inset: 0;
+}
+@keyframes kSideIn {
+  0% {
+    opacity: 0;
+    transform: translate(-18px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(0);
+  }
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-side-in {
+  animation: 0.6s cubic-bezier(0.16, 0.86, 0.24, 1) both kSideIn;
+}
+@media (prefers-reduced-motion: reduce) {
+  .readdy-tracker-ui.readdy-tracker-ui .k-rise,
+  .readdy-tracker-ui.readdy-tracker-ui .k-rise-hero,
+  .readdy-tracker-ui.readdy-tracker-ui .k-title-in,
+  .readdy-tracker-ui.readdy-tracker-ui .k-top-drop,
+  .readdy-tracker-ui.readdy-tracker-ui .k-enter,
+  .readdy-tracker-ui.readdy-tracker-ui .k-row-in,
+  .readdy-tracker-ui.readdy-tracker-ui .k-tab-in,
+  .readdy-tracker-ui.readdy-tracker-ui .k-badge-bump,
+  .readdy-tracker-ui.readdy-tracker-ui .k-side-in {
+    filter: none !important;
+    animation: none !important;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .k-badge-bump:after {
+    opacity: 0 !important;
+    animation: none !important;
+  }
+}
+.readdy-tracker-ui.readdy-tracker-ui .sf-timer {
+  --sf-w: clamp(33px, 7.4vw, 43px);
+  --sf-h: calc(var(--sf-w) * 1.34);
+  --sf-fs: calc(var(--sf-w) * 0.76);
+  flex-direction: column;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  display: flex;
+}
+.readdy-tracker-ui.readdy-tracker-ui .sf-board {
+  box-sizing: border-box;
+  border: 1px solid var(--k-line);
+  background:
+    radial-gradient(
+      118% 130% at 50% -28%,
+      color-mix(in srgb, var(--k-pink) 11%, transparent),
+      transparent 64%
+    ),
+    linear-gradient(
+      168deg,
+      color-mix(in srgb, var(--k-card) 93%, var(--k-plum-2)) 0%,
+      var(--k-card) 58%,
+      color-mix(in srgb, var(--k-card) 90%, var(--k-plum-2)) 100%
+    );
+  border-radius: 14px;
+  width: 100%;
+  max-width: 388px;
+  padding: 14px 14px 12px;
+  position: relative;
+  overflow: hidden;
+}
+.readdy-tracker-ui.readdy-tracker-ui .sf-board:before {
+  content: "";
+  background: linear-gradient(90deg, transparent, var(--k-pink), transparent);
+  opacity: 0.5;
+  height: 1px;
+  position: absolute;
+  top: 0;
+  left: 18%;
+  right: 18%;
+}
+.readdy-tracker-ui.readdy-tracker-ui .sf-sheen {
+  pointer-events: none;
+  background: linear-gradient(
+    104deg,
+    transparent 30%,
+    #ffffffad 44%,
+    color-mix(in srgb, var(--k-pink) 16%, transparent) 52%,
+    transparent 66%
+  );
+  animation: 1.25s cubic-bezier(0.4, 0, 0.3, 1) 0.36s both sfSheen;
+  position: absolute;
+  inset: 0;
+}
+.readdy-tracker-ui.readdy-tracker-ui.dark .sf-sheen,
+.readdy-tracker-ui.readdy-tracker-ui.app-shell.app-dark .sf-sheen {
+  background: linear-gradient(
+    104deg,
+    transparent 30%,
+    #ffffff21 44%,
+    color-mix(in srgb, var(--k-pink) 22%, transparent) 52%,
+    transparent 66%
+  );
+}
+@keyframes sfSheen {
+  0% {
+    opacity: 0;
+    transform: translate(-95%);
+  }
+  18% {
+    opacity: 1;
+  }
+  82% {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+    transform: translate(95%);
+  }
+}
+.readdy-tracker-ui.readdy-tracker-ui .sf-row {
+  justify-content: center;
+  align-items: flex-start;
+  gap: 5px;
+  display: flex;
+}
+.readdy-tracker-ui.readdy-tracker-ui .sf-group {
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  display: flex;
+}
+.readdy-tracker-ui.readdy-tracker-ui .sf-digits {
+  gap: 4px;
+  display: flex;
+}
+.readdy-tracker-ui.readdy-tracker-ui .sf-label {
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--k-faint);
+  font-family:
+    IBM Plex Sans Arabic,
+    Inter,
+    system-ui,
+    sans-serif;
+  font-size: 8px;
+  font-weight: 600;
+}
+.readdy-tracker-ui.readdy-tracker-ui .sf-slot {
+  perspective: 620px;
+  will-change: transform, opacity;
+  animation: 0.95s cubic-bezier(0.24, 0.74, 0.26, 1) both sfSlotIn;
+  display: block;
+}
+@keyframes sfSlotIn {
+  0% {
+    opacity: 0;
+    transform: translateY(-10px) rotateX(-58deg) scale(0.94);
+  }
+  70% {
+    opacity: 1;
+    transform: translateY(0) rotateX(2deg) scale(1);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) rotateX(0) scale(1);
+  }
+}
+.readdy-tracker-ui.readdy-tracker-ui .sf-card {
+  width: var(--sf-w);
+  height: var(--sf-h);
+  background: var(--k-line-2);
+  transform-style: preserve-3d;
+  perspective: 520px;
+  border-radius: 7px;
+  display: block;
+  position: relative;
+}
+.readdy-tracker-ui.readdy-tracker-ui .sf-slot.is-accent .sf-glyph {
+  color: var(--k-pink);
+}
+.readdy-tracker-ui.readdy-tracker-ui .sf-glyph {
+  height: var(--sf-h);
+  font-size: var(--sf-fs);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  color: var(--k-ink);
+  -webkit-user-select: none;
+  user-select: none;
+  justify-content: center;
+  align-items: center;
+  font-weight: 700;
+  line-height: 1;
+  display: flex;
+  position: absolute;
+  left: 0;
+  right: 0;
+}
+.readdy-tracker-ui.readdy-tracker-ui .sf-half,
+.readdy-tracker-ui.readdy-tracker-ui .sf-leaf {
+  backface-visibility: hidden;
+  height: 50%;
+  position: absolute;
+  left: 0;
+  right: 0;
+  overflow: hidden;
+}
+.readdy-tracker-ui.readdy-tracker-ui .sf-top,
+.readdy-tracker-ui.readdy-tracker-ui .sf-leaf-top {
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--k-card) 99%, var(--k-plum-2)) 0%,
+    color-mix(in srgb, var(--k-card) 86%, var(--k-plum-2)) 100%
+  );
+  border-radius: 7px 7px 3px 3px;
+  top: 0;
+}
+.readdy-tracker-ui.readdy-tracker-ui .sf-bot,
+.readdy-tracker-ui.readdy-tracker-ui .sf-leaf-bot {
+  background: linear-gradient(
+    0deg,
+    color-mix(in srgb, var(--k-card) 99%, var(--k-plum-2)) 0%,
+    color-mix(in srgb, var(--k-card) 84%, var(--k-plum-2)) 100%
+  );
+  border-radius: 3px 3px 7px 7px;
+  bottom: 0;
+}
+.readdy-tracker-ui.readdy-tracker-ui .sf-top > .sf-glyph {
+  top: 0;
+}
+.readdy-tracker-ui.readdy-tracker-ui .sf-bot > .sf-glyph {
+  bottom: 0;
+}
+.readdy-tracker-ui.readdy-tracker-ui .sf-seam {
+  z-index: 5;
+  background: color-mix(in srgb, var(--k-plum-2) 22%, transparent);
+  pointer-events: none;
+  height: 1px;
+  position: absolute;
+  top: calc(50% - 0.5px);
+  left: 2px;
+  right: 2px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .sf-seam:before,
+.readdy-tracker-ui.readdy-tracker-ui .sf-seam:after {
+  content: "";
+  background: color-mix(in srgb, var(--k-plum-2) 34%, transparent);
+  border-radius: 999px;
+  width: 3px;
+  height: 3px;
+  position: absolute;
+  top: -1.5px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .sf-seam:before {
+  left: -1px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .sf-seam:after {
+  right: -1px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .sf-leaf {
+  z-index: 4;
+  will-change: transform;
+}
+.readdy-tracker-ui.readdy-tracker-ui .sf-leaf-top {
+  transform-origin: bottom;
+  animation: 0.36s cubic-bezier(0.42, 0, 0.9, 0.56) both sfFlipDown;
+}
+.readdy-tracker-ui.readdy-tracker-ui .sf-leaf-bot {
+  transform-origin: top;
+  animation: 0.34s cubic-bezier(0.2, 0.58, 0.36, 1) 0.36s both sfFlipUp;
+  transform: rotateX(88deg);
+}
+.readdy-tracker-ui.readdy-tracker-ui .sf-leaf-top:after {
+  content: "";
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--k-plum) 42%, transparent) 0%,
+    transparent 88%
+  );
+  opacity: 0;
+  animation: 0.36s ease-in both sfLeafShade;
+  position: absolute;
+  inset: 0;
+}
+@keyframes sfFlipDown {
+  0% {
+    transform: rotateX(0);
+  }
+  to {
+    transform: rotateX(-88deg);
+  }
+}
+@keyframes sfFlipUp {
+  0% {
+    transform: rotateX(88deg);
+  }
+  to {
+    transform: rotateX(0);
+  }
+}
+@keyframes sfLeafShade {
+  0% {
+    opacity: 0;
+  }
+  to {
+    opacity: 0.55;
+  }
+}
+.readdy-tracker-ui.readdy-tracker-ui .sf-colon {
+  margin-top: calc((var(--sf-h) - 14px) / 2);
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  display: flex;
+}
+.readdy-tracker-ui.readdy-tracker-ui .sf-colon > i {
+  background: color-mix(in srgb, var(--k-plum-2) 55%, transparent);
+  border-radius: 999px;
+  width: 4px;
+  height: 4px;
+  display: block;
+}
+.readdy-tracker-ui.readdy-tracker-ui .sf-colon.is-live > i {
+  animation: 3.6s ease-in-out infinite sfColonBlink;
+}
+.readdy-tracker-ui.readdy-tracker-ui .sf-colon.is-live > i:last-child {
+  animation-delay: 1.8s;
+}
+@keyframes sfColonBlink {
+  0%,
+  to {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+.readdy-tracker-ui.readdy-tracker-ui .sf-meta {
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--k-faint);
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  margin-top: 11px;
+  font-family:
+    IBM Plex Sans Arabic,
+    Inter,
+    system-ui,
+    sans-serif;
+  font-size: 9px;
+  font-weight: 600;
+  display: flex;
+}
+.readdy-tracker-ui.readdy-tracker-ui .sf-meta-val {
+  color: var(--k-muted);
+}
+.readdy-tracker-ui.readdy-tracker-ui .sf-bar {
+  background: var(--k-track);
+  border-radius: 999px;
+  height: 3px;
+  margin-top: 7px;
+  display: block;
+  position: relative;
+  overflow: hidden;
+}
+.readdy-tracker-ui.readdy-tracker-ui .sf-bar > span {
+  background: linear-gradient(90deg, var(--k-ring-1), var(--k-ring-3) 74%, var(--k-ring-4));
+  border-radius: 999px;
+  height: 100%;
+  transition: width 1.1s cubic-bezier(0.32, 0.72, 0.22, 1);
+  display: block;
+}
+@media (prefers-reduced-motion: reduce) {
+  .readdy-tracker-ui.readdy-tracker-ui .sf-slot,
+  .readdy-tracker-ui.readdy-tracker-ui .sf-sheen,
+  .readdy-tracker-ui.readdy-tracker-ui .sf-leaf-top,
+  .readdy-tracker-ui.readdy-tracker-ui .sf-leaf-bot,
+  .readdy-tracker-ui.readdy-tracker-ui .sf-leaf-top:after,
+  .readdy-tracker-ui.readdy-tracker-ui .sf-colon.is-live > i {
+    animation: none !important;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .sf-slot {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes k-face-slide-from-right {
+  0% {
+    opacity: 0;
+    filter: blur(3px);
+    transform: translate(46px) rotateY(9deg) scale(0.965);
+  }
+  60% {
+    opacity: 1;
+    filter: blur();
+  }
+  to {
+    opacity: 1;
+    transform: translate(0) rotateY(0) scale(1);
+  }
+}
+@keyframes k-face-slide-from-left {
+  0% {
+    opacity: 0;
+    filter: blur(3px);
+    transform: translate(-46px) rotateY(-9deg) scale(0.965);
+  }
+  60% {
+    opacity: 1;
+    filter: blur();
+  }
+  to {
+    opacity: 1;
+    transform: translate(0) rotateY(0) scale(1);
+  }
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-face-in-next {
+  animation: 0.5s cubic-bezier(0.22, 0.9, 0.24, 1) both k-face-slide-from-right;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-face-in-prev {
+  animation: 0.5s cubic-bezier(0.22, 0.9, 0.24, 1) both k-face-slide-from-left;
+}
+@media (prefers-reduced-motion: reduce) {
+  .readdy-tracker-ui.readdy-tracker-ui .k-face-in-next,
+  .readdy-tracker-ui.readdy-tracker-ui .k-face-in-prev {
+    animation: none;
+  }
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell {
+  overflow-x: clip;
+}
+.readdy-tracker-ui.readdy-tracker-ui .app-dock-bar {
+  box-sizing: border-box;
+  border: 1px solid color-mix(in srgb, var(--k-line) 62%, var(--k-pink) 38%);
+  background: color-mix(in srgb, var(--k-card) 88%, transparent);
+  -webkit-backdrop-filter: blur(20px) saturate(1.35);
+  backdrop-filter: blur(20px) saturate(1.35);
+  scrollbar-width: none;
+  border-radius: 17px;
+  padding: 6px 7px;
+  animation: 0.62s cubic-bezier(0.24, 1.18, 0.36, 1) 0.18s both kDockRise;
+}
+.readdy-tracker-ui.readdy-tracker-ui .app-dock-bar::-webkit-scrollbar {
+  display: none;
+}
+.readdy-tracker-ui.readdy-tracker-ui .app-dock-tab {
+  box-sizing: border-box;
+  min-width: 72px;
+  color: var(--k-muted);
+  cursor: pointer;
+  white-space: nowrap;
+  background: 0 0;
+  border: 1px solid #0000;
+  border-radius: 11px;
+  flex-direction: column;
+  flex: 1 1 0;
+  justify-content: center;
+  align-items: center;
+  gap: 3px;
+  padding: 6px 8px 5px;
+  transition:
+    color 0.18s,
+    background 0.18s,
+    border-color 0.18s;
+  display: flex;
+  position: relative;
+}
+.readdy-tracker-ui.readdy-tracker-ui .app-dock-tab:hover {
+  color: var(--k-ink);
+  background: color-mix(in srgb, var(--k-plum-2) 9%, transparent);
+}
+.readdy-tracker-ui.readdy-tracker-ui .app-dock-tab:before {
+  content: "";
+  background: linear-gradient(180deg, var(--k-cta-1) 0%, var(--k-cta-2) 100%);
+  opacity: 0;
+  pointer-events: none;
+  border-radius: 11px;
+  transition: opacity 0.24s;
+  position: absolute;
+  inset: 0;
+}
+.readdy-tracker-ui.readdy-tracker-ui .app-dock-tab:active {
+  transform: translateY(1px);
+}
+.readdy-tracker-ui.readdy-tracker-ui .app-dock-key {
+  z-index: 1;
+  border-radius: 7px;
+  justify-content: center;
+  align-items: center;
+  width: 22px;
+  height: 22px;
+  transition:
+    transform 0.22s cubic-bezier(0.3, 1.4, 0.5, 1),
+    background 0.18s;
+  display: flex;
+  position: relative;
+}
+.readdy-tracker-ui.readdy-tracker-ui .app-dock-tab:hover .app-dock-key {
+  transform: translateY(-1px);
+}
+.readdy-tracker-ui.readdy-tracker-ui .app-dock-label {
+  z-index: 1;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  font-family:
+    Inter,
+    IBM Plex Sans Arabic,
+    system-ui,
+    sans-serif;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  position: relative;
+}
+.readdy-tracker-ui.readdy-tracker-ui .app-dock-tab.is-active {
+  color: #fff;
+  border-color: color-mix(in srgb, var(--k-pink) 46%, transparent);
+  background: 0 0;
+}
+.readdy-tracker-ui.readdy-tracker-ui .app-dock-tab.is-active:before {
+  opacity: 1;
+}
+.readdy-tracker-ui.readdy-tracker-ui .app-dock-tab.is-active .app-dock-key {
+  transform: none;
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell.app-dark .app-dock-tab.is-active {
+  color: #fff;
+}
+.readdy-tracker-ui.readdy-tracker-ui .app-dock-lamp {
+  z-index: 2;
+  background: color-mix(in srgb, #fff 78%, var(--k-pink));
+  opacity: 0.92;
+  pointer-events: none;
+  border-radius: 999px;
+  width: 13px;
+  height: 2px;
+  position: absolute;
+  top: 3px;
+  left: 50%;
+  transform: translate(-50%);
+}
+.readdy-tracker-ui.readdy-tracker-ui .app-dock-live {
+  z-index: 2;
+  background: var(--k-green);
+  border-radius: 999px;
+  width: 5px;
+  height: 5px;
+  animation: 2s ease-in-out infinite appPulse;
+  position: absolute;
+  top: 5px;
+  right: 7px;
+}
+@keyframes kDockRise {
+  0% {
+    opacity: 0;
+    transform: translateY(76px);
+  }
+  70% {
+    opacity: 1;
+    transform: translateY(-3px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes kViewDissolveUp {
+  0% {
+    opacity: 0;
+    filter: blur(6px);
+    transform: translateY(16px) scale(0.994);
+  }
+  60% {
+    opacity: 1;
+    filter: blur();
+  }
+  to {
+    opacity: 1;
+    filter: blur();
+    transform: translateY(0) scale(1);
+  }
+}
+@keyframes kViewDissolveDown {
+  0% {
+    opacity: 0;
+    filter: blur(6px);
+    transform: translateY(-16px) scale(0.994);
+  }
+  60% {
+    opacity: 1;
+    filter: blur();
+  }
+  to {
+    opacity: 1;
+    filter: blur();
+    transform: translateY(0) scale(1);
+  }
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-view-next,
+.readdy-tracker-ui.readdy-tracker-ui .k-view-prev {
+  transform-origin: 50% 42%;
+  will-change: transform, opacity, filter;
+  backface-visibility: hidden;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-view-next {
+  animation: 0.4s cubic-bezier(0.16, 1, 0.3, 1) both kViewDissolveUp;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-view-prev {
+  animation: 0.4s cubic-bezier(0.16, 1, 0.3, 1) both kViewDissolveDown;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-view-next .k-rise,
+.readdy-tracker-ui.readdy-tracker-ui .k-view-prev .k-rise,
+.readdy-tracker-ui.readdy-tracker-ui .k-view-next .k-rise-hero,
+.readdy-tracker-ui.readdy-tracker-ui .k-view-prev .k-rise-hero,
+.readdy-tracker-ui.readdy-tracker-ui .k-view-next .k-title-in,
+.readdy-tracker-ui.readdy-tracker-ui .k-view-prev .k-title-in,
+.readdy-tracker-ui.readdy-tracker-ui .k-view-next .k-enter,
+.readdy-tracker-ui.readdy-tracker-ui .k-view-prev .k-enter,
+.readdy-tracker-ui.readdy-tracker-ui .k-view-next .k-row-in,
+.readdy-tracker-ui.readdy-tracker-ui .k-view-prev .k-row-in,
+.readdy-tracker-ui.readdy-tracker-ui .k-view-next .k-hub-row,
+.readdy-tracker-ui.readdy-tracker-ui .k-view-prev .k-hub-row {
+  filter: none !important;
+  animation: none !important;
+}
+@media (width<=1024px) {
+  .readdy-tracker-ui.readdy-tracker-ui .app-dock-tab {
+    min-width: 64px;
+    padding: 6px 6px 5px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .readdy-tracker-ui.readdy-tracker-ui .app-dock-bar,
+  .readdy-tracker-ui.readdy-tracker-ui .k-view-next,
+  .readdy-tracker-ui.readdy-tracker-ui .k-view-prev {
+    filter: none !important;
+    animation: none !important;
+    transform: none !important;
+  }
+}
+.readdy-tracker-ui.readdy-tracker-ui {
+  --k-safe-top: env(safe-area-inset-top, 0px);
+  --k-safe-right: env(safe-area-inset-right, 0px);
+  --k-safe-bottom: env(safe-area-inset-bottom, 0px);
+  --k-safe-left: env(safe-area-inset-left, 0px);
+  --k-dock-gap: 34px;
+  --k-dock-space: calc(112px + var(--k-safe-bottom));
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell {
+  overscroll-behavior-y: contain;
+  min-height: 100dvh;
+}
+@media (width>=1024px) {
+  .readdy-tracker-ui.readdy-tracker-ui.app-shell.app-fit {
+    height: 100dvh;
+    max-height: 100dvh;
+    overflow: hidden;
+  }
+}
+.readdy-tracker-ui.readdy-tracker-ui .app-topbar {
+  padding-top: var(--k-safe-top);
+  padding-left: var(--k-safe-left);
+  padding-right: var(--k-safe-right);
+}
+.readdy-tracker-ui.readdy-tracker-ui .app-statusbar {
+  padding-bottom: var(--k-safe-bottom);
+  padding-left: var(--k-safe-left);
+  padding-right: var(--k-safe-right);
+}
+.readdy-tracker-ui.readdy-tracker-ui .app-dock {
+  bottom: calc(var(--k-dock-gap) + var(--k-safe-bottom));
+  left: var(--k-safe-left);
+  right: var(--k-safe-right);
+}
+.readdy-tracker-ui.readdy-tracker-ui .app-main {
+  padding-left: max(0.75rem, var(--k-safe-left));
+  padding-right: max(0.75rem, var(--k-safe-right));
+  padding-bottom: var(--k-dock-space);
+}
+@media (width>=768px) {
+  .readdy-tracker-ui.readdy-tracker-ui .app-main {
+    padding-left: max(1.5rem, var(--k-safe-left));
+    padding-right: max(1.5rem, var(--k-safe-right));
+    padding-bottom: calc(128px + var(--k-safe-bottom));
+  }
+}
+.readdy-tracker-ui.readdy-tracker-ui .app-main.app-main-fit {
+  padding-bottom: calc(104px + var(--k-safe-bottom));
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell .k-toast-stack {
+  bottom: calc(7rem + var(--k-safe-bottom));
+}
+@media (height<=560px) and (orientation: landscape) {
+  .readdy-tracker-ui.readdy-tracker-ui.app-shell .k-toast-stack {
+    bottom: calc(4.25rem + var(--k-safe-bottom));
+  }
+}
+@media (width<=480px) {
+  .readdy-tracker-ui.readdy-tracker-ui.app-shell .k-frame,
+  .readdy-tracker-ui.readdy-tracker-ui.app-shell .app-card,
+  .readdy-tracker-ui.readdy-tracker-ui.app-shell .k-card {
+    border-radius: 12px;
+  }
+}
+@media (width<=767px) {
+  .readdy-tracker-ui.readdy-tracker-ui.app-shell input,
+  .readdy-tracker-ui.readdy-tracker-ui.app-shell select,
+  .readdy-tracker-ui.readdy-tracker-ui.app-shell textarea {
+    font-size: 16px;
+  }
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell button,
+.readdy-tracker-ui.readdy-tracker-ui.app-shell a,
+.readdy-tracker-ui.readdy-tracker-ui.app-shell input,
+.readdy-tracker-ui.readdy-tracker-ui.app-shell select,
+.readdy-tracker-ui.readdy-tracker-ui.app-shell textarea {
+  -webkit-tap-highlight-color: transparent;
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell {
+  -webkit-overflow-scrolling: touch;
+}
+@media (width<=560px) {
+  .readdy-tracker-ui.readdy-tracker-ui .app-dock {
+    padding-left: max(10px, var(--k-safe-left));
+    padding-right: max(10px, var(--k-safe-right));
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .app-dock-tab {
+    gap: 2px;
+    min-width: 0;
+    padding: 6px 3px 5px;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .app-dock-key {
+    width: 20px;
+    height: 20px;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .app-dock-label {
+    letter-spacing: 0.05em;
+    font-size: 8px;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .app-dock-live {
+    right: 4px;
+  }
+}
+@media (height<=560px) and (orientation: landscape) {
+  .readdy-tracker-ui.readdy-tracker-ui .app-dock {
+    bottom: calc(10px + var(--k-safe-bottom));
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .app-dock-label {
+    display: none;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .app-dock-tab {
+    padding: 4px 3px;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .app-dock-bar {
+    border-radius: 14px;
+  }
+}
+@media (width>=1700px) {
+  .readdy-tracker-ui.readdy-tracker-ui .app-main {
+    padding-left: max(2.5rem, var(--k-safe-left));
+    padding-right: max(2.5rem, var(--k-safe-right));
+  }
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell {
+  --k-hero-hole: color-mix(in srgb, var(--k-hero-1) 80%, #000);
+  --k-hero-ink: #fff;
+  --k-hero-mute: #ffffffad;
+  --k-hero-line: #ffffff26;
+  --k-hero-cell: #ffffff1a;
+  --k-hero-accent: #eedccd;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-hero-card {
+  isolation: isolate;
+  color: var(--k-hero-ink);
+  background:
+    radial-gradient(120% 130% at 100% 0%, #ffffff1f 0%, transparent 58%),
+    linear-gradient(155deg, var(--k-hero-1) 0%, var(--k-hero-2) 100%);
+  border: 1px solid #ffffff1a;
+  border-radius: 14px;
+  position: relative;
+  overflow: hidden;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-hero-card:before {
+  content: "";
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0.22;
+  -webkit-mask-image: radial-gradient(320px 200px at 100% 0, #000 0%, #0000 74%);
+  background-image: radial-gradient(#ffffff29 1px, #0000 1px);
+  background-size: 22px 22px;
+  position: absolute;
+  inset: 0;
+  mask-image: radial-gradient(320px 200px at 100% 0, #000 0%, #0000 76%);
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-hero-card > * {
+  z-index: 1;
+  position: relative;
+}
+.readdy-tracker-ui.readdy-tracker-ui .k-hero-chip {
+  box-sizing: border-box;
+  background: var(--k-hero-cell);
+  white-space: nowrap;
+  border: 1px solid #ffffff29;
+  border-radius: 999px;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  display: inline-flex;
+}
+.readdy-tracker-ui.readdy-tracker-ui .m-stack > * + * {
+  margin-top: 10px;
+}
+@media (width>=640px) {
+  .readdy-tracker-ui.readdy-tracker-ui .m-stack > * + * {
+    margin-top: 12px;
+  }
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell {
+  --k-cta-ink: #fff;
+  --k-surface-topbar: color-mix(in srgb, var(--k-bg) 82%, var(--k-card));
+  --k-surface-status: color-mix(in srgb, var(--k-bg) 88%, var(--k-card));
+  --k-surface-side: color-mix(in srgb, var(--k-card) 76%, var(--k-bg));
+  --k-card-surface: var(--k-card);
+  --k-quickbar: color-mix(in srgb, var(--k-card) 94%, var(--k-bg));
+  --k-hero-surface: linear-gradient(160deg, var(--k-hero-grad-1) 0%, var(--k-hero-grad-2) 100%);
+  --k-stat-surface: color-mix(in srgb, var(--k-card) 95%, var(--k-bg));
+  --k-chip-bg: color-mix(in srgb, var(--k-plum-2) 8%, transparent);
+  --k-chip-line: color-mix(in srgb, var(--k-plum-2) 24%, transparent);
+  --k-search-bg: color-mix(in srgb, var(--k-card) 60%, transparent);
+  --k-bar-1: var(--k-plum-2);
+  --k-bar-2: var(--k-pink);
+  --k-bar-3: var(--k-ring-1);
+  --k-cta-shadow: color-mix(in srgb, var(--k-cta-grad-2) 42%, transparent);
+  --k-dock-bg: color-mix(in srgb, var(--k-card) 88%, transparent);
+  --k-shot-meta: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--k-bg) 0%, transparent) 0%,
+    color-mix(in srgb, var(--k-bg) 82%, transparent) 44%,
+    color-mix(in srgb, var(--k-bg) 95%, transparent) 100%
+  );
+  --k-select-ink: #fff;
+  --k-select-bg: var(--k-pink);
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell.app-dark {
+  --k-surface-topbar: color-mix(in srgb, var(--k-bg) 72%, var(--k-card));
+  --k-surface-status: color-mix(in srgb, var(--k-bg) 78%, var(--k-card));
+  --k-surface-side: color-mix(in srgb, var(--k-card) 68%, var(--k-bg));
+  --k-card-surface: linear-gradient(
+    170deg,
+    color-mix(in srgb, var(--k-card) 96%, #fff) 0%,
+    color-mix(in srgb, var(--k-card) 74%, var(--k-bg)) 100%
+  );
+  --k-quickbar: linear-gradient(
+    120deg,
+    color-mix(in srgb, var(--k-card) 92%, var(--k-pink)) 0%,
+    color-mix(in srgb, var(--k-bg) 82%, var(--k-card)) 100%
+  );
+  --k-stat-surface: linear-gradient(
+    165deg,
+    color-mix(in srgb, var(--k-card) 94%, var(--k-pink)) 0%,
+    color-mix(in srgb, var(--k-card) 62%, var(--k-bg)) 100%
+  );
+  --k-chip-bg: color-mix(in srgb, var(--k-pink) 11%, transparent);
+  --k-chip-line: color-mix(in srgb, var(--k-pink) 26%, transparent);
+  --k-search-bg: color-mix(in srgb, var(--k-pink) 7%, transparent);
+  --k-bar-1: var(--k-plum-2);
+  --k-bar-2: var(--k-pink);
+  --k-bar-3: var(--k-plum);
+  --k-dock-bg: color-mix(in srgb, var(--k-card) 80%, transparent);
+  --k-shot-meta: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--k-bg) 0%, transparent) 0%,
+    color-mix(in srgb, var(--k-bg) 86%, transparent) 44%,
+    color-mix(in srgb, var(--k-bg) 97%, transparent) 100%
+  );
+  --k-select-ink: #17111c;
+  --k-select-bg: var(--k-pink);
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell {
+  background:
+    radial-gradient(980px 560px at 58% -18%, var(--k-wash-1), transparent 66%),
+    radial-gradient(760px 460px at 0% 2%, var(--k-wash-2), transparent 68%),
+    radial-gradient(940px 620px at 104% 108%, var(--k-wash-3), transparent 70%), var(--k-bg);
+  color: var(--k-ink);
+  transition:
+    background-color 0.35s,
+    color 0.35s;
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell ::-moz-selection {
+  background: var(--k-select-bg);
+  color: var(--k-select-ink);
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell.app-dark ::-moz-selection {
+  background: var(--k-select-bg);
+  color: var(--k-select-ink);
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell ::selection {
+  background: var(--k-select-bg);
+  color: var(--k-select-ink);
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell.app-dark ::selection {
+  background: var(--k-select-bg);
+  color: var(--k-select-ink);
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell .app-grid,
+.readdy-tracker-ui.readdy-tracker-ui.app-shell.app-dark .app-grid {
+  background-image: radial-gradient(var(--k-grid-dot) 1px, transparent 1px);
+  opacity: 0.3;
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell .app-topbar,
+.readdy-tracker-ui.readdy-tracker-ui.app-shell.app-dark .app-topbar {
+  background: color-mix(in srgb, var(--k-surface-topbar) 92%, transparent);
+  border-bottom-color: var(--k-line);
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell .app-statusbar,
+.readdy-tracker-ui.readdy-tracker-ui.app-shell.app-dark .app-statusbar {
+  background: color-mix(in srgb, var(--k-surface-status) 94%, transparent);
+  border-top-color: var(--k-line-2);
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell .app-sidebar,
+.readdy-tracker-ui.readdy-tracker-ui.app-shell.app-dark .app-sidebar {
+  background: color-mix(in srgb, var(--k-surface-side) 88%, transparent);
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell .k-card,
+.readdy-tracker-ui.readdy-tracker-ui.app-shell .k-frame,
+.readdy-tracker-ui.readdy-tracker-ui.app-shell .app-card,
+.readdy-tracker-ui.readdy-tracker-ui.app-shell.app-dark .k-card,
+.readdy-tracker-ui.readdy-tracker-ui.app-shell.app-dark .k-frame,
+.readdy-tracker-ui.readdy-tracker-ui.app-shell.app-dark .app-card {
+  background: var(--k-card-surface);
+  border-color: var(--k-line);
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell .k-frame:before,
+.readdy-tracker-ui.readdy-tracker-ui.app-shell.app-dark .k-frame:before {
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, var(--k-pink) 46%, transparent),
+    transparent
+  );
+}
+.readdy-tracker-ui.readdy-tracker-ui .app-quickbar {
+  border: 1px solid var(--k-line);
+  background: var(--k-quickbar);
+  border-radius: 16px;
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell.app-dark .app-quickbar {
+  border-color: var(--k-line);
+}
+.readdy-tracker-ui.readdy-tracker-ui .app-quick-label {
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--k-muted);
+  align-items: center;
+  gap: 5px;
+  margin-bottom: 4px;
+  font-family:
+    Inter,
+    IBM Plex Sans Arabic,
+    system-ui,
+    sans-serif;
+  font-size: 8.5px;
+  font-weight: 700;
+  display: flex;
+}
+.readdy-tracker-ui.readdy-tracker-ui .app-hero-panel {
+  isolation: isolate;
+  border: 1px solid var(--k-line);
+  background:
+    radial-gradient(540px 300px at 88% -6%, var(--k-hero-sheen, var(--k-wash-2)), transparent 64%),
+    radial-gradient(500px 360px at -6% 110%, var(--k-hero-wash, var(--k-wash-3)), transparent 66%),
+    var(--k-hero-surface);
+  border-radius: 16px;
+  transition:
+    background 0.4s,
+    border-color 0.35s;
+  position: relative;
+  overflow: hidden;
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell.app-dark .app-hero-panel {
+  border-color: color-mix(in srgb, var(--k-pink) 18%, var(--k-line));
+  box-shadow:
+    inset 0 1px #ffffff0d,
+    0 26px 54px -34px #000c;
+}
+.readdy-tracker-ui.readdy-tracker-ui .app-stat-card {
+  border: 1px solid var(--k-line);
+  background: var(--k-stat-surface);
+  border-radius: 14px;
+  min-width: 0;
+  transition:
+    border-color 0.2s,
+    background 0.2s,
+    transform 0.2s;
+  position: relative;
+}
+.readdy-tracker-ui.readdy-tracker-ui .app-stat-card:hover {
+  transform: translateY(-1px);
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell.app-dark .app-stat-card {
+  border-color: var(--k-line);
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell.app-dark .app-stat-card:hover {
+  border-color: color-mix(in srgb, var(--k-pink) 30%, var(--k-line));
+}
+.readdy-tracker-ui.readdy-tracker-ui .app-icon-chip {
+  border: 1px solid var(--k-chip-line);
+  background: var(--k-chip-bg);
+  width: 26px;
+  height: 26px;
+  color: var(--k-plum-2);
+  border-radius: 999px;
+  flex: none;
+  justify-content: center;
+  align-items: center;
+  display: flex;
+}
+.readdy-tracker-ui.readdy-tracker-ui .app-icon-chip.is-ok {
+  border-color: color-mix(in srgb, var(--k-green) 30%, transparent);
+  background: color-mix(in srgb, var(--k-green) 12%, transparent);
+  color: var(--k-green);
+}
+.readdy-tracker-ui.readdy-tracker-ui .app-icon-chip.is-warn {
+  border-color: color-mix(in srgb, var(--k-amber) 32%, transparent);
+  background: color-mix(in srgb, var(--k-amber) 12%, transparent);
+  color: var(--k-amber);
+}
+.readdy-tracker-ui.readdy-tracker-ui .app-clock-colon {
+  color: var(--k-plum-2);
+  opacity: 0.9;
+  font-weight: 600;
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell.app-dark .app-clock-colon {
+  color: var(--k-plum);
+  text-shadow: 0 0 14px var(--k-glow);
+}
+.readdy-tracker-ui.readdy-tracker-ui .app-progress {
+  background: var(--k-track);
+  border-radius: 999px;
+  width: 100%;
+  height: 8px;
+  display: block;
+  overflow: hidden;
+}
+.readdy-tracker-ui.readdy-tracker-ui .app-progress.is-slim {
+  height: 6px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .app-progress > span {
+  background: linear-gradient(90deg, var(--k-bar-1) 0%, var(--k-bar-2) 54%, var(--k-bar-3) 100%);
+  height: 100%;
+  box-shadow: 0 0 12px var(--k-glow);
+  border-radius: 999px;
+  transition: width 0.9s cubic-bezier(0.32, 0.72, 0.22, 1);
+  display: block;
+}
+.readdy-tracker-ui.readdy-tracker-ui .app-cta {
+  background: linear-gradient(135deg, var(--k-cta-grad-1), var(--k-cta-grad-2));
+  color: var(--k-cta-ink);
+  box-shadow: 0 10px 22px -18px var(--k-cta-shadow);
+}
+.readdy-tracker-ui.readdy-tracker-ui .app-cta:hover {
+  filter: brightness(1.06);
+}
+.readdy-tracker-ui.readdy-tracker-ui .app-ghost-btn {
+  border: 1px solid color-mix(in srgb, var(--k-plum-2) 22%, transparent);
+  background: var(--k-search-bg);
+  color: var(--k-ink-2);
+}
+.readdy-tracker-ui.readdy-tracker-ui .app-ghost-btn:hover {
+  border-color: color-mix(in srgb, var(--k-pink) 42%, transparent);
+  color: var(--k-ink);
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell.app-dark .app-ghost-btn {
+  border-color: var(--k-chip-line);
+  background: var(--k-chip-bg);
+  color: var(--k-ink-2);
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell.app-dark .app-ghost-btn:hover {
+  border-color: color-mix(in srgb, var(--k-pink) 40%, transparent);
+  background: color-mix(in srgb, var(--k-pink) 14%, transparent);
+  color: var(--k-ink);
+}
+.readdy-tracker-ui.readdy-tracker-ui .kbd-key {
+  border: 1px solid color-mix(in srgb, var(--k-plum-2) 24%, transparent);
+  background: color-mix(in srgb, var(--k-plum-2) 7%, transparent);
+  letter-spacing: 0.04em;
+  min-width: 20px;
+  color: var(--k-ink-2);
+  border-radius: 5px;
+  justify-content: center;
+  align-items: center;
+  padding: 2px 5px;
+  font-family: Inter, system-ui, sans-serif;
+  font-size: 9px;
+  font-weight: 700;
+  display: inline-flex;
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell.app-dark .kbd-key {
+  border-color: var(--k-chip-line);
+  background: var(--k-chip-bg);
+}
+.readdy-tracker-ui.readdy-tracker-ui .app-tl-dot {
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--k-plum-2) 9%, transparent);
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell.app-dark .app-tl-dot {
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--k-pink) 10%, transparent);
+}
+.readdy-tracker-ui.readdy-tracker-ui .app-tl-line {
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--k-plum-2) 24%, transparent),
+    color-mix(in srgb, var(--k-plum-2) 5%, transparent)
+  );
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell.app-dark .app-tl-line {
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--k-pink) 30%, transparent),
+    color-mix(in srgb, var(--k-pink) 5%, transparent)
+  );
+}
+.readdy-tracker-ui.readdy-tracker-ui .app-shot-meta,
+.readdy-tracker-ui.readdy-tracker-ui.app-shell.app-dark .app-shot-meta {
+  background: var(--k-shot-meta);
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell .app-dock-bar {
+  border-color: color-mix(in srgb, var(--k-line) 55%, var(--k-pink) 45%);
+  background: var(--k-dock-bg);
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell.app-dark .app-dock-bar {
+  box-shadow:
+    inset 0 1px #ffffff12,
+    0 24px 54px -26px #000000e6;
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell.app-dark .app-dock-tab.is-active {
+  box-shadow: 0 12px 26px -20px color-mix(in srgb, var(--k-cta-grad-2) 70%, transparent);
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell.app-dark .app-dock-live {
+  background: var(--k-green);
+}
+.readdy-tracker-ui.readdy-tracker-ui .app-pill-live {
+  border-color: color-mix(in srgb, var(--k-green) 30%, transparent);
+  background: var(--k-green-2);
+  color: var(--k-green);
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell.app-dark .app-pill-live {
+  border-color: color-mix(in srgb, var(--k-green) 26%, transparent);
+  background: var(--k-green-2);
+  color: var(--k-green);
+}
+.readdy-tracker-ui.readdy-tracker-ui .app-live-halo {
+  box-shadow: 0 0 0 0 var(--k-glow);
+  animation: 2.8s ease-out infinite appLiveHalo;
+}
+@keyframes appLiveHalo {
+  0% {
+    box-shadow: 0 0 0 0 var(--k-glow);
+  }
+  70% {
+    box-shadow: 0 0 0 6px #0000;
+  }
+  to {
+    box-shadow: 0 0 #0000;
+  }
+}
+.readdy-tracker-ui.readdy-tracker-ui .app-nav-pill {
+  letter-spacing: 0.005em;
+  white-space: nowrap;
+  height: 34px;
+  color: var(--k-muted);
+  cursor: pointer;
+  background: 0 0;
+  border: 1px solid #0000;
+  border-radius: 999px;
+  justify-content: center;
+  align-items: center;
+  gap: 6px;
+  padding: 0 13px;
+  font-family:
+    Inter,
+    IBM Plex Sans Arabic,
+    system-ui,
+    sans-serif;
+  font-size: 11.5px;
+  font-weight: 600;
+  transition:
+    color 0.18s,
+    background 0.18s,
+    border-color 0.18s;
+  display: inline-flex;
+}
+.readdy-tracker-ui.readdy-tracker-ui .app-nav-pill:hover {
+  color: var(--k-ink);
+  background: color-mix(in srgb, var(--k-plum-2) 9%, transparent);
+}
+.readdy-tracker-ui.readdy-tracker-ui .app-nav-pill.is-active,
+.readdy-tracker-ui.readdy-tracker-ui .app-nav-pill.is-active:hover {
+  color: var(--k-card);
+  border-color: color-mix(in srgb, var(--k-ink) 60%, transparent);
+  background: var(--k-ink);
+}
+.readdy-tracker-ui.readdy-tracker-ui .app-quick-cell {
+  border: 1px solid var(--k-line);
+  background: color-mix(in srgb, var(--k-card) 70%, transparent);
+  border-radius: 11px;
+  min-width: 0;
+  padding: 5px 9px 6px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .app-quick-cell .app-quick-label {
+  margin-bottom: 2px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .app-side-link:hover,
+.readdy-tracker-ui.readdy-tracker-ui.app-shell.app-dark .app-side-link:hover {
+  color: var(--k-ink);
+  background: color-mix(in srgb, var(--k-plum-2) 8%, transparent);
+}
+.readdy-tracker-ui.readdy-tracker-ui .app-side-active,
+.readdy-tracker-ui.readdy-tracker-ui .app-side-active:hover,
+.readdy-tracker-ui.readdy-tracker-ui.app-shell.app-dark .app-side-active,
+.readdy-tracker-ui.readdy-tracker-ui.app-shell.app-dark .app-side-active:hover {
+  color: #fff;
+  background: var(--k-solid);
+  border-color: var(--k-solid);
+}
+.readdy-tracker-ui.readdy-tracker-ui .app-nav-btn:hover {
+  background: color-mix(in srgb, var(--k-plum-2) 8%, transparent);
+  color: var(--k-ink);
+}
+.readdy-tracker-ui.readdy-tracker-ui .app-nav-active:hover,
+.readdy-tracker-ui.readdy-tracker-ui.app-shell.app-dark .app-nav-active:hover {
+  background: var(--k-solid-2);
+  color: #fff;
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell .k-stripes > span,
+.readdy-tracker-ui.readdy-tracker-ui.app-shell.app-dark .k-stripes > span {
+  background: linear-gradient(180deg, var(--k-plum-2), var(--k-pink));
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell .k-app-field,
+.readdy-tracker-ui.readdy-tracker-ui.app-shell.app-dark .k-app-field {
+  background: var(--k-field);
+  border-color: color-mix(in srgb, var(--k-plum-2) 22%, transparent);
+  color: var(--k-ink);
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell .k-app-field::-moz-placeholder {
+  color: var(--k-faint);
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell.app-dark .k-app-field::-moz-placeholder {
+  color: var(--k-faint);
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell .k-app-field::placeholder,
+.readdy-tracker-ui.readdy-tracker-ui.app-shell.app-dark .k-app-field::placeholder {
+  color: var(--k-faint);
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell .k-app-field:focus {
+  background: var(--k-card);
+  border-color: color-mix(in srgb, var(--k-pink) 58%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--k-pink) 14%, transparent);
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell.app-dark .k-app-field:focus {
+  background: color-mix(in srgb, var(--k-field) 80%, var(--k-card));
+  border-color: color-mix(in srgb, var(--k-pink) 60%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--k-pink) 16%, transparent);
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell select.k-app-field option,
+.readdy-tracker-ui.readdy-tracker-ui.app-shell.app-dark select.k-app-field option {
+  background: var(--k-card);
+  color: var(--k-ink);
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell .k-glass-card,
+.readdy-tracker-ui.readdy-tracker-ui.app-shell.app-dark .k-glass-card {
+  border-color: color-mix(in srgb, var(--k-pink) 20%, var(--k-line));
+  background:
+    radial-gradient(
+      140% 130% at 0% 0%,
+      color-mix(in srgb, var(--k-pink) 12%, transparent),
+      transparent 60%
+    ),
+    radial-gradient(
+      120% 130% at 100% 100%,
+      color-mix(in srgb, var(--k-plum-2) 12%, transparent),
+      transparent 64%
+    ),
+    color-mix(in srgb, var(--k-card) 62%, transparent);
+  box-shadow:
+    inset 0 1px #ffffff14,
+    0 14px 34px -20px #00000073;
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell .k-glass-cell,
+.readdy-tracker-ui.readdy-tracker-ui.app-shell.app-dark .k-glass-cell {
+  background: color-mix(in srgb, var(--k-card) 40%, transparent);
+  border-color: var(--k-line);
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell .k-glass-cell:hover,
+.readdy-tracker-ui.readdy-tracker-ui.app-shell.app-dark .k-glass-cell:hover {
+  background: color-mix(in srgb, var(--k-pink) 12%, transparent);
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell {
+  --k-hero-1: #4b3bb0;
+  --k-hero-2: #241a63;
+  --k-hero-accent: var(--k-plum);
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell.app-dark {
+  --k-hero-1: #2a1f57;
+  --k-hero-2: #14112e;
+  --k-hero-accent: var(--k-plum);
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell[data-skin="ember"] {
+  --k-bg: #fdf7f0;
+  --k-bg-2: #f8ede2;
+  --k-card: #fff;
+  --k-ink: #2b1a11;
+  --k-ink-2: #4d3425;
+  --k-muted: #8a6852;
+  --k-faint: #b99a83;
+  --k-dot: #e8d5c2;
+  --k-line: #78482429;
+  --k-line-2: #78482417;
+  --k-plum: #a4441a;
+  --k-plum-2: #c1662f;
+  --k-pink: #df7a2c;
+  --k-pink-2: #df7a2c1f;
+  --k-green: #17795a;
+  --k-green-2: #e2f3ea;
+  --k-amber: #96660f;
+  --k-amber-2: #fbeed6;
+  --k-rose: #b13a35;
+  --k-rose-2: #fbe3e0;
+  --k-solid: #b04c1c;
+  --k-solid-2: #c9611f;
+  --k-hover: #fdf2e8;
+  --k-field: #fffdfa;
+  --k-check-line: #e3cfba;
+  --k-overlay: #1a1109;
+  --k-ring-1: #f0b06a;
+  --k-ring-2: #df7a2c;
+  --k-ring-3: #b04c1c;
+  --k-ring-4: #f6c98f;
+  --k-track: #7848241f;
+  --k-glow: #df7a2c1a;
+  --k-cta-1: #b04c1c;
+  --k-cta-2: #c9611f;
+  --k-cta-grad-1: #f0a24a;
+  --k-cta-grad-2: #d3661f;
+  --k-cta-ink: #fff;
+  --k-hero-grad-1: #fffdf9;
+  --k-hero-grad-2: #fbf0e4;
+  --k-wash-1: #df7a2c1a;
+  --k-wash-2: #c1662f12;
+  --k-wash-3: #df7a2c17;
+  --k-grid-dot: #78482429;
+  --k-hero-1: #8a3f22;
+  --k-hero-2: #5c2a1a;
+  --k-hero-accent: #f7d7b6;
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell[data-skin="ember"].app-dark {
+  --k-bg: #17111c;
+  --k-bg-2: #1f1626;
+  --k-card: #241a2c;
+  --k-ink: #f9efe8;
+  --k-ink-2: #e2c8bf;
+  --k-muted: #ac93a0;
+  --k-faint: #7f6a76;
+  --k-dot: #3d2c3a;
+  --k-line: #f0c8b429;
+  --k-line-2: #f0c8b417;
+  --k-plum: #f4c8a6;
+  --k-plum-2: #d79a72;
+  --k-pink: #f0954a;
+  --k-pink-2: #f0954a21;
+  --k-green: #62d3a2;
+  --k-green-2: #62d3a221;
+  --k-amber: #e6b46a;
+  --k-amber-2: #e6b46a24;
+  --k-rose: #f0837c;
+  --k-rose-2: #f0837c24;
+  --k-solid: #b8541f;
+  --k-solid-2: #cf6a30;
+  --k-hover: #f0c8b40f;
+  --k-field: #1c1323;
+  --k-check-line: #4d3547;
+  --k-overlay: #0a0509;
+  --k-ring-1: #f7cfa4;
+  --k-ring-2: #f0954a;
+  --k-ring-3: #b8541f;
+  --k-ring-4: #f6d9b8;
+  --k-track: #f0c8b429;
+  --k-glow: #f0954a24;
+  --k-cta-1: #b8541f;
+  --k-cta-2: #d4681f;
+  --k-cta-grad-1: #f2a45c;
+  --k-cta-grad-2: #d4681f;
+  --k-cta-ink: #2a1206;
+  --k-hero-grad-1: #3b2030;
+  --k-hero-grad-2: #221a28;
+  --k-wash-1: #be465a57;
+  --k-wash-2: #f0954a14;
+  --k-wash-3: #782d5061;
+  --k-grid-dot: #f0c8b429;
+  --k-hero-1: #3b2030;
+  --k-hero-2: #221a28;
+  --k-hero-accent: #f7cfa4;
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell[data-skin="forest"] {
+  --k-bg: #f3faf6;
+  --k-bg-2: #e7f5ee;
+  --k-card: #fff;
+  --k-ink: #0d2620;
+  --k-ink-2: #26443b;
+  --k-muted: #577a6f;
+  --k-faint: #8fb0a5;
+  --k-dot: #cfe4db;
+  --k-line: #0d584226;
+  --k-line-2: #0d584214;
+  --k-plum: #0c5c45;
+  --k-plum-2: #17876a;
+  --k-pink: #0f9873;
+  --k-pink-2: #0f98731f;
+  --k-green: #0f8a63;
+  --k-green-2: #dff3e9;
+  --k-amber: #8a6410;
+  --k-amber-2: #fbeed6;
+  --k-rose: #a8323f;
+  --k-rose-2: #fbe3e6;
+  --k-solid: #0d6b52;
+  --k-solid-2: #12856a;
+  --k-hover: #f1fbf6;
+  --k-field: #fafffd;
+  --k-check-line: #cbe3d9;
+  --k-overlay: #061512;
+  --k-ring-1: #7fe3c1;
+  --k-ring-2: #17b083;
+  --k-ring-3: #0c6b52;
+  --k-ring-4: #b5f0dc;
+  --k-track: #0d58421f;
+  --k-glow: #0f98731a;
+  --k-cta-1: #0d6b52;
+  --k-cta-2: #12856a;
+  --k-cta-grad-1: #19b98a;
+  --k-cta-grad-2: #0b7d5b;
+  --k-cta-ink: #fff;
+  --k-hero-grad-1: #fbfffd;
+  --k-hero-grad-2: #eaf8f1;
+  --k-wash-1: #0f98731a;
+  --k-wash-2: #0c6b5212;
+  --k-wash-3: #0f987317;
+  --k-grid-dot: #0d584226;
+  --k-hero-1: #0f6b52;
+  --k-hero-2: #06372b;
+  --k-hero-accent: #b5f0dc;
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell[data-skin="forest"].app-dark {
+  --k-bg: #06120f;
+  --k-bg-2: #0a1d18;
+  --k-card: #0d241e;
+  --k-ink: #e8fdf4;
+  --k-ink-2: #c0e8d9;
+  --k-muted: #7fa89a;
+  --k-faint: #5a7d72;
+  --k-dot: #17352c;
+  --k-line: #7ae7c229;
+  --k-line-2: #7ae7c217;
+  --k-plum: #9ff0d1;
+  --k-plum-2: #3ecfa1;
+  --k-pink: #34d399;
+  --k-pink-2: #34d39921;
+  --k-green: #34d399;
+  --k-green-2: #34d39921;
+  --k-amber: #e0b062;
+  --k-amber-2: #e0b06224;
+  --k-rose: #f08a86;
+  --k-rose-2: #f08a8624;
+  --k-solid: #10866a;
+  --k-solid-2: #17a081;
+  --k-hover: #7ae7c20f;
+  --k-field: #081915;
+  --k-check-line: #1d4538;
+  --k-overlay: #020806;
+  --k-ring-1: #a7f3d0;
+  --k-ring-2: #34d399;
+  --k-ring-3: #0f8f6b;
+  --k-ring-4: #6ee7b7;
+  --k-track: #7ae7c224;
+  --k-glow: #34d39924;
+  --k-cta-1: #10866a;
+  --k-cta-2: #0e8a66;
+  --k-cta-grad-1: #45e0aa;
+  --k-cta-grad-2: #0e8a66;
+  --k-cta-ink: #04211a;
+  --k-hero-grad-1: #123a2d;
+  --k-hero-grad-2: #0a1f19;
+  --k-wash-1: #14b48238;
+  --k-wash-2: #34d3990f;
+  --k-wash-3: #0c785f47;
+  --k-grid-dot: #7ae7c22e;
+  --k-hero-1: #123a2d;
+  --k-hero-2: #0a1f19;
+  --k-hero-accent: #a7f3d0;
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell[data-skin="violet"] {
+  --k-bg: #f6f5fe;
+  --k-bg-2: #eceafa;
+  --k-card: #fff;
+  --k-ink: #171432;
+  --k-ink-2: #38326b;
+  --k-muted: #6b6593;
+  --k-faint: #9d99bd;
+  --k-dot: #d8d4ea;
+  --k-line: #463a8c26;
+  --k-line-2: #463a8c14;
+  --k-plum: #4b3bb0;
+  --k-plum-2: #6a55d8;
+  --k-pink: #7c5cff;
+  --k-pink-2: #7c5cff1f;
+  --k-green: #12876a;
+  --k-green-2: #dff3ec;
+  --k-amber: #8d6413;
+  --k-amber-2: #fbeed6;
+  --k-rose: #a83250;
+  --k-rose-2: #fbe3e9;
+  --k-solid: #5a44d6;
+  --k-solid-2: #6d57ea;
+  --k-hover: #f4f2ff;
+  --k-field: #fdfcff;
+  --k-check-line: #d6d0ea;
+  --k-overlay: #0d0a22;
+  --k-ring-1: #b9a6ff;
+  --k-ring-2: #7c5cff;
+  --k-ring-3: #4b3bb0;
+  --k-ring-4: #d4c8ff;
+  --k-track: #463a8c1f;
+  --k-glow: #7c5cff1f;
+  --k-cta-1: #5a44d6;
+  --k-cta-2: #6d57ea;
+  --k-cta-grad-1: #8970ff;
+  --k-cta-grad-2: #5a44d6;
+  --k-cta-ink: #fff;
+  --k-hero-grad-1: #fdfcff;
+  --k-hero-grad-2: #efecff;
+  --k-wash-1: #7c5cff1c;
+  --k-wash-2: #463a8c12;
+  --k-wash-3: #7c5cff1a;
+  --k-grid-dot: #463a8c26;
+  --k-hero-1: #4b3bb0;
+  --k-hero-2: #241a63;
+  --k-hero-accent: #d4c8ff;
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell[data-skin="violet"].app-dark {
+  --k-bg: #0a0918;
+  --k-bg-2: #12102a;
+  --k-card: #171336;
+  --k-ink: #ecebff;
+  --k-ink-2: #c7c3ea;
+  --k-muted: #8f8ac0;
+  --k-faint: #6b6698;
+  --k-dot: #2a2550;
+  --k-line: #a096ff29;
+  --k-line-2: #a096ff17;
+  --k-plum: #cfc4ff;
+  --k-plum-2: #8b7bff;
+  --k-pink: #9b87ff;
+  --k-pink-2: #9b87ff24;
+  --k-green: #5eead4;
+  --k-green-2: #5eead421;
+  --k-amber: #e0b062;
+  --k-amber-2: #e0b06224;
+  --k-rose: #fb8aa8;
+  --k-rose-2: #fb8aa824;
+  --k-solid: #5f47d8;
+  --k-solid-2: #7159f0;
+  --k-hover: #a096ff0f;
+  --k-field: #0f0d24;
+  --k-check-line: #362f63;
+  --k-overlay: #03020a;
+  --k-ring-1: #a5b4ff;
+  --k-ring-2: #8b7bff;
+  --k-ring-3: #6d4bd8;
+  --k-ring-4: #c4b5fd;
+  --k-track: #a096ff29;
+  --k-glow: #8b7bff29;
+  --k-cta-1: #5f47d8;
+  --k-cta-2: #6d3fe0;
+  --k-cta-grad-1: #8b7bff;
+  --k-cta-grad-2: #6d3fe0;
+  --k-cta-ink: #fff;
+  --k-bar-1: #6b47d8;
+  --k-bar-2: #9463e0;
+  --k-bar-3: #c69ad6;
+  --k-hero-grad-1: #2a1f57;
+  --k-hero-grad-2: #14112e;
+  --k-wash-1: #7c5cff4d;
+  --k-wash-2: #6ee7ff0f;
+  --k-wash-3: #b446dc3d;
+  --k-grid-dot: #a096ff2e;
+  --k-hero-1: #2a1f57;
+  --k-hero-2: #14112e;
+  --k-hero-accent: #c4b5fd;
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell[data-skin="ember"] {
+  --k-bg: #fcf9f6;
+  --k-bg-2: #f8f1e9;
+  --k-card: #fff;
+  --k-ink: #2a1b14;
+  --k-ink-2: #4b3528;
+  --k-muted: #8b7264;
+  --k-faint: #b8a195;
+  --k-dot: #e7d6c8;
+  --k-line: #72462621;
+  --k-line-2: #72462612;
+  --k-plum: #8c3a1b;
+  --k-plum-2: #d8792f;
+  --k-pink: #ec8a3c;
+  --k-pink-2: #ec8a3c1f;
+  --k-track: #f4e7dc;
+  --k-track-2: #7246261a;
+  --k-ring-1: #f6b168;
+  --k-ring-2: #d8576f;
+  --k-ring-3: #9a2a21;
+  --k-ring-4: #f7cfa9;
+  --k-glow: #d8576f24;
+  --k-bar-1: #f6a95c;
+  --k-bar-2: #d8576f;
+  --k-bar-3: #8d2520;
+  --k-cta-grad-1: #f7b268;
+  --k-cta-grad-2: #df7a2c;
+  --k-hero-grad-1: #fff;
+  --k-hero-grad-2: #fffdfa;
+  --k-wash-1: #ec8a3c0f;
+  --k-wash-2: #d8792f0b;
+  --k-wash-3: #d8576f0d;
+  --k-hover: #fdf6ef;
+  --k-field: #fdfbf8;
+  background: var(--k-bg);
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell[data-skin="ember"] .app-grid {
+  display: none;
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell[data-skin="ember"] .k-wm-art {
+  opacity: 0.018;
+}
+.readdy-tracker-ui.readdy-tracker-ui .tp-card {
+  box-sizing: border-box;
+  border: 1px solid var(--k-line);
+  background: var(--k-card);
+  border-radius: 18px;
+  min-width: 0;
+  position: relative;
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell .tp-hero {
+  background: var(--k-card);
+  box-shadow: none;
+}
+@property --tp-deg {
+  syntax: "<angle>";
+  inherits: true;
+  initial-value: 0deg;
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell .tp-hero {
+  --tp-rail: 4px;
+}
+@media (width>=768px) {
+  .readdy-tracker-ui.readdy-tracker-ui.app-shell .tp-hero {
+    --tp-rail: 5px;
+  }
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell .tp-hero:after {
+  content: "";
+  z-index: 3;
+  padding: var(--tp-rail);
+  pointer-events: none;
+  background-image: conic-gradient(
+    from 180deg,
+    var(--k-bar-1) 0deg,
+    var(--k-bar-2) calc(var(--tp-deg) * 0.54),
+    var(--k-bar-3) var(--tp-deg),
+    var(--k-track) var(--tp-deg),
+    var(--k-track) 360deg
+  );
+  -webkit-mask-composite: xor;
+  -webkit-mask-composite: xor;
+  border-radius: 20px;
+  transition: --tp-deg 0.9s cubic-bezier(0.32, 0.72, 0.22, 1);
+  position: absolute;
+  inset: -1px;
+  -webkit-mask-image: linear-gradient(#000 0 0), linear-gradient(#000 0 0);
+  mask-image: linear-gradient(#000 0 0), linear-gradient(#000 0 0);
+  -webkit-mask-position:
+    0 0,
+    0 0;
+  mask-position:
+    0 0,
+    0 0;
+  -webkit-mask-size: auto, auto;
+  mask-size: auto, auto;
+  -webkit-mask-repeat: repeat, repeat;
+  mask-repeat: repeat, repeat;
+  -webkit-mask-clip: content-box, border-box;
+  mask-clip: content-box, border-box;
+  -webkit-mask-origin: content-box, border-box;
+  mask-origin: content-box, border-box;
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  -webkit-mask-source-type: auto, auto;
+  mask-mode: match-source, match-source;
+}
+.readdy-tracker-ui.readdy-tracker-ui .tp-eyebrow {
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--k-muted);
+  font-family:
+    Inter,
+    IBM Plex Sans Arabic,
+    system-ui,
+    sans-serif;
+  font-size: 10px;
+  font-weight: 600;
+}
+.readdy-tracker-ui.readdy-tracker-ui .tp-tag {
+  border: 1px solid color-mix(in srgb, var(--k-pink) 30%, transparent);
+  background: color-mix(in srgb, var(--k-pink) 14%, var(--k-card));
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--k-plum) 88%, var(--k-ink));
+  white-space: nowrap;
+  border-radius: 999px;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 11px;
+  font-size: 9.5px;
+  font-weight: 700;
+  display: inline-flex;
+}
+.readdy-tracker-ui.readdy-tracker-ui .tp-tag.is-live {
+  border-color: color-mix(in srgb, var(--k-green) 28%, transparent);
+  background: var(--k-green-2);
+  color: var(--k-green);
+}
+.readdy-tracker-ui.readdy-tracker-ui .tp-clock {
+  -webkit-user-select: none;
+  user-select: none;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.035em;
+  color: var(--k-ink);
+  align-items: baseline;
+  gap: 0.14em;
+  font-family:
+    Inter,
+    IBM Plex Sans Arabic,
+    system-ui,
+    sans-serif;
+  font-size: clamp(40px, 4.6vw, 62px);
+  font-weight: 700;
+  line-height: 1;
+  display: flex;
+}
+.readdy-tracker-ui.readdy-tracker-ui .tp-clock.is-small {
+  font-size: clamp(42px, 4.4vw, 58px);
+}
+.readdy-tracker-ui.readdy-tracker-ui .tp-clock .tp-colon {
+  color: var(--k-pink);
+  font-weight: 600;
+  transform: translateY(-0.04em);
+}
+.readdy-tracker-ui.readdy-tracker-ui .tp-goal-label {
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--k-muted);
+  margin-top: 6px;
+  font-size: 8px;
+  font-weight: 700;
+}
+.readdy-tracker-ui.readdy-tracker-ui .tp-goal-value {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  color: var(--k-ink);
+  font-family:
+    Inter,
+    IBM Plex Sans Arabic,
+    system-ui,
+    sans-serif;
+  font-size: 27px;
+  font-weight: 700;
+  line-height: 1;
+}
+.readdy-tracker-ui.readdy-tracker-ui .tp-target {
+  border: 1px solid color-mix(in srgb, var(--k-pink) 12%, var(--k-line));
+  background: color-mix(in srgb, var(--k-pink) 8%, var(--k-card));
+  border-radius: 14px;
+  padding: 12px 14px 13px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .tp-target-track {
+  background: color-mix(in srgb, var(--k-pink) 16%, var(--k-card));
+  border-radius: 999px;
+  width: 100%;
+  height: 7px;
+  display: block;
+  position: relative;
+  overflow: hidden;
+}
+.readdy-tracker-ui.readdy-tracker-ui .tp-target-track > span {
+  background: linear-gradient(90deg, var(--k-bar-1) 0%, var(--k-bar-2) 62%, var(--k-bar-3) 100%);
+  border-radius: 999px;
+  height: 100%;
+  transition: width 0.9s cubic-bezier(0.32, 0.72, 0.22, 1);
+  display: block;
+}
+.readdy-tracker-ui.readdy-tracker-ui .tp-pill {
+  box-sizing: border-box;
+  border: 1px solid var(--k-line);
+  background: var(--k-card);
+  min-width: 0;
+  height: 42px;
+  color: var(--k-ink);
+  border-radius: 13px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  transition:
+    border-color 0.16s,
+    background 0.16s;
+  display: flex;
+}
+.readdy-tracker-ui.readdy-tracker-ui .tp-pill:hover {
+  border-color: color-mix(in srgb, var(--k-pink) 30%, var(--k-line));
+}
+.readdy-tracker-ui.readdy-tracker-ui .tp-pill-key {
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--k-muted);
+  white-space: nowrap;
+  flex: none;
+  font-size: 9.5px;
+  font-weight: 700;
+}
+.readdy-tracker-ui.readdy-tracker-ui .tp-pill .k-dropdown {
+  flex: auto;
+  min-width: 0;
+}
+.readdy-tracker-ui.readdy-tracker-ui .tp-pill .k-select-trigger,
+.readdy-tracker-ui.readdy-tracker-ui .tp-pill .k-select-trigger-app {
+  min-width: 0;
+  color: var(--k-ink);
+  background: 0 0;
+  border: 0;
+  border-radius: 0;
+  gap: 6px;
+  height: 24px;
+  padding: 0;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.readdy-tracker-ui.readdy-tracker-ui .tp-pill .k-select-trigger:hover {
+  color: var(--k-plum);
+  border-color: #0000;
+}
+.readdy-tracker-ui.readdy-tracker-ui .tp-pill .k-select-trigger.is-open {
+  background: 0 0;
+  border-color: #0000;
+}
+.readdy-tracker-ui.readdy-tracker-ui .tp-pill .k-dropdown-caret {
+  width: 14px;
+  color: var(--k-muted);
+}
+.readdy-tracker-ui.readdy-tracker-ui .tp-note-input {
+  width: 100%;
+  min-width: 0;
+  color: var(--k-ink);
+  background: 0 0;
+  border: 0;
+  outline: none;
+  padding: 0;
+  font-family:
+    Inter,
+    IBM Plex Sans Arabic,
+    system-ui,
+    sans-serif;
+  font-size: 12.5px;
+  font-weight: 500;
+}
+.readdy-tracker-ui.readdy-tracker-ui .tp-note-input::placeholder {
+  color: var(--k-faint);
+  font-weight: 400;
+}
+.readdy-tracker-ui.readdy-tracker-ui .tp-ghost {
+  border: 1px solid var(--k-line);
+  background: var(--k-card);
+  height: 42px;
+  color: var(--k-ink-2);
+  white-space: nowrap;
+  cursor: pointer;
+  border-radius: 13px;
+  justify-content: center;
+  align-items: center;
+  gap: 7px;
+  padding: 0 14px;
+  font-size: 12px;
+  font-weight: 600;
+  transition:
+    border-color 0.16s,
+    color 0.16s,
+    background 0.16s;
+  display: inline-flex;
+}
+.readdy-tracker-ui.readdy-tracker-ui .tp-ghost:hover {
+  border-color: color-mix(in srgb, var(--k-pink) 44%, var(--k-line));
+  color: var(--k-ink);
+  background: color-mix(in srgb, var(--k-pink) 14%, var(--k-card));
+}
+.readdy-tracker-ui.readdy-tracker-ui .tp-ghost.is-on {
+  border-color: color-mix(in srgb, var(--k-green) 26%, var(--k-line));
+  background: var(--k-green-2);
+  color: var(--k-green);
+}
+.readdy-tracker-ui.readdy-tracker-ui .tp-cta {
+  z-index: 2;
+  background: linear-gradient(135deg, var(--k-cta-grad-1) 0%, var(--k-cta-grad-2) 100%);
+  color: #fff;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  cursor: pointer;
+  border: 0;
+  border-radius: 12px;
+  justify-content: center;
+  align-items: center;
+  gap: 9px;
+  height: 44px;
+  padding: 0 22px;
+  font-size: 12.5px;
+  font-weight: 700;
+  transition:
+    filter 0.16s,
+    transform 0.12s;
+  display: inline-flex;
+  position: relative;
+}
+.readdy-tracker-ui.readdy-tracker-ui .tp-cta:hover {
+  filter: brightness(1.05);
+}
+.readdy-tracker-ui.readdy-tracker-ui .tp-cta:active {
+  transform: scale(0.99);
+}
+.readdy-tracker-ui.readdy-tracker-ui .tp-action {
+  z-index: 2;
+  border: 1px solid var(--k-line);
+  background: var(--k-card);
+  height: 44px;
+  color: var(--k-ink-2);
+  white-space: nowrap;
+  cursor: pointer;
+  border-radius: 12px;
+  justify-content: center;
+  align-items: center;
+  gap: 8px;
+  padding: 0 18px;
+  font-size: 12px;
+  font-weight: 600;
+  transition:
+    border-color 0.16s,
+    background 0.16s,
+    color 0.16s;
+  display: inline-flex;
+  position: relative;
+}
+.readdy-tracker-ui.readdy-tracker-ui .tp-action:hover,
+.readdy-tracker-ui.readdy-tracker-ui .tp-action:focus-visible {
+  border-color: color-mix(in srgb, var(--k-pink) 48%, var(--k-line));
+  background: color-mix(in srgb, var(--k-pink) 15%, var(--k-card));
+  color: var(--k-ink);
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell.app-dark .tp-ghost:hover,
+.readdy-tracker-ui.readdy-tracker-ui.app-shell.app-dark .tp-ghost:focus-visible,
+.readdy-tracker-ui.readdy-tracker-ui.app-shell.app-dark .tp-action:hover,
+.readdy-tracker-ui.readdy-tracker-ui.app-shell.app-dark .tp-action:focus-visible {
+  color: var(--k-ink);
+}
+.readdy-tracker-ui.readdy-tracker-ui .tp-cta:hover,
+.readdy-tracker-ui.readdy-tracker-ui .tp-cta:focus-visible {
+  filter: brightness(1.05);
+  color: #fff;
+}
+.readdy-tracker-ui.readdy-tracker-ui .tp-timer-row,
+.readdy-tracker-ui.readdy-tracker-ui .tp-actions-row {
+  z-index: 2;
+  position: relative;
+}
+.readdy-tracker-ui.readdy-tracker-ui .tp-actions-row {
+  top: 46px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .tp-tl-row {
+  align-items: flex-start;
+  gap: 10px;
+  padding: 11px 4px;
+  display: flex;
+  position: relative;
+}
+.readdy-tracker-ui.readdy-tracker-ui .tp-tl-row + .tp-tl-row {
+  border-top: 1px solid var(--k-line-2);
+}
+.readdy-tracker-ui.readdy-tracker-ui .tp-tl-chip {
+  border: 1px solid var(--k-line);
+  background: color-mix(in srgb, var(--k-plum-2) 8%, var(--k-card));
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--k-ink-2);
+  border-radius: 999px;
+  flex: none;
+  padding: 2px 9px;
+  font-size: 8.5px;
+  font-weight: 700;
+}
+.readdy-tracker-ui.readdy-tracker-ui .tp-tl-chip.is-overtime {
+  border-color: color-mix(in srgb, var(--k-pink) 34%, transparent);
+  background: color-mix(in srgb, var(--k-pink) 9%, var(--k-card));
+  color: var(--k-plum);
+}
+.readdy-tracker-ui.readdy-tracker-ui .tp-tl-chip.is-rest {
+  border-color: color-mix(in srgb, var(--k-amber) 30%, transparent);
+  background: var(--k-amber-2);
+  color: var(--k-amber);
+}
+.readdy-tracker-ui.readdy-tracker-ui .tp-tl-chip.is-live {
+  border-color: color-mix(in srgb, var(--k-green) 30%, transparent);
+  background: var(--k-green-2);
+  color: var(--k-green);
+}
+.readdy-tracker-ui.readdy-tracker-ui .tp-stat {
+  border: 1px solid var(--k-line);
+  background: var(--k-card);
+  border-radius: 14px;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding: 14px 15px 15px;
+  transition: border-color 0.18s;
+  display: flex;
+  position: relative;
+}
+.readdy-tracker-ui.readdy-tracker-ui .tp-stat:hover {
+  border-color: color-mix(in srgb, var(--k-pink) 26%, var(--k-line));
+}
+.readdy-tracker-ui.readdy-tracker-ui .tp-stat-label {
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--k-muted);
+  font-size: 9px;
+  font-weight: 700;
+}
+.readdy-tracker-ui.readdy-tracker-ui .tp-stat-value {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.025em;
+  color: var(--k-ink);
+  font-family:
+    Inter,
+    IBM Plex Sans Arabic,
+    system-ui,
+    sans-serif;
+  font-size: 21px;
+  font-weight: 700;
+  line-height: 1;
+}
+.readdy-tracker-ui.readdy-tracker-ui .tp-stat-note {
+  color: var(--k-muted);
+  font-size: 10px;
+  font-weight: 500;
+}
+.readdy-tracker-ui.readdy-tracker-ui .tp-stat-note.is-ok {
+  color: var(--k-green);
+}
+.readdy-tracker-ui.readdy-tracker-ui .tp-stat-note.is-accent {
+  color: var(--k-plum-2);
+}
+.readdy-tracker-ui.readdy-tracker-ui .tp-stat-icon {
+  width: 22px;
+  height: 22px;
+  color: var(--k-faint);
+  flex: none;
+  justify-content: center;
+  align-items: center;
+  display: flex;
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell .app-dock-bar {
+  border-color: var(--k-line);
+  background: color-mix(in srgb, var(--k-card) 92%, transparent);
+  border-radius: 18px;
+  max-width: 700px;
+  padding: 7px 8px;
+  box-shadow: 0 18px 40px -30px #502d148c;
+}
+.readdy-tracker-ui.readdy-tracker-ui .app-dock-tab {
+  border-radius: 12px;
+  flex-direction: row;
+  gap: 7px;
+  min-width: 0;
+  padding: 9px 13px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .app-dock-tab:before {
+  background: linear-gradient(135deg, var(--k-cta-grad-1) 0%, var(--k-cta-grad-2) 100%);
+}
+.readdy-tracker-ui.readdy-tracker-ui .app-dock-label {
+  letter-spacing: 0.1em;
+  font-size: 10px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .app-dock-key {
+  border-radius: 6px;
+  width: 18px;
+  height: 18px;
+}
+.readdy-tracker-ui.readdy-tracker-ui .app-dock-tab.is-active {
+  color: #fff;
+  border-color: #0000;
+}
+.readdy-tracker-ui.readdy-tracker-ui .app-dock-lamp,
+.readdy-tracker-ui.readdy-tracker-ui .app-dock-live {
+  display: none;
+}
+.readdy-tracker-ui.readdy-tracker-ui .app-dock-tab.is-active .app-dock-label {
+  color: #fff;
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell .app-topbar {
+  background: color-mix(in srgb, var(--k-bg) 92%, #fff);
+  border-bottom: 1px solid var(--k-line);
+  box-shadow: none;
+}
+.readdy-tracker-ui.readdy-tracker-ui .app-logo-plate {
+  border: 1px solid var(--k-line);
+  background: #fff;
+  border-radius: 999px;
+  padding: 2px;
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell .app-nav-pill {
+  height: 32px;
+  color: var(--k-ink-2);
+  padding: 0 14px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell .app-nav-pill.is-active,
+.readdy-tracker-ui.readdy-tracker-ui.app-shell .app-nav-pill.is-active:hover {
+  color: var(--k-card);
+  background: var(--k-ink);
+  border-color: #0000;
+  font-weight: 700;
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell.app-dark .app-nav-pill.is-active,
+.readdy-tracker-ui.readdy-tracker-ui.app-shell.app-dark .app-nav-pill.is-active:hover {
+  color: var(--k-bg);
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell .app-topbar .app-pill-live {
+  border-color: color-mix(in srgb, var(--k-green) 30%, var(--k-line));
+  background: color-mix(in srgb, var(--k-green) 12%, var(--k-card));
+  color: var(--k-ink-2);
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell.app-dark .app-topbar .app-pill-live {
+  background: color-mix(in srgb, var(--k-green) 14%, var(--k-card));
+  color: var(--k-ink-2);
+}
+.readdy-tracker-ui.readdy-tracker-ui.app-shell .app-statusbar {
+  background: 0 0;
+  border-top: 0;
+}
+@media (width<=640px) {
+  .readdy-tracker-ui.readdy-tracker-ui .tp-clock {
+    font-size: 40px;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui .tp-stat-value {
+    font-size: 18px;
+  }
+}

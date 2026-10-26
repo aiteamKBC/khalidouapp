@@ -1,0 +1,51 @@
+.readdy-tracker-ui.readdy-tracker-ui.tracker-frame .native-quote-settings label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 14px 0 10px;
+  cursor: pointer;
+  color: var(--k-ink);
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: normal;
+  text-transform: none;
+}
+.readdy-tracker-ui.readdy-tracker-ui.tracker-frame .native-quote-settings input[type="checkbox"] {
+  accent-color: var(--k-pink);
+  width: 18px;
+  height: 18px;
+  min-height: 18px;
+  flex: 0 0 18px;
+  padding: 0;
+  margin: 0;
+}
+.native-quote-reminder {
+  position: fixed;
+  z-index: 70;
+  right: 16px;
+  bottom: 48px;
+  width: min(360px, calc(100vw - 32px));
+  padding: 16px;
+  border: 1px solid var(--k-line);
+  border-radius: 16px;
+  background: var(--k-card);
+  color: var(--k-ink);
+  box-shadow: 0 8px 32px #0003;
+}
+.native-quote-reminder > div {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+}
+.native-quote-reminder strong { font-size: 12px; }
+.native-quote-reminder p { margin: 10px 0 0; font-size: 14px; line-height: 1.6; }
+.native-quote-reminder button {
+  background: transparent;
+  color: var(--k-muted);
+  border: none;
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-size: 20px;
+  cursor: pointer;
+}

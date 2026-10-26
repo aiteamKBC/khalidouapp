@@ -2,17 +2,17 @@ import { createFileRoute, Link, Navigate, Outlet, useRouterState } from "@tansta
 import { useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { Plus, Search } from "lucide-react";
-import { PageHeader } from "@/components/ui/page-header";
+import { PageHeader } from "@/components/admin/PageHeader";
 import { Input } from "@/components/ui/input";
-import { Button } from "@/components/ui/button";
+import { Button } from "@/components/admin/button";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
-import { Card } from "@/components/ui/card";
+} from "@/components/admin/select";
+import { Card } from "@/components/admin/card";
 import {
   Table,
   TableBody,
@@ -20,8 +20,8 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table";
-import { StatusBadge } from "@/components/ui/status-badge";
+} from "@/components/admin/table";
+import { StatusBadge } from "@/components/admin/status-badge";
 import { useAuth } from "@/lib/auth";
 import { permissions } from "@/lib/permissions";
 import { employeeDisplayStatus, listEmployees } from "@/api/employees";

@@ -2,9 +2,9 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { AlertTriangle, Database, Loader2, Save } from "lucide-react";
-import { PageHeader } from "@/components/ui/page-header";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
+import { PageHeader } from "@/components/admin/PageHeader";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/admin/card";
+import { Button } from "@/components/admin/button";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
@@ -14,7 +14,7 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
+} from "@/components/admin/select";
 import { getTrackingSettings, updateTrackingSettings } from "@/api/settings";
 import { getScreenshotStorageStatus } from "@/api/screenshots";
 import { resolveInitialLoadState } from "@/lib/async-load-state";

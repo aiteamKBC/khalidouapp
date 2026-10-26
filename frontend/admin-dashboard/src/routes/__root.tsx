@@ -6,6 +6,7 @@ import {
   useRouter,
   HeadContent,
   Scripts,
+  type ErrorComponentProps,
 } from "@tanstack/react-router";
 import { useEffect, type ReactNode } from "react";
 import { Toaster } from "@/components/ui/sonner";
@@ -36,7 +37,7 @@ function NotFoundComponent() {
   );
 }
 
-function ErrorComponent({ error, reset }: { error: Error; reset: () => void }) {
+function ErrorComponent({ error, reset }: ErrorComponentProps) {
   const router = useRouter();
   const showDetails = import.meta.env.DEV;
   useEffect(() => {
@@ -51,7 +52,9 @@ function ErrorComponent({ error, reset }: { error: Error; reset: () => void }) {
         </p>
         {showDetails && (
           <pre className="mt-4 max-h-48 overflow-auto rounded-lg border bg-muted/50 p-3 text-left text-xs text-muted-foreground">
-            {error.stack || `${error.name}: ${error.message}`}
+            {error instanceof Error
+              ? error.stack || `${error.name}: ${error.message}`
+              : String(error)}
           </pre>
         )}
         <div className="mt-6 flex flex-wrap justify-center gap-2">

@@ -2,8 +2,8 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, Images, X } from "lucide-react";
 import { useEffect, useState } from "react";
-import { PageHeader } from "@/components/ui/page-header";
-import { Card } from "@/components/ui/card";
+import { PageHeader } from "@/components/admin/PageHeader";
+import { Card } from "@/components/admin/card";
 import {
   Table,
   TableBody,
@@ -11,22 +11,22 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table";
-import { Button } from "@/components/ui/button";
+} from "@/components/admin/table";
+import { Button } from "@/components/admin/button";
 import {
   Dialog,
   DialogContent,
   DialogDescription,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
+} from "@/components/admin/dialog";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
+} from "@/components/admin/select";
 import {
   listMeetings,
   listMeetingScreenshots,
@@ -105,8 +105,7 @@ function MeetingsPage() {
   // A team leader only sees and decides their own team's meetings.
   const isTeamLeader = (user?.teamLeadTeamIds?.length ?? 0) > 0;
   const canReview = Boolean(
-    user &&
-      (user.isSuperAdmin || user.dataScope === "company" || isTeamLeader),
+    user && (user.isSuperAdmin || user.dataScope === "company" || isTeamLeader),
   );
 
   // Keep active-meeting durations ticking without hammering the API.
@@ -170,7 +169,10 @@ function MeetingsPage() {
         title="Meetings"
         description="Review desktop Meeting Mode periods. A meeting can be approved or rejected once it has ended; approving pays the covered in-shift time once, rejecting reverts to the underlying activity."
         actions={
-          <Select value={status} onValueChange={(value) => setStatus(value as MeetingStatus | "all")}>
+          <Select
+            value={status}
+            onValueChange={(value) => setStatus(value as MeetingStatus | "all")}
+          >
             <SelectTrigger className="w-40">
               <SelectValue placeholder="Status" />
             </SelectTrigger>
@@ -227,7 +229,8 @@ function MeetingsPage() {
                         </div>
                       )}
                       <div className="mt-1 text-[11px] font-semibold text-muted-foreground">
-                        Evidence: {meeting.workSessionId ? "linked tracking session" : "desktop record"}
+                        Evidence:{" "}
+                        {meeting.workSessionId ? "linked tracking session" : "desktop record"}
                         {meeting.deviceName ? ` on ${meeting.deviceName}` : ""}
                       </div>
                     </TableCell>
@@ -334,8 +337,8 @@ function MeetingScreenshotsDialog({
         <DialogHeader>
           <DialogTitle>Screenshots during “{meeting?.title}”</DialogTitle>
           <DialogDescription>
-            Existing captures taken by the desktop agent while the meeting was
-            recorded. No new screenshots are triggered by this review.
+            Existing captures taken by the desktop agent while the meeting was recorded. No new
+            screenshots are triggered by this review.
           </DialogDescription>
         </DialogHeader>
         {shots.isLoading ? (

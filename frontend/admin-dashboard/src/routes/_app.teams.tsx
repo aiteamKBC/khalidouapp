@@ -1,20 +1,22 @@
+import { AdminPagination } from "@/components/admin/pagination";
+import { useAdminPagination } from "@/components/admin/useAdminPagination";
 import { createFileRoute, Link, Outlet, useNavigate, useRouterState } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState, type FormEvent } from "react";
 import { Clock3, Plus, RotateCcw, Search, ShieldCheck, UsersRound } from "lucide-react";
-import { PageHeader } from "@/components/ui/page-header";
+import { PageHeader } from "@/components/admin/PageHeader";
 import { Input } from "@/components/ui/input";
-import { Button } from "@/components/ui/button";
+import { Button } from "@/components/admin/button";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
-import { StatusBadge } from "@/components/ui/status-badge";
-import { Card } from "@/components/ui/card";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+} from "@/components/admin/select";
+import { StatusBadge } from "@/components/admin/status-badge";
+import { Card } from "@/components/admin/card";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/admin/dialog";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -26,7 +28,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table";
+} from "@/components/admin/table";
 import { useAuth } from "@/lib/auth";
 import { permissions } from "@/lib/permissions";
 import { addTeamMember, addTeamOwner, createTeam, listTeams } from "@/api/teams";
@@ -34,7 +36,7 @@ import { employeeIsOnline, listEmployees } from "@/api/employees";
 import { listUsers } from "@/api/users";
 import { formatMinutes, formatRelative } from "@/lib/format";
 import { toast } from "sonner";
-import { MetricTile } from "@/components/ui/metric-tile";
+import { MetricTile } from "@/components/admin/MetricTile";
 import type { Team, User } from "@/types";
 
 export const Route = createFileRoute("/_app/teams")({
@@ -133,6 +135,8 @@ function TeamsList() {
     });
   }, [teams.data, q, status, ownerId]);
 
+  const teamPage = useAdminPagination(rows, JSON.stringify([q, status, ownerId]));
+
   function submitCreate(event: FormEvent) {
     event.preventDefault();
     createMutation.mutate();
@@ -170,7 +174,7 @@ function TeamsList() {
         }
       />
 
-      <div className="mb-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="admin-metrics mb-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <MetricTile
           icon={UsersRound}
           value={(teams.data ?? []).length}
@@ -286,7 +290,7 @@ function TeamsList() {
         </Card>
       ) : (
         <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
-          {rows.map((team) => {
+          {teamPage.items.map((team) => {
             const members = (emps.data ?? []).filter((employee) =>
               employee.teamIds.includes(team.id),
             );
@@ -392,7 +396,7 @@ function TeamsList() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {rows.map((team) => {
+            {teamPage.items.map((team) => {
               const members = (emps.data ?? []).filter((employee) =>
                 employee.teamIds.includes(team.id),
               );
@@ -511,6 +515,7 @@ function TeamsList() {
         </Table>
       </Card>
 
+      <AdminPagination {...teamPage} label="Teams" />
       <Dialog
         open={createOpen}
         onOpenChange={(open) => {

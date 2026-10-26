@@ -14,9 +14,9 @@ import {
   Cell,
   Legend,
 } from "recharts";
-import { PageHeader } from "@/components/ui/page-header";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
+import { PageHeader } from "@/components/admin/PageHeader";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/admin/card";
+import { Button } from "@/components/admin/button";
 import { Input } from "@/components/ui/input";
 import { DateInput } from "@/components/ui/date-input";
 import {
@@ -25,7 +25,7 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
+} from "@/components/admin/select";
 import { StatCard } from "@/components/ui/stat-card";
 import { buildReport, fetchEmployeeReport, fetchReportTotals } from "@/api/reports";
 import { listTeams } from "@/api/teams";
