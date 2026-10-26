@@ -30,6 +30,7 @@ export type BackendWorkdayTimeline = {
     task_name?: string | null;
     is_current: boolean;
     work_category?: "extra" | "break_work" | null;
+    saved_break_cover?: boolean;
   }>;
 };
 
@@ -64,6 +65,7 @@ export function mapWorkdayTimeline(row: BackendWorkdayTimeline): WorkdayTimeline
       taskName: interval.task_name ?? undefined,
       isCurrent: interval.is_current,
       workCategory: interval.work_category ?? null,
+      savedBreakCover: interval.saved_break_cover ?? false,
     })),
   };
 }

@@ -8,6 +8,7 @@ import {
   WifiOff,
 } from "lucide-react";
 
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import type { WorkdayIntervalType, WorkdayTimeline as WorkdayTimelineData } from "@/types";
 import {
   formatAttendanceStart,
@@ -16,7 +17,7 @@ import {
   formatSessionStatus,
 } from "@/lib/format";
 
-type DisplayIntervalType = WorkdayIntervalType | "break_work" | "extra" | "leave";
+type DisplayIntervalType = WorkdayIntervalType | "break_work" | "extra" | "leave" | "saved_break";
 
 const intervalStyles: Record<
   DisplayIntervalType,
@@ -44,6 +45,12 @@ const intervalStyles: Record<
     label: "Idle",
     bar: "bg-amber-400",
     badge: "bg-amber-400/15 text-amber-800",
+    icon: Coffee,
+  },
+  saved_break: {
+    label: "Saved break used",
+    bar: "bg-teal-500",
+    badge: "bg-teal-500/15 text-teal-700 dark:text-teal-300",
     icon: Coffee,
   },
   break: {
@@ -88,9 +95,13 @@ function resolveDisplayType(
   intervalType: WorkdayIntervalType,
   workCategory: "extra" | "break_work" | null | undefined,
   approvedLeave: boolean,
+  savedBreakCover?: boolean,
 ): DisplayIntervalType {
   if (approvedLeave) {
     return intervalType === "worked" ? "extra" : "leave";
+  }
+  if (intervalType === "idle" && savedBreakCover) {
+    return "saved_break";
   }
   if (intervalType === "worked" && workCategory === "break_work") {
     return "break_work";
@@ -177,9 +188,7 @@ function PayableBreakdownBar({ financials }: { financials: PayableBreakdown }) {
   );
   return (
     <div className="space-y-2">
-      <span className="block text-xs font-medium text-muted-foreground">
-        Payable adjustments
-      </span>
+      <span className="block text-xs font-medium text-muted-foreground">Payable adjustments</span>
       <div
         className="flex h-3 overflow-hidden rounded-sm bg-muted"
         aria-label="Payable adjustments bar"
@@ -201,18 +210,89 @@ function PayableBreakdownBar({ financials }: { financials: PayableBreakdown }) {
           >
             <span className={`h-2 w-2 rounded-full ${segment.bar}`} />
             {segment.label}
-            <strong className="font-mono">
-              {formatDurationSeconds(segment.seconds)}
-            </strong>
+            <strong className="font-mono">{formatDurationSeconds(segment.seconds)}</strong>
           </span>
         ))}
       </div>
       <p className="text-xs text-muted-foreground">
-        These are payable-policy overlays on the activity above: paid late
-        allowance, delayed-break claims, and approved/pending meeting time are
-        paid; excess lateness is the unpaid remainder after the allowance.
+        These are payable-policy overlays on the activity above: paid late allowance, delayed-break
+        claims, and approved/pending meeting time are paid; excess lateness is the unpaid remainder
+        after the allowance.
       </p>
     </div>
+  );
+}
+
+/**
+ * The day's activity as one proportional bar. Hovering (or focusing) a part
+ * shows what it was, when it ran, how long it lasted and the task worked on.
+ */
+export function WorkdayActivityBar({
+  timeline,
+  className = "h-3",
+}: {
+  timeline: WorkdayTimelineData;
+  className?: string;
+}) {
+  const visibleSeconds = Math.max(
+    1,
+    timeline.intervals.reduce((total, interval) => total + interval.durationSeconds, 0),
+  );
+  return (
+    <TooltipProvider delayDuration={0} disableHoverableContent>
+      <div
+        className={`flex overflow-hidden rounded-sm bg-muted ${className}`}
+        aria-label="Workday activity bar"
+      >
+        {timeline.intervals.map((interval, index) => {
+          const displayType = resolveDisplayType(
+            interval.type,
+            interval.workCategory,
+            timeline.approvedLeave,
+            interval.savedBreakCover,
+          );
+          const style = intervalStyles[displayType];
+          const Icon = style.icon;
+          const showsTask =
+            displayType === "worked" || displayType === "extra" || displayType === "break_work";
+          const taskLabel = showsTask ? (interval.taskName ?? interval.projectName) : undefined;
+          return (
+            <Tooltip key={`${interval.sessionId}-${interval.startedAt}-${index}`}>
+              <TooltipTrigger asChild>
+                <span
+                  tabIndex={0}
+                  aria-label={`${style.label}: ${formatDurationSeconds(interval.durationSeconds)}`}
+                  className={`${style.bar} h-full transition-opacity hover:opacity-75 focus-visible:opacity-75 focus-visible:outline-none`}
+                  style={{ width: `${(interval.durationSeconds / visibleSeconds) * 100}%` }}
+                />
+              </TooltipTrigger>
+              <TooltipContent className="border bg-popover text-popover-foreground shadow-md">
+                <span
+                  className={`inline-flex items-center gap-1.5 rounded px-1.5 py-0.5 font-medium ${style.badge}`}
+                >
+                  <Icon className="h-3.5 w-3.5" />
+                  {style.label}
+                </span>
+                <span className="mt-1.5 block font-mono">
+                  {formatClock(interval.startedAt, timeline.timezone)} –{" "}
+                  {interval.endedAt
+                    ? formatClock(interval.endedAt, timeline.timezone)
+                    : "Until now"}
+                  <strong className="ml-2">
+                    {formatDurationSeconds(interval.durationSeconds)}
+                  </strong>
+                </span>
+                {taskLabel && (
+                  <span className="mt-0.5 block max-w-64 truncate text-muted-foreground">
+                    {taskLabel}
+                  </span>
+                )}
+              </TooltipContent>
+            </Tooltip>
+          );
+        })}
+      </div>
+    </TooltipProvider>
   );
 }
 
@@ -238,10 +318,6 @@ export function WorkdayTimeline({
     );
   }
 
-  const visibleSeconds = Math.max(
-    1,
-    timeline.intervals.reduce((total, interval) => total + interval.durationSeconds, 0),
-  );
   const overtimeSeconds = timeline.intervals.reduce(
     (total, interval) =>
       total +
@@ -289,26 +365,7 @@ export function WorkdayTimeline({
         <Metric label="Untracked" value={formatDurationSeconds(timeline.untrackedSeconds)} />
       </div>
 
-      <div
-        className="flex h-3 overflow-hidden rounded-sm bg-muted"
-        aria-label="Workday activity bar"
-      >
-        {timeline.intervals.map((interval, index) => {
-          const displayType = resolveDisplayType(
-            interval.type,
-            interval.workCategory,
-            timeline.approvedLeave,
-          );
-          return (
-            <span
-              key={`${interval.sessionId}-${interval.startedAt}-${index}`}
-              className={intervalStyles[displayType].bar}
-              style={{ width: `${(interval.durationSeconds / visibleSeconds) * 100}%` }}
-              title={`${intervalStyles[displayType].label}: ${formatDurationSeconds(interval.durationSeconds)}`}
-            />
-          );
-        })}
-      </div>
+      <WorkdayActivityBar timeline={timeline} />
 
       <p className="text-xs text-muted-foreground">
         Untracked is a gap with no device evidence, so it is not counted as worked or idle. Timeline
@@ -324,6 +381,7 @@ export function WorkdayTimeline({
             interval.type,
             interval.workCategory,
             timeline.approvedLeave,
+            interval.savedBreakCover,
           );
           const style = intervalStyles[displayType];
           const Icon = style.icon;

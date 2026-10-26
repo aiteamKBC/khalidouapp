@@ -1,15 +1,15 @@
-"""Employees deleting their own screenshots from the employee portal.
+"""Screenshot deletion: admins only.
 
-Deleting a screenshot removes the active time it tracked (like Hubstaff), is
-refused for someone else's screenshot, and is refused once the day is inside an
-approved / locked / paid payroll run.
+Employees used to delete their own screenshots from the employee portal; that
+was removed, so the portal endpoint no longer exists. Admin deletion still
+removes the active time the screenshot tracked.
 """
 
 from datetime import UTC, date, datetime, time
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -19,7 +19,6 @@ from app.database.session import get_db
 from app.main import app
 from app.models import (
     AdminUser,
-    AuditLog,
     Company,
     Device,
     Employee,
@@ -161,83 +160,17 @@ def env():
         engine.dispose()
 
 
-def test_employee_deletes_own_screenshot_and_its_time(env):
+def test_employees_cannot_delete_screenshots(env):
+    # Removed on 2026-10-25: only admins delete screenshots (and their time).
     client, headers = env["client"], env["headers"]
     screenshot = env["shot"](0)
 
     response = client.delete(f"/api/v1/employee-portal/screenshots/{screenshot.id}", headers=headers)
-    assert response.status_code == 200, response.text
-    assert response.json()["data"] == {"deleted": True, "deducted_seconds": 600}
+    assert response.status_code in (404, 405)
 
     with env["factory"]() as db:
-        row = db.get(Screenshot, screenshot.id)
-        assert row.deleted_at is not None
-        assert row.deleted_time_seconds == 600
-        assert db.get(WorkSession, env["session"].id).deducted_seconds == 600
-        audit = db.scalar(select(AuditLog).where(AuditLog.entity_id == screenshot.id))
-        assert audit.action == "deleted_by_employee"
-        assert audit.admin_user_id is None
-        assert audit.details["deducted_seconds"] == 600
-
-    # Gone from the employee's list, and a second delete is a 404 (time is
-    # deducted once only).
-    listing = client.get(
-        "/api/v1/employee-portal/screenshots", params={"day": WORK_DATE.isoformat()}, headers=headers
-    )
-    assert all(item["id"] != str(screenshot.id) for item in listing.json()["data"])
-    again = client.delete(f"/api/v1/employee-portal/screenshots/{screenshot.id}", headers=headers)
-    assert again.status_code == 404
-
-
-def test_employee_cannot_delete_someone_elses_screenshot(env):
-    client, headers = env["client"], env["headers"]
-    foreign = env["other_shot"](5)
-    response = client.delete(f"/api/v1/employee-portal/screenshots/{foreign.id}", headers=headers)
-    assert response.status_code == 404
-    with env["factory"]() as db:
-        assert db.get(Screenshot, foreign.id).deleted_at is None
-        assert db.get(WorkSession, env["other"][2].id).deducted_seconds == 0
-
-
-@pytest.mark.parametrize("status", ["approved", "locked", "paid"])
-def test_employee_cannot_delete_inside_a_frozen_payroll_period(env, status):
-    client, headers, db = env["client"], env["headers"], env["db"]
-    db.add(
-        PayrollRun(
-            company_id=env["company"].id,
-            month=date(2026, 9, 1),
-            period_start=date(2026, 8, 26),
-            period_end=date(2026, 9, 25),
-            status=status,
-            created_by_admin_user_id=env["admin"].id,
-        )
-    )
-    db.commit()
-    screenshot = env["shot"](10)
-    response = client.delete(f"/api/v1/employee-portal/screenshots/{screenshot.id}", headers=headers)
-    assert response.status_code == 409
-    assert response.json()["error"]["code"] == "PAYROLL_PERIOD_LOCKED"
-    with env["factory"]() as fresh:
-        assert fresh.get(Screenshot, screenshot.id).deleted_at is None
-        assert fresh.get(WorkSession, env["session"].id).deducted_seconds == 0
-
-
-def test_draft_payroll_does_not_block_deletion(env):
-    client, headers, db = env["client"], env["headers"], env["db"]
-    db.add(
-        PayrollRun(
-            company_id=env["company"].id,
-            month=date(2026, 9, 1),
-            period_start=date(2026, 8, 26),
-            period_end=date(2026, 9, 25),
-            status="draft",
-            created_by_admin_user_id=env["admin"].id,
-        )
-    )
-    db.commit()
-    screenshot = env["shot"](15)
-    response = client.delete(f"/api/v1/employee-portal/screenshots/{screenshot.id}", headers=headers)
-    assert response.status_code == 200, response.text
+        assert db.get(Screenshot, screenshot.id).deleted_at is None
+        assert db.get(WorkSession, env["session"].id).deducted_seconds == 0
 
 
 def test_admin_delete_still_deducts_through_the_shared_service(env):

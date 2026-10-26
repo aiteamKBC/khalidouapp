@@ -465,6 +465,9 @@ let idleSecondsBeforeCurrentIdle = 0;
 let eligibleIdleSecondsBeforeCurrentIdle = 0;
 let idleWallClockStartedAt: number | null = null;
 let automaticIdleStartedDuringBreak = false;
+// Idle that the employee's saved break minutes pay for: no idle popup, and the
+// return resumes quietly. `endsAtMs` is when the saved minutes run out.
+let savedBreakCover: { startedAtMs: number; endsAtMs: number } | null = null;
 let lastObservedSystemIdleSeconds: number | null = null;
 let lastObservedOperatingSystemIdleSeconds: number | null = null;
 let lastHandledIdleReturnInputAt = 0;
@@ -2969,6 +2972,7 @@ function finishAutomaticIdleAfterVerification(
   eligibleIdleSecondsBeforeCurrentIdle = runtimeStatus.eligibleIdleSeconds;
   idleWallClockStartedAt = null;
   automaticIdleStartedDuringBreak = false;
+  savedBreakCover = null;
   clearIdleReturnVerification();
   idleResumedAt = now;
   isFinishingAutomaticIdle = true;
@@ -3053,6 +3057,23 @@ async function resumeAutomaticIdle() {
   }
   await finishPromise;
   return { success: true };
+}
+
+/** Saved break minutes left that can pay for idle that starts now. */
+function savedBreakSecondsLeft() {
+  const bank = runtimeStatus.breakBank;
+  if (!bank?.policy_active) return 0;
+  return Math.max(0, Math.floor(bank.remaining_seconds ?? 0));
+}
+
+function showSavedBreakNotification(seconds: number) {
+  if (!Notification.isSupported()) return;
+  const minutes = Math.max(1, Math.round(seconds / 60));
+  new Notification({
+    title: "Using your saved break",
+    body: `You're away, so your saved break time is being used (${minutes} min left). It's paid; no idle is counted until it runs out.`,
+    icon: getAppIconPath(),
+  }).show();
 }
 
 function showIdleStartedNotification() {
@@ -3647,6 +3668,14 @@ function startIdleMonitor() {
       }
       return;
     }
+    if (savedBreakCover && runtimeStatus.trackingStatus !== "idle") {
+      savedBreakCover = null;
+    }
+    if (savedBreakCover && Date.now() >= savedBreakCover.endsAtMs) {
+      // The saved minutes are used up; from here it is ordinary idle.
+      savedBreakCover = null;
+      if (!activeMeeting) showIdleStartedReview();
+    }
     const insideScheduledBreak = isInsideScheduledBreak(new Date());
     if (
       hasReachedIdleThreshold(
@@ -3681,6 +3710,13 @@ function startIdleMonitor() {
         // Idle during a scheduled break is expected and paid: keep the quiet
         // notification and suppress the accountable-idle review popup.
         showIdleStartedNotification();
+      } else if (savedBreakSecondsLeft() > 0) {
+        // Saved break minutes pay for this idle (the server spends them in time
+        // order), so there is nothing to review until they run out.
+        const seconds = savedBreakSecondsLeft();
+        const startedAtMs = idleWallClockStartedAt ?? Date.now();
+        savedBreakCover = { startedAtMs, endsAtMs: startedAtMs + seconds * 1000 };
+        showSavedBreakNotification(seconds);
       } else {
         // Show the review the instant idle begins, not on input return.
         showIdleStartedReview();
@@ -3700,6 +3736,11 @@ function startIdleMonitor() {
         // Real input during Meeting Mode ends the silent idle evidence without
         // opening the ordinary review popup. This preserves genuine activity
         // inside the meeting for either approval or rejection accounting.
+        void resumeAutomaticIdle();
+      } else if (savedBreakCover) {
+        // Back within the saved break minutes: all of it was paid, so resume
+        // without asking.
+        savedBreakCover = null;
         void resumeAutomaticIdle();
       } else {
         showAutomaticIdleReturnReview();
@@ -5875,6 +5916,13 @@ function runtimeStatusPayload() {
     scheduledBreak: runningBreak
       ? { name: runningBreak.name, endsAt: new Date(runningBreak.endMs).toISOString() }
       : null,
+    savedBreakCover:
+      savedBreakCover && runtimeStatus.trackingStatus === "idle"
+        ? {
+            startedAt: new Date(savedBreakCover.startedAtMs).toISOString(),
+            endsAt: new Date(savedBreakCover.endsAtMs).toISOString(),
+          }
+        : null,
     screenshotMonitoringEnabled:
       runtimeStatus.enrolled && trackingConfig.screenshot_enabled,
     screenshotCaptureActive: screenshotBlockReason === null,

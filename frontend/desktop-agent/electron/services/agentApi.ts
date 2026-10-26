@@ -250,6 +250,8 @@ export type AgentWorkdayTimeline = {
     is_current: boolean;
     work_category?: "extra" | "break_work" | null;
     break_paid?: boolean | null;
+    // Idle paid from the employee's saved break minutes.
+    saved_break_cover?: boolean;
   }>;
 };
 

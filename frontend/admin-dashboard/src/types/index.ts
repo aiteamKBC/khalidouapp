@@ -210,6 +210,8 @@ export interface WorkdayInterval {
   taskName?: string;
   isCurrent: boolean;
   workCategory?: "extra" | "break_work" | null;
+  /** Idle paid from the employee's saved break minutes. */
+  savedBreakCover?: boolean;
 }
 
 export interface WorkdayTimeline {

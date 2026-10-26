@@ -924,6 +924,50 @@ def test_attendance_range_stops_at_employee_today(team_client):
         db.close()
 
 
+def test_attendance_period_timelines_cover_worked_days_without_persisting(team_client):
+    client, data = team_client
+    today = local_today("UTC")
+    start_date = today - timedelta(days=6)
+
+    response = client.get(
+        f"/api/v1/attendance/timelines/employee/{data['employee_a'].id}",
+        params={"start_date": start_date.isoformat(), "end_date": today.isoformat()},
+        headers=data["owner_headers"],
+    )
+
+    assert response.status_code == 200, response.text
+    timelines = response.json()["data"]["timelines"]
+    assert list(timelines) == [today.isoformat()]
+    assert timelines[today.isoformat()]["date"] == today.isoformat()
+    assert "intervals" in timelines[today.isoformat()]
+
+    db: Session = data["session_factory"]()
+    try:
+        stored = db.scalars(
+            select(DailyAttendance).where(DailyAttendance.employee_id == data["employee_a"].id)
+        ).all()
+        assert stored == []
+    finally:
+        db.close()
+
+    other_team = client.get(
+        f"/api/v1/attendance/timelines/employee/{data['employee_b'].id}",
+        params={"start_date": start_date.isoformat(), "end_date": today.isoformat()},
+        headers=data["owner_headers"],
+    )
+    assert other_team.status_code in {403, 404}
+
+    too_long = client.get(
+        f"/api/v1/attendance/timelines/employee/{data['employee_a'].id}",
+        params={
+            "start_date": (today - timedelta(days=90)).isoformat(),
+            "end_date": today.isoformat(),
+        },
+        headers=data["owner_headers"],
+    )
+    assert too_long.status_code == 400
+
+
 def test_attendance_range_does_not_rebuild_empty_historical_days(team_client, monkeypatch):
     client, data = team_client
     today = local_today("UTC")

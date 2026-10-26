@@ -246,6 +246,35 @@ def test_saved_break_covers_later_idle_automatically_and_zeroes_the_bank(ctx):
     assert timesheet["payable_seconds"] == SHIFT
 
 
+def test_the_timeline_shows_which_idle_the_saved_break_paid_for(ctx):
+    db, company, employee, device = ctx
+    _activate_policy(db, company)
+    # Save 20m in lunch, then 30m idle at 16:00-16:30: 20m covered, 10m idle.
+    _session_with_events(
+        db, employee, device, start=_dt(9), end=_dt(17),
+        idle_windows=[
+            (_dt(12, 20), _dt(12, 30)),
+            (_dt(15), _dt(15, 15)),
+            (_dt(16), _dt(16, 30)),
+        ],
+    )
+    row, timeline = calculate_daily_attendance(
+        db, employee=employee, work_date=WORK_DATE, now=datetime(2026, 9, 11, tzinfo=UTC)
+    )
+    afternoon = [
+        (item["started_at"], item["ended_at"], bool(item.get("saved_break_cover")))
+        for item in timeline["intervals"]
+        if item["type"] == "idle" and item["started_at"] >= _dt(16).isoformat()
+    ]
+    assert afternoon == [
+        (_dt(16).isoformat(), _dt(16, 20).isoformat(), True),
+        (_dt(16, 20).isoformat(), _dt(16, 30).isoformat(), False),
+    ]
+    assert timeline["saved_break_cover_seconds"] == 20 * 60
+    # Display only: payroll figures are unchanged.
+    assert row.calculation_sources["approved_delayed_break_seconds"] == 20 * 60
+
+
 def test_saved_break_cover_never_exceeds_what_was_saved(ctx):
     db, company, employee, device = ctx
     _activate_policy(db, company)

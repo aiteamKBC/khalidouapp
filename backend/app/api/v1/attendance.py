@@ -44,6 +44,7 @@ from app.services.audit import record_audit_log
 from app.services.attendance import (
     cached_daily_attendance,
     calculate_daily_attendance,
+    calculate_daily_attendance_bulk,
     serialize_daily_attendance,
 )
 from app.services.employee_archive import cap_to_employment_end, current_employee_clause
@@ -1163,5 +1164,81 @@ def employee_attendance_range(
                 "screenshots": sum(row["screenshot_count"] for row in rows),
             },
             "rows": rows,
+        }
+    )
+
+
+@router.get("/timelines/employee/{employee_id}")
+def employee_attendance_timelines(
+    employee_id: UUID,
+    current_admin: Annotated[AdminUser, Depends(get_current_admin)],
+    db: Annotated[Session, Depends(get_db)],
+    start_date: date,
+    end_date: date,
+    team_id: UUID | None = None,
+):
+    """Return each worked day's activity timeline for a bounded period.
+
+    Kept apart from the period ledger so the ledger stays fast; the dashboard
+    loads these bars afterwards. Days are recalculated in memory with bulk reads
+    and nothing is persisted, so viewing a period never rewrites closed days.
+    """
+    require_capability(current_admin, "timesheets.view")
+    if end_date < start_date or (end_date - start_date).days > 62:
+        raise ApiError(
+            "INVALID_ATTENDANCE_PERIOD",
+            "Choose an attendance period of up to 63 days.",
+            400,
+        )
+    employee = ensure_employee_access(db, current_admin, employee_id, team_id)
+    try:
+        timezone = ZoneInfo(employee.timezone or "UTC")
+    except ZoneInfoNotFoundError:
+        timezone = UTC
+    now = datetime.now(UTC)
+    ledger_end_date = cap_to_employment_end(
+        employee, min(end_date, now.astimezone(timezone).date())
+    )
+    if ledger_end_date < start_date:
+        return success_response(data={"timelines": {}})
+    range_start = datetime.combine(start_date, time.min, tzinfo=timezone).astimezone(UTC)
+    range_end = datetime.combine(
+        ledger_end_date + timedelta(days=1), time.min, tzinfo=timezone
+    ).astimezone(UTC)
+
+    # Only days touched by a work session can have a timeline worth drawing.
+    worked_days: set[date] = set()
+    for started_at, ended_at in db.execute(
+        select(WorkSession.started_at, WorkSession.ended_at).where(
+            WorkSession.company_id == current_admin.company_id,
+            WorkSession.employee_id == employee.id,
+            WorkSession.started_at < range_end,
+            or_(WorkSession.ended_at.is_(None), WorkSession.ended_at > range_start),
+        )
+    ).all():
+        first_day = max(start_date, _session_utc(started_at).astimezone(timezone).date())
+        last_day = min(
+            ledger_end_date,
+            (_session_utc(ended_at) if ended_at is not None else now).astimezone(timezone).date(),
+        )
+        cursor = first_day
+        while cursor <= last_day:
+            worked_days.add(cursor)
+            cursor += timedelta(days=1)
+
+    results = calculate_daily_attendance_bulk(
+        db,
+        company_id=current_admin.company_id,
+        requests=[(employee, work_date) for work_date in sorted(worked_days)],
+        now=now,
+        existing_by_key={},
+        persist=False,
+    )
+    return success_response(
+        data={
+            "timelines": {
+                work_date.isoformat(): timeline
+                for (_, work_date), (_, timeline) in results.items()
+            }
         }
     )

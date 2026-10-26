@@ -100,3 +100,19 @@ test("only paid break blocks count, and the running break grows live", () => {
   // No running break: use the durations the server sent.
   assert.equal(paidBreakSecondsToday(intervals, now, null), 1800 + 60);
 });
+
+test("idle paid from saved break minutes counts like a paid break", () => {
+  const at = (clock: string) => `2026-10-25T${clock}:00.000Z`;
+  const intervals = [
+    { type: "idle", started_at: at("15:00"), duration_seconds: 600, is_current: false, saved_break_cover: true },
+    { type: "idle", started_at: at("15:10"), duration_seconds: 300, is_current: false, saved_break_cover: false },
+    { type: "idle", started_at: at("16:00"), duration_seconds: 60, is_current: true, saved_break_cover: true },
+  ];
+  const now = Date.parse(at("16:05"));
+  // The running cover grows live until the saved minutes run out at 16:08.
+  assert.equal(paidBreakSecondsToday(intervals, now, null, Date.parse(at("16:08"))), 600 + 300);
+  assert.equal(
+    paidBreakSecondsToday(intervals, Date.parse(at("16:20")), null, Date.parse(at("16:08"))),
+    600 + 480,
+  );
+});

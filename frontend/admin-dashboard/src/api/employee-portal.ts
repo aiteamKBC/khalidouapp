@@ -399,15 +399,6 @@ export const createEmployeeLeaveRequest = (
     token,
   );
 
-/** Deletes the employee's own screenshot and the tracked time it represents. */
-export function deleteEmployeeScreenshot(token: string, screenshotId: string) {
-  return apiFetch<{ deleted: boolean; deducted_seconds: number }>(
-    `/employee-portal/screenshots/${screenshotId}`,
-    { method: "DELETE" },
-    token,
-  );
-}
-
 export async function employeeScreenshots(
   token: string,
   day?: string,

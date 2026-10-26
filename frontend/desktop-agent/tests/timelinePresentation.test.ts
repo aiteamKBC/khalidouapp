@@ -103,3 +103,9 @@ test("the authoritative timeline replaces the local sync fallback", () => {
     },
   );
 });
+
+test("idle paid from saved break minutes has its own row type", () => {
+  assert.equal(timelineDisplayType("idle", false, null, true), "saved_break");
+  assert.equal(timelineDisplayType("idle", false, null, false), "idle");
+  assert.equal(TIMELINE_LABELS.saved_break, "Saved break used");
+});

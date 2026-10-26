@@ -819,6 +819,12 @@ function App() {
   // Away during a scheduled break: paid break time, never shown as idle.
   const onScheduledBreak =
     isTracking && isIdleState && !isPaused && Boolean(status.scheduledBreak);
+  // Away while saved break minutes pay for it: also not shown as idle.
+  const onSavedBreak =
+    isTracking && isIdleState && !isPaused && Boolean(status.savedBreakCover);
+  const savedBreakEndsAtMs = status.savedBreakCover
+    ? Date.parse(status.savedBreakCover.endsAt)
+    : null;
   const timerTone = isPaused
     ? "paused"
     : isTracking && isExtraTime
@@ -830,6 +836,8 @@ function App() {
           : "stopped";
   const statusText = onScheduledBreak
     ? `On break · ${status.scheduledBreak?.name ?? "Break"}`
+    : onSavedBreak && savedBreakEndsAtMs !== null
+    ? `Saved break · ${Math.max(0, Math.ceil((savedBreakEndsAtMs - Date.now()) / 60_000))} min left`
     : isNotWorkingOutsideShift
       ? "Off shift"
       : isPaused && status.trackingMovedToDevice
@@ -848,7 +856,10 @@ function App() {
     : null;
   const displayedTimerSeconds = mainTimerSeconds({
     isAutomaticIdle:
-      status.trackingStatus === "idle" && !isPaused && !onScheduledBreak,
+      status.trackingStatus === "idle" &&
+      !isPaused &&
+      !onScheduledBreak &&
+      !onSavedBreak,
     isExtraTime,
     currentIdleSeconds: status.currentIdleSeconds,
     extraSeconds,
@@ -857,6 +868,9 @@ function App() {
       status.todayTimeline?.intervals ?? [],
       Date.now(),
       Number.isFinite(runningBreakEndsAtMs) ? runningBreakEndsAtMs : null,
+      savedBreakEndsAtMs !== null && Number.isFinite(savedBreakEndsAtMs)
+        ? savedBreakEndsAtMs
+        : null,
     ),
   });
 
@@ -2785,6 +2799,7 @@ function Timeline({
               interval.type,
               Boolean(timeline.approved_leave),
               interval.work_category,
+              interval.saved_break_cover,
             );
             const displaysWork =
               displayType === "worked" ||

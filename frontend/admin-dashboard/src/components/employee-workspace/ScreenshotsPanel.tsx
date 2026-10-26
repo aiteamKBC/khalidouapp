@@ -1,10 +1,7 @@
 import { useState } from "react";
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Trash2 } from "lucide-react";
-import { toast } from "sonner";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import {
   employeeScreenshots,
-  deleteEmployeeScreenshot,
   type PortalScreenshot,
 } from "@/api/employee-portal";
 import { retryTransientRequest } from "@/api/client";
@@ -12,25 +9,12 @@ import { SCREENSHOT_REFRESH_INTERVAL_MS } from "@/lib/screenshot-display";
 import { jwtSubjectScopeKey } from "@/lib/private-query-scope";
 import { formatDateTime } from "@/lib/format";
 import { ProtectedImage } from "@/components/ProtectedImage";
-import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
 import { todayISO } from "./format";
 
 export default function ScreenshotsPanel({ token }: { token: string }) {
-  const client = useQueryClient();
   const [day, setDay] = useState(todayISO);
   const [preview, setPreview] = useState<PortalScreenshot | null>(null);
-  const [toDelete, setToDelete] = useState<PortalScreenshot | null>(null);
   const scope = ["employee-portal", jwtSubjectScopeKey(token)];
   const screenshots = useQuery({
     queryKey: [...scope, "screenshots", day],
@@ -41,28 +25,13 @@ export default function ScreenshotsPanel({ token }: { token: string }) {
     placeholderData: keepPreviousData,
     retry: retryTransientRequest,
   });
-  const remove = useMutation({
-    mutationFn: (shot: PortalScreenshot) => deleteEmployeeScreenshot(token, shot.id),
-    onSuccess: async (result, shot) => {
-      setToDelete(null);
-      if (preview?.id === shot.id) setPreview(null);
-      toast.success(
-        `Screenshot deleted. ${Math.round(result.deducted_seconds / 60)} minutes removed from tracked time.`,
-      );
-      await client.invalidateQueries({ queryKey: scope });
-    },
-    onError: (error) => {
-      setToDelete(null);
-      toast.error(error.message);
-    },
-  });
   return (
     <section className="k-card p-3.5">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="font-ew-heading text-sm font-semibold text-ew-plum">My screenshots</h2>
           <p className="mt-1 text-xs text-ew-muted">
-            Review your captured work. Deleting a screenshot also deducts its tracked time.
+            Review your captured work for the selected day.
           </p>
         </div>
         <div>
@@ -113,16 +82,8 @@ export default function ScreenshotsPanel({ token }: { token: string }) {
                 className="aspect-video w-full object-cover"
               />
             </button>
-            <figcaption className="flex items-center justify-between gap-2 p-2 text-xs text-ew-muted">
-              <span>{formatDateTime(shot.captured_at)}</span>
-              <button
-                type="button"
-                className="rounded p-2 text-ew-bad hover:bg-ew-bad-2"
-                onClick={() => setToDelete(shot)}
-                aria-label={`Delete screenshot from ${formatDateTime(shot.captured_at)}`}
-              >
-                <Trash2 className="h-4 w-4" />
-              </button>
+            <figcaption className="p-2 text-xs text-ew-muted">
+              {formatDateTime(shot.captured_at)}
             </figcaption>
           </figure>
         ))}
@@ -139,51 +100,13 @@ export default function ScreenshotsPanel({ token }: { token: string }) {
                 alt="Full work screenshot preview"
                 className="max-h-[75vh] w-full rounded-lg object-contain"
               />
-              <div className="flex items-center justify-between gap-3">
-                <p className="text-xs text-muted-foreground">
-                  {formatDateTime(preview.captured_at)}
-                </p>
-                <Button
-                  variant="outline"
-                  className="text-destructive"
-                  onClick={() => setToDelete(preview)}
-                >
-                  <Trash2 className="mr-2 h-4 w-4" />
-                  Delete screenshot
-                </Button>
-              </div>
+              <p className="text-xs text-muted-foreground">
+                {formatDateTime(preview.captured_at)}
+              </p>
             </>
           ) : null}
         </DialogContent>
       </Dialog>
-      <AlertDialog
-        open={toDelete !== null}
-        onOpenChange={(open) => !open && !remove.isPending && setToDelete(null)}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete this screenshot?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Deleting this screenshot also removes{" "}
-              {toDelete ? `about ${Math.round(toDelete.tracked_seconds / 60)} minutes of` : "its"}{" "}
-              tracked time. Those minutes will not be paid. This cannot be undone.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={remove.isPending}>Keep it</AlertDialogCancel>
-            <AlertDialogAction
-              className="bg-destructive text-destructive-foreground"
-              disabled={remove.isPending}
-              onClick={(event) => {
-                event.preventDefault();
-                if (toDelete) remove.mutate(toDelete);
-              }}
-            >
-              {remove.isPending ? "Deleting…" : "Delete screenshot and time"}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </section>
   );
 }
