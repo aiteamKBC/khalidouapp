@@ -1468,6 +1468,7 @@ function App() {
       : !isTrackingStart &&
         !alert.outsideScheduledShift &&
         alert.eligibleLostSeconds > 0;
+    let idleReason = "";
     let result: SweetAlertResult;
     try {
       result = await Swal.fire({
@@ -1488,6 +1489,20 @@ function App() {
               ? `Input was detected after ${formatDuration(alert.lostSeconds)} away. Choose Continue to resume now; ${formatDuration(alert.eligibleLostSeconds)} inside your paid shift remains available to explain.`
               : `Input was detected after ${formatDuration(alert.lostSeconds)} away. Choose Continue to resume tracking now.`,
         icon: "warning",
+        input: canRequestManualTime ? "textarea" : undefined,
+        inputLabel: "Reason (for idle time explanation)",
+        inputPlaceholder:
+          "Client call, meeting, offline work, or a system issue...",
+        inputAttributes: {
+          maxlength: "1000",
+          rows: "3",
+          "aria-label": "Reason for idle time",
+        },
+        willClose: (popup) => {
+          // The explanation action dismisses the alert, so SweetAlert does
+          // not include the input in result.value. Preserve it for the form.
+          idleReason = popup.querySelector("textarea")?.value.trim() ?? "";
+        },
         showDenyButton: true,
         showCancelButton: canRequestManualTime,
         confirmButtonText: isTrackingStart
@@ -1587,9 +1602,7 @@ function App() {
         }
         setTimeRequestError(null);
         setTimeRequestSuccess(null);
-        setTimeRequestReason(
-          "Offline meeting or work completed while away from the computer.",
-        );
+        setTimeRequestReason(idleReason);
         setExpandedRequest("idle");
         setActiveView("requests");
         // The period is listed once the server has the idle end. Online, the
