@@ -1,0 +1,21 @@
+/* Keep the native window rounded across every page, size and display mode. */
+html,
+body,
+#root {
+  background: transparent !important;
+  border-radius: 24px;
+}
+
+html {
+  /* Include dialogs rendered outside React's root in the transparent corners. */
+  clip-path: inset(0 round 24px);
+}
+
+#root {
+  overflow: hidden;
+}
+
+.readdy-tracker-ui.readdy-tracker-ui.tracker-frame.tracker-native,
+.workspace-login.desktop-login {
+  border-radius: 24px;
+}

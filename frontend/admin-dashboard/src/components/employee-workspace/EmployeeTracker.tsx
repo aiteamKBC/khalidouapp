@@ -14,6 +14,7 @@ import { TrackerFrame, TrackerStage } from "../tracker-ui/TrackerWorkspace";
 import type { Employee, TimeSummary } from "./model";
 import { WorkspaceIcon } from "./WorkspaceIcon";
 import { countedSeconds } from "./model";
+import type { Appearance, AppearancePatch } from "../../../../shared/appearance-store";
 
 export default function EmployeeTracker({
   token,
@@ -25,6 +26,8 @@ export default function EmployeeTracker({
   shiftLabel,
   theme,
   onThemeChange,
+  appearance,
+  onAppearanceChange,
   onDashboard,
   onLogout,
   onProfile,
@@ -42,6 +45,8 @@ export default function EmployeeTracker({
   shiftLabel: string;
   theme: "light" | "dark";
   onThemeChange: () => void;
+  appearance: Appearance;
+  onAppearanceChange: (patch: AppearancePatch) => void;
   onDashboard: () => void;
   onLogout: () => void;
   onProfile: () => void;
@@ -103,6 +108,8 @@ export default function EmployeeTracker({
       logo="/khaliduo-icon.png"
       theme={theme}
       onThemeChange={onThemeChange}
+      appearance={appearance}
+      onAppearanceChange={onAppearanceChange}
       sections={[
         { id: "tracker", label: "Tracker", icon: "ri-timer-line" },
         { id: "screenshots", label: "Screenshots", icon: "ri-image-line" },
@@ -196,12 +203,16 @@ export default function EmployeeTracker({
           }
           screenshotTime={time(screenshot?.captured_at)}
           onOpenShots={() => setView("screenshots")}
+          onOpenAttendance={() => setView("attendance")}
+          synced={!refreshError}
           timeline={summary.todayTimeline.intervals.map((item, index) => ({
             id: `${item.sessionId}-${index}`,
             label: item.taskName ?? item.type,
             time: `${time(item.startedAt) ?? "—"} – ${item.isCurrent ? "Until now" : (time(item.endedAt) ?? "—")}`,
             seconds: item.durationSeconds,
             kind: item.type,
+            current: item.isCurrent,
+            category: item.workCategory,
           }))}
         >
           {note && !taskId && (

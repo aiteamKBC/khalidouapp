@@ -20,6 +20,7 @@ export function ReaddyHome({
   onProjectChange,
   onTaskChange,
   onTrackingToggle,
+  onTakeBreak,
   changingTracking,
   submittingTask,
   sessionNote,
@@ -31,6 +32,8 @@ export function ReaddyHome({
   children,
   recentScreenshots,
   onOpenScreenshots,
+  onOpenAttendance,
+  onEndShift,
 }: {
   status: AgentStatus;
   workedSeconds: number;
@@ -40,6 +43,7 @@ export function ReaddyHome({
   onProjectChange: (id: string) => void;
   onTaskChange: (id: string) => void;
   onTrackingToggle: () => void;
+  onTakeBreak: () => void;
   changingTracking: boolean;
   submittingTask: boolean;
   sessionNote: string;
@@ -51,6 +55,8 @@ export function ReaddyHome({
   children: ReactNode;
   recentScreenshots: RecentScreenshot[] | null;
   onOpenScreenshots: () => void;
+  onOpenAttendance: () => void;
+  onEndShift: () => void;
 }) {
   const today = status.timeSummary?.today;
   const running =
@@ -86,7 +92,7 @@ export function ReaddyHome({
         onNoteChange={onSessionNoteChange}
         running={running}
         stateLabel={
-          status.trackingPaused
+          status.breakStartedAt ? "On break" : status.trackingPaused
             ? "Paused"
             : status.scheduledBreak
               ? "On break"
@@ -120,6 +126,14 @@ export function ReaddyHome({
         )}
         lastActivityAt={time(status.todayTimeline?.last_activity_at)}
         onToggle={onTrackingToggle}
+        onTakeBreak={onTakeBreak}
+        breakStartedAt={status.breakStartedAt}
+        breakElapsedSeconds={status.breakElapsedSeconds}
+        onEndShift={onEndShift}
+        onOpenAttendance={onOpenAttendance}
+        deviceLabel={status.deviceId?.slice(0, 8).toUpperCase()}
+        synced={status.connectionStatus === "online"}
+        screenshotsEnabled={status.screenshotMonitoringEnabled}
         controlBusy={changingTracking || submittingTask}
         onExplainIdle={() =>
           document
@@ -146,6 +160,8 @@ export function ReaddyHome({
               (item.is_current ? "Until now" : (time(item.ended_at) ?? "—")),
             seconds: item.duration_seconds,
             kind: item.type,
+            current: item.is_current,
+            category: item.work_category,
           }),
         )}
       >
@@ -160,10 +176,10 @@ export function ReaddyHome({
           </p>
         )}
       </TrackerStage>
-      {taskRequest}
-      {manualRequest}
       <details className="rd-card rd-workday-details">
-        <summary>Workday details &amp; screenshots</summary>
+        <summary>Requests &amp; workday details</summary>
+        {taskRequest}
+        {manualRequest}
         {children}
       </details>
     </section>

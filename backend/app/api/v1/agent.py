@@ -12,6 +12,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import DeviceAuthContext, get_current_device, get_current_employee
+from app.services.appearance import AppearanceUpdate, read_appearance, write_appearance
 from app.api.v1.employee_portal import (
     manual_request_status_seconds,
     period_summary,
@@ -141,6 +142,22 @@ from app.services.attendance import calculate_daily_attendance
 from app.services.device_location import refresh_device_location
 
 router = APIRouter(prefix="/agent", tags=["desktop-agent"])
+
+@router.get("/appearance")
+def get_appearance(
+    context: Annotated[DeviceAuthContext, Depends(get_current_device)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    return success_response(data=read_appearance(db, context.device.company_id, context.device.employee_id))
+
+
+@router.patch("/appearance")
+def update_appearance(
+    payload: AppearanceUpdate,
+    context: Annotated[DeviceAuthContext, Depends(get_current_device)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    return success_response(data=write_appearance(db, context.device.company_id, context.device.employee_id, payload))
 logger = logging.getLogger(__name__)
 
 DEFAULT_DAILY_TARGET_SECONDS = 8 * 60 * 60

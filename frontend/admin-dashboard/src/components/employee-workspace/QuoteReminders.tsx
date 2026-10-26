@@ -4,7 +4,7 @@ import {
   consumeDueQuote,
   defaultQuoteSettings,
   quoteAt,
-  readQuoteSettings,
+  loadQuoteSettings,
   validQuoteMinutes,
   type QuoteLanguage,
 } from "./quote-reminders";
@@ -20,7 +20,7 @@ export default function QuoteReminders({
 }) {
   const storageKey = `khaliduo:quote-reminders:v1:${employeeId}`;
   const [settings, setSettings] = useState(defaultQuoteSettings);
-  const [enabled, setEnabled] = useState(false);
+  const [enabled, setEnabled] = useState(true);
   const [minutes, setMinutes] = useState("60");
   const [language, setLanguage] = useState<QuoteLanguage>("both");
   const [message, setMessage] = useState<string | null>(null);
@@ -29,12 +29,12 @@ export default function QuoteReminders({
 
   useEffect(() => {
     let active = true;
-    const read = () => readQuoteSettings(localStorage.getItem(storageKey));
+    const read = () => loadQuoteSettings(localStorage, storageKey);
     const refresh = () => {
       try {
         if (active) setSettings(read());
       } catch {
-        /* Remains off if storage is unavailable. */
+        /* Delivery waits until the preference and deadline can be saved. */
       }
     };
     refresh();
@@ -121,7 +121,7 @@ export default function QuoteReminders({
         onClose={onClose}
         eyebrow="Personal preferences"
         title="Quote reminders"
-        description="A little encouragement, at an interval you choose."
+        description="Enabled by default. Change the interval or turn reminders off here."
         footer={
           <button
             type="submit"

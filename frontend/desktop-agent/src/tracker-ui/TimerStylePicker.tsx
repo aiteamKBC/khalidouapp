@@ -48,7 +48,9 @@ export default function TimerStylePicker({ value, onChange, variant = "inline" }
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") setOpen(false);
     };
-    const onScroll = () => setOpen(false);
+    const onScroll = () => {
+      if (btnRef.current) setPos(panelPosition(btnRef.current, variant));
+    };
     document.addEventListener("mousedown", onPointerDown);
     document.addEventListener("keydown", onKeyDown);
     window.addEventListener("resize", onScroll);
@@ -59,7 +61,7 @@ export default function TimerStylePicker({ value, onChange, variant = "inline" }
       window.removeEventListener("resize", onScroll);
       window.removeEventListener("scroll", onScroll, true);
     };
-  }, [open]);
+  }, [open, variant]);
 
   const pick = (next: TimerStyle) => {
     onChange(next);

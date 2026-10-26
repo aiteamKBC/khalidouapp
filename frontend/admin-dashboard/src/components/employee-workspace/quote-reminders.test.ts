@@ -4,23 +4,47 @@ import {
   consumeDueQuote,
   defaultQuoteSettings,
   readQuoteSettings,
+  loadQuoteSettings,
   validQuoteMinutes,
   quoteAt,
 } from "./quote-reminders.ts";
 
-test("reminders require opt-in and a valid saved deadline", () => {
-  assert.equal(consumeDueQuote(defaultQuoteSettings(), Date.now()), null);
-  for (const raw of [
-    null,
-    "broken",
-    "{}",
-    JSON.stringify({ ...defaultQuoteSettings(), enabled: true }),
-  ]) {
-    assert.deepEqual(readQuoteSettings(raw), defaultQuoteSettings());
+test("reminders default to enabled with the first quote after one hour", () => {
+  const now = 1000;
+  const defaults = defaultQuoteSettings(now);
+  assert.equal(defaults.enabled, true);
+  assert.equal(defaults.minutes, 60);
+  assert.equal(defaults.nextAt, now + 60 * 60_000);
+  assert.equal(consumeDueQuote(defaults, now), null);
+  assert.equal(consumeDueQuote(defaults, defaults.nextAt - 1), null);
+  assert.ok(consumeDueQuote(defaults, defaults.nextAt));
+  for (const raw of [null, "broken", "{}", JSON.stringify({ ...defaults, nextAt: 0 })]) {
+    assert.deepEqual(readQuoteSettings(raw, now), defaults);
   }
   for (const minutes of [0, -1, 1.5, 1441, NaN, Infinity])
     assert.equal(validQuoteMinutes(minutes), false);
   for (const minutes of [1, 17, 1440]) assert.equal(validQuoteMinutes(minutes), true);
+});
+
+test("initialization persists one deadline across polling and reloads", () => {
+  const values = new Map<string, string>();
+  const storage = {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => {
+      values.set(key, value);
+    },
+  };
+  const first = loadQuoteSettings(storage, "employee-A", 1000);
+  assert.equal(first.enabled, true);
+  assert.deepEqual(loadQuoteSettings(storage, "employee-A", 2000), first);
+  assert.deepEqual(loadQuoteSettings(storage, "employee-A", first.nextAt), first);
+  assert.ok(consumeDueQuote(loadQuoteSettings(storage, "employee-A", first.nextAt), first.nextAt));
+  const disabled = { ...first, enabled: false, nextAt: 0 };
+  storage.setItem("employee-A", JSON.stringify(disabled));
+  assert.deepEqual(loadQuoteSettings(storage, "employee-A", 10_000_000), disabled);
+  assert.equal(consumeDueQuote(disabled, 10_000_000), null);
+  assert.equal(loadQuoteSettings(storage, "employee-B", 1000).enabled, true);
+  assert.deepEqual(loadQuoteSettings(storage, "employee-A", 1000), disabled);
 });
 
 test("one overdue quote schedules from now and does not replay missed intervals", () => {

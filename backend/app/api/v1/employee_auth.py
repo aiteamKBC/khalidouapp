@@ -21,8 +21,25 @@ from app.schemas.employee_portal import (
 )
 from app.services.person_access import ensure_tracked_employee
 from app.services.rate_limit import enforce_rate_limit
+from app.services.appearance import AppearanceUpdate, read_appearance, write_appearance
 
 router = APIRouter(prefix="/employee-auth", tags=["employee-auth"])
+
+@router.get("/appearance")
+def get_appearance(
+    employee: Annotated[Employee, Depends(get_current_employee)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    return success_response(data=read_appearance(db, employee.company_id, employee.id))
+
+
+@router.patch("/appearance")
+def update_appearance(
+    payload: AppearanceUpdate,
+    employee: Annotated[Employee, Depends(get_current_employee)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    return success_response(data=write_appearance(db, employee.company_id, employee.id, payload))
 
 
 def validate_avatar(value: str | None) -> str | None:

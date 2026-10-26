@@ -1,3 +1,7 @@
+import DesktopLogin from "./DesktopLogin";
+import { useAppearance } from "./useAppearance";
+import { useQuoteReminders } from "./useQuoteReminders";
+import "./quote-reminders.css";
 import { TrackerFrame } from "./tracker-ui/TrackerWorkspace";
 import {
   useCallback,
@@ -32,6 +36,7 @@ import {
   totalRequestableIdleMinutes,
 } from "./idleRequests";
 import { OperationTimeoutError, withOperationTimeout } from "./promiseTimeout";
+import { createStatusReader } from "./statusReader";
 import { toValidDate } from "./safeDate";
 import { ShiftRescheduleCard } from "./ShiftRescheduleCard";
 import { breakStatusAt, todaysBreaks } from "./breakSchedule";
@@ -529,7 +534,15 @@ function App() {
   >(null);
   const [isLoadingScreenshots, setIsLoadingScreenshots] = useState(false);
   const [screenshotError, setScreenshotError] = useState<string | null>(null);
-  const [theme, setTheme] = useState<"light" | "dark">(initialTheme);
+  const [loginTheme, setLoginTheme] = useState<"light" | "dark">(initialTheme);
+  const { appearance, updateAppearance } = useAppearance(status.appearanceScope);
+  const quoteReminders = useQuoteReminders(
+    status.enrolled ? (status.appearanceScope ?? status.deviceId) : null,
+  );
+  const theme = status.enrolled && status.appearanceScope ? appearance.mode : loginTheme;
+  const toggleTheme = () => status.enrolled && updateAppearance
+    ? updateAppearance({ mode: theme === "dark" ? "light" : "dark" })
+    : setLoginTheme(current => current === "dark" ? "light" : "dark");
   const shownIdleAlertId = useRef<string | null>(null);
   const screenshotsLoadedForEnrollment = useRef(false);
   const lastLoadedScreenshotAt = useRef<string | null>(null);
@@ -539,43 +552,29 @@ function App() {
     "Open Khaliduo desktop app to enroll this device. The browser preview cannot access the secure desktop identity store.";
 
   useEffect(() => {
-    let mounted = true;
-
-    async function loadStatus() {
-      const nextStatus = await window.khaliduo?.getAgentStatus();
-      if (mounted && nextStatus) {
-        setStatus(nextStatus);
-        if (nextStatus.lastIdleAlert) {
-          void showIdleAlert(nextStatus.lastIdleAlert);
-        }
-      }
-    }
-
     if (!window.khaliduo) {
       setEnrollmentError(desktopRuntimeMessage);
       return undefined;
     }
 
-    void loadStatus();
+    const statusReader = createStatusReader(
+      () => window.khaliduo!.getAgentStatus(),
+      (nextStatus) => {
+        setStatus(nextStatus);
+        if (nextStatus.lastIdleAlert) void showIdleAlert(nextStatus.lastIdleAlert);
+      },
+    );
+    void statusReader.poll();
     const removeIdleAlertListener =
       window.khaliduo.onIdleAlert?.((alert) => {
         void showIdleAlert(alert);
       }) ?? (() => undefined);
     const removeStatusChangedListener =
-      window.khaliduo.onStatusChanged?.((nextStatus) => {
-        if (!mounted) return;
-        setStatus(nextStatus);
-        // The native event and the status snapshot can race when the mouse
-        // becomes active again. Re-open the mandatory idle review from either
-        // source so it cannot be missed or appear behind another window.
-        if (nextStatus.lastIdleAlert) {
-          void showIdleAlert(nextStatus.lastIdleAlert);
-        }
-      }) ?? (() => undefined);
-    const interval = window.setInterval(() => void loadStatus(), 1000);
+      window.khaliduo.onStatusChanged?.(statusReader.push) ?? (() => undefined);
+    const interval = window.setInterval(() => void statusReader.poll(), 1000);
 
     return () => {
-      mounted = false;
+      statusReader.stop();
       removeIdleAlertListener();
       removeStatusChangedListener();
       window.clearInterval(interval);
@@ -841,20 +840,20 @@ function App() {
   const statusText = onScheduledBreak
     ? `On break · ${status.scheduledBreak?.name ?? "Break"}`
     : onSavedBreak && savedBreakEndsAtMs !== null
-    ? `Saved break · ${Math.max(0, Math.ceil((savedBreakEndsAtMs - Date.now()) / 60_000))} min left`
-    : isNotWorkingOutsideShift
-      ? "Off shift"
-      : isPaused && status.trackingMovedToDevice
-        ? `Tracking on ${status.trackingMovedToDevice}`
-        : isPaused
-          ? "Paused"
-          : isTracking
-            ? isExtraTime
-              ? "Extra time"
-              : isIdleState
-                ? "Shift idle"
-                : "Paid shift"
-            : "No timer running";
+      ? `Saved break · ${Math.max(0, Math.ceil((savedBreakEndsAtMs - Date.now()) / 60_000))} min left`
+      : isNotWorkingOutsideShift
+        ? "Off shift"
+        : isPaused && status.trackingMovedToDevice
+          ? `Tracking on ${status.trackingMovedToDevice}`
+          : isPaused
+            ? "Paused"
+            : isTracking
+              ? isExtraTime
+                ? "Extra time"
+                : isIdleState
+                  ? "Shift idle"
+                  : "Paid shift"
+              : "No timer running";
   const runningBreakEndsAtMs = status.scheduledBreak
     ? Date.parse(status.scheduledBreak.endsAt)
     : null;
@@ -1314,20 +1313,58 @@ function App() {
     }
   }
 
-  async function handleTrackingToggle() {
-    if (!window.khaliduo || !status.enrolled) return;
+  async function handleEndShift() {
+    if (!window.khaliduo || !status.enrolled || isChangingTracking) return;
+    const confirmation = await Swal.fire({
+      title: "End your shift?",
+      text: "Your recorded time will be saved and work tracking will stop. Workplace captures continue according to company policy.",
+      icon: "question",
+      showCancelButton: true,
+      confirmButtonText: "End shift",
+      cancelButtonText: "Keep working",
+      confirmButtonColor: "#7c5cff",
+      focusCancel: true,
+    });
+    if (!confirmation.isConfirmed) return;
+    setIsChangingTracking(true);
+    try {
+      const result = await withOperationTimeout(
+        window.khaliduo.endShift(),
+        TRACKING_CONTROL_TIMEOUT_MS,
+        "Ending the shift is still syncing. Your recorded time remains saved locally.",
+      );
+      setTrackingControlMessage(
+        result.message ??
+          (result.success
+            ? "Shift ended. Your recorded time is saved."
+            : "Could not end the shift."),
+      );
+      setStatus(
+        await withOperationTimeout(window.khaliduo.getAgentStatus(), 2_000),
+      );
+    } catch (error) {
+      setTrackingControlMessage(
+        error instanceof Error ? error.message : "Could not end the shift.",
+      );
+    } finally {
+      setIsChangingTracking(false);
+    }
+  }
+
+  async function handleTrackingToggle(takeBreak = false) {
+    if (!window.khaliduo || !status.enrolled || isChangingTracking) return;
     setTrackingControlMessage(null);
     setIsChangingTracking(true);
     try {
-      const shouldResume =
+      const shouldResume = !takeBreak && (
         status.trackingPaused ||
         status.trackingStatus === "paused" ||
         status.trackingStatus === "offline" ||
-        status.trackingStatus === "error";
+        status.trackingStatus === "error");
       const result = await withOperationTimeout(
         shouldResume
           ? window.khaliduo.resumeTracking()
-          : window.khaliduo.pauseTracking(),
+          : window.khaliduo.pauseTracking(takeBreak ? { takeBreak: true } : undefined),
         TRACKING_CONTROL_TIMEOUT_MS,
         "Tracking control did not respond within 20 seconds.",
       );
@@ -1714,6 +1751,61 @@ function App() {
     status.updateStatus === "available" ||
     status.updateStatus === "installing";
 
+  const updateNotice = (status.updateRequired ||
+    ["available", "downloading", "ready", "installing"].includes(
+      status.updateStatus,
+    )) && (
+    <section className="k-update" role="status" aria-live="assertive">
+      <strong>
+        Required update {status.updateVersion ? `v${status.updateVersion}` : ""}
+      </strong>
+      <span>
+        {status.updateStatus === "installing"
+          ? "Installing automatically now. Khaliduo will restart when it finishes."
+          : status.updateStatus === "ready"
+            ? "Downloaded and ready. Automatic installation is starting now; you can also click Install update."
+            : status.updateStatus === "downloading"
+              ? `Downloading: ${Math.round(status.updatePercent ?? 0)}%`
+              : status.updateStatus === "available"
+                ? "Preparing the required download..."
+                : status.updateStatus === "error"
+                  ? "This version of Khaliduo is no longer supported and the update could not be downloaded yet. Khaliduo keeps retrying every few minutes; check the internet connection."
+                  : "This version of Khaliduo is no longer supported. Looking for the update now..."}
+      </span>
+      {status.updateRequired &&
+        ["error", "idle", "up-to-date", "ready"].includes(
+          status.updateStatus,
+        ) && (
+          <button
+            type="button"
+            onClick={() => void handleUpdateButton()}
+            disabled={updateButtonDisabled}
+          >
+            {updateButtonLabel}
+          </button>
+        )}
+    </section>
+  );
+
+  if (!status.enrolled) {
+    return (
+      <DesktopLogin
+        employeeEmail={employeeEmail}
+        employeePassword={employeePassword}
+        enrollmentError={enrollmentError}
+        isSubmitting={isSubmitting}
+        isDesktopRuntime={isDesktopRuntime}
+        onEmailChange={setEmployeeEmail}
+        onPasswordChange={setEmployeePassword}
+        onCredentialEnrollment={handleCredentialEnrollment}
+        theme={theme}
+        onThemeChange={toggleTheme}
+        updateNotice={updateNotice}
+        version={status.agentVersion}
+      />
+    );
+  }
+
   return (
     <TrackerFrame
       native
@@ -1723,9 +1815,9 @@ function App() {
       avatar={status.employeeAvatarUrl}
       logo="./khaliduo-icon.png"
       theme={theme}
-      onThemeChange={() =>
-        setTheme((current) => (current === "dark" ? "light" : "dark"))
-      }
+      onThemeChange={toggleTheme}
+      appearance={status.appearanceScope ? appearance : undefined}
+      onAppearanceChange={updateAppearance}
       view={activeView}
       sections={
         status.enrolled
@@ -1811,383 +1903,283 @@ function App() {
         </>
       }
     >
-      {(status.updateRequired ||
-        ["available", "downloading", "ready", "installing"].includes(
-          status.updateStatus,
-        )) && (
-        <section className="k-update" role="status" aria-live="assertive">
-          <strong>
-            Required update{" "}
-            {status.updateVersion ? `v${status.updateVersion}` : ""}
-          </strong>
-          <span>
-            {status.updateStatus === "installing"
-              ? "Installing automatically now. Khaliduo will restart when it finishes."
-              : status.updateStatus === "ready"
-                ? "Downloaded and ready. Automatic installation is starting now; you can also click Install update."
-                : status.updateStatus === "downloading"
-                  ? `Downloading: ${Math.round(status.updatePercent ?? 0)}%`
-                  : status.updateStatus === "available"
-                    ? "Preparing the required download..."
-                    : status.updateStatus === "error"
-                      ? "This version of Khaliduo is no longer supported and the update could not be downloaded yet. Khaliduo keeps retrying every few minutes; check the internet connection."
-                      : "This version of Khaliduo is no longer supported. Looking for the update now..."}
-          </span>
-          {status.updateRequired &&
-            ["error", "idle", "up-to-date", "ready"].includes(
-              status.updateStatus,
-            ) && (
-              <button
-                type="button"
-                onClick={() => void handleUpdateButton()}
-                disabled={updateButtonDisabled}
-              >
-                {updateButtonLabel}
-              </button>
-            )}
-        </section>
-      )}
+      {updateNotice}
 
-      {!status.enrolled ? (
-        <EnrollmentView
-          employeeEmail={employeeEmail}
-          employeePassword={employeePassword}
-          enrollmentError={enrollmentError}
-          isSubmitting={isSubmitting}
-          isDesktopRuntime={isDesktopRuntime}
-          onEmailChange={setEmployeeEmail}
-          onPasswordChange={setEmployeePassword}
-          onCredentialEnrollment={handleCredentialEnrollment}
-        />
-      ) : (
-        <>
-          {activeView === "home" && (
-            <ReaddyHome
-              recentScreenshots={recentScreenshots}
-              onOpenScreenshots={() => setActiveView("screenshots")}
+      <>
+        {activeView === "home" && (
+          <ReaddyHome
+            recentScreenshots={recentScreenshots}
+            onOpenScreenshots={() => setActiveView("screenshots")}
+            onOpenAttendance={() => setActiveView("attendance")}
+            onEndShift={() => void handleEndShift()}
+            status={status}
+            workedSeconds={trackedTodaySeconds}
+            activeSeconds={Math.max(
+              status.workedTodaySeconds,
+              status.timeSummary?.today.tracked_active_seconds ?? 0,
+              status.normalSeconds + status.extraSeconds,
+            )}
+            visibleTasks={visibleTasks}
+            projectFilterId={projectFilterId}
+            onProjectChange={setProjectFilterId}
+            onTaskChange={(taskId) => void handleTaskChange(taskId)}
+            onTrackingToggle={() => void handleTrackingToggle()}
+            onTakeBreak={() => void handleTrackingToggle(true)}
+            changingTracking={isChangingTracking}
+            submittingTask={isSubmittingTask}
+            sessionNote={sessionNote}
+            onSessionNoteChange={setSessionNote}
+            message={trackingControlMessage}
+            error={taskError ?? dashboardError}
+            taskRequest={
+              <ReaddyTaskRequest
+                status={status}
+                teams={taskTeams}
+                values={{
+                  name: newTaskName,
+                  description: newTaskDescription,
+                  teamId: newTaskTeamId,
+                  projectId: newTaskProjectId,
+                  startDate: newTaskStartDate,
+                  deadline: newTaskDeadline,
+                }}
+                onChange={(field, value) => {
+                  const setters = {
+                    name: setNewTaskName,
+                    description: setNewTaskDescription,
+                    teamId: (teamId: string) => {
+                      setNewTaskTeamId(teamId);
+                      setNewTaskProjectId("");
+                    },
+                    projectId: setNewTaskProjectId,
+                    startDate: setNewTaskStartDate,
+                    deadline: setNewTaskDeadline,
+                  };
+                  setters[field](value);
+                }}
+                onSubmit={() => void handleCreateTask()}
+                submitting={isSubmittingTask}
+                error={taskError}
+              />
+            }
+            manualRequest={
+              <ReaddyManualRequest status={status} onStatusChange={setStatus} />
+            }
+          >
+            <HomeView
               status={status}
-              workedSeconds={trackedTodaySeconds}
-              activeSeconds={Math.max(
-                status.workedTodaySeconds,
-                status.timeSummary?.today.tracked_active_seconds ?? 0,
-                status.normalSeconds + status.extraSeconds,
-              )}
-              visibleTasks={visibleTasks}
+              statusLabel={statusLabel}
+              selectedProject={selectedProject}
               projectFilterId={projectFilterId}
+              visibleTasks={visibleTasks}
+              recentScreenshots={recentScreenshots}
+              isLoadingScreenshots={isLoadingScreenshots}
+              screenshotError={screenshotError}
+              sessionNote={sessionNote}
+              timeBreakdown={timeBreakdown}
+              targetProgress={targetProgress}
+              countedTodaySeconds={countedTodaySeconds}
+              trackedTodaySeconds={trackedTodaySeconds}
+              displayedTimerSeconds={displayedTimerSeconds}
+              isExtraTime={isExtraTime}
+              normalSeconds={normalSeconds}
+              extraSeconds={extraSeconds}
+              isChangingTracking={isChangingTracking}
+              isSubmittingTask={isSubmittingTask}
+              isOpeningDashboard={isOpeningDashboard}
+              dashboardError={dashboardError}
               onProjectChange={setProjectFilterId}
               onTaskChange={(taskId) => void handleTaskChange(taskId)}
-              onTrackingToggle={() => void handleTrackingToggle()}
-              changingTracking={isChangingTracking}
-              submittingTask={isSubmittingTask}
-              sessionNote={sessionNote}
               onSessionNoteChange={setSessionNote}
-              message={trackingControlMessage}
-              error={taskError ?? dashboardError}
-              taskRequest={
-                <ReaddyTaskRequest
-                  status={status}
-                  teams={taskTeams}
-                  values={{
-                    name: newTaskName,
-                    description: newTaskDescription,
-                    teamId: newTaskTeamId,
-                    projectId: newTaskProjectId,
-                    startDate: newTaskStartDate,
-                    deadline: newTaskDeadline,
-                  }}
-                  onChange={(field, value) => {
-                    const setters = {
-                      name: setNewTaskName,
-                      description: setNewTaskDescription,
-                      teamId: (teamId: string) => {
-                        setNewTaskTeamId(teamId);
-                        setNewTaskProjectId("");
-                      },
-                      projectId: setNewTaskProjectId,
-                      startDate: setNewTaskStartDate,
-                      deadline: setNewTaskDeadline,
-                    };
-                    setters[field](value);
-                  }}
-                  onSubmit={() => void handleCreateTask()}
-                  submitting={isSubmittingTask}
-                  error={taskError}
-                />
-              }
-              manualRequest={
-                <ReaddyManualRequest
-                  status={status}
-                  onStatusChange={setStatus}
-                />
-              }
-            >
-              <HomeView
-                status={status}
-                statusLabel={statusLabel}
-                selectedProject={selectedProject}
-                projectFilterId={projectFilterId}
-                visibleTasks={visibleTasks}
-                recentScreenshots={recentScreenshots}
-                isLoadingScreenshots={isLoadingScreenshots}
-                screenshotError={screenshotError}
-                sessionNote={sessionNote}
-                timeBreakdown={timeBreakdown}
-                targetProgress={targetProgress}
-                countedTodaySeconds={countedTodaySeconds}
-                trackedTodaySeconds={trackedTodaySeconds}
-                displayedTimerSeconds={displayedTimerSeconds}
-                isExtraTime={isExtraTime}
-                normalSeconds={normalSeconds}
-                extraSeconds={extraSeconds}
-                isChangingTracking={isChangingTracking}
-                isSubmittingTask={isSubmittingTask}
-                isOpeningDashboard={isOpeningDashboard}
-                dashboardError={dashboardError}
-                onProjectChange={setProjectFilterId}
-                onTaskChange={(taskId) => void handleTaskChange(taskId)}
-                onSessionNoteChange={setSessionNote}
-                onTrackingToggle={() => void handleTrackingToggle()}
-                onLoadScreenshots={() => void handleLoadRecentScreenshots()}
-                onOpenScreenshots={() =>
-                  void handleOpenDashboard("screenshots")
+              onTrackingToggle={() => void handleTrackingToggle()}
+              onLoadScreenshots={() => void handleLoadRecentScreenshots()}
+              onOpenScreenshots={() => void handleOpenDashboard("screenshots")}
+              idleRequestOptions={idleRequestOptions}
+              onRequestManualTime={(option) => {
+                if (option) {
+                  setSelectedIdleRequestKey(option.key);
                 }
+                setExpandedRequest("idle");
+                setActiveView("requests");
+              }}
+            />
+          </ReaddyHome>
+        )}
+        {activeView === "tasks" && (
+          <TasksView
+            status={status}
+            taskTeams={taskTeams}
+            trackableTasks={trackableTasks}
+            taskError={taskError}
+            trackingControlMessage={trackingControlMessage}
+            isSubmittingTask={isSubmittingTask}
+            newTaskName={newTaskName}
+            newTaskDescription={newTaskDescription}
+            newTaskTeamId={newTaskTeamId}
+            newTaskProjectId={newTaskProjectId}
+            newTaskStartDate={newTaskStartDate}
+            newTaskDeadline={newTaskDeadline}
+            taskCompletionNote={taskCompletionNote}
+            newChecklistTitle={newChecklistTitle}
+            onTaskChange={(taskId) => void handleTaskChange(taskId)}
+            onTaskStage={(stage, note) => void handleTaskStage(stage, note)}
+            onChecklistToggle={(itemId, completed) =>
+              void handleToggleChecklistItem(itemId, completed)
+            }
+            onDeleteChecklistItems={handleDeleteChecklistItems}
+            onChecklistTitleChange={setNewChecklistTitle}
+            onAddChecklistItem={() => void handleAddChecklistItem()}
+            onTaskCompletionNoteChange={setTaskCompletionNote}
+            onTrackingToggle={() => void handleTrackingToggle()}
+            onNewTaskNameChange={setNewTaskName}
+            onNewTaskDescriptionChange={setNewTaskDescription}
+            onNewTaskTeamChange={(teamId) => {
+              setNewTaskTeamId(teamId);
+              setNewTaskProjectId("");
+            }}
+            onNewTaskProjectChange={setNewTaskProjectId}
+            onNewTaskStartDateChange={setNewTaskStartDate}
+            onNewTaskDeadlineChange={setNewTaskDeadline}
+            onCreateTask={() => void handleCreateTask()}
+          />
+        )}
+        {activeView === "requests" && (
+          <RequestCentreView
+            leadingContent={<BreakBankCard status={status} />}
+            status={status}
+            timeRequestReason={timeRequestReason}
+            timeRequestError={timeRequestError}
+            timeRequestSuccess={timeRequestSuccess}
+            leaveStartDate={leaveStartDate}
+            leaveEndDate={leaveEndDate}
+            leaveReason={leaveReason}
+            leaveRequestError={leaveRequestError}
+            leaveRequestSuccess={leaveRequestSuccess}
+            isSubmittingLeaveRequest={isSubmittingLeaveRequest}
+            isSubmittingTimeRequest={isSubmittingTimeRequest}
+            onLeaveStartDateChange={setLeaveStartDate}
+            onLeaveEndDateChange={setLeaveEndDate}
+            onLeaveReasonChange={setLeaveReason}
+            onSubmitLeaveRequest={handleLeaveRequest}
+            onTimeRequestReasonChange={setTimeRequestReason}
+            selectedIdleRequestKey={selectedIdleRequestKey}
+            idleRequestOptions={idleRequestOptions}
+            earlyLeaveDate={earlyLeaveDate}
+            earlyLeaveTime={earlyLeaveTime}
+            earlyLeaveMinutes={earlyLeaveMinutes}
+            earlyLeaveReason={earlyLeaveReason}
+            expandedRequest={expandedRequest}
+            onSelectedIdleRequestChange={setSelectedIdleRequestKey}
+            onEarlyLeaveDateChange={setEarlyLeaveDate}
+            onEarlyLeaveTimeChange={setEarlyLeaveTime}
+            onEarlyLeaveReasonChange={setEarlyLeaveReason}
+            onExpandedRequestChange={(value) => {
+              setExpandedRequest(value);
+              setTimeRequestError(null);
+              setTimeRequestSuccess(null);
+              setLeaveRequestError(null);
+              setLeaveRequestSuccess(null);
+            }}
+            onSubmitIdleTimeRequest={handleIdleTimeRequest}
+            onSubmitEarlyLeaveRequest={handleEarlyLeaveRequest}
+          >
+            <ShiftRescheduleCard enrolled={status.enrolled} />
+          </RequestCentreView>
+        )}
+        {activeView === "meeting" && (
+          <MeetingView
+            status={status}
+            onRefresh={async () => {
+              const next = await window.khaliduo?.getAgentStatus();
+              if (next) setStatus(next);
+            }}
+          />
+        )}
+        {activeView === "screenshots" && (
+          <section className="k-page">
+            <header className="tracker-heading">
+              <h1>Screenshots</h1>
+              <p>Recent captures from this device.</p>
+            </header>
+            {screenshotError && <p role="alert">{screenshotError}</p>}
+            <button
+              type="button"
+              className="k-primary"
+              onClick={() => void handleLoadRecentScreenshots()}
+              disabled={isLoadingScreenshots}
+            >
+              {isLoadingScreenshots ? "Loading…" : "Refresh screenshots"}
+            </button>
+            {recentScreenshots?.length === 0 && <p>No captures available.</p>}
+            {recentScreenshots?.map((shot) => (
+              <figure className="rd-card" key={shot.id}>
+                <img
+                  src={shot.dataUrl}
+                  alt={shot.displayName ?? "Workplace screenshot"}
+                  style={{ width: "100%", borderRadius: 8 }}
+                />
+                <figcaption>{formatTimestamp(shot.capturedAt)}</figcaption>
+              </figure>
+            ))}
+            <button
+              type="button"
+              onClick={() => void handleOpenDashboard("screenshots")}
+              className="k-primary"
+            >
+              Manage screenshots in web dashboard
+            </button>
+          </section>
+        )}
+        {activeView === "insights" && <NativeInsights status={status} />}
+        {activeView === "attendance" && (
+          <section className="k-page">
+            <header className="tracker-heading">
+              <h1>Attendance</h1>
+              <p>
+                Shift {status.requestPolicy?.shift_start ?? "—"} –{" "}
+                {status.requestPolicy?.shift_end ?? "—"}
+              </p>
+            </header>
+            <BreakBankCard status={status} />
+            {status.todayTimeline ? (
+              <Timeline
+                timeline={status.todayTimeline}
+                locallyEndedIdleAt={status.locallyEndedIdleAt}
                 idleRequestOptions={idleRequestOptions}
-                onRequestManualTime={(option) => {
-                  if (option) {
-                    setSelectedIdleRequestKey(option.key);
-                  }
+                onRequestIdleTime={(option) => {
+                  setSelectedIdleRequestKey(option.key);
                   setExpandedRequest("idle");
                   setActiveView("requests");
                 }}
               />
-            </ReaddyHome>
-          )}
-          {activeView === "tasks" && (
-            <TasksView
-              status={status}
-              taskTeams={taskTeams}
-              trackableTasks={trackableTasks}
-              taskError={taskError}
-              trackingControlMessage={trackingControlMessage}
-              isSubmittingTask={isSubmittingTask}
-              newTaskName={newTaskName}
-              newTaskDescription={newTaskDescription}
-              newTaskTeamId={newTaskTeamId}
-              newTaskProjectId={newTaskProjectId}
-              newTaskStartDate={newTaskStartDate}
-              newTaskDeadline={newTaskDeadline}
-              taskCompletionNote={taskCompletionNote}
-              newChecklistTitle={newChecklistTitle}
-              onTaskChange={(taskId) => void handleTaskChange(taskId)}
-              onTaskStage={(stage, note) => void handleTaskStage(stage, note)}
-              onChecklistToggle={(itemId, completed) =>
-                void handleToggleChecklistItem(itemId, completed)
-              }
-              onDeleteChecklistItems={handleDeleteChecklistItems}
-              onChecklistTitleChange={setNewChecklistTitle}
-              onAddChecklistItem={() => void handleAddChecklistItem()}
-              onTaskCompletionNoteChange={setTaskCompletionNote}
-              onTrackingToggle={() => void handleTrackingToggle()}
-              onNewTaskNameChange={setNewTaskName}
-              onNewTaskDescriptionChange={setNewTaskDescription}
-              onNewTaskTeamChange={(teamId) => {
-                setNewTaskTeamId(teamId);
-                setNewTaskProjectId("");
-              }}
-              onNewTaskProjectChange={setNewTaskProjectId}
-              onNewTaskStartDateChange={setNewTaskStartDate}
-              onNewTaskDeadlineChange={setNewTaskDeadline}
-              onCreateTask={() => void handleCreateTask()}
-            />
-          )}
-          {activeView === "requests" && (
-            <RequestCentreView
-              leadingContent={<BreakBankCard status={status} />}
-              status={status}
-              timeRequestReason={timeRequestReason}
-              timeRequestError={timeRequestError}
-              timeRequestSuccess={timeRequestSuccess}
-              leaveStartDate={leaveStartDate}
-              leaveEndDate={leaveEndDate}
-              leaveReason={leaveReason}
-              leaveRequestError={leaveRequestError}
-              leaveRequestSuccess={leaveRequestSuccess}
-              isSubmittingLeaveRequest={isSubmittingLeaveRequest}
-              isSubmittingTimeRequest={isSubmittingTimeRequest}
-              onLeaveStartDateChange={setLeaveStartDate}
-              onLeaveEndDateChange={setLeaveEndDate}
-              onLeaveReasonChange={setLeaveReason}
-              onSubmitLeaveRequest={handleLeaveRequest}
-              onTimeRequestReasonChange={setTimeRequestReason}
-              selectedIdleRequestKey={selectedIdleRequestKey}
-              idleRequestOptions={idleRequestOptions}
-              earlyLeaveDate={earlyLeaveDate}
-              earlyLeaveTime={earlyLeaveTime}
-              earlyLeaveMinutes={earlyLeaveMinutes}
-              earlyLeaveReason={earlyLeaveReason}
-              expandedRequest={expandedRequest}
-              onSelectedIdleRequestChange={setSelectedIdleRequestKey}
-              onEarlyLeaveDateChange={setEarlyLeaveDate}
-              onEarlyLeaveTimeChange={setEarlyLeaveTime}
-              onEarlyLeaveReasonChange={setEarlyLeaveReason}
-              onExpandedRequestChange={(value) => {
-                setExpandedRequest(value);
-                setTimeRequestError(null);
-                setTimeRequestSuccess(null);
-                setLeaveRequestError(null);
-                setLeaveRequestSuccess(null);
-              }}
-              onSubmitIdleTimeRequest={handleIdleTimeRequest}
-              onSubmitEarlyLeaveRequest={handleEarlyLeaveRequest}
-            >
-              <ShiftRescheduleCard enrolled={status.enrolled} />
-            </RequestCentreView>
-          )}
-          {activeView === "meeting" && (
-            <MeetingView
-              status={status}
-              onRefresh={async () => {
-                const next = await window.khaliduo?.getAgentStatus();
-                if (next) setStatus(next);
-              }}
-            />
-          )}
-          {activeView === "screenshots" && (
-            <section className="k-page">
-              <header className="tracker-heading">
-                <h1>Screenshots</h1>
-                <p>Recent captures from this device.</p>
-              </header>
-              {screenshotError && <p role="alert">{screenshotError}</p>}
-              <button
-                type="button"
-                className="k-primary"
-                onClick={() => void handleLoadRecentScreenshots()}
-                disabled={isLoadingScreenshots}
-              >
-                {isLoadingScreenshots ? "Loading…" : "Refresh screenshots"}
-              </button>
-              {recentScreenshots?.length === 0 && <p>No captures available.</p>}
-              {recentScreenshots?.map((shot) => (
-                <figure className="rd-card" key={shot.id}>
-                  <img
-                    src={shot.dataUrl}
-                    alt={shot.displayName ?? "Workplace screenshot"}
-                    style={{ width: "100%", borderRadius: 8 }}
-                  />
-                  <figcaption>{formatTimestamp(shot.capturedAt)}</figcaption>
-                </figure>
-              ))}
-              <button
-                type="button"
-                onClick={() => void handleOpenDashboard("screenshots")}
-                className="k-primary"
-              >
-                Manage screenshots in web dashboard
-              </button>
-            </section>
-          )}
-          {activeView === "insights" && <NativeInsights status={status} />}
-          {activeView === "attendance" && (
-            <section className="k-page">
-              <header className="tracker-heading">
-                <h1>Attendance</h1>
-                <p>
-                  Shift {status.requestPolicy?.shift_start ?? "—"} –{" "}
-                  {status.requestPolicy?.shift_end ?? "—"}
-                </p>
-              </header>
-              <BreakBankCard status={status} />
-              {status.todayTimeline ? (
-                <Timeline
-                  timeline={status.todayTimeline}
-                  locallyEndedIdleAt={status.locallyEndedIdleAt}
-                  idleRequestOptions={idleRequestOptions}
-                  onRequestIdleTime={(option) => {
-                    setSelectedIdleRequestKey(option.key);
-                    setExpandedRequest("idle");
-                    setActiveView("requests");
-                  }}
-                />
-              ) : (
-                <p>No attendance recorded yet.</p>
-              )}
-            </section>
-          )}
-          {activeView === "settings" && (
-            <SettingsView
-              status={status}
-              onLogout={() => void handleLogout()}
-              isLoggingOut={isLoggingOut}
-            />
-          )}
-        </>
+            ) : (
+              <p>No attendance recorded yet.</p>
+            )}
+          </section>
+        )}
+        {activeView === "settings" && (
+          <SettingsView
+            status={status}
+            quotesEnabled={quoteReminders.enabled}
+            onQuotesEnabledChange={quoteReminders.setEnabled}
+            quoteError={quoteReminders.error}
+            onLogout={() => void handleLogout()}
+            isLoggingOut={isLoggingOut}
+          />
+        )}
+      </>
+      {quoteReminders.message && (
+        <aside className="native-quote-reminder" role="status" aria-live="polite" aria-label="Quote reminder">
+          <div>
+            <strong>A moment of inspiration</strong>
+            <button type="button" aria-label="Dismiss quote" onClick={quoteReminders.dismiss}>
+              ×
+            </button>
+          </div>
+          <p dir="auto">{quoteReminders.message}</p>
+        </aside>
       )}
     </TrackerFrame>
-  );
-}
-
-function EnrollmentView({
-  employeeEmail,
-  employeePassword,
-  enrollmentError,
-  isSubmitting,
-  isDesktopRuntime,
-  onEmailChange,
-  onPasswordChange,
-  onCredentialEnrollment,
-}: {
-  employeeEmail: string;
-  employeePassword: string;
-  enrollmentError: string | null;
-  isSubmitting: boolean;
-  isDesktopRuntime: boolean;
-  onEmailChange: (value: string) => void;
-  onPasswordChange: (value: string) => void;
-  onCredentialEnrollment: (event: FormEvent<HTMLFormElement>) => void;
-}) {
-  return (
-    <section className="k-enrollment">
-      <div className="k-panel k-enroll-card">
-        <h2>Sign in to set up this computer</h2>
-        <p>Your device will be linked to your employee account.</p>
-        <form className="k-form" onSubmit={onCredentialEnrollment}>
-          <label>
-            Work email
-            <input
-              type="email"
-              value={employeeEmail}
-              onChange={(event) => onEmailChange(event.target.value)}
-              autoComplete="email"
-              placeholder="name@company.com"
-              disabled={isSubmitting}
-              required
-            />
-          </label>
-          <label>
-            Password
-            <input
-              type="password"
-              value={employeePassword}
-              onChange={(event) => onPasswordChange(event.target.value)}
-              autoComplete="current-password"
-              placeholder="Employee password"
-              disabled={isSubmitting}
-              minLength={8}
-              required
-            />
-          </label>
-          <button
-            type="submit"
-            className="k-primary k-enroll-submit"
-            disabled={isSubmitting || !isDesktopRuntime}
-          >
-            {isSubmitting ? "Signing in..." : "Sign in and link device"}
-          </button>
-        </form>
-        {enrollmentError && <p className="k-error">{enrollmentError}</p>}
-      </div>
-    </section>
   );
 }
 
@@ -4277,10 +4269,16 @@ function MeetingView({
 
 function SettingsView({
   status,
+  quotesEnabled,
+  onQuotesEnabledChange,
+  quoteError,
   onLogout,
   isLoggingOut,
 }: {
   status: AgentStatus;
+  quotesEnabled: boolean;
+  onQuotesEnabledChange: (enabled: boolean) => void;
+  quoteError: string | null;
   onLogout: () => void;
   isLoggingOut: boolean;
 }) {
@@ -4292,6 +4290,15 @@ function SettingsView({
           <p>Device information and account controls.</p>
         </div>
       </header>
+      <section className="k-panel native-quote-settings">
+        <h2>Quote notifications</h2>
+        <label>
+          <input type="checkbox" checked={quotesEnabled} onChange={(event) => onQuotesEnabledChange(event.target.checked)} />
+          Enable quote notifications
+        </label>
+        <p className="k-muted">Enabled by default. A quote in Arabic or English appears every 60 minutes while your workspace is open and visible. Your choice is saved automatically on this device.</p>
+        {quoteError && <p role="alert">{quoteError}</p>}
+      </section>
       <details className="k-panel k-system-panel" open>
         <summary>System details</summary>
         <dl className="k-details">

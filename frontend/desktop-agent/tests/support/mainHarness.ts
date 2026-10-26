@@ -18,6 +18,7 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { randomUUID, createHash } from "node:crypto";
 import ts from "typescript";
+import { timedBreakState } from "../../electron/services/timedBreak.ts";
 import initSqlJs from "sql.js";
 
 const require = createRequire(import.meta.url);
@@ -81,6 +82,7 @@ export function context(overrides: Record<string, unknown> = {}) {
       agentVersion: "test",
       trackingStatus: "active",
       trackingPaused: false,
+      breakElapsedSeconds: 0,
       sessionStartedAt: "2026-09-10T10:00:00Z",
       activeSeconds: 600,
       idleSeconds: 0,
@@ -134,6 +136,11 @@ export function context(overrides: Record<string, unknown> = {}) {
     workedTodayBaseSeconds: 0,
     trackingPausedByUser: false,
     unpaidPauseActive: false,
+    breakSessionSnapshot: null,
+    timedBreakState,
+    clearTimedBreak: noop,
+    pauseTimedBreak: noop,
+    endExpiredBreak: async () => {},
     isQuitting: false,
     onAcPower: true,
     isPromotingLocalTrackingSessions: false,

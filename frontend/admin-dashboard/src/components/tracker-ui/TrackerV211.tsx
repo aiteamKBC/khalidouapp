@@ -2,6 +2,7 @@ import {
   createContext,
   useContext,
   useEffect,
+  useRef,
   useState,
   type CSSProperties,
   type ReactNode,
@@ -11,8 +12,11 @@ import TimerStylePicker from "./TimerStylePicker";
 import SwipeTimer from "./SwipeTimer";
 import SelectMenu from "./SelectMenu";
 import { TrackerIcon } from "./TrackerIcon";
+import type { Appearance, AppearancePatch } from "../../../../shared/appearance-store";
+import { appearanceVariables } from "../../../../shared/appearance-palettes";
 import "./readdy-reference.css";
 import "./tracker.css";
+import "./readdy-alignment.css";
 
 // Readdy V211 /app, connected to the authenticated employee APIs.
 const TimerContext = createContext<{
@@ -27,6 +31,8 @@ export type TrackerTimelineRow = {
   time: string;
   seconds: number;
   kind: string;
+  current?: boolean;
+  category?: string | null;
 };
 
 function savedPreference(key: string, fallback: string) {
@@ -44,6 +50,8 @@ export function TrackerFrame({
   logo,
   theme,
   onThemeChange,
+  appearance,
+  onAppearanceChange,
   sections,
   view,
   onViewChange,
@@ -67,6 +75,8 @@ export function TrackerFrame({
   logo: string;
   theme: "light" | "dark";
   onThemeChange: () => void;
+  appearance?: Appearance;
+  onAppearanceChange?: (patch: AppearancePatch) => void;
   sections: TrackerSection[];
   view: string;
   onViewChange: (view: string) => void;
@@ -84,14 +94,24 @@ export function TrackerFrame({
   native?: boolean;
   dataTone?: string;
 }) {
+  const contentRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (contentRef.current) contentRef.current.scrollTop = 0;
+  }, [view]);
   const [style, setStyle] = useState<TimerStyle>("minimal");
-  const [skin, setSkin] = useState("violet");
+  const [localSkin, setLocalSkin] = useState("violet");
+  const skin = appearance ? (appearance.skin === "orbit" ? "violet" : appearance.skin) : localSkin;
+  const setSkin = (value: string) => {
+    if (onAppearanceChange)
+      onAppearanceChange({ skin: value === "violet" ? "orbit" : (value as Appearance["skin"]) });
+    else setLocalSkin(value);
+  };
   const [preferencesLoaded, setPreferencesLoaded] = useState(false);
   useEffect(() => {
     const savedStyle = savedPreference("khaliduo-timer-style-v3", "minimal");
     const savedSkin = savedPreference("khaliduo-app-skin-v4", "violet");
     if (isTimerStyle(savedStyle)) setStyle(savedStyle);
-    if (["ember", "forest", "violet"].includes(savedSkin)) setSkin(savedSkin);
+    if (["ember", "forest", "violet"].includes(savedSkin)) setLocalSkin(savedSkin);
     setPreferencesLoaded(true);
   }, []);
   useEffect(() => {
@@ -115,18 +135,26 @@ export function TrackerFrame({
       aria-label={dock ? "Workspace dock" : "Tracker sections"}
       className={dock ? "v211-dock-nav" : "v211-top-nav"}
     >
-      {sections.map((section) => (
-        <button
-          type="button"
-          key={section.id}
-          className={`${dock ? "app-dock-tab" : "app-nav-pill"}${section.id === view ? " is-active" : ""}`}
-          aria-current={section.id === view ? "page" : undefined}
-          onClick={() => onViewChange(section.id)}
-        >
-          <TrackerIcon className={section.icon} aria-hidden="true" />
-          <span className={dock ? "app-dock-label" : undefined}>{section.label}</span>
-        </button>
-      ))}
+      {sections
+        .filter((section) => sections.length <= 6 || !["requests", "meeting"].includes(section.id))
+        .map((section) => (
+          <button
+            type="button"
+            key={section.id}
+            className={`${dock ? "app-dock-tab" : "app-nav-pill"}${section.id === view ? " is-active" : ""}`}
+            aria-current={section.id === view ? "page" : undefined}
+            onClick={() => onViewChange(section.id)}
+          >
+            <TrackerIcon className={section.icon} aria-hidden="true" />
+            <span className={dock ? "app-dock-label" : undefined}>
+              {section.id === "screenshots"
+                ? "Shots"
+                : section.id === "attendance"
+                  ? "Shift"
+                  : section.label}
+            </span>
+          </button>
+        ))}
     </nav>
   );
   return (
@@ -134,88 +162,133 @@ export function TrackerFrame({
       <div
         data-theme={theme}
         data-skin={skin}
+        style={appearance ? (appearanceVariables(appearance) as CSSProperties) : undefined}
         data-tone={dataTone}
         className={`readdy-tracker-ui app-shell tracker-frame ${theme === "dark" ? "app-dark dark" : ""} ${native ? "tracker-native k-app k-readdy" : ""}`}
       >
-        <div className="v211-watermark" aria-hidden="true" />
+        <div className="v211-watermark" aria-hidden="true">
+          <span
+            className="v216-watermark-horse"
+            style={{ maskImage: 'url("./employee-workspace/horse.png")' }}
+          />
+          <span
+            className="v216-watermark-bird"
+            style={{ maskImage: 'url("./employee-workspace/bird.png")' }}
+          />
+        </div>
         <header className="app-topbar v211-topbar">
-          <button
-            type="button"
-            className="v211-brand"
-            onClick={onDashboard}
-            aria-label="Open web dashboard"
-          >
-            <img src={logo} alt="Khaliduo" />
-            <span>
-              <strong>Khaliduo</strong>
-              <small>ENTERPRISE</small>
-            </span>
-          </button>
-          {nav(false)}
-          <div className="v211-top-actions">
-            <span
-              className="app-pill app-pill-live v211-shift"
-              title={`${stateLabel} · ${shiftLabel}`}
-            >
-              <i className={running ? "tracker-live-dot" : "tracker-paused-dot"} />
-              <span>{running ? "Active shift" : stateLabel}</span>
-              <strong>{clock(seconds)}</strong>
-            </span>
+          <div className="v216-topbar-inner">
             <button
               type="button"
-              className="app-nav-btn"
-              onClick={onSync}
-              aria-label={synced ? "Sync now" : "Retry sync"}
-              title={synced ? "Sync now" : "Retry sync"}
+              className="v211-brand"
+              onClick={onDashboard}
+              aria-label="Open web dashboard"
             >
-              <TrackerIcon className="ri-refresh-line" aria-hidden="true" />
-            </button>
-            <details className="v211-theme-picker">
-              <summary aria-label="Appearance" title="Appearance">
-                <TrackerIcon className="ri-palette-line" aria-hidden="true" />
-              </summary>
-              <div className="v211-theme-panel">
-                <strong>Appearance</strong>
-                {(
-                  [
-                    ["ember", "Ember"],
-                    ["forest", "Forest"],
-                    ["violet", "Orbit"],
-                  ] as const
-                ).map(([value, label]) => (
-                  <button
-                    type="button"
-                    key={value}
-                    aria-pressed={skin === value}
-                    onClick={() => setSkin(value)}
-                  >
-                    <i className={`v211-swatch is-${value}`} />
-                    {label}
-                  </button>
-                ))}
-                <button
-                  type="button"
-                  onClick={onThemeChange}
-                  aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} theme`}
-                >
-                  <TrackerIcon className={theme === "dark" ? "ri-sun-line" : "ri-moon-line"} />
-                  {theme === "dark" ? "Light mode" : "Dark mode"}
-                </button>
-              </div>
-            </details>
-            <div className="v211-account" title={email ?? name}>
-              <span className="v211-avatar">
-                {avatar ? <img src={avatar} alt="" /> : name.slice(0, 1)}
-              </span>
+              <img src={logo} alt="Khaliduo" />
               <span>
-                <strong>{name}</strong>
-                <small>{shotsLabel}</small>
+                <strong>Khaliduo</strong>
+                <small>ENTERPRISE</small>
               </span>
+            </button>
+            {nav(false)}
+            <div className="v211-top-actions">
+              <span
+                className="app-pill app-pill-live v211-shift"
+                title={`${stateLabel} · ${shiftLabel}`}
+              >
+                <i className={running ? "tracker-live-dot" : "tracker-paused-dot"} />
+                <span>{running ? "Active shift" : stateLabel}</span>
+                <strong>{clock(seconds)}</strong>
+              </span>
+              <button
+                type="button"
+                className="app-nav-btn"
+                onClick={onSync}
+                aria-label={synced ? "Sync now" : "Retry sync"}
+                title={synced ? "Sync now" : "Retry sync"}
+              >
+                <TrackerIcon className="ri-refresh-line" aria-hidden="true" />
+              </button>
+              <details className="v211-theme-picker">
+                <summary aria-label="Appearance" title="Appearance">
+                  <TrackerIcon className="ri-palette-line" aria-hidden="true" />
+                </summary>
+                <div className="v211-theme-panel">
+                  <strong>Appearance</strong>
+                  {(
+                    [
+                      ["violet", "Orbit"],
+                      ["ember", "Ember"],
+                      ["forest", "Forest"],
+                    ] as const
+                  ).flatMap(([value, label]) =>
+                    (["light", "dark"] as const).map((mode) => (
+                      <button
+                        type="button"
+                        key={`${value}-${mode}`}
+                        aria-pressed={skin === value && theme === mode}
+                        onClick={(event) => {
+                          if (onAppearanceChange)
+                            onAppearanceChange({
+                              skin: value === "violet" ? "orbit" : value,
+                              mode,
+                            });
+                          else {
+                            setSkin(value);
+                            if (theme !== mode) onThemeChange();
+                          }
+                          event.currentTarget.closest("details")?.removeAttribute("open");
+                        }}
+                      >
+                        <i className={`v211-swatch is-${value}`} />
+                        {label} {mode === "light" ? "Light" : "Dark"}
+                      </button>
+                    )),
+                  )}
+                </div>
+              </details>
+              <details className="v216-account-menu">
+                <summary
+                  className="v211-account"
+                  title={email ?? name}
+                  aria-label="Account and more sections"
+                >
+                  <span className="v211-avatar">
+                    {avatar ? <img src={avatar} alt="" /> : name.slice(0, 1)}
+                  </span>
+                  <span>
+                    <strong>{name}</strong>
+                    <small>Employee workspace</small>
+                  </span>
+                </summary>
+                <div className="v216-account-panel">
+                  <span>{email ?? name}</span>
+                  {sections
+                    .filter((section) => ["requests", "meeting"].includes(section.id))
+                    .map((section) => (
+                      <button
+                        type="button"
+                        key={section.id}
+                        onClick={(event) => {
+                          onViewChange(section.id);
+                          event.currentTarget.closest("details")?.removeAttribute("open");
+                        }}
+                      >
+                        <TrackerIcon className={section.icon} />
+                        {section.label}
+                      </button>
+                    ))}
+                  <button type="button" onClick={onDashboard}>
+                    Open web dashboard
+                  </button>
+                  <small>{shotsLabel}</small>
+                </div>
+              </details>
+              {headerControls}
             </div>
-            {headerControls}
           </div>
         </header>
-        <main className="tracker-content" data-motion-scroller="">
+        <main ref={contentRef} className="tracker-content" data-motion-scroller="">
           {children}
         </main>
         {sections.length > 0 && (
@@ -268,6 +341,11 @@ export function TrackerStage({
   startedAt,
   lastActivityAt,
   onToggle,
+  onEndShift,
+  onOpenAttendance,
+  deviceLabel,
+  synced,
+  screenshotsEnabled,
   controlBusy,
   onExplainIdle,
   screenshot,
@@ -305,6 +383,11 @@ export function TrackerStage({
   startedAt: string | null;
   lastActivityAt: string | null;
   onToggle?: () => void;
+  onEndShift?: () => void;
+  onOpenAttendance?: () => void;
+  deviceLabel?: string | null;
+  synced?: boolean;
+  screenshotsEnabled?: boolean;
   controlBusy?: boolean;
   onExplainIdle: () => void;
   screenshot: ReactNode;
@@ -450,6 +533,12 @@ export function TrackerStage({
           <TrackerIcon className="ri-image-line" aria-hidden="true" />
           Screenshots
         </button>
+        {onOpenAttendance ? (
+          <button type="button" className="tp-ghost v216-shift-action" onClick={onOpenAttendance}>
+            <TrackerIcon className="ri-focus-3-line" />
+            Shift details
+          </button>
+        ) : null}
       </div>
       <div className="v211-stage-grid">
         <section
@@ -466,13 +555,21 @@ export function TrackerStage({
               <i className={running ? "tracker-live-dot" : "tracker-paused-dot"} />
               {stateLabel}
             </span>
-            <span className="v211-shift-label">Paid shift · {shiftLabel}</span>
+            <span className="v211-shift-label">
+              {deviceLabel ? `ID: ${deviceLabel}` : shiftLabel}
+            </span>
             <div className="tracker-style-picker">
               <TimerStylePicker value={timer.style} onChange={timer.change} />
             </div>
+            {synced !== undefined ? (
+              <span className="v216-sync-label">
+                <i className={synced ? "tracker-live-dot" : "tracker-paused-dot"} />
+                {synced ? "Connected & synced" : "Sync pending"}
+              </span>
+            ) : null}
           </header>
           <div className="v211-timer-area">
-            <p className="tp-eyebrow">Worked today</p>
+            <p className="tp-eyebrow">Elapsed work time</p>
             <div className="v211-timer-face">
               <SwipeTimer
                 style={timer.style}
@@ -484,18 +581,19 @@ export function TrackerStage({
               />
             </div>
             <p className="v211-task-caption">
+              <TrackerIcon className="ri-arrow-right-up-line" aria-hidden="true" />
               {activeTask?.name ??
                 projects.find((project) => project.id === projectId)?.name ??
                 "No task selected"}
             </p>
-          </div>
-          <div className="v211-goal">
-            <span className="tp-eyebrow">Daily goal</span>
-            <strong>{targetSeconds > 0 ? `${progress}%` : "—"}</strong>
-            <p>
-              {clock(counted).slice(0, 5)} logged ·{" "}
-              {clock(Math.max(0, targetSeconds - counted)).slice(0, 5)} remaining
-            </p>
+            <div className="v211-goal">
+              <span className="tp-eyebrow">Daily goal</span>
+              <strong>{targetSeconds > 0 ? `${progress}%` : "—"}</strong>
+              <p>
+                {clock(counted).slice(0, 5)} logged ·{" "}
+                {clock(Math.max(0, targetSeconds - counted)).slice(0, 5)} remaining
+              </p>
+            </div>
           </div>
           <div className="v211-controls">
             {onToggle ? (
@@ -521,9 +619,17 @@ export function TrackerStage({
                   <TrackerIcon className="ri-cup-line" aria-hidden="true" />
                   Take Break
                 </button>
-                <span className="v211-shortcut">
-                  Shortcut: <kbd>Alt</kbd> + <kbd>P</kbd>
-                </span>
+                {onEndShift ? (
+                  <button
+                    type="button"
+                    className="tp-action"
+                    disabled={controlBusy}
+                    onClick={onEndShift}
+                  >
+                    <TrackerIcon className="ri-stop-circle-line" />
+                    End Shift
+                  </button>
+                ) : null}
               </>
             ) : (
               <p>Pause or resume tracking from your desktop app.</p>
@@ -550,10 +656,36 @@ export function TrackerStage({
                   >
                     <i />
                     <div>
-                      <strong>{row.label}</strong>
-                      <small>{row.time}</small>
+                      <div className="v216-timeline-heading">
+                        <strong>
+                          {row.current
+                            ? "Worked (Current Session)"
+                            : ({
+                                worked: "Worked",
+                                manual: "Manual time",
+                                idle: "Idle",
+                                break: "Scheduled break",
+                                locked: "Screen locked",
+                                sleeping: "Sleeping",
+                                untracked: "Untracked",
+                              }[row.kind] ?? row.kind)}
+                        </strong>
+                        <span>{row.time}</span>
+                      </div>
+                      <small>{row.label}</small>
                     </div>
-                    <span>{clock(row.seconds)}</span>
+                    <span
+                      className={`tp-tl-chip ${row.current ? "is-live" : row.kind === "break" ? "is-rest" : row.category ? "is-overtime" : ""}`}
+                      title={clock(row.seconds)}
+                    >
+                      {row.current
+                        ? "Ongoing"
+                        : row.kind === "worked"
+                          ? row.category
+                            ? "Overtime"
+                            : "Shift"
+                          : row.kind}
+                    </span>
                   </li>
                 ))
               ) : (
@@ -578,9 +710,34 @@ export function TrackerStage({
               onClick={onOpenShots}
               aria-label="Open latest screenshots"
             >
-              {screenshot ?? <p>No captures available</p>}
+              {screenshot ?? (
+                <span className="v216-empty-capture">
+                  <TrackerIcon className="ri-image-line" />
+                  <strong>
+                    {screenshotsEnabled === false
+                      ? "Screenshot capture is disabled"
+                      : "No captures yet"}
+                  </strong>
+                  <small>
+                    {screenshotsEnabled === false
+                      ? "Your company has disabled captures for this account."
+                      : "Your next workplace capture will appear here."}
+                  </small>
+                </span>
+              )}
+              {screenshot && screenshotTime ? (
+                <span className="v216-shot-meta">
+                  {screenshotTime}
+                  <span>Synced</span>
+                </span>
+              ) : null}
             </button>
-            <footer>{screenshotTime ?? "No screenshot recorded"}</footer>
+            <footer>
+              <span>Workplace capture</span>
+              <span className="v216-capture-status">
+                {screenshotsEnabled === false ? "Capture disabled" : "Company schedule"}
+              </span>
+            </footer>
           </section>
         </aside>
       </div>

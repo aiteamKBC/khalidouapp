@@ -4,8 +4,8 @@ import MotionPage from "@/components/motion/MotionPage";
 import AnimatedText from "@/components/motion/AnimatedText";
 import HeroRays from "@/components/motion/HeroRays";
 import StarButton from "@/components/motion/StarButton";
-import { useWorkspaceTheme } from "./useWorkspaceTheme";
-import { useDashboardSkin } from "./useDashboardSkin";
+import { useAppearance } from "./useAppearance";
+import { appearanceVariables } from "../../../../shared/appearance-palettes";
 import "./dashboard-skins.css";
 import { useEffect, useMemo, useState } from "react";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -81,8 +81,9 @@ export default function EmployeeWorkspace({
   onLogout: () => void;
   initialMode?: "dashboard" | "tracker";
 }) {
-  const { theme, toggleTheme, setTheme } = useWorkspaceTheme();
-  const { skin, setSkin } = useDashboardSkin();
+  const { appearance, updateAppearance } = useAppearance(token);
+  const { mode: theme, skin } = appearance;
+  const toggleTheme = () => updateAppearance({ mode: theme === "dark" ? "light" : "dark" });
   const [trackerMode, setTrackerMode] = useState(initialMode === "tracker");
   const client = useQueryClient();
   const { prompt, dialog: notePromptDialog } = useNotePrompt();
@@ -425,6 +426,7 @@ export default function EmployeeWorkspace({
     <MotionPage
       className={`employee-workspace readdy-tracker-ui ${theme === "dark" ? "dark" : ""}`}
       data-dash-skin={skin}
+      style={appearanceVariables(appearance)}
       scrollContainer={trackerMode ? "[data-motion-scroller]" : undefined}
     >
       {trackerMode ? (
@@ -438,6 +440,8 @@ export default function EmployeeWorkspace({
           tasks={tasksQuery.data ?? []}
           shiftLabel={`${attendance.shiftStart} – ${attendance.shiftEnd}`}
           theme={theme}
+          appearance={appearance}
+          onAppearanceChange={updateAppearance}
           onThemeChange={toggleTheme}
           onDashboard={() => setTrackerMode(false)}
           onLogout={handleLogout}
@@ -512,8 +516,7 @@ export default function EmployeeWorkspace({
             theme={theme}
             skin={skin}
             onTheme={(nextSkin, nextMode) => {
-              setSkin(nextSkin);
-              setTheme(nextMode);
+              updateAppearance({ skin: nextSkin, mode: nextMode });
             }}
             onOpenTracker={() => setTrackerMode(true)}
             employee={profile}
