@@ -19,6 +19,47 @@
   padding: 0;
   margin: 0;
 }
+.native-quote-interval {
+  max-width: 440px;
+}
+.native-quote-interval-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.native-quote-interval-controls input {
+  flex: 1 1 120px;
+  min-width: 0;
+  width: 120px;
+}
+.native-quote-interval-controls button {
+  flex: 0 0 auto;
+}
+.readdy-tracker-ui.readdy-tracker-ui.tracker-frame .native-quote-interval-controls input {
+  min-height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--k-line);
+  border-radius: 10px;
+  background: var(--k-bg-2);
+  color: var(--k-ink);
+}
+.readdy-tracker-ui.readdy-tracker-ui.tracker-frame .native-quote-interval-controls button {
+  min-height: 40px;
+  padding: 10px 16px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--k-pink);
+  color: var(--k-bg);
+  box-shadow: none;
+}
+.native-quote-interval-controls :is(input, button):focus-visible {
+  outline: 2px solid var(--k-pink);
+  outline-offset: 3px;
+}
+.native-quote-interval .native-quote-saved {
+  color: var(--k-green);
+}
 .native-quote-reminder {
   position: fixed;
   z-index: 70;
@@ -39,8 +80,15 @@
   gap: 10px;
 }
 .native-quote-reminder strong { font-size: 12px; }
+.native-quote-actions { display: flex; align-items: center; gap: 4px; flex: none; }
+.native-quote-actions svg { font-size: 16px; }
 .native-quote-reminder p { margin: 10px 0 0; font-size: 14px; line-height: 1.6; }
 .native-quote-reminder button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  min-height: 28px;
   background: transparent;
   color: var(--k-muted);
   border: none;
@@ -48,4 +96,12 @@
   padding: 2px 8px;
   font-size: 20px;
   cursor: pointer;
+}
+.native-quote-reminder button:hover {
+  color: var(--k-ink);
+  background: var(--k-bg-2);
+}
+.native-quote-reminder button:focus-visible {
+  outline: 2px solid var(--k-pink);
+  outline-offset: 2px;
 }

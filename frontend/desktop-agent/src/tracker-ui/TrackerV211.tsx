@@ -437,6 +437,7 @@ export function TrackerStage({
   note,
   onNoteChange,
   onNoteSubmit,
+  noteSaving = false,
   running,
   stateLabel,
   seconds,
@@ -481,6 +482,7 @@ export function TrackerStage({
   note: string;
   onNoteChange: (note: string) => void;
   onNoteSubmit?: () => void;
+  noteSaving?: boolean;
   running: boolean;
   stateLabel: string;
   seconds: number;
@@ -700,12 +702,18 @@ export function TrackerStage({
           <TrackerIcon className="ri-quill-pen-line" aria-hidden="true" />
           <input
             id="live-note"
-            aria-label="Session note"
+            aria-label="New task name"
+            disabled={noteSaving}
             value={note}
             onChange={(event) => onNoteChange(event.target.value)}
-            maxLength={1000}
-            placeholder="Add activity note or sprint reference"
+            maxLength={255}
+            placeholder="Create a new task…"
           />
+          {onNoteSubmit && (
+            <button type="submit" disabled={!note.trim() || noteSaving} className="v211-save-note">
+              {noteSaving ? "Saving…" : "Save"}
+            </button>
+          )}
         </form>
         <button type="button" className="tp-ghost" onClick={onOpenShots}>
           <TrackerIcon className="ri-image-line" aria-hidden="true" />
@@ -848,7 +856,9 @@ export function TrackerStage({
                   <li
                     key={row.id}
                     className={
-                      row.kind === "worked" || row.kind === "manual"
+                      row.kind === "idle"
+                        ? "is-away is-idle"
+                        : row.kind === "worked" || row.kind === "manual"
                         ? "is-work"
                         : "is-away"
                     }
@@ -857,7 +867,7 @@ export function TrackerStage({
                     <div>
                       <div className="v216-timeline-heading">
                         <strong>
-                          {row.current
+                          {row.current && row.kind === "worked"
                             ? "Worked (Current Session)"
                             : ({
                                 worked: "Worked",
@@ -874,7 +884,7 @@ export function TrackerStage({
                       <small>{row.label}</small>
                     </div>
                     <span
-                      className={`tp-tl-chip ${row.current ? "is-live" : row.kind === "break" ? "is-rest" : row.category ? "is-overtime" : ""}`}
+                      className={`tp-tl-chip ${row.kind === "idle" ? "is-idle" : row.current ? "is-live" : row.kind === "break" ? "is-rest" : row.category ? "is-overtime" : ""}`}
                       title={clock(row.seconds)}
                     >
                       {row.current

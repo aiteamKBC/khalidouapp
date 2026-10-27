@@ -1,5 +1,8 @@
 import DesktopLogin from "./DesktopLogin";
+import { NativeWindowControls } from "./NativeWindowControls";
 import { useAppearance } from "./useAppearance";
+import { useDialogTheme } from "./useDialogTheme";
+import "./idle-dialog.css";
 import { useQuoteReminders } from "./useQuoteReminders";
 import "./quote-reminders.css";
 import { TrackerFrame } from "./tracker-ui/TrackerWorkspace";
@@ -52,12 +55,14 @@ import {
 import "sweetalert2/dist/sweetalert2.min.css";
 import "./App.css";
 import {
-  NativeInsights,
   ReaddyHome,
   ReaddyTaskRequest,
   ReaddyManualRequest,
 } from "./ReaddyDesktop";
 import "./ReaddyDesktop.css";
+import { NativeInsights, NativeShiftPage, ScreenshotsPage, WorkspacePageHeader } from "./WorkspacePages";
+import { TrackerIcon } from "./tracker-ui/TrackerIcon";
+import "./workspace-pages.css";
 
 const fallbackStatus: AgentStatus = {
   enrolled: false,
@@ -487,6 +492,9 @@ function App() {
   >("home");
   const [projectFilterId, setProjectFilterId] = useState("");
   const [sessionNote, setSessionNote] = useState("");
+  const [quickTaskName, setQuickTaskName] = useState("");
+  const [isCreatingQuickTask, setIsCreatingQuickTask] = useState(false);
+  const quickTaskInFlight = useRef(false);
   const [timeRequestReason, setTimeRequestReason] = useState("");
   const [selectedIdleRequestKey, setSelectedIdleRequestKey] = useState("");
   const [earlyLeaveDate, setEarlyLeaveDate] = useState(localDateKey());
@@ -540,6 +548,7 @@ function App() {
     status.enrolled ? (status.appearanceScope ?? status.deviceId) : null,
   );
   const theme = status.enrolled && status.appearanceScope ? appearance.mode : loginTheme;
+  useDialogTheme({ skin: appearance.skin, mode: theme });
   const toggleTheme = () => status.enrolled && updateAppearance
     ? updateAppearance({ mode: theme === "dark" ? "light" : "dark" })
     : setLoginTheme(current => current === "dark" ? "light" : "dark");
@@ -1113,6 +1122,33 @@ function App() {
     }
   }
 
+  async function handleQuickCreateTask() {
+    const name = quickTaskName.trim();
+    if (!name || name.length > 255 || !window.khaliduo || quickTaskInFlight.current) return;
+    quickTaskInFlight.current = true;
+    setIsCreatingQuickTask(true);
+    setTaskError(null);
+    setTrackingControlMessage(null);
+    try {
+      const result = await window.khaliduo.createTask({
+        name,
+        projectId: projectFilterId || status.selectedTask?.projectId,
+      });
+      if (!result.success) {
+        setTaskError(result.message ?? "Could not create the task. Please try again.");
+        return;
+      }
+      setQuickTaskName("");
+      setTrackingControlMessage(result.message ?? "Task sent for manager approval.");
+      if (result.status) setStatus(result.status);
+    } catch (error) {
+      setTaskError(ipcErrorMessage(error, "Could not create the task. Please try again."));
+    } finally {
+      quickTaskInFlight.current = false;
+      setIsCreatingQuickTask(false);
+    }
+  }
+
   async function handleCreateTask() {
     const name = newTaskName.trim();
     if (!name || !window.khaliduo) return;
@@ -1536,16 +1572,30 @@ function App() {
             : "Confirm you are back",
         text: isTrackingStart
           ? alert.outsideScheduledShift
-            ? "You are outside your scheduled shift. A device being on or mouse and keyboard movement alone will not start time. Confirm only if you are actually working."
-            : "Khaliduo will not count time just because this device is on. Confirm that you are present and actually starting work."
+            ? "You are outside your scheduled shift. Confirm only if you are working; your timer starts after you confirm."
+            : "Ready to begin? Confirm that you are here and working to start your timer."
           : isIdleStarted
-            ? "No keyboard or mouse activity was detected, so idle time has started. Choose Continue working if you are here. If you were working away from the computer, submit an explanation for review."
+            ? "No activity detected. Continue if you are back, or explain this idle time for review."
             : canRequestManualTime
               ? `Input was detected after ${formatDuration(alert.lostSeconds)} away. Choose Continue to resume now; ${formatDuration(alert.eligibleLostSeconds)} inside your paid shift remains available to explain.`
               : `Input was detected after ${formatDuration(alert.lostSeconds)} away. Choose Continue to resume tracking now.`,
         icon: "warning",
+        iconHtml: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 7v5l3 2"/></svg>',
+        buttonsStyling: false,
+        customClass: {
+          container: "k-idle-backdrop",
+          popup: "k-idle-dialog",
+          title: "k-idle-title",
+          htmlContainer: "k-idle-description",
+          input: "k-idle-reason",
+          inputLabel: "k-idle-label",
+          actions: "k-idle-actions",
+          confirmButton: "k-idle-continue",
+          denyButton: "k-idle-stop",
+          cancelButton: "k-idle-explain",
+        },
         input: canRequestManualTime ? "textarea" : undefined,
-        inputLabel: "Reason (for idle time explanation)",
+        inputLabel: "Reason for idle time",
         inputPlaceholder:
           "Client call, meeting, offline work, or a system issue...",
         inputAttributes: {
@@ -1571,8 +1621,6 @@ function App() {
         cancelButtonText: isIdleStarted
           ? "I was working during this idle period"
           : "Request manual time",
-        confirmButtonColor: "#1f7a4d",
-        denyButtonColor: "#842029",
         allowEscapeKey: false,
         allowOutsideClick: false,
       });
@@ -1877,29 +1925,7 @@ function App() {
           >
             <KIcon name="update" />
           </button>
-          <div className="rd-window-controls">
-            <button
-              type="button"
-              aria-label="Minimize"
-              onClick={() => void window.khaliduo?.minimizeWindow()}
-            >
-              −
-            </button>
-            <button
-              type="button"
-              aria-label="Maximize or restore"
-              onClick={() => void window.khaliduo?.toggleMaximizeWindow()}
-            >
-              □
-            </button>
-            <button
-              type="button"
-              aria-label="Close"
-              onClick={() => void window.khaliduo?.closeWindow()}
-            >
-              ×
-            </button>
-          </div>
+          <NativeWindowControls />
         </>
       }
     >
@@ -1927,8 +1953,10 @@ function App() {
             onTakeBreak={() => void handleTrackingToggle(true)}
             changingTracking={isChangingTracking}
             submittingTask={isSubmittingTask}
-            sessionNote={sessionNote}
-            onSessionNoteChange={setSessionNote}
+            sessionNote={quickTaskName}
+            onSessionNoteChange={(value) => { setQuickTaskName(value); setTaskError(null); setTrackingControlMessage(null); }}
+            onCreateQuickTask={() => void handleQuickCreateTask()}
+            creatingQuickTask={isCreatingQuickTask}
             message={trackingControlMessage}
             error={taskError ?? dashboardError}
             taskRequest={
@@ -2096,53 +2124,31 @@ function App() {
           />
         )}
         {activeView === "screenshots" && (
-          <section className="k-page">
-            <header className="tracker-heading">
-              <h1>Screenshots</h1>
-              <p>Recent captures from this device.</p>
-            </header>
-            {screenshotError && <p role="alert">{screenshotError}</p>}
-            <button
-              type="button"
-              className="k-primary"
-              onClick={() => void handleLoadRecentScreenshots()}
-              disabled={isLoadingScreenshots}
-            >
-              {isLoadingScreenshots ? "Loading…" : "Refresh screenshots"}
-            </button>
-            {recentScreenshots?.length === 0 && <p>No captures available.</p>}
-            {recentScreenshots?.map((shot) => (
-              <figure className="rd-card" key={shot.id}>
-                <img
-                  src={shot.dataUrl}
-                  alt={shot.displayName ?? "Workplace screenshot"}
-                  style={{ width: "100%", borderRadius: 8 }}
-                />
-                <figcaption>{formatTimestamp(shot.capturedAt)}</figcaption>
-              </figure>
-            ))}
-            <button
-              type="button"
-              onClick={() => void handleOpenDashboard("screenshots")}
-              className="k-primary"
-            >
-              Manage screenshots in web dashboard
-            </button>
-          </section>
+          <ScreenshotsPage
+            screenshots={recentScreenshots}
+            loading={isLoadingScreenshots}
+            error={screenshotError ?? dashboardError}
+            enabled={status.screenshotMonitoringEnabled}
+            openingDashboard={isOpeningDashboard}
+            onRefresh={() => void handleLoadRecentScreenshots()}
+            onOpenDashboard={() => void handleOpenDashboard("screenshots")}
+            formatTimestamp={formatTimestamp}
+          />
         )}
         {activeView === "insights" && <NativeInsights status={status} />}
         {activeView === "attendance" && (
-          <section className="k-page">
-            <header className="tracker-heading">
-              <h1>Attendance</h1>
-              <p>
-                Shift {status.requestPolicy?.shift_start ?? "—"} –{" "}
-                {status.requestPolicy?.shift_end ?? "—"}
-              </p>
-            </header>
+          <NativeShiftPage
+            status={status}
+            scheduledShift={status.requestPolicy?.shift_start && status.requestPolicy.shift_end
+              ? `${formatScheduledTime(status.requestPolicy.shift_start)} – ${formatScheduledTime(status.requestPolicy.shift_end)}`
+              : "Not configured"}
+            formatClock={formatClock}
+            formatDuration={formatDuration}
+          >
             <BreakBankCard status={status} />
             {status.todayTimeline ? (
               <Timeline
+                workspace
                 timeline={status.todayTimeline}
                 locallyEndedIdleAt={status.locallyEndedIdleAt}
                 idleRequestOptions={idleRequestOptions}
@@ -2153,15 +2159,21 @@ function App() {
                 }}
               />
             ) : (
-              <p>No attendance recorded yet.</p>
+              <div className="wp-card wp-empty">
+                <span className="wp-empty-icon"><TrackerIcon className="ri-calendar-line" aria-hidden="true" /></span>
+                <h2>No attendance recorded yet</h2>
+                <p>Your shift activity will appear here after your next sync.</p>
+              </div>
             )}
-          </section>
+          </NativeShiftPage>
         )}
         {activeView === "settings" && (
           <SettingsView
             status={status}
             quotesEnabled={quoteReminders.enabled}
             onQuotesEnabledChange={quoteReminders.setEnabled}
+            quoteMinutes={quoteReminders.minutes}
+            onQuoteMinutesChange={quoteReminders.setMinutes}
             quoteError={quoteReminders.error}
             onLogout={() => void handleLogout()}
             isLoggingOut={isLoggingOut}
@@ -2172,9 +2184,14 @@ function App() {
         <aside className="native-quote-reminder" role="status" aria-live="polite" aria-label="Quote reminder">
           <div>
             <strong>A moment of inspiration</strong>
-            <button type="button" aria-label="Dismiss quote" onClick={quoteReminders.dismiss}>
-              ×
-            </button>
+            <div className="native-quote-actions">
+              <button type="button" aria-label="Translate quote" title="Translate quote" onClick={quoteReminders.translate}>
+                <TrackerIcon className="ri-translate-line" aria-hidden="true" />
+              </button>
+              <button type="button" aria-label="Dismiss quote" onClick={quoteReminders.dismiss}>
+                ×
+              </button>
+            </div>
           </div>
           <p dir="auto">{quoteReminders.message}</p>
         </aside>
@@ -2731,15 +2748,31 @@ function Timeline({
   locallyEndedIdleAt,
   idleRequestOptions,
   onRequestIdleTime,
+  workspace = false,
 }: {
   timeline: WorkdayTimeline;
   locallyEndedIdleAt: string | null;
   idleRequestOptions: IdleRequestOption[];
   onRequestIdleTime: (option: IdleRequestOption) => void;
+  workspace?: boolean;
 }) {
   const requestableMinutes = totalRequestableIdleMinutes(idleRequestOptions);
   return (
-    <section className="k-side-section">
+    <section
+      className={workspace ? "wp-card wp-shift-timeline" : "k-side-section"}
+    >
+      {workspace && (
+        <header className="wp-card-heading">
+          <div>
+            <h2>Today's timeline</h2>
+            <p>A full view of your work, breaks and time away.</p>
+          </div>
+          <span className="wp-badge">
+            {timeline.intervals.length}{" "}
+            {timeline.intervals.length === 1 ? "period" : "periods"}
+          </span>
+        </header>
+      )}
       {idleRequestOptions.length ? (
         <section
           className="k-idle-needs"
@@ -2773,10 +2806,28 @@ function Timeline({
           </div>
         </section>
       ) : null}
-      <strong>Today's timeline</strong>
-      <div className="k-timeline">
+      {!workspace && <strong>Today's timeline</strong>}
+      <div
+        className={workspace ? "wp-shift-events" : "k-timeline"}
+        role={workspace ? "list" : undefined}
+        aria-label={workspace ? "Shift activity" : undefined}
+      >
+        {workspace &&
+          timeline.intervals.length === 0 &&
+          !timeline.approved_leave && (
+            <div className="wp-empty" role="listitem">
+              <span className="wp-empty-icon">
+                <TrackerIcon className="ri-timer-line" aria-hidden="true" />
+              </span>
+              <h3>No activity recorded yet</h3>
+              <p>Your recorded work and breaks will appear here.</p>
+            </div>
+          )}
         {timeline.intervals.length === 0 && timeline.approved_leave ? (
-          <div className="k-line-leave">
+          <div
+            className="k-line-leave"
+            role={workspace ? "listitem" : undefined}
+          >
             <i className="k-timeline-icon">
               <KIcon name="idle" />
             </i>
@@ -2801,6 +2852,58 @@ function Timeline({
               displayType === "worked" ||
               displayType === "extra" ||
               displayType === "break_work";
+            const elapsed = formatDuration(
+              presentation.isCurrent
+                ? Math.max(
+                    0,
+                    Math.floor(
+                      (Date.now() - new Date(interval.started_at).getTime()) /
+                        1000,
+                    ),
+                  )
+                : presentation.durationSeconds,
+            );
+            if (workspace) {
+              return (
+                <div
+                  key={`${interval.session_id}-${interval.started_at}-${index}`}
+                  className={`wp-shift-event is-${displayType}${presentation.isCurrent ? " is-current" : ""}`}
+                  role="listitem"
+                >
+                  <span className="wp-event-icon" aria-hidden="true">
+                    <KIcon name={interval.type} />
+                  </span>
+                  <div className="wp-event-copy">
+                    <h3>{TIMELINE_LABELS[displayType]}</h3>
+                    <p className="wp-event-period">
+                      <time dateTime={interval.started_at}>
+                        {formatClock(interval.started_at, timeline.timezone)}
+                      </time>
+                      <span aria-hidden="true">–</span>
+                      {presentation.isCurrent ? (
+                        "Until now"
+                      ) : (
+                        <time dateTime={presentation.endedAt ?? undefined}>
+                          {formatClock(presentation.endedAt, timeline.timezone)}
+                        </time>
+                      )}
+                    </p>
+                    {displaysWork &&
+                      (interval.task_name || interval.project_name) && (
+                        <p className="wp-event-context">
+                          {interval.task_name ?? interval.project_name}
+                        </p>
+                      )}
+                  </div>
+                  <div className="wp-event-meta">
+                    <strong aria-label="Duration">{elapsed}</strong>
+                    <span className="wp-badge">
+                      {presentation.isCurrent ? "Ongoing" : "Completed"}
+                    </span>
+                  </div>
+                </div>
+              );
+            }
             return (
               <div
                 key={`${interval.session_id}-${interval.started_at}-${index}`}
@@ -2829,25 +2932,23 @@ function Timeline({
                     ? ` · ${interval.task_name ?? interval.project_name}`
                     : ""}
                 </b>
-                <small>
-                  {formatDuration(
-                    presentation.isCurrent
-                      ? Math.max(
-                          0,
-                          Math.floor(
-                            (Date.now() -
-                              new Date(interval.started_at).getTime()) /
-                              1000,
-                          ),
-                        )
-                      : presentation.durationSeconds,
-                  )}
-                </small>
+                <small>{elapsed}</small>
               </div>
             );
           },
         )}
       </div>
+      {workspace && timeline.last_activity_at && (
+        <footer className="wp-card-footer">
+          <p>
+            <TrackerIcon className="ri-refresh-line" aria-hidden="true" />
+            Last activity{" "}
+            <time dateTime={timeline.last_activity_at}>
+              {formatClock(timeline.last_activity_at, timeline.timezone)}
+            </time>
+          </p>
+        </footer>
+      )}
     </section>
   );
 }
@@ -2958,9 +3059,13 @@ function TasksView({
   }
 
   return (
-    <section className="k-page">
-      <div className="k-panel">
-        <h2>Create task request</h2>
+    <section className="k-page workspace-page wp-tasks">
+      <WorkspacePageHeader title="Tasks" description="Plan your work and keep your current task moving." icon="ri-task-line" actions={<span className="wp-badge">{trackableTasks.length} available</span>} />
+      <div className="k-panel wp-task-request">
+        <div className="wp-section-heading">
+          <div><h2>Create task request</h2><p>Share the details of your next task for review.</p></div>
+          <TrackerIcon className="ri-add-circle-line" aria-hidden="true" />
+        </div>
         <div className="k-form-grid">
           <label className="wide">
             Task name
@@ -2974,8 +3079,9 @@ function TasksView({
           </label>
           <label className="wide">
             Description
-            <input
+            <textarea
               value={newTaskDescription}
+              rows={3}
               maxLength={1000}
               placeholder="Expected outcome or useful context"
               disabled={isSubmittingTask}
@@ -2988,6 +3094,7 @@ function TasksView({
             Team
             <select
               value={newTaskTeamId}
+              aria-label="Team"
               disabled={isSubmittingTask}
               onChange={(event) => onNewTaskTeamChange(event.target.value)}
             >
@@ -3003,6 +3110,7 @@ function TasksView({
             Project
             <select
               value={newTaskProjectId}
+              aria-label="Project"
               disabled={isSubmittingTask || !newTaskTeamId}
               onChange={(event) => onNewTaskProjectChange(event.target.value)}
             >
@@ -3045,13 +3153,17 @@ function TasksView({
         </button>
       </div>
 
-      <div className="k-panel">
-        <h2>Current task</h2>
+      <div className="k-panel wp-current-task">
+        <div className="wp-section-heading">
+          <div><h2>Current task</h2><p>Choose what you’re working on and update your progress.</p></div>
+          <span className="wp-badge">{selectedTask ? selectedTask.stage.replaceAll("_", " ") : "No task selected"}</span>
+        </div>
         <div className="k-form-grid">
           <label>
             Task
             <select
               value={status.selectedTask?.id ?? "none"}
+              aria-label="Task"
               disabled={isSubmittingTask}
               onChange={(event) => onTaskChange(event.target.value)}
             >
@@ -3067,6 +3179,7 @@ function TasksView({
             Stage
             <select
               value={status.selectedTask?.stage ?? "assigned"}
+              aria-label="Stage"
               disabled={
                 !status.selectedTask ||
                 isSubmittingTask ||
@@ -3235,12 +3348,17 @@ function TasksView({
             </button>
           ))}
         </div>
-        <button
-          className={status.trackingPaused ? "k-primary" : "k-warning"}
-          onClick={onTrackingToggle}
-        >
-          {status.trackingPaused ? "Resume" : "Pause"}
-        </button>
+        <div className="wp-task-controls">
+          <button
+            type="button"
+            className={status.trackingPaused ? "k-primary" : "k-warning"}
+            onClick={onTrackingToggle}
+          >
+            <TrackerIcon className={status.trackingPaused ? "ri-play-circle-line" : "ri-pause-circle-line"} aria-hidden="true" />
+            {status.trackingPaused ? "Resume" : "Pause"}
+          </button>
+          <p>{status.breakStartedAt ? "You’re on a break. Resume when you’re ready to work." : status.trackingPaused ? "Resume when you’re ready to continue." : "Your current work session is being tracked."}</p>
+        </div>
         {trackingControlMessage && (
           <p className="k-success">{trackingControlMessage}</p>
         )}
@@ -4271,6 +4389,8 @@ function SettingsView({
   status,
   quotesEnabled,
   onQuotesEnabledChange,
+  quoteMinutes,
+  onQuoteMinutesChange,
   quoteError,
   onLogout,
   isLoggingOut,
@@ -4278,10 +4398,16 @@ function SettingsView({
   status: AgentStatus;
   quotesEnabled: boolean;
   onQuotesEnabledChange: (enabled: boolean) => void;
+  quoteMinutes: number;
+  onQuoteMinutesChange: (minutes: number) => boolean;
   quoteError: string | null;
   onLogout: () => void;
   isLoggingOut: boolean;
 }) {
+  const [quoteInterval, setQuoteInterval] = useState(String(quoteMinutes));
+  const [quoteIntervalSaved, setQuoteIntervalSaved] = useState(false);
+  useEffect(() => setQuoteInterval(String(quoteMinutes)), [quoteMinutes]);
+
   return (
     <section className="k-page k-settings-page">
       <header className="k-page-header">
@@ -4296,7 +4422,41 @@ function SettingsView({
           <input type="checkbox" checked={quotesEnabled} onChange={(event) => onQuotesEnabledChange(event.target.checked)} />
           Enable quote notifications
         </label>
-        <p className="k-muted">Enabled by default. A quote in Arabic or English appears every 60 minutes while your workspace is open and visible. Your choice is saved automatically on this device.</p>
+        <p className="k-muted">Quotes appear every {quoteMinutes} minute(s) while your workspace is open and visible. Your preferences are saved on this device.</p>
+        <form
+          className="native-quote-interval"
+          onSubmit={(event) => {
+            event.preventDefault();
+            setQuoteIntervalSaved(onQuoteMinutesChange(Number(quoteInterval)));
+          }}
+        >
+          <label htmlFor="native-quote-minutes">Remind me every (minutes)</label>
+          <div className="native-quote-interval-controls">
+            <input
+              id="native-quote-minutes"
+              type="number"
+              min={1}
+              max={1440}
+              step={1}
+              required
+              value={quoteInterval}
+              aria-describedby="native-quote-interval-help"
+              onChange={(event) => {
+                setQuoteInterval(event.target.value);
+                setQuoteIntervalSaved(false);
+              }}
+            />
+            <button type="submit" className="k-primary">Save interval</button>
+          </div>
+          <p id="native-quote-interval-help" className="k-muted">Choose 1 to 1440 minutes. The next reminder starts counting from when you save.</p>
+          {quoteIntervalSaved && !quoteError && (
+            <p role="status" className="native-quote-saved">
+              {quotesEnabled
+                ? `Saved. Your next quote is in ${quoteMinutes} minute(s).`
+                : "Interval saved. Quote notifications are off."}
+            </p>
+          )}
+        </form>
         {quoteError && <p role="alert">{quoteError}</p>}
       </section>
       <details className="k-panel k-system-panel" open>

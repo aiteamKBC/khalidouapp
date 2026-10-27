@@ -8,10 +8,11 @@
   "author": "Kent Consultancy",
   "scripts": {
     "dev": "concurrently -k \"vite --host 127.0.0.1\" \"wait-on http://127.0.0.1:5173 && cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron .\"",
-    "build": "tsc -b && vite build && tsc -p tsconfig.electron.json",
+    "build": "node scripts/renderer-licenses.mjs && tsc -b && vite build && tsc -p tsconfig.electron.json",
     "dist": "powershell -NoProfile -ExecutionPolicy Bypass -File ../scripts/build-desktop-installer.ps1",
     "lint": "oxlint src electron",
     "test": "node --test tests/*.test.ts",
+    "test:window-controls": "node e2e/window-controls.mjs",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -20,10 +21,7 @@
     "electron-log": "^5.4.4",
     "electron-updater": "^6.8.9",
     "form-data": "^4.0.6",
-    "react": "^19.2.7",
-    "react-dom": "^19.2.7",
     "sql.js": "^1.14.1",
-    "sweetalert2": "^11.26.25",
     "uuid": "^14.0.1"
   },
   "devDependencies": {
@@ -38,6 +36,9 @@
     "electron": "^43.1.0",
     "electron-builder": "^26.15.3",
     "oxlint": "^1.71.0",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "sweetalert2": "^11.26.25",
     "typescript": "~6.0.2",
     "vite": "^8.1.1",
     "wait-on": "^9.0.10"
@@ -58,8 +59,10 @@
     "electronUpdaterCompatibility": ">=2.16",
     "files": [
       "dist-khaliduo/**/*",
-      "dist-electron-khaliduo/**/*",
-      "node_modules/sql.js/dist/**/*",
+      "dist-electron-khaliduo/**/*.js",
+      "node_modules/sql.js/dist/sql-wasm.{js,wasm}",
+      "!node_modules/sql.js/!(dist|package.json|LICENSE|AUTHORS)",
+      "!node_modules/sql.js/dist/!(sql-wasm.js|sql-wasm.wasm)",
       "package.json"
     ],
     "extraResources": [

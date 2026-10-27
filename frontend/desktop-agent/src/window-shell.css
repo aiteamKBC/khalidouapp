@@ -19,3 +19,23 @@ html {
 .workspace-login.desktop-login {
   border-radius: 24px;
 }
+
+body.swal2-shown [data-native-window-controls] {
+  visibility: hidden;
+}
+
+.native-modal-window-controls {
+  position: fixed;
+  z-index: 1000000;
+  display: flex;
+  border-radius: 5px;
+  -webkit-app-region: no-drag;
+}
+
+.native-modal-window-controls button {
+  flex: 1;
+  width: auto;
+  height: 100%;
+  color: inherit;
+  -webkit-app-region: no-drag;
+}

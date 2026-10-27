@@ -1,0 +1,173 @@
+.swal2-container.k-idle-backdrop {
+  padding: 16px;
+  background: color-mix(in srgb, var(--dialog-overlay) 42%, transparent);
+}
+
+body[data-dialog-theme="dark"] .swal2-container.k-idle-backdrop {
+  background: color-mix(in srgb, var(--dialog-overlay) 70%, transparent);
+}
+
+.swal2-popup.k-idle-dialog {
+  width: min(460px, 100%);
+  max-height: calc(100dvh - 32px);
+  overflow-y: auto;
+  padding: 26px;
+  border: 1px solid var(--dialog-line) !important;
+  border-radius: 24px !important;
+  background: var(--dialog-card) !important;
+  color: var(--dialog-ink) !important;
+  box-shadow: 0 24px 80px #08051d30;
+  text-align: left;
+  scrollbar-width: thin;
+  scrollbar-color: var(--dialog-line) transparent;
+}
+
+.k-idle-dialog .swal2-icon {
+  width: 46px;
+  height: 46px;
+  margin: 0 0 18px;
+  border: 1px solid var(--dialog-line);
+  border-radius: 14px;
+  background: var(--dialog-pink-2);
+  color: var(--dialog-pink);
+}
+
+.k-idle-dialog .swal2-icon-content {
+  display: grid;
+  place-items: center;
+}
+
+.k-idle-dialog .k-idle-title {
+  padding: 0;
+  margin: 0;
+  color: var(--dialog-ink);
+  font-size: 23px;
+  font-weight: 700;
+  line-height: 1.25;
+  letter-spacing: -0.4px;
+  text-align: left;
+}
+
+.k-idle-dialog .k-idle-description {
+  margin: 10px 0 20px;
+  padding: 0;
+  color: var(--dialog-muted);
+  font-size: 13px;
+  line-height: 1.65;
+  text-align: left;
+}
+
+.k-idle-dialog .k-idle-label {
+  display: block !important;
+  width: 100%;
+  align-self: start;
+  margin: 0 0 8px;
+  padding: 0;
+  color: var(--dialog-ink-2);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: normal;
+  text-transform: none;
+  text-align: left;
+}
+
+.k-idle-dialog textarea.k-idle-reason {
+  width: 100%;
+  min-height: 84px;
+  height: 84px;
+  max-height: 180px;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--dialog-line);
+  border-radius: 12px;
+  outline: none;
+  background: var(--dialog-field);
+  color: var(--dialog-ink);
+  box-shadow: none;
+  font-size: 13px;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.k-idle-dialog textarea.k-idle-reason::placeholder {
+  color: var(--dialog-faint);
+  font-weight: 400;
+}
+
+.k-idle-dialog textarea.k-idle-reason:focus {
+  border-color: var(--dialog-pink);
+  box-shadow: 0 0 0 3px var(--dialog-pink-2);
+}
+
+.k-idle-dialog .k-idle-actions {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+  width: 100%;
+  gap: 9px;
+  margin: 20px 0 0;
+  padding: 0;
+}
+
+.k-idle-actions button {
+  min-width: 0;
+  min-height: 42px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.35;
+  cursor: pointer;
+  transition: filter 120ms ease, background 120ms ease;
+}
+
+.k-idle-actions button:hover {
+  filter: brightness(1.07);
+}
+
+.k-idle-actions button:focus-visible {
+  outline: 2px solid var(--dialog-pink);
+  outline-offset: 3px;
+}
+
+.k-idle-actions button:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+
+.k-idle-actions .k-idle-continue {
+  background: linear-gradient(120deg, var(--dialog-cta-grad-1), var(--dialog-cta-grad-2));
+  color: var(--dialog-cta-ink);
+  box-shadow: 0 4px 12px var(--dialog-glow);
+}
+
+.k-idle-actions .k-idle-stop {
+  border-color: color-mix(in srgb, var(--dialog-rose) 24%, transparent);
+  background: var(--dialog-rose-2);
+  color: var(--dialog-rose);
+}
+
+.k-idle-actions .k-idle-explain {
+  grid-column: 1 / -1;
+  border-color: var(--dialog-line);
+  background: var(--dialog-bg-2);
+  color: var(--dialog-ink-2);
+}
+
+@media (max-height: 560px) {
+  .swal2-popup.k-idle-dialog { padding: 16px 18px; }
+  .k-idle-dialog .swal2-icon { width: 32px; height: 32px; margin-bottom: 10px; border-radius: 10px; }
+  .k-idle-dialog .swal2-icon svg { width: 20px; height: 20px; }
+  .k-idle-dialog .k-idle-title { font-size: 19px; }
+  .k-idle-dialog .k-idle-description { margin: 7px 0 12px; font-size: 12px; line-height: 1.45; }
+  .k-idle-dialog .k-idle-label { margin-bottom: 6px; font-size: 11px; }
+  .k-idle-dialog textarea.k-idle-reason { min-height: 56px; height: 56px; padding: 8px 10px; font-size: 12px; }
+  .k-idle-dialog .k-idle-actions { margin-top: 12px; gap: 7px; }
+  .k-idle-actions button { min-height: 36px; padding: 8px 10px; font-size: 11px; border-radius: 10px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .k-idle-actions button { transition: none; }
+}

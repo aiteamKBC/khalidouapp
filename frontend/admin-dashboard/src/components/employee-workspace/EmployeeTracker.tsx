@@ -1,8 +1,8 @@
-import { useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   employeeScreenshots,
-  createEmployeeTaskComment,
+  createEmployeeTask,
   type PortalProject,
   type PortalTask,
   type PortalSummary,
@@ -58,9 +58,16 @@ export default function EmployeeTracker({
   const client = useQueryClient();
   const scope = ["employee-portal", jwtSubjectScopeKey(token)];
   const [view, setView] = useState("tracker");
-  const [projectId, setProjectId] = useState("");
+  const [projectSelection, setProjectId] = useState<string | null>(null);
+  const projectId =
+    projectSelection ??
+    projects.find((project) => project.name.trim().toLowerCase() === "general work")?.id ??
+    (projects.length === 1 ? projects[0].id : "");
   const [taskId, setTaskId] = useState("");
-  const [note, setNote] = useState("");
+  const [newTaskName, setNewTaskName] = useState("");
+  const [taskMessage, setTaskMessage] = useState<string | null>(null);
+  const [taskError, setTaskError] = useState<string | null>(null);
+  const creatingTask = useRef(false);
   const day = summary.todayTimeline.date;
   const shots = useQuery({
     queryKey: [...scope, "screenshots", day],
@@ -70,13 +77,35 @@ export default function EmployeeTracker({
     refetchInterval: view === "tracker" ? 30_000 : false,
     retry: retryTransientRequest,
   });
-  const saveNote = useMutation({
-    mutationFn: () => createEmployeeTaskComment(token, taskId, note.trim()),
-    onSuccess: () => {
-      setNote("");
+  const createTask = useMutation({
+    mutationFn: (input: { name: string; projectId: string }) => createEmployeeTask(token, input),
+    onSuccess: (task) => {
+      setNewTaskName("");
+      setTaskMessage(
+        task.stage === "new_requests" ? "Task sent for manager approval." : "Task created.",
+      );
       void client.invalidateQueries({ queryKey: scope });
     },
+    onError: (error) =>
+      setTaskError(
+        error instanceof Error ? error.message : "Could not create the task. Please try again.",
+      ),
+    onSettled: () => {
+      creatingTask.current = false;
+    },
   });
+  const submitQuickTask = () => {
+    const name = newTaskName.trim();
+    if (!name || name.length > 255 || creatingTask.current) return;
+    setTaskError(null);
+    setTaskMessage(null);
+    if (!projectId) {
+      setTaskError("Choose a project for the new task.");
+      return;
+    }
+    creatingTask.current = true;
+    createTask.mutate({ name, projectId });
+  };
   const today = summary.today;
   const running = summary.todayTimeline.isRunning;
   const stateLabel = running
@@ -168,12 +197,15 @@ export default function EmployeeTracker({
             .map((task) => ({ id: task.id, name: task.name, projectId: task.project_id }))}
           taskId={taskId}
           onTaskChange={setTaskId}
-          note={note}
-          onNoteChange={setNote}
-          noteSaving={saveNote.isPending}
-          onNoteSubmit={() => {
-            if (taskId && note.trim() && !saveNote.isPending) saveNote.mutate();
+          selectionDisabled={createTask.isPending}
+          note={newTaskName}
+          onNoteChange={(value) => {
+            setNewTaskName(value);
+            setTaskError(null);
+            setTaskMessage(null);
           }}
+          noteSaving={createTask.isPending}
+          onNoteSubmit={submitQuickTask}
           running={running}
           stateLabel={stateLabel}
           seconds={countedSeconds(summaries[0].breakdown)}
@@ -215,11 +247,8 @@ export default function EmployeeTracker({
             category: item.workCategory,
           }))}
         >
-          {note && !taskId && (
-            <p className="text-muted text-xs">Choose a task to save this note as a task comment.</p>
-          )}
-          {saveNote.isError && <p role="alert">Could not save your note. Please try again.</p>}
-          {saveNote.isSuccess && <p role="status">Task note saved.</p>}
+          {taskError && <p role="alert">{taskError}</p>}
+          {taskMessage && <p role="status">{taskMessage}</p>}
           {shots.isError && (
             <p role="alert">Could not refresh the latest capture. Use Retry sync to try again.</p>
           )}

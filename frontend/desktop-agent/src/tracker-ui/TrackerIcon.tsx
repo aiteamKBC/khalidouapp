@@ -6,6 +6,7 @@ export function TrackerIcon({
 }: ComponentProps<"svg">) {
   const name = className.match(/ri-[\w-]+/)?.[0] ?? "";
   const icons: Record<string, string> = {
+    "ri-translate-line": "M5 8l6 6M4 14l6-6 2-3M2 5h12M7 2h1M22 22l-5-10-5 10M14 18h6",
     "ri-refresh-line":
       "M20 7v5h-5M4 17v-5h5M6 6a8 8 0 0 1 13 5M18 18a8 8 0 0 1-13-5",
     "ri-palette-line":

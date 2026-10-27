@@ -1,11 +1,13 @@
 import { useEffect, useState } from "react";
 import Drawer from "./Drawer";
+import { WorkspaceIcon } from "./WorkspaceIcon";
 import {
   consumeDueQuote,
   defaultQuoteSettings,
   quoteAt,
   loadQuoteSettings,
   validQuoteMinutes,
+  translateQuote,
   type QuoteLanguage,
 } from "./quote-reminders";
 
@@ -215,14 +217,25 @@ export default function QuoteReminders({
         >
           <div className="flex items-center justify-between gap-3">
             <p className="k-label">A moment of inspiration</p>
-            <button
-              type="button"
-              aria-label="Dismiss quote"
-              onClick={() => setMessage(null)}
-              className="cursor-pointer rounded-md px-2 py-1 text-ew-muted"
-            >
-              ×
-            </button>
+            <div className="flex shrink-0 items-center gap-1">
+              <button
+                type="button"
+                aria-label="Translate quote"
+                title="Translate quote"
+                onClick={() => setMessage(current => current ? translateQuote(current) : null)}
+                className="inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded-md text-[16px] text-ew-muted hover:bg-ew-bg-2 hover:text-ew-ink focus-visible:outline-2 focus-visible:outline-ew-plum"
+              >
+                <WorkspaceIcon className="ri-translate-line" aria-hidden="true" />
+              </button>
+              <button
+                type="button"
+                aria-label="Dismiss quote"
+                onClick={() => setMessage(null)}
+                className="inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded-md text-[20px] text-ew-muted hover:bg-ew-bg-2 hover:text-ew-ink focus-visible:outline-2 focus-visible:outline-ew-plum"
+              >
+                ×
+              </button>
+            </div>
           </div>
           <p dir="auto" className="mt-2 text-[14px] leading-relaxed">
             {message}

@@ -7,6 +7,7 @@ import {
   loadQuoteSettings,
   validQuoteMinutes,
   quoteAt,
+  translateQuote,
 } from "./quote-reminders.ts";
 
 test("reminders default to enabled with the first quote after one hour", () => {
@@ -71,4 +72,18 @@ test("language selection and rotation remain valid across a complete cycle", () 
     assert.deepEqual(readQuoteSettings(JSON.stringify(settings)), settings);
   }
   assert.equal(settings.sequence, 0);
+});
+
+test("each quote translates to the same quote in the other language and back", () => {
+  for (const language of ["ar", "en", "both"] as const) {
+    for (let sequence = 0; sequence < 24; sequence++) {
+      const original = quoteAt(language, sequence);
+      const translated = translateQuote(original);
+      assert.notEqual(translated, original);
+      assert.equal(translateQuote(translated), original);
+      assert.equal(/[\u0600-\u06ff]/.test(translated), !/[\u0600-\u06ff]/.test(original));
+    }
+  }
+  assert.equal(translateQuote(quoteAt("ar", 0)), "A small step each day adds up to meaningful progress.");
+  assert.equal(translateQuote("Unknown quote"), "Unknown quote");
 });
