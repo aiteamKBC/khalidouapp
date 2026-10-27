@@ -6,6 +6,9 @@ export function TrackerIcon({
 }: ComponentProps<"svg">) {
   const name = className.match(/ri-[\w-]+/)?.[0] ?? "";
   const icons: Record<string, string> = {
+    "ri-window-minimize-line": "M3 4h18v16H3zM3 9h18M8 15h8",
+    "ri-logout-box-line": "M9 4H3v16h6M13 7l5 5-5 5M7 12h14",
+    "ri-shut-down-line": "M12 2v10M6 5a9 9 0 1 0 12 0",
     "ri-video-chat-line": "M3 5h12v14H3zM15 10l6-4v12l-6-4",
     "ri-shield-check-line": "M12 2 3 6v6c0 5 9 10 9 10s9-5 9-10V6l-9-4ZM8 12l3 3 5-6",
     "ri-chat-quote-line": "M4 3h16v14H9l-5 4V3zM8 7h3v3H8V7zm5 0h3v3h-3V7zM8 10v2m5-2v2",

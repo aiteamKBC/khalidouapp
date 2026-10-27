@@ -7,6 +7,7 @@ import './window-shell.css'
 import { ErrorBoundary } from './ErrorBoundary.tsx'
 import { NativeModalWindowControls, NativeWindowFrame } from './NativeWindowControls.tsx'
 import QuoteReminderWindow from './QuoteReminderWindow.tsx'
+import NativeCloseDialog from './NativeCloseDialog.tsx'
 
 const isQuoteWindow = new URLSearchParams(window.location.search).get('window') === 'quote';
 if (isQuoteWindow) document.documentElement.dataset.quoteWindow = 'true';
@@ -18,6 +19,7 @@ createRoot(document.getElementById('root')!).render(
         <NativeWindowFrame />
         <App />
         <NativeModalWindowControls />
+        <NativeCloseDialog />
       </>}
     </ErrorBoundary>
   </StrictMode>,

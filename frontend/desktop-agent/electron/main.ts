@@ -5,6 +5,7 @@ import electronUpdater from "electron-updater";
 import dotenv from "dotenv";
 import { timedBreakState } from "./services/timedBreak.js";
 import { QuoteReminderWindow } from "./services/quoteReminderWindow.js";
+import type { WindowCloseRequest, WindowCloseResult } from "./services/windowClosePrompt.js";
 import axios from "axios";
 import { execFile, fork, spawn, type ChildProcess } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
@@ -513,6 +514,7 @@ let unpaidPauseActive = false;
 // server session without accruing the time spent away or closing another device's session.
 let breakSessionSnapshot: { id: string; activeSeconds: number; idleSeconds: number } | null = null;
 let isHandlingWindowClose = false;
+let windowCloseRequest: WindowCloseRequest | null = null;
 let updateCheckTimer: ReturnType<typeof setInterval> | null = null;
 let initialUpdateCheckTimer: ReturnType<typeof setTimeout> | null = null;
 let updateRetryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -5825,6 +5827,7 @@ async function logoutDevice() {
   // Bank the pre-intent interval once before isSigningOut freezes accrual (G3).
   recalculateWorkedTime({ finalCheckpoint: true });
   isSigningOut = true;
+  clearWindowClosePrompt();
   quoteReminder.dispose();
   clearTimedBreak();
   invalidateInFlightScreenshotCaptures();
@@ -5902,6 +5905,52 @@ function isMainWindowExpanded() {
     bounds.width >= screen.getDisplayMatching(bounds).workArea.width;
 }
 
+function clearWindowClosePrompt() {
+  windowCloseRequest = null;
+  if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
+    mainWindow.webContents.send("window:close-requested", null);
+  }
+}
+
+async function handleWindowCloseChoice(requestId: unknown, choice: unknown): Promise<WindowCloseResult> {
+  const request = windowCloseRequest;
+  const window = mainWindow;
+  if (!request || request.id !== requestId || !["hide", "toggle", "quit", "cancel"].includes(choice as string)) {
+    return { success: false, message: "This close request is no longer active." };
+  }
+  if (isHandlingWindowClose) return { success: false, message: "Please wait for the current action to finish." };
+  if (choice === "cancel") {
+    clearWindowClosePrompt();
+    return { success: true };
+  }
+  if (!window || window.isDestroyed() || !runtimeStatus.enrolled || isSigningOut || isQuitting) {
+    clearWindowClosePrompt();
+    return { success: false, message: "The employee session changed. Please try again." };
+  }
+  const generation = enrollmentGeneration;
+  isHandlingWindowClose = true;
+  try {
+    if (choice === "toggle") {
+      const result = request.paused
+        ? await resumeTracking()
+        : await pauseTracking("Paused while closing the status window");
+      if (!result.success) return result;
+    }
+    if (windowCloseRequest !== request || generation !== enrollmentGeneration || isSigningOut || isQuitting || window.isDestroyed()) {
+      return { success: false, message: "The employee session changed. Please try again." };
+    }
+    clearWindowClosePrompt();
+    if (choice === "quit") app.quit();
+    else window.hide();
+    return { success: true };
+  } catch (error) {
+    log.error("Could not complete the window close action", safeErrorForLog(error));
+    return { success: false, message: "Could not complete this action. Please try again." };
+  } finally {
+    isHandlingWindowClose = false;
+  }
+}
+
 async function createMainWindow() {
   const display = screen.getDisplayNearestPoint(
     screen.getCursorScreenPoint(),
@@ -5949,6 +5998,8 @@ async function createMainWindow() {
       event.preventDefault();
     }
   });
+  mainWindow.webContents.on("render-process-gone", clearWindowClosePrompt);
+  mainWindow.on("closed", clearWindowClosePrompt);
 
   mainWindow.on("minimize", () => {
     // Minimize belongs on the taskbar. Hiding is an explicit Close/tray action.
@@ -5969,57 +6020,12 @@ async function createMainWindow() {
     if (isHandlingWindowClose) {
       return;
     }
-    isHandlingWindowClose = true;
-    void dialog
-      .showMessageBox(mainWindow!, {
-        type: "question",
-        title: "Close Khaliduo",
-        message: trackingPausedByUser
-          ? "Khaliduo is currently paused."
-          : unpaidPauseActive
-            ? "Khaliduo is currently paused."
-            : runtimeStatus.trackingPaused
-              ? "Khaliduo is currently paused."
-              : "Tracking and screenshots are currently active.",
-        detail:
-          "Choose whether Khaliduo should keep tracking, hide, or quit completely.",
-        buttons: trackingPausedByUser
-          ? ["Hide (Keep Paused)", "Resume Tracking & Hide", "Quit Khaliduo"]
-          : runtimeStatus.trackingPaused
-            ? ["Hide (Keep Paused)", "Resume Tracking & Hide", "Quit Khaliduo"]
-            : ["Hide & Keep Tracking", "Pause & Hide", "Quit Khaliduo"],
-        defaultId: 0,
-        cancelId: 0,
-        noLink: true,
-      })
-      .then(async ({ response }) => {
-        if (response === 1) {
-          if (trackingPausedByUser || runtimeStatus.trackingPaused) {
-            await resumeTracking();
-          } else {
-            await pauseTracking("Paused while closing the status window");
-          }
-          mainWindow?.hide();
-        } else if (response === 2) {
-          app.quit();
-        } else {
-          mainWindow?.hide();
-          if (process.platform === "win32") {
-            tray?.displayBalloon({
-              title: "Khaliduo is still running",
-              content:
-                "Tracking continues in the notification area. Right-click the Khaliduo icon to pause or reopen it.",
-              iconType: "info",
-            });
-          }
-        }
-      })
-      .catch((error) => {
-        log.error("Could not complete the window close action", safeErrorForLog(error));
-      })
-      .finally(() => {
-        isHandlingWindowClose = false;
-      });
+    windowCloseRequest ??= {
+      id: randomUUID(),
+      paused: trackingPausedByUser || unpaidPauseActive || runtimeStatus.trackingPaused,
+    };
+    mainWindow?.webContents.send("window:close-requested", windowCloseRequest);
+    showMainWindow({ forceForeground: true });
   });
 
   if (process.env.VITE_DEV_SERVER_URL) {
@@ -7166,6 +7172,7 @@ app.on("second-instance", (_event, commandLine) => {
 
 app.on("before-quit", (event) => {
   isQuitting = true;
+  clearWindowClosePrompt();
   quoteReminder.dispose();
   stopCrashRecoveryWatchdog();
   updateDisplaySleepBlocker();
@@ -7708,7 +7715,15 @@ ipcMain.handle("window:toggle-maximize", () => {
   }
 });
 
-ipcMain.handle("window:close", () => {
+ipcMain.handle("window:get-close-request", event => event.sender === mainWindow?.webContents ? windowCloseRequest : null);
+
+ipcMain.handle("window:respond-close", (event, requestId: unknown, choice: unknown) => {
+  if (event.sender !== mainWindow?.webContents) return { success: false, message: "This window cannot close the workspace." };
+  return handleWindowCloseChoice(requestId, choice);
+});
+
+ipcMain.handle("window:close", event => {
+  if (event.sender !== mainWindow?.webContents) return;
   mainWindow?.close();
 });
 
