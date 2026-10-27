@@ -1,4 +1,5 @@
 import type { QuoteReminderPayload } from "../../electron/services/quoteReminderWindow";
+import type { WindowCloseChoice, WindowCloseRequest, WindowCloseResult } from "../../electron/services/windowClosePrompt";
 
 export type AgentStatus = {
   appearanceScope?: string | null;
@@ -540,6 +541,9 @@ declare global {
       onWindowExpandedChanged: (callback: (expanded: boolean) => void) => () => void;
       toggleMaximizeWindow: () => Promise<void>;
       closeWindow: () => Promise<void>;
+      getWindowCloseRequest: () => Promise<WindowCloseRequest | null>;
+      respondWindowClose: (requestId: string, choice: WindowCloseChoice) => Promise<WindowCloseResult>;
+      onWindowCloseRequested: (callback: (request: WindowCloseRequest | null) => void) => () => void;
       checkForUpdates: () => Promise<{ success: boolean; message?: string }>;
     };
   }

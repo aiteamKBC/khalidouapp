@@ -1,5 +1,6 @@
 import electronRenderer from "electron/renderer";
 import type { QuoteReminderPayload } from "./services/quoteReminderWindow.js";
+import type { WindowCloseChoice, WindowCloseRequest } from "./services/windowClosePrompt.js";
 
 const { contextBridge, ipcRenderer } = electronRenderer;
 
@@ -118,6 +119,13 @@ contextBridge.exposeInMainWorld("khaliduo", {
   },
   toggleMaximizeWindow: () => ipcRenderer.invoke("window:toggle-maximize"),
   closeWindow: () => ipcRenderer.invoke("window:close"),
+  getWindowCloseRequest: () => ipcRenderer.invoke("window:get-close-request"),
+  respondWindowClose: (requestId: string, choice: WindowCloseChoice) => ipcRenderer.invoke("window:respond-close", requestId, choice),
+  onWindowCloseRequested: (callback: (request: WindowCloseRequest | null) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, request: WindowCloseRequest | null) => callback(request);
+    ipcRenderer.on("window:close-requested", listener);
+    return () => ipcRenderer.removeListener("window:close-requested", listener);
+  },
   checkForUpdates: () => ipcRenderer.invoke("agent:check-for-updates"),
   installUpdate: () => ipcRenderer.invoke("agent:install-update"),
   onRequiredUpdate: (

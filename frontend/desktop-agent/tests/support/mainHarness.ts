@@ -70,6 +70,7 @@ export function context(overrides: Record<string, unknown> = {}) {
     exports: {},
     log,
     quoteReminder: { dispose: noop },
+    clearWindowClosePrompt: noop,
     path,
     fs,
     process: { platform: "win32", env: {}, cwd: () => desktop },
