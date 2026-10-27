@@ -1,64 +1,69 @@
-.readdy-tracker-ui.readdy-tracker-ui.tracker-frame .native-quote-settings label {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin: 14px 0 10px;
-  cursor: pointer;
-  color: var(--k-ink);
-  font-size: 13px;
-  font-weight: 500;
-  letter-spacing: normal;
-  text-transform: none;
-}
-.readdy-tracker-ui.readdy-tracker-ui.tracker-frame .native-quote-settings input[type="checkbox"] {
-  accent-color: var(--k-pink);
-  width: 18px;
-  height: 18px;
-  min-height: 18px;
-  flex: 0 0 18px;
-  padding: 0;
-  margin: 0;
-}
-.native-quote-interval {
-  max-width: 440px;
-}
-.native-quote-interval-controls {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 10px;
-}
-.native-quote-interval-controls input {
-  flex: 1 1 120px;
-  min-width: 0;
-  width: 120px;
-}
-.native-quote-interval-controls button {
-  flex: 0 0 auto;
-}
-.readdy-tracker-ui.readdy-tracker-ui.tracker-frame .native-quote-interval-controls input {
-  min-height: 40px;
-  padding: 0 12px;
+.readdy-tracker-ui.readdy-tracker-ui.tracker-frame .native-quote-settings {
+  padding: 24px;
   border: 1px solid var(--k-line);
-  border-radius: 10px;
-  background: var(--k-bg-2);
+  border-radius: 18px;
   color: var(--k-ink);
-}
-.readdy-tracker-ui.readdy-tracker-ui.tracker-frame .native-quote-interval-controls button {
-  min-height: 40px;
-  padding: 10px 16px;
-  border: 0;
-  border-radius: 10px;
-  background: var(--k-pink);
-  color: var(--k-bg);
+  background: var(--k-card);
   box-shadow: none;
+
+  & .native-quote-settings-header { display: flex; align-items: center; gap: 12px; }
+  & .native-quote-settings-icon { display: grid; place-items: center; flex: none; width: 42px; height: 42px; border: 1px solid var(--k-line); border-radius: 12px; color: var(--k-plum-2); background: var(--k-pink-2); font-size: 21px; }
+  & .native-quote-settings-header h2 { margin: 0; font-size: 16px; line-height: 1.4; color: var(--k-ink); }
+  & .native-quote-settings-header p { margin: 5px 0 0; color: var(--k-muted); font-size: 12px; line-height: 1.6; }
+  & .native-quote-toggle { display: flex; align-items: center; justify-content: space-between; gap: 18px; margin: 22px 0 0; padding: 16px; border: 1px solid var(--k-line); border-radius: 12px; background: var(--k-bg); cursor: pointer; text-transform: none; letter-spacing: normal; }
+  & .native-quote-toggle > span { display: grid; gap: 6px; min-width: 0; }
+  & .native-quote-toggle strong { color: var(--k-ink); font-size: 12px; line-height: 1.5; font-weight: 600; }
+  & .native-quote-toggle small { color: var(--k-muted); font-size: 11px; line-height: 1.6; }
+  & .native-quote-toggle input {
+    position: relative;
+    appearance: none;
+    -webkit-appearance: none;
+    flex: 0 0 38px;
+    width: 38px;
+    height: 22px;
+    min-height: 22px;
+    padding: 0;
+    margin: 0;
+    border: 1px solid var(--k-line);
+    border-radius: 999px;
+    background: var(--k-line-2);
+    box-shadow: none;
+    cursor: pointer;
+    transition: background-color 150ms;
+  }
+  & .native-quote-toggle input::before { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: var(--k-muted); transition: transform 150ms; }
+  & .native-quote-toggle input:checked { border-color: var(--k-solid); background: var(--k-solid); }
+  & .native-quote-toggle input:checked::before { background: #fff; transform: translateX(16px); }
+  & .native-quote-interval { display: grid; gap: 14px; width: 100%; max-width: none; margin-top: 22px; padding-top: 22px; border-top: 1px solid var(--k-line); }
+  & .native-quote-interval-label { display: block; margin: 0; color: var(--k-ink); font-size: 12px; font-weight: 500; letter-spacing: normal; text-transform: none; }
+  & .native-quote-interval-controls { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 14px; max-width: 520px; }
+  & .native-quote-duration { display: flex; align-items: center; gap: 10px; box-sizing: border-box; min-width: 0; height: 44px; padding: 0 14px; border: 1px solid var(--k-line); border-radius: 10px; color: var(--k-muted); background: var(--k-field); }
+  & .native-quote-duration > svg { flex: none; width: 17px; height: 17px; font-size: 17px; }
+  & .native-quote-duration input { appearance: textfield; -moz-appearance: textfield; flex: 1; width: 100%; min-width: 0; height: 40px; min-height: 0; padding: 0; margin: 0; border: 0; border-radius: 0; background: transparent; color: var(--k-ink); font: inherit; font-size: 14px; line-height: 1; font-weight: 600; box-shadow: none; outline: none; font-variant-numeric: tabular-nums; }
+  & .native-quote-duration input::-webkit-inner-spin-button,
+  & .native-quote-duration input::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+  & .native-quote-duration > span { flex: none; font-size: 11px; }
+  & .native-quote-duration:focus-within { border-color: var(--k-pink); outline: 2px solid var(--k-pink); outline-offset: 3px; }
+  & .native-quote-interval-controls button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; box-sizing: border-box; width: auto; min-height: 44px; margin: 0; padding: 11px 16px; border: 1px solid transparent; border-radius: 10px; background: var(--k-solid); color: #fff; box-shadow: none; font: inherit; font-size: 12px; font-weight: 600; line-height: 1.5; cursor: pointer; }
+  & .native-quote-interval-controls button:hover { filter: brightness(1.08); }
+  & .native-quote-interval-controls button > svg { flex: none; font-size: 15px; }
+  & :is(button, input[type="checkbox"]):focus-visible { outline: 2px solid var(--k-pink); outline-offset: 3px; }
+  & .native-quote-help { display: flex; align-items: flex-start; gap: 8px; margin: 0; color: var(--k-muted); font-size: 11px; line-height: 1.7; }
+  & .native-quote-help > svg { flex: none; margin-top: 2px; font-size: 14px; }
+  & .native-quote-feedback { display: flex; align-items: flex-start; gap: 9px; margin: 16px 0 0; padding: 12px 14px; border: 1px solid var(--k-line); border-radius: 10px; font-size: 11px; line-height: 1.7; }
+  & .native-quote-feedback > svg { flex: none; margin-top: 2px; font-size: 15px; }
+  & .native-quote-interval .native-quote-feedback { margin: 0; }
+  & .native-quote-feedback.is-success { border-color: color-mix(in srgb, var(--k-green) 25%, var(--k-line)); color: var(--k-green); background: var(--k-green-2); }
+  & .native-quote-feedback.is-error { border-color: color-mix(in srgb, var(--k-rose) 25%, var(--k-line)); color: var(--k-rose); background: var(--k-rose-2); }
 }
-.native-quote-interval-controls :is(input, button):focus-visible {
-  outline: 2px solid var(--k-pink);
-  outline-offset: 3px;
-}
-.native-quote-interval .native-quote-saved {
-  color: var(--k-green);
+
+@media (max-width: 540px) {
+  .readdy-tracker-ui.readdy-tracker-ui.tracker-frame .native-quote-settings {
+    padding: 18px;
+    & .native-quote-toggle { padding: 14px; gap: 12px; }
+    & .native-quote-interval-controls { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+    & .native-quote-interval-controls button { width: 100%; }
+  }
 }
 .native-quote-reminder {
   position: fixed;
@@ -83,6 +88,12 @@
 .native-quote-actions { display: flex; align-items: center; gap: 4px; flex: none; }
 .native-quote-actions svg { font-size: 16px; }
 .native-quote-reminder p { margin: 10px 0 0; font-size: 14px; line-height: 1.6; }
+.native-quote-reminder p:lang(ar),
+.native-quote-author:lang(ar) {
+  font-family: "Tajawal", sans-serif;
+}
+.native-quote-author { margin-top: 10px; color: var(--k-muted); font-size: 12px; line-height: 1.6; }
+.native-quote-author cite { font-style: normal; }
 .native-quote-reminder button {
   display: inline-flex;
   align-items: center;

@@ -2,6 +2,8 @@ import { useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent, KeyboardEvent as ReactKeyboardEvent } from "react";
 import TimerDisplay from "./TimerFaces";
 import { TIMER_STYLES, type TimerStyle } from "./timer-style";
+import { TrackerIcon } from "./TrackerIcon";
+import "./swipe-timer.css";
 
 type Props = {
   style: TimerStyle;
@@ -131,11 +133,11 @@ export default function SwipeTimer({
   const faceHeight = compact ? "h-[238px]" : "h-[300px] sm:h-[336px]";
 
   return (
-    <div className="flex w-full flex-col items-center">
+    <div className="timer-carousel flex w-full flex-col items-center">
       <div
         role="group"
         tabIndex={0}
-        aria-label={`Timer face ${TIMER_STYLES[index].label}. Swipe or use the arrow keys to change it.`}
+        aria-label={`Timer face ${TIMER_STYLES[index].label}. Use the buttons, swipe, or use the arrow keys to change it.`}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={endGesture}
@@ -161,7 +163,7 @@ export default function SwipeTimer({
         >
           <div
             key={style}
-            className={`flex w-full items-center justify-center ${faceHeight} ${dir > 0 ? "k-face-in-next" : "k-face-in-prev"}`}
+            className={`timer-carousel-face flex w-full items-center justify-center ${faceHeight} ${dir > 0 ? "k-face-in-next" : "k-face-in-prev"}`}
             style={{ transformStyle: "preserve-3d" }}
           >
             <TimerDisplay
@@ -173,6 +175,26 @@ export default function SwipeTimer({
             />
           </div>
         </div>
+        <button
+          type="button"
+          className="timer-carousel-button is-previous"
+          aria-label="Previous timer style"
+          title="Previous timer style"
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={() => shift(-1)}
+        >
+          <TrackerIcon className="ri-arrow-left-line" aria-hidden="true" />
+        </button>
+        <button
+          type="button"
+          className="timer-carousel-button is-next"
+          aria-label="Next timer style"
+          title="Next timer style"
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={() => shift(1)}
+        >
+          <TrackerIcon className="ri-arrow-right-line" aria-hidden="true" />
+        </button>
       </div>
 
       <div className={`flex flex-col items-center gap-1.5 ${compact ? "mt-1" : "mt-2"}`}>

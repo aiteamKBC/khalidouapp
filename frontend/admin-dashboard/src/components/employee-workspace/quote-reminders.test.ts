@@ -7,6 +7,7 @@ import {
   loadQuoteSettings,
   validQuoteMinutes,
   quoteAt,
+  quoteAttribution,
   translateQuote,
 } from "./quote-reminders.ts";
 
@@ -84,6 +85,26 @@ test("each quote translates to the same quote in the other language and back", (
       assert.equal(/[\u0600-\u06ff]/.test(translated), !/[\u0600-\u06ff]/.test(original));
     }
   }
-  assert.equal(translateQuote(quoteAt("ar", 0)), "A small step each day adds up to meaningful progress.");
+  assert.equal(translateQuote(quoteAt("ar", 0)), "I have no special talent, I am only passionately curious.");
   assert.equal(translateQuote("Unknown quote"), "Unknown quote");
+});
+
+test("every reminder retains its author and source when translated", () => {
+  const authors = new Set<string>();
+  for (let sequence = 0; sequence < 12; sequence++) {
+    const arabic = quoteAt("ar", sequence);
+    const english = translateQuote(arabic);
+    const ar = quoteAttribution(arabic)!;
+    const en = quoteAttribution(english)!;
+    assert.equal(ar.language, "ar");
+    assert.equal(en.language, "en");
+    assert.match(ar.author, /[\u0600-\u06ff]/);
+    assert.match(en.author, /^[A-Za-z]/);
+    assert.equal(ar.source, en.source);
+    assert.equal(new URL(en.source).protocol, "https:");
+    assert.ok(arabic.length <= 500 && english.length <= 500);
+    authors.add(en.author);
+  }
+  assert.equal(authors.size, 12);
+  assert.equal(quoteAttribution("Unknown quote"), null);
 });

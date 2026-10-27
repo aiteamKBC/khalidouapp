@@ -1,3 +1,5 @@
+import type { QuoteReminderPayload } from "../../electron/services/quoteReminderWindow";
+
 export type AgentStatus = {
   appearanceScope?: string | null;
   enrolled: boolean;
@@ -529,6 +531,13 @@ declare global {
       setIdleAlertAttention: (active: boolean) => void;
       setUpdateAttention: (active: boolean) => void;
       minimizeWindow: () => Promise<void>;
+      showQuoteReminder: (payload: QuoteReminderPayload) => Promise<void>;
+      getQuoteReminder: () => Promise<QuoteReminderPayload | null>;
+      dismissQuoteReminder: () => Promise<void>;
+      resizeQuoteReminder: (height: number) => void;
+      onQuoteReminderChanged: (callback: (payload: QuoteReminderPayload) => void) => () => void;
+      isWindowExpanded: () => Promise<boolean>;
+      onWindowExpandedChanged: (callback: (expanded: boolean) => void) => () => void;
       toggleMaximizeWindow: () => Promise<void>;
       closeWindow: () => Promise<void>;
       checkForUpdates: () => Promise<{ success: boolean; message?: string }>;

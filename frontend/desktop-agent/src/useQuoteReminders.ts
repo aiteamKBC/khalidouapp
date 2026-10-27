@@ -1,23 +1,27 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { appearanceVariables } from "../../shared/appearance-palettes";
+import type { Appearance } from "../../shared/appearance-store";
 import {
   consumeDueQuote,
   defaultQuoteSettings,
   loadQuoteSettings,
   validQuoteMinutes,
-  translateQuote,
   type QuoteSettings,
 } from "../../shared/quote-reminders";
 
-export function useQuoteReminders(scope: string | null) {
+export function useQuoteReminders(scope: string | null, appearance: Appearance) {
   const storageKey = scope ? `khaliduo:quote-reminders:v1:${scope}` : null;
   const [state, setState] = useState<{ key: string | null; settings: QuoteSettings }>(() => ({
     key: null, settings: defaultQuoteSettings(),
   }));
-  const [message, setMessage] = useState<{ key: string; text: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const colors = useRef(appearanceVariables(appearance));
 
   useEffect(() => {
-    setMessage(null);
+    colors.current = appearanceVariables(appearance);
+  }, [appearance]);
+
+  useEffect(() => {
     setError(null);
     if (!storageKey) return;
     let active = true;
@@ -31,13 +35,17 @@ export function useQuoteReminders(scope: string | null) {
       }
     };
     const claim = () => {
-      if (!active || document.visibilityState !== "visible") return;
+      if (!active || !window.khaliduo) return;
       try {
         const due = consumeDueQuote(read(), Date.now());
         if (!due) return;
         localStorage.setItem(storageKey, JSON.stringify(due.settings));
         setState({ key: storageKey, settings: due.settings });
-        setMessage({ key: storageKey, text: due.text });
+        void window.khaliduo.showQuoteReminder({ text: due.text, colors: colors.current }).then(() => {
+          if (active) setError(null);
+        }).catch(() => {
+          if (active) setError("Your desktop quote could not be displayed. Please try again.");
+        });
       } catch {
         // Do not display again until a new deadline has been saved successfully.
       }
@@ -59,14 +67,9 @@ export function useQuoteReminders(scope: string | null) {
       window.clearInterval(timer);
       document.removeEventListener("visibilitychange", tick);
       window.removeEventListener("storage", onStorage);
+      void window.khaliduo?.dismissQuoteReminder().catch(() => {});
     };
   }, [storageKey]);
-
-  useEffect(() => {
-    if (!message) return;
-    const timer = window.setTimeout(() => setMessage(null), 20_000);
-    return () => window.clearTimeout(timer);
-  }, [message]);
 
   const savePreferences = (changes: Partial<Pick<QuoteSettings, "enabled" | "minutes">>) => {
     if (!storageKey) return false;
@@ -76,7 +79,7 @@ export function useQuoteReminders(scope: string | null) {
       next.nextAt = next.enabled ? Date.now() + next.minutes * 60_000 : 0;
       localStorage.setItem(storageKey, JSON.stringify(next));
       setState({ key: storageKey, settings: next });
-      setMessage(null);
+      void window.khaliduo?.dismissQuoteReminder().catch(() => {});
       setError(null);
       return true;
     } catch {
@@ -88,9 +91,6 @@ export function useQuoteReminders(scope: string | null) {
   return {
     enabled: state.key === storageKey ? state.settings.enabled : true,
     minutes: state.key === storageKey ? state.settings.minutes : 60,
-    message: message?.key === storageKey ? message.text : null,
-    dismiss: () => setMessage(null),
-    translate: () => setMessage(current => current ? { ...current, text: translateQuote(current.text) } : null),
     setEnabled: (enabled: boolean) => savePreferences({ enabled }),
     setMinutes: (minutes: number) => {
       if (!validQuoteMinutes(minutes)) {

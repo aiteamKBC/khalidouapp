@@ -6,11 +6,35 @@
   font-display: swap;
 }
 
+@font-face {
+  font-family: "Tajawal";
+  src: url("/fonts/Tajawal-Regular.ttf") format("truetype");
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Tajawal";
+  src: url("/fonts/Tajawal-Medium.ttf") format("truetype");
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Tajawal";
+  src: url("/fonts/Tajawal-Bold.ttf") format("truetype");
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+}
+
 :root {
-  --font: "Roboto", "Segoe UI", Arial, sans-serif;
-  --font-sans: "Roboto", "Segoe UI", Arial, sans-serif;
-  --font-ew-heading: "Roboto", "Segoe UI", Arial, sans-serif;
-  --font-ew-mono: "Roboto", "Segoe UI", Arial, sans-serif;
+  --font: "Roboto", "Tajawal", "Segoe UI", Arial, sans-serif;
+  --font-sans: "Roboto", "Tajawal", "Segoe UI", Arial, sans-serif;
+  --font-ew-heading: "Roboto", "Tajawal", "Segoe UI", Arial, sans-serif;
+  --font-ew-mono: "Roboto", "Tajawal", "Segoe UI", Arial, sans-serif;
 }
 
 body,
@@ -19,12 +43,18 @@ input,
 textarea,
 select,
 option {
-  font-family: "Roboto", "Segoe UI", Arial, sans-serif;
+  font-family: "Roboto", "Tajawal", "Segoe UI", Arial, sans-serif;
 }
 
 /* Override the older design's heading and timer faces, including inline fonts. */
-:is(.readdy-tracker-ui, .employee-workspace, .workspace-login, .k-app, .swal2-container),
-:is(.readdy-tracker-ui, .employee-workspace, .workspace-login, .k-app, .swal2-container)
+:is(.readdy-tracker-ui, .employee-workspace, .workspace-login, .k-app, .swal2-container, .native-quote-reminder),
+:is(.readdy-tracker-ui, .employee-workspace, .workspace-login, .k-app, .swal2-container, .native-quote-reminder)
   :where(div, span, h1, h2, h3, h4, h5, h6, p, a, button, input, textarea, select, option, label, legend, strong, small, b, em, summary, li, td, th, dt, dd, time, kbd, output, text) {
-  font-family: "Roboto", "Segoe UI", Arial, sans-serif !important;
+  font-family: "Roboto", "Tajawal", "Segoe UI", Arial, sans-serif !important;
+}
+
+:lang(ar),
+.font-arabic,
+.font-arabic * {
+  font-family: "Tajawal", "Roboto", "Segoe UI", Arial, sans-serif !important;
 }

@@ -4,6 +4,7 @@ import log from "electron-log/main";
 import electronUpdater from "electron-updater";
 import dotenv from "dotenv";
 import { timedBreakState } from "./services/timedBreak.js";
+import { QuoteReminderWindow } from "./services/quoteReminderWindow.js";
 import axios from "axios";
 import { execFile, fork, spawn, type ChildProcess } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
@@ -416,6 +417,24 @@ const FOREGROUND_SEGMENT_MAX_MS = 60_000;
 const LONG_IDLE_SESSION_SPLIT_SECONDS = 4 * 60 * 60;
 
 let mainWindow: Electron.BrowserWindow | null = null;
+const quoteReminder = new QuoteReminderWindow({
+  createWindow: options => new BrowserWindow(options),
+  preload: path.join(__dirname, "preload.js"),
+  getWorkArea: () => mainWindow && !mainWindow.isDestroyed()
+    ? screen.getDisplayMatching(mainWindow.getBounds()).workArea
+    : screen.getPrimaryDisplay().workArea,
+  loadWindow: async window => {
+    if (process.env.VITE_DEV_SERVER_URL) {
+      const url = new URL(process.env.VITE_DEV_SERVER_URL);
+      url.searchParams.set("window", "quote");
+      await window.loadURL(url.toString());
+    } else {
+      await window.loadFile(path.join(__dirname, "..", "dist-khaliduo", "index.html"), {
+        query: { window: "quote" },
+      });
+    }
+  },
+});
 let tray: Electron.Tray | null = null;
 let isQuitting = false;
 let crashRecoveryWatchdog: ChildProcess | null = null;
@@ -5806,6 +5825,7 @@ async function logoutDevice() {
   // Bank the pre-intent interval once before isSigningOut freezes accrual (G3).
   recalculateWorkedTime({ finalCheckpoint: true });
   isSigningOut = true;
+  quoteReminder.dispose();
   clearTimedBreak();
   invalidateInFlightScreenshotCaptures();
   trackingPausedByUser = true;
@@ -5875,6 +5895,13 @@ async function syncNow() {
   }
 }
 
+function isMainWindowExpanded() {
+  if (!mainWindow || mainWindow.isDestroyed()) return false;
+  const bounds = mainWindow.getBounds();
+  return mainWindow.isMaximized() || mainWindow.isFullScreen() ||
+    bounds.width >= screen.getDisplayMatching(bounds).workArea.width;
+}
+
 async function createMainWindow() {
   const display = screen.getDisplayNearestPoint(
     screen.getCursorScreenPoint(),
@@ -5897,6 +5924,8 @@ async function createMainWindow() {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
+      // Desktop reminders still run while the workspace is minimized or hidden.
+      backgroundThrottling: false,
       // The preload is an ESM bundle; Electron sandboxed preloads cannot load
       // ESM imports. Context isolation and disabled Node integration still
       // keep application APIs behind the narrow contextBridge surface.
@@ -5905,6 +5934,15 @@ async function createMainWindow() {
   });
 
   mainWindow.setMenuBarVisibility(false);
+  const updateWindowShape = () => {
+    mainWindow?.webContents.send("window:expanded-changed", isMainWindowExpanded());
+  };
+  mainWindow.on("maximize", updateWindowShape);
+  mainWindow.on("unmaximize", updateWindowShape);
+  mainWindow.on("enter-full-screen", updateWindowShape);
+  mainWindow.on("leave-full-screen", updateWindowShape);
+  mainWindow.on("resize", updateWindowShape);
+  mainWindow.on("move", updateWindowShape);
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   mainWindow.webContents.on("will-navigate", (event, url) => {
     if (url !== mainWindow?.webContents.getURL()) {
@@ -7128,6 +7166,7 @@ app.on("second-instance", (_event, commandLine) => {
 
 app.on("before-quit", (event) => {
   isQuitting = true;
+  quoteReminder.dispose();
   stopCrashRecoveryWatchdog();
   updateDisplaySleepBlocker();
   if (shouldClearInstallRecoveryOnBeforeQuit(isInstallingUpdate)) {
@@ -7637,6 +7676,21 @@ ipcMain.handle("agent:decline-tracking-start", () =>
 );
 
 ipcMain.handle("agent:logout", () => logoutDevice());
+
+ipcMain.handle("window:is-expanded", () => isMainWindowExpanded());
+
+ipcMain.handle("quote:show", async (event, payload: unknown) => {
+  if (event.sender !== mainWindow?.webContents || !runtimeStatus.enrolled || isSigningOut || isQuitting) return;
+  await quoteReminder.show(payload);
+});
+
+ipcMain.handle("quote:get", event => quoteReminder.getPayload(event.sender));
+
+ipcMain.handle("quote:dismiss", event => {
+  if (event.sender === mainWindow?.webContents || quoteReminder.owns(event.sender)) quoteReminder.dismiss();
+});
+
+ipcMain.on("quote:resize", (event, height: unknown) => quoteReminder.resize(event.sender, height));
 
 ipcMain.handle("window:minimize", () => {
   mainWindow?.minimize();

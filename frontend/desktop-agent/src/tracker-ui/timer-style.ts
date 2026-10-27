@@ -32,12 +32,6 @@ export const TIMER_STYLES: {
     icon: "ri-donut-chart-line",
   },
   {
-    key: "bar",
-    label: "Linear bar",
-    hint: "Wide track under the numbers",
-    icon: "ri-progress-2-line",
-  },
-  {
     key: "minimal",
     label: "Numbers only",
     hint: "Type-led, no shape",

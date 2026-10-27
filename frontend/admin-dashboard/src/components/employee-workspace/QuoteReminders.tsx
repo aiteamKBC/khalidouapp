@@ -5,6 +5,7 @@ import {
   consumeDueQuote,
   defaultQuoteSettings,
   quoteAt,
+  quoteAttribution,
   loadQuoteSettings,
   validQuoteMinutes,
   translateQuote,
@@ -28,6 +29,7 @@ export default function QuoteReminders({
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
+  const attribution = message ? quoteAttribution(message) : null;
 
   useEffect(() => {
     let active = true;
@@ -240,6 +242,11 @@ export default function QuoteReminders({
           <p dir="auto" className="mt-2 text-[14px] leading-relaxed">
             {message}
           </p>
+          {attribution && (
+            <footer dir="auto" lang={attribution.language} className="mt-2 text-[12px] leading-relaxed text-ew-muted">
+              <cite title={attribution.source} className="not-italic">{attribution.author}</cite>
+            </footer>
+          )}
         </aside>
       )}
     </>

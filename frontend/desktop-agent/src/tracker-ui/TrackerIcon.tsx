@@ -6,6 +6,13 @@ export function TrackerIcon({
 }: ComponentProps<"svg">) {
   const name = className.match(/ri-[\w-]+/)?.[0] ?? "";
   const icons: Record<string, string> = {
+    "ri-video-chat-line": "M3 5h12v14H3zM15 10l6-4v12l-6-4",
+    "ri-shield-check-line": "M12 2 3 6v6c0 5 9 10 9 10s9-5 9-10V6l-9-4ZM8 12l3 3 5-6",
+    "ri-chat-quote-line": "M4 3h16v14H9l-5 4V3zM8 7h3v3H8V7zm5 0h3v3h-3V7zM8 10v2m5-2v2",
+    "ri-information-line": "M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0M12 11v6M12 7h.01",
+    "ri-file-list-3-line": "M14 3H5v18h14V8zM14 3v5h5M8 12h8M8 16h8",
+    "ri-calendar-event-line": "M4 5h16v16H4zM8 2v6M16 2v6M4 11h16M8 15h3M8 18h7",
+    "ri-send-plane-line": "m22 2-7 20-4-9-9-4 20-7ZM22 2 11 13",
     "ri-translate-line": "M5 8l6 6M4 14l6-6 2-3M2 5h12M7 2h1M22 22l-5-10-5 10M14 18h6",
     "ri-refresh-line":
       "M20 7v5h-5M4 17v-5h5M6 6a8 8 0 0 1 13 5M18 18a8 8 0 0 1-13-5",

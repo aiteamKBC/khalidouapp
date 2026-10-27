@@ -1,5 +1,6 @@
 import DesktopLogin from "./DesktopLogin";
 import { NativeWindowControls } from "./NativeWindowControls";
+import { createPortal } from "react-dom";
 import { useAppearance } from "./useAppearance";
 import { useDialogTheme } from "./useDialogTheme";
 import "./idle-dialog.css";
@@ -63,6 +64,8 @@ import "./ReaddyDesktop.css";
 import { NativeInsights, NativeShiftPage, ScreenshotsPage, WorkspacePageHeader } from "./WorkspacePages";
 import { TrackerIcon } from "./tracker-ui/TrackerIcon";
 import "./workspace-pages.css";
+import "./requests-page.css";
+import "./meetings-page.css";
 
 const fallbackStatus: AgentStatus = {
   enrolled: false,
@@ -546,6 +549,7 @@ function App() {
   const { appearance, updateAppearance } = useAppearance(status.appearanceScope);
   const quoteReminders = useQuoteReminders(
     status.enrolled ? (status.appearanceScope ?? status.deviceId) : null,
+    appearance,
   );
   const theme = status.enrolled && status.appearanceScope ? appearance.mode : loginTheme;
   useDialogTheme({ skin: appearance.skin, mode: theme });
@@ -2180,22 +2184,6 @@ function App() {
           />
         )}
       </>
-      {quoteReminders.message && (
-        <aside className="native-quote-reminder" role="status" aria-live="polite" aria-label="Quote reminder">
-          <div>
-            <strong>A moment of inspiration</strong>
-            <div className="native-quote-actions">
-              <button type="button" aria-label="Translate quote" title="Translate quote" onClick={quoteReminders.translate}>
-                <TrackerIcon className="ri-translate-line" aria-hidden="true" />
-              </button>
-              <button type="button" aria-label="Dismiss quote" onClick={quoteReminders.dismiss}>
-                ×
-              </button>
-            </div>
-          </div>
-          <p dir="auto">{quoteReminders.message}</p>
-        </aside>
-      )}
     </TrackerFrame>
   );
 }
@@ -3405,6 +3393,11 @@ type RequestCentreProps = {
   children?: ReactNode;
 };
 
+function RequestDialogPortal({ children }: { children: ReactNode }) {
+  const frame = document.querySelector(".tracker-frame");
+  return frame ? createPortal(<div className="workspace-page wp-requests request-dialog-portal">{children}</div>, frame) : children;
+}
+
 function RequestCentreView(props: RequestCentreProps) {
   const {
     status,
@@ -3496,40 +3489,75 @@ function RequestCentreView(props: RequestCentreProps) {
   const toggle = (type: "idle" | "early" | "leave") =>
     props.onExpandedRequestChange(expandedRequest === type ? null : type);
 
+  const closeRequest = useRef(props.onExpandedRequestChange);
+  useEffect(() => {
+    closeRequest.current = props.onExpandedRequestChange;
+  }, [props.onExpandedRequestChange]);
   useEffect(() => {
     if (!expandedRequest) return;
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") props.onExpandedRequestChange(null);
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const dialog = document.querySelector<HTMLElement>(".wp-requests .k-request-dialog");
+    const focusable = () => Array.from(dialog?.querySelectorAll<HTMLElement>(
+      'button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex="0"]',
+    ) ?? []).filter(element => element.getClientRects().length > 0);
+    (dialog?.querySelector<HTMLInputElement>('input[type="radio"]:checked') ?? focusable()[0])?.focus({ preventScroll: true });
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeRequest.current(null);
+      }
+      if (event.key !== "Tab") return;
+      const elements = focusable();
+      const first = elements[0];
+      const last = elements[elements.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last?.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first?.focus();
+      }
     };
-    window.addEventListener("keydown", closeOnEscape);
-    return () => window.removeEventListener("keydown", closeOnEscape);
-  }, [expandedRequest, props]);
+    window.addEventListener("keydown", handleKey);
+    return () => {
+      window.removeEventListener("keydown", handleKey);
+      if (previous?.isConnected) previous.focus({ preventScroll: true });
+    };
+  }, [expandedRequest]);
 
   return (
-    <section className="k-page k-requests-page">
-      <header className="k-page-header">
-        <div>
-          <h1>Time &amp; Leave Requests</h1>
-          <p>
-            Submit and track work-time explanations, permissions, and leave.
-          </p>
-        </div>
-      </header>
+    <section className="k-page k-requests-page workspace-page wp-requests">
+      <WorkspacePageHeader
+        title="Time & Leave Requests"
+        description="Manage your time, plan your leave, and keep track of every request."
+        icon="ri-file-list-3-line"
+        actions={<span className="wp-badge"><span className="request-review-dot" />{requests.filter(request => request.status === "pending").length} pending review</span>}
+      />
 
       <section className="k-summary-strip" aria-label="Request balances">
         <div>
-          <span>Today&apos;s scheduled shift</span>
-          <strong>{scheduledShift}</strong>
+          <span className="request-balance-icon"><TrackerIcon className="ri-time-line" aria-hidden="true" /></span>
+          <div className="request-balance-copy">
+            <span>Today&apos;s scheduled shift</span>
+            <strong>{scheduledShift}</strong>
+            <small>Your regular working hours</small>
+          </div>
         </div>
         <div>
-          <span>Weekly early-leave balance</span>
-          <strong>
-            {weeklyRemaining} of {weeklyAllowance} min remaining
-          </strong>
+          <span className="request-balance-icon"><TrackerIcon className="ri-timer-line" aria-hidden="true" /></span>
+          <div className="request-balance-copy">
+            <span>Weekly early-leave balance</span>
+            <strong>{weeklyRemaining} <em>min remaining</em></strong>
+            <small>Of {weeklyAllowance} minutes this week</small>
+          </div>
         </div>
         <div>
-          <span>Annual-leave balance</span>
-          <strong>{leaveBalance} working days</strong>
+          <span className="request-balance-icon"><TrackerIcon className="ri-calendar-check-line" aria-hidden="true" /></span>
+          <div className="request-balance-copy">
+            <span>Annual-leave balance</span>
+            <strong>{leaveBalance} <em>working days</em></strong>
+            <small>Available for your next leave</small>
+          </div>
         </div>
       </section>
 
@@ -3537,8 +3565,11 @@ function RequestCentreView(props: RequestCentreProps) {
 
       <section className="k-request-centre">
         <div className="k-section-heading">
-          <h2>Request Centre</h2>
-          <span>Choose one request type</span>
+          <div>
+            <h2>Request Centre</h2>
+            <p>Choose what you need. We&apos;ll guide you through the details.</p>
+          </div>
+          <span className="request-section-label">3 request types</span>
         </div>
 
         <article
@@ -3556,7 +3587,7 @@ function RequestCentreView(props: RequestCentreProps) {
             </div>
             <strong className="k-request-state">
               {idleRequestOptions.length
-                ? `${idleRequestOptions.length} idle period${idleRequestOptions.length === 1 ? "" : "s"} require explanation`
+                ? `${idleRequestOptions.length} idle period${idleRequestOptions.length === 1 ? " requires" : "s require"} explanation`
                 : "No unexplained idle periods during your scheduled working hours."}
             </strong>
             <button
@@ -3570,6 +3601,7 @@ function RequestCentreView(props: RequestCentreProps) {
             </button>
           </div>
           {expandedRequest === "idle" && (
+            <RequestDialogPortal>
             <div
               className="k-request-form-shell"
               onMouseDown={(event) => {
@@ -3579,18 +3611,18 @@ function RequestCentreView(props: RequestCentreProps) {
               }}
             >
               <form
-                className="k-form k-request-dialog"
+                className="k-form k-request-dialog k-idle-request-dialog"
                 role="dialog"
                 aria-modal="true"
                 aria-labelledby="idle-request-title"
                 onSubmit={props.onSubmitIdleTimeRequest}
               >
                 <header className="k-request-dialog-header">
-                  <div>
+                  <span className="idle-dialog-icon"><TrackerIcon className="ri-hourglass-line" aria-hidden="true" /></span>
+                  <div className="idle-dialog-heading">
                     <h2 id="idle-request-title">Explain Idle Time</h2>
                     <p>
-                      Choose the detected period and explain the work you
-                      completed.
+                      Select a period, then tell HR what you were working on.
                     </p>
                   </div>
                   <button
@@ -3599,90 +3631,88 @@ function RequestCentreView(props: RequestCentreProps) {
                     aria-label="Close request"
                     onClick={() => props.onExpandedRequestChange(null)}
                   >
-                    ×
+                    <TrackerIcon className="ri-close-line" aria-hidden="true" />
                   </button>
                 </header>
-                <div className="k-request-form-grid">
-                  <label>
-                    Idle period
-                    <select
-                      value={selectedIdle?.key ?? ""}
-                      onChange={(event) =>
-                        props.onSelectedIdleRequestChange(event.target.value)
-                      }
-                      disabled={!idleRequestOptions.length}
-                    >
-                      {idleRequestOptions.map((option) => (
-                        <option key={option.key} value={option.key}>
-                          {formatClock(
-                            option.startedAt,
-                            status.todayTimeline?.timezone ?? "UTC",
-                          )}{" "}
-                          -{" "}
-                          {formatClock(
-                            option.endedAt,
-                            status.todayTimeline?.timezone ?? "UTC",
-                          )}{" "}
-                          | {formatDuration(option.durationSeconds)} idle | up
-                          to {requestableIdleMinutes(option)} min remaining
-                        </option>
+                <div className="idle-request-body">
+                <div className="idle-request-selection">
+                  <fieldset className="idle-periods">
+                    <legend>Detected idle periods <span>{idleRequestOptions.length}</span></legend>
+                    <div className="idle-period-list">
+                      {idleRequestOptions.map(option => (
+                        <label key={option.key} className="idle-period-option" data-selected={selectedIdle?.key === option.key}>
+                          <input
+                            type="radio"
+                            name="idle-request-period"
+                            value={option.key}
+                            checked={selectedIdle?.key === option.key}
+                            onChange={() => props.onSelectedIdleRequestChange(option.key)}
+                            aria-label={`${formatClock(option.startedAt, status.todayTimeline?.timezone ?? policy?.timezone ?? "UTC")} to ${formatClock(option.endedAt, status.todayTimeline?.timezone ?? policy?.timezone ?? "UTC")}, ${requestableIdleMinutes(option)} minutes`}
+                          />
+                          <span className="idle-period-copy">
+                            <strong>{formatClock(option.startedAt, status.todayTimeline?.timezone ?? policy?.timezone ?? "UTC")} – {formatClock(option.endedAt, status.todayTimeline?.timezone ?? policy?.timezone ?? "UTC")}</strong>
+                            <small>{new Date(option.startedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: status.todayTimeline?.timezone ?? policy?.timezone ?? "UTC" })} · {formatDuration(option.durationSeconds)} recorded</small>
+                          </span>
+                          <span className="idle-period-minutes">{requestableIdleMinutes(option)} <small>min</small></span>
+                        </label>
                       ))}
-                    </select>
-                  </label>
-                  <label>
-                    Minutes requested (full idle period)
-                    <input
-                      value={selectedIdle ? `${maxIdleMinutes} min` : "0 min"}
-                      disabled
-                    />
-                  </label>
+                      {!idleRequestOptions.length && <p className="idle-no-periods">No idle periods are available to explain.</p>}
+                    </div>
+                  </fieldset>
+                  <aside className="idle-request-total" aria-label="Requested time" aria-live="polite">
+                    <span className="idle-total-icon"><TrackerIcon className="ri-time-line" aria-hidden="true" /></span>
+                    <span>Requested time</span>
+                    <strong>{selectedIdle ? maxIdleMinutes : 0}<small>min</small></strong>
+                    <p>The full selected period will be sent for review.</p>
+                  </aside>
                 </div>
-                <label>
-                  What were you doing?
+                <label className="idle-request-reason" htmlFor="idle-request-reason">
+                  <span className="idle-reason-heading"><span id="idle-reason-label">What were you doing?</span><small>Required</small></span>
                   <textarea
                     id="idle-request-reason"
+                    aria-labelledby="idle-reason-label"
+                    aria-describedby="idle-reason-help"
                     value={props.timeRequestReason}
                     onChange={(event) =>
                       props.onTimeRequestReasonChange(event.target.value)
                     }
                     minLength={10}
                     maxLength={1000}
-                    placeholder="Client call, meeting, offline work, or a system issue..."
+                    placeholder="For example: I was on a client call and taking notes away from my computer."
                     required
                   />
-                  <small>Required · at least 10 characters</small>
+                  <span className="idle-reason-help" id="idle-reason-help"><span>At least 10 characters. A brief explanation is enough.</span><span>{props.timeRequestReason.length}/1000</span></span>
                 </label>
-                <div className="k-form-footer">
-                  <span>
-                    Idle period:{" "}
-                    {selectedIdle
-                      ? formatDuration(selectedIdle.durationSeconds)
-                      : "00:00:00"}
-                    {selectedIdle
-                      ? ` | The full ${requestableIdleMinutes(selectedIdle)} min will be sent`
-                      : ""}
-                  </span>
-                  <button
-                    className="k-primary"
-                    disabled={
-                      props.isSubmittingTimeRequest ||
-                      !selectedIdle ||
-                      props.timeRequestReason.trim().length < 10
-                    }
-                  >
-                    {props.isSubmittingTimeRequest
-                      ? "Submitting..."
-                      : "Submit to HR"}
-                  </button>
-                </div>
                 {props.timeRequestError && (
-                  <p className="k-error">{props.timeRequestError}</p>
+                  <p className="k-error" role="alert">{props.timeRequestError}</p>
                 )}
                 {props.timeRequestSuccess && (
-                  <p className="k-success">{props.timeRequestSuccess}</p>
+                  <p className="k-success" role="status">{props.timeRequestSuccess}</p>
                 )}
+                </div>
+                <footer className="k-form-footer idle-request-footer">
+                  <span className="idle-review-note"><TrackerIcon className="ri-information-line" aria-hidden="true" />HR will review your explanation.</span>
+                  <div className="idle-request-actions">
+                    <button type="button" className="idle-request-cancel" onClick={() => props.onExpandedRequestChange(null)}>Cancel</button>
+                    <button
+                      type="submit"
+                      className="k-primary"
+                      disabled={
+                        props.isSubmittingTimeRequest ||
+                        !selectedIdle ||
+                        props.timeRequestReason.trim().length < 10
+                      }
+                    >
+                      <TrackerIcon className="ri-send-plane-line" aria-hidden="true" />
+                      {props.isSubmittingTimeRequest
+                        ? "Submitting..."
+                        : "Submit to HR"}
+                    </button>
+                  </div>
+                </footer>
               </form>
             </div>
+            </RequestDialogPortal>
           )}
         </article>
 
@@ -3977,9 +4007,11 @@ function RequestCentreView(props: RequestCentreProps) {
                 key={filter}
                 type="button"
                 className={requestFilter === filter ? "active" : ""}
+                aria-pressed={requestFilter === filter}
                 onClick={() => setRequestFilter(filter)}
               >
                 {filter[0].toUpperCase() + filter.slice(1)}
+                <span>{filter === "all" ? requests.length : requests.filter(request => request.status === filter).length}</span>
               </button>
             ))}
           </div>
@@ -3990,14 +4022,15 @@ function RequestCentreView(props: RequestCentreProps) {
               <div className="k-request-record" key={request.id}>
                 <div className="k-request-record-row">
                   <strong>{request.type}</strong>
-                  <span>{request.period}</span>
-                  <span>{request.duration}</span>
-                  <span>Submitted {formatTimestamp(request.createdAt)}</span>
+                  <span className="request-record-period">{request.period}</span>
+                  <span className="request-record-duration">{request.duration}</span>
+                  <span className="request-record-submitted">Submitted {formatTimestamp(request.createdAt)}</span>
                   <em className={`k-request-status ${request.status}`}>
                     {request.status}
                   </em>
                   <button
                     type="button"
+                    aria-expanded={openRequestId === request.id}
                     onClick={() =>
                       setOpenRequestId(
                         openRequestId === request.id ? null : request.id,
@@ -4025,8 +4058,9 @@ function RequestCentreView(props: RequestCentreProps) {
             ))
           ) : (
             <div className="k-empty-request-list">
-              No {requestFilter === "all" ? "" : `${requestFilter} `}requests
-              yet.
+              <span className="request-empty-icon"><TrackerIcon className="ri-file-list-3-line" aria-hidden="true" /></span>
+              <h3>No {requestFilter === "all" ? "" : `${requestFilter} `}requests yet</h3>
+              <p>{requestFilter === "all" ? "Your requests and their review status will appear here." : "Try another filter to see the rest of your requests."}</p>
             </div>
           )}
         </div>
@@ -4218,53 +4252,60 @@ function MeetingView({
     : "";
 
   return (
-    <section className="k-page k-requests-page">
-      <article className="k-panel k-request-card">
-        <header className="k-request-card-header">
-          <span className="k-request-icon">
-            <KIcon name="meeting" />
-          </span>
+    <section className="k-page workspace-page wp-meetings">
+      <WorkspacePageHeader
+        title="Meeting Mode"
+        description="Record meetings and calls, and track their review status."
+        icon="ri-video-chat-line"
+        actions={<span className={`wp-badge${active ? " is-success" : ""}`}>{active ? "Meeting in progress" : "Meetings & calls"}</span>}
+      />
+      <div className="meeting-layout">
+      <article className="wp-card meeting-main">
+        <header className="wp-card-heading">
           <div>
-            <h2>Meeting Mode</h2>
-            <p className="k-muted">
-              Record an offline meeting or call. Screenshot capture continues as
-              normal. The time is sent for review once it ends; approved
-              meetings are paid, and genuine activity is preserved if it is
-              rejected.
-            </p>
+            <h2>{active ? "Your current meeting" : "Start a meeting"}</h2>
+            <p>{active ? "Focus on the conversation. We’ll keep track of the time." : "Add a few details before your meeting or call begins."}</p>
           </div>
+          <span className="meeting-card-icon"><TrackerIcon className="ri-video-chat-line" aria-hidden="true" /></span>
         </header>
 
         {active ? (
-          <div className="k-meeting-active">
-            <span className="k-meeting-live-chip">
-              <span className="k-meeting-live-dot" aria-hidden="true" />
+          <div className="meeting-active">
+            <span className={`k-meeting-badge k-meeting-${meetingStateKind(active.syncState, "pending", "active")}`}>
+              <i aria-hidden="true" />
               {meetingStateLabel(active.syncState, "pending", "active")}
             </span>
-            <p className="k-meeting-elapsed" aria-live="polite">
+            <p className="meeting-elapsed-label">Time in meeting</p>
+            <p className="k-meeting-elapsed" role="timer" aria-label="Meeting elapsed time">
               {formatDuration(elapsedSeconds)}
             </p>
             <p className="k-meeting-active-title">{active.title}</p>
-            <p className="k-muted">{active.reason}</p>
-            <p className="k-meeting-hint">
-              Becomes “Pending review” once its end is confirmed · ends
-              automatically by {expectedEndClock}
-            </p>
-            {active.lastError && <p className="k-error">{active.lastError}</p>}
+            <p className="meeting-active-reason">{active.reason}</p>
+            <div className="meeting-active-times">
+              <div><span>Started at</span><strong>{new Date(active.startedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</strong></div>
+              <div><span>Automatic end</span><strong>{expectedEndClock}</strong></div>
+            </div>
+            <p className="meeting-notice"><TrackerIcon className="ri-information-line" aria-hidden="true" />Time moves to pending review once the meeting end is confirmed.</p>
+            {active.lastError && <p className="k-error" role="alert">{active.lastError}</p>}
+            <div className="meeting-form-footer">
+            <p>You can finish earlier at any time.</p>
             <button
               type="button"
               className="k-primary"
               onClick={() => void handleEnd()}
               disabled={submitting}
             >
+              <TrackerIcon className="ri-stop-circle-line" aria-hidden="true" />
               {submitting ? "Ending…" : "End meeting"}
             </button>
+            </div>
           </div>
         ) : (
-          <form className="k-form" onSubmit={handleStart}>
-            <label>
-              Title
+          <form className="meeting-form" onSubmit={handleStart} aria-busy={submitting}>
+            <div className="meeting-field">
+              <label htmlFor="meeting-title">Meeting title <span>Required</span></label>
               <input
+                id="meeting-title"
                 type="text"
                 value={title}
                 onChange={(event) => setTitle(event.target.value)}
@@ -4273,22 +4314,29 @@ function MeetingView({
                 disabled={submitting}
                 required
               />
-            </label>
-            <label>
-              Reason
+            </div>
+            <div className="meeting-field">
+              <label htmlFor="meeting-reason">Reason <span>Required</span></label>
               <textarea
+                id="meeting-reason"
                 value={reason}
                 onChange={(event) => setReason(event.target.value)}
                 placeholder="Briefly describe the meeting"
                 maxLength={1000}
                 minLength={3}
                 disabled={submitting}
+                aria-describedby="meeting-reason-help"
                 required
               />
-            </label>
-            <label>
-              Expected duration (minutes)
+              <div className="meeting-field-help" id="meeting-reason-help"><span>A short description helps your reviewer understand the time.</span><span>{reason.length}/1000</span></div>
+            </div>
+            <div className="meeting-field">
+              <label htmlFor="meeting-duration">Expected duration</label>
+              <div className="meeting-duration-controls">
+              <div className="meeting-duration-input">
+                <TrackerIcon className="ri-time-line" aria-hidden="true" />
               <input
+                id="meeting-duration"
                 type="number"
                 value={expectedMinutes}
                 onChange={(event) =>
@@ -4297,30 +4345,56 @@ function MeetingView({
                 min={1}
                 max={720}
                 disabled={submitting}
+                aria-describedby="meeting-duration-help"
                 required
               />
-            </label>
+                <span>minutes</span>
+              </div>
+              <div className="meeting-presets" role="group" aria-label="Meeting duration presets">
+                {[15, 30, 45, 60].map(minutes => <button key={minutes} type="button" aria-pressed={expectedMinutes === minutes} disabled={submitting} onClick={() => setExpectedMinutes(minutes)}>{minutes} min</button>)}
+              </div>
+              </div>
+              <p className="meeting-field-help" id="meeting-duration-help">Choose 1–720 minutes. The meeting ends automatically after this time.</p>
+            </div>
+            <div className="meeting-form-footer">
+            <p><TrackerIcon className="ri-time-line" aria-hidden="true" />Your meeting timer starts immediately.</p>
             <button type="submit" className="k-primary" disabled={submitting}>
+              <TrackerIcon className="ri-video-chat-line" aria-hidden="true" />
               {submitting ? "Starting…" : "Start meeting"}
             </button>
+            </div>
           </form>
         )}
-        {error && <p className="k-error">{error}</p>}
-        {message && <p className="k-success">{message}</p>}
+        {error && <p className="k-error" role="alert">{error}</p>}
+        {message && <p className="k-success" role="status">{message}</p>}
       </article>
 
-      <article className="k-panel k-request-card">
-        <header className="k-request-card-header">
-          <span className="k-request-icon">
-            <KIcon name="calendar" />
-          </span>
+      <aside className="wp-card meeting-guide" aria-label="How meeting mode works">
+        <span className="meeting-guide-icon"><TrackerIcon className="ri-information-line" aria-hidden="true" /></span>
+        <h2>How meeting mode works</h2>
+        <p>Step away from your keyboard for a meeting or call, and keep the time on record.</p>
+        <ol>
+          <li><span>1</span><div><strong>Start & focus</strong><p>Add your meeting details and start the timer.</p></div></li>
+          <li><span>2</span><div><strong>Your usual capture settings</strong><p>Screenshot capture follows your normal settings during the meeting.</p></div></li>
+          <li><span>3</span><div><strong>Finish & send for review</strong><p>Time is sent for review after the meeting ends. Approved meetings are paid.</p></div></li>
+        </ol>
+        <p className="meeting-guide-note"><TrackerIcon className="ri-shield-check-line" aria-hidden="true" />If a meeting is rejected, your genuine activity is still preserved.</p>
+      </aside>
+      </div>
+
+      <article className="wp-card meeting-history">
+        <header className="wp-card-heading">
           <div>
             <h2>Recent meetings</h2>
-            <p className="k-muted">Your latest Meeting Mode periods.</p>
+            <p>Your conversations, recorded time and review status.</p>
           </div>
+          <span className="wp-badge">{status.meetings.length} {status.meetings.length === 1 ? "meeting" : "meetings"}</span>
         </header>
         {status.meetings.length === 0 ? (
-          <p className="k-meeting-hint">No meetings recorded yet.</p>
+          <div className="meeting-empty">
+            <span><TrackerIcon className="ri-calendar-event-line" aria-hidden="true" /></span>
+            <div><h3>No meetings yet</h3><p>Start your first meeting above. Its time and status will appear here.</p></div>
+          </div>
         ) : (
           <ul className="k-meeting-list">
             {status.meetings.map((meeting) => {
@@ -4352,14 +4426,14 @@ function MeetingView({
                 meeting.syncState === "end_error";
               return (
                 <li key={meeting.id}>
-                  <div>
+                  <span className="meeting-row-icon"><TrackerIcon className="ri-video-chat-line" aria-hidden="true" /></span>
+                  <div className="meeting-row-copy">
                     <strong>{meeting.title}</strong>
                     <span className="k-meeting-hint">
-                      {" "}
-                      · {formatDuration(rowSeconds)}
+                      {new Date(meeting.startedAt).toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" })} · {new Date(meeting.startedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                     </span>
                     {failed && meeting.lastError && (
-                      <p className="k-error">{meeting.lastError}</p>
+                      <p className="k-error" role="alert">{meeting.lastError}</p>
                     )}
                     {failed && (
                       <button
@@ -4372,6 +4446,7 @@ function MeetingView({
                       </button>
                     )}
                   </div>
+                  <div className="meeting-row-duration"><span>{isActive ? "Elapsed" : "Recorded"}</span><strong>{formatDuration(rowSeconds)}</strong></div>
                   <span className={`k-meeting-badge k-meeting-${badgeKind}`}>
                     {badgeLabel}
                   </span>
@@ -4417,12 +4492,20 @@ function SettingsView({
         </div>
       </header>
       <section className="k-panel native-quote-settings">
-        <h2>Quote notifications</h2>
-        <label>
-          <input type="checkbox" checked={quotesEnabled} onChange={(event) => onQuotesEnabledChange(event.target.checked)} />
-          Enable quote notifications
+        <header className="native-quote-settings-header">
+          <span className="native-quote-settings-icon"><TrackerIcon className="ri-chat-quote-line" aria-hidden="true" /></span>
+          <div>
+            <h2>Quote notifications</h2>
+            <p>Choose when a quote appears on your desktop.</p>
+          </div>
+        </header>
+        <label className="native-quote-toggle" htmlFor="native-quote-enabled">
+          <span>
+            <strong>Enable quote notifications</strong>
+            <small>Bottom right of your screen, even when Khaliduo is minimized.</small>
+          </span>
+          <input id="native-quote-enabled" type="checkbox" role="switch" aria-label="Enable quote notifications" checked={quotesEnabled} onChange={(event) => onQuotesEnabledChange(event.target.checked)} />
         </label>
-        <p className="k-muted">Quotes appear every {quoteMinutes} minute(s) while your workspace is open and visible. Your preferences are saved on this device.</p>
         <form
           className="native-quote-interval"
           onSubmit={(event) => {
@@ -4430,34 +4513,39 @@ function SettingsView({
             setQuoteIntervalSaved(onQuoteMinutesChange(Number(quoteInterval)));
           }}
         >
-          <label htmlFor="native-quote-minutes">Remind me every (minutes)</label>
+          <label className="native-quote-interval-label" htmlFor="native-quote-minutes">Remind me every</label>
           <div className="native-quote-interval-controls">
-            <input
-              id="native-quote-minutes"
-              type="number"
-              min={1}
-              max={1440}
-              step={1}
-              required
-              value={quoteInterval}
-              aria-describedby="native-quote-interval-help"
-              onChange={(event) => {
-                setQuoteInterval(event.target.value);
-                setQuoteIntervalSaved(false);
-              }}
-            />
-            <button type="submit" className="k-primary">Save interval</button>
+            <div className="native-quote-duration">
+              <TrackerIcon className="ri-time-line" aria-hidden="true" />
+              <input
+                id="native-quote-minutes"
+                type="number"
+                min={1}
+                max={1440}
+                step={1}
+                required
+                value={quoteInterval}
+                aria-describedby="native-quote-interval-help"
+                onChange={(event) => {
+                  setQuoteInterval(event.target.value);
+                  setQuoteIntervalSaved(false);
+                }}
+              />
+              <span aria-hidden="true">minutes</span>
+            </div>
+            <button type="submit" className="k-primary"><TrackerIcon className="ri-check-line" aria-hidden="true" />Save interval</button>
           </div>
-          <p id="native-quote-interval-help" className="k-muted">Choose 1 to 1440 minutes. The next reminder starts counting from when you save.</p>
+          <p id="native-quote-interval-help" className="native-quote-help"><TrackerIcon className="ri-information-line" aria-hidden="true" /><span>Choose 1–1440 minutes. Saving starts a new countdown.</span></p>
           {quoteIntervalSaved && !quoteError && (
-            <p role="status" className="native-quote-saved">
-              {quotesEnabled
-                ? `Saved. Your next quote is in ${quoteMinutes} minute(s).`
-                : "Interval saved. Quote notifications are off."}
+            <p role="status" className="native-quote-feedback is-success">
+              <TrackerIcon className="ri-check-line" aria-hidden="true" />
+              <span>{quotesEnabled
+                ? `Saved. Your next quote is in ${quoteMinutes} ${quoteMinutes === 1 ? "minute" : "minutes"}.`
+                : "Interval saved. Quote notifications are off."}</span>
             </p>
           )}
         </form>
-        {quoteError && <p role="alert">{quoteError}</p>}
+        {quoteError && <p role="alert" className="native-quote-feedback is-error"><TrackerIcon className="ri-information-line" aria-hidden="true" /><span>{quoteError}</span></p>}
       </section>
       <details className="k-panel k-system-panel" open>
         <summary>System details</summary>

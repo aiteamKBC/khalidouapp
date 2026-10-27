@@ -79,7 +79,10 @@
   max-width: 1240px;
   margin: 0 auto;
   padding: 34px 24px 112px;
-  scrollbar-width: thin;
+  scrollbar-width: none;
+}
+.readdy-tracker-ui.readdy-tracker-ui.tracker-frame .tracker-content::-webkit-scrollbar {
+  display: none;
 }
 .readdy-tracker-ui.readdy-tracker-ui.tracker-frame .v211-tracker {
   gap: 16px;

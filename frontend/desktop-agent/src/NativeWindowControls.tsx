@@ -1,6 +1,28 @@
 import { useEffect, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 
+export function NativeWindowFrame() {
+  useEffect(() => {
+    let active = true;
+    let receivedUpdate = false;
+    const apply = (expanded: boolean) => {
+      if (active) document.documentElement.dataset.windowExpanded = String(expanded);
+    };
+    const unsubscribe = window.khaliduo?.onWindowExpandedChanged((expanded) => {
+      receivedUpdate = true;
+      apply(expanded);
+    });
+    void window.khaliduo?.isWindowExpanded().then((expanded) => {
+      if (!receivedUpdate) apply(expanded);
+    });
+    return () => {
+      active = false;
+      unsubscribe?.();
+    };
+  }, []);
+  return null;
+}
+
 export function NativeWindowControls() {
   return (
     <div className="rd-window-controls" data-native-window-controls>

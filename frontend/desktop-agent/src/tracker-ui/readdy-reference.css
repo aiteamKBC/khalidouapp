@@ -74,7 +74,7 @@
   -webkit-tap-highlight-color: transparent;
   font-family:
     Inter,
-    IBM Plex Sans Arabic,
+    Tajawal,
     system-ui,
     sans-serif;
   line-height: 1.5;
@@ -118,7 +118,7 @@
   font-variation-settings: normal;
   font-family:
     Inter,
-    IBM Plex Sans Arabic,
+    Tajawal,
     system-ui,
     sans-serif;
   font-size: 1em;
@@ -1748,7 +1748,7 @@
 .readdy-tracker-ui.readdy-tracker-ui .font-mono {
   font-family:
     Inter,
-    IBM Plex Sans Arabic,
+    Tajawal,
     system-ui,
     sans-serif;
 }
@@ -2306,7 +2306,7 @@
   margin: 0;
   font-family:
     Inter,
-    IBM Plex Sans Arabic,
+    Tajawal,
     system-ui,
     -apple-system,
     sans-serif;
@@ -2330,7 +2330,7 @@
   letter-spacing: -0.015em;
   font-family:
     Inter,
-    IBM Plex Sans Arabic,
+    Tajawal,
     system-ui,
     sans-serif;
 }
@@ -2340,7 +2340,7 @@
 .readdy-tracker-ui.readdy-tracker-ui .font-arabic {
   letter-spacing: 0;
   font-family:
-    IBM Plex Sans Arabic,
+    Tajawal,
     Inter,
     system-ui,
     sans-serif;
@@ -2543,7 +2543,7 @@
   color: var(--k-muted);
   font-family:
     Inter,
-    IBM Plex Sans Arabic,
+    Tajawal,
     system-ui,
     sans-serif;
   font-size: 11.5px;
@@ -2553,7 +2553,7 @@
   font-variant-numeric: tabular-nums;
   font-family:
     Inter,
-    IBM Plex Sans Arabic,
+    Tajawal,
     system-ui,
     sans-serif;
 }
@@ -2574,7 +2574,7 @@
   padding: 8px 10px;
   font-family:
     Inter,
-    IBM Plex Sans Arabic,
+    Tajawal,
     system-ui,
     sans-serif;
   font-size: 10px;
@@ -2704,7 +2704,7 @@
   padding: 9px 11px;
   font-family:
     Inter,
-    IBM Plex Sans Arabic,
+    Tajawal,
     system-ui,
     sans-serif;
   font-size: 13.5px;
@@ -2741,7 +2741,7 @@
   margin-bottom: 5px;
   font-family:
     Inter,
-    IBM Plex Sans Arabic,
+    Tajawal,
     system-ui,
     sans-serif;
   font-size: 10px;
@@ -2799,7 +2799,7 @@
   padding: 9px 9px 9px 11px;
   font-family:
     Inter,
-    IBM Plex Sans Arabic,
+    Tajawal,
     system-ui,
     sans-serif;
   font-size: 13.5px;
@@ -2901,7 +2901,7 @@
   padding: 7px 9px;
   font-family:
     Inter,
-    IBM Plex Sans Arabic,
+    Tajawal,
     system-ui,
     sans-serif;
   font-size: 12.5px;
@@ -3181,7 +3181,7 @@
   letter-spacing: -0.015em;
   font-family:
     Inter,
-    IBM Plex Sans Arabic,
+    Tajawal,
     system-ui,
     sans-serif;
 }
@@ -3348,7 +3348,7 @@
   padding: 10px 36px 10px 12px;
   font-family:
     Inter,
-    IBM Plex Sans Arabic,
+    Tajawal,
     system-ui,
     sans-serif;
   font-size: 13px;
@@ -3616,7 +3616,7 @@
   padding: 7px 12px;
   font-family:
     Inter,
-    IBM Plex Sans Arabic,
+    Tajawal,
     system-ui,
     sans-serif;
   font-size: 12.5px;
@@ -3675,7 +3675,7 @@
   padding: 11px 12px 11px 36px;
   font-family:
     Inter,
-    IBM Plex Sans Arabic,
+    Tajawal,
     system-ui,
     sans-serif;
   font-size: 13.5px;
@@ -4915,7 +4915,7 @@
   text-transform: uppercase;
   color: var(--k-faint);
   font-family:
-    IBM Plex Sans Arabic,
+    Tajawal,
     Inter,
     system-ui,
     sans-serif;
@@ -4925,7 +4925,7 @@
 .readdy-tracker-ui.readdy-tracker-ui .sf-slot {
   perspective: 620px;
   will-change: transform, opacity;
-  animation: 0.95s cubic-bezier(0.24, 0.74, 0.26, 1) both sfSlotIn;
+  animation: 0.42s cubic-bezier(0.24, 0.74, 0.26, 1) both sfSlotIn;
   display: block;
 }
 @keyframes sfSlotIn {
@@ -5001,10 +5001,12 @@
   border-radius: 3px 3px 7px 7px;
   bottom: 0;
 }
-.readdy-tracker-ui.readdy-tracker-ui .sf-top > .sf-glyph {
+.readdy-tracker-ui.readdy-tracker-ui .sf-top > .sf-glyph,
+.readdy-tracker-ui.readdy-tracker-ui .sf-leaf-top > .sf-glyph {
   top: 0;
 }
-.readdy-tracker-ui.readdy-tracker-ui .sf-bot > .sf-glyph {
+.readdy-tracker-ui.readdy-tracker-ui .sf-bot > .sf-glyph,
+.readdy-tracker-ui.readdy-tracker-ui .sf-leaf-bot > .sf-glyph {
   bottom: 0;
 }
 .readdy-tracker-ui.readdy-tracker-ui .sf-seam {
@@ -5039,11 +5041,11 @@
 }
 .readdy-tracker-ui.readdy-tracker-ui .sf-leaf-top {
   transform-origin: bottom;
-  animation: 0.36s cubic-bezier(0.42, 0, 0.9, 0.56) both sfFlipDown;
+  animation: 0.22s cubic-bezier(0.42, 0, 0.9, 0.56) both sfFlipDown;
 }
 .readdy-tracker-ui.readdy-tracker-ui .sf-leaf-bot {
   transform-origin: top;
-  animation: 0.34s cubic-bezier(0.2, 0.58, 0.36, 1) 0.36s both sfFlipUp;
+  animation: 0.22s cubic-bezier(0.2, 0.58, 0.36, 1) 0.22s both sfFlipUp;
   transform: rotateX(88deg);
 }
 .readdy-tracker-ui.readdy-tracker-ui .sf-leaf-top:after {
@@ -5054,7 +5056,7 @@
     transparent 88%
   );
   opacity: 0;
-  animation: 0.36s ease-in both sfLeafShade;
+  animation: 0.22s ease-in both sfLeafShade;
   position: absolute;
   inset: 0;
 }
@@ -5120,7 +5122,7 @@
   gap: 10px;
   margin-top: 11px;
   font-family:
-    IBM Plex Sans Arabic,
+    Tajawal,
     Inter,
     system-ui,
     sans-serif;
@@ -5286,7 +5288,7 @@
   text-transform: uppercase;
   font-family:
     Inter,
-    IBM Plex Sans Arabic,
+    Tajawal,
     system-ui,
     sans-serif;
   font-size: 9px;
@@ -5748,7 +5750,7 @@
   margin-bottom: 4px;
   font-family:
     Inter,
-    IBM Plex Sans Arabic,
+    Tajawal,
     system-ui,
     sans-serif;
   font-size: 8.5px;
@@ -5985,7 +5987,7 @@
   padding: 0 13px;
   font-family:
     Inter,
-    IBM Plex Sans Arabic,
+    Tajawal,
     system-ui,
     sans-serif;
   font-size: 11.5px;
@@ -6519,7 +6521,7 @@
   color: var(--k-muted);
   font-family:
     Inter,
-    IBM Plex Sans Arabic,
+    Tajawal,
     system-ui,
     sans-serif;
   font-size: 10px;
@@ -6555,7 +6557,7 @@
   gap: 0.14em;
   font-family:
     Inter,
-    IBM Plex Sans Arabic,
+    Tajawal,
     system-ui,
     sans-serif;
   font-size: clamp(40px, 4.6vw, 62px);
@@ -6585,7 +6587,7 @@
   color: var(--k-ink);
   font-family:
     Inter,
-    IBM Plex Sans Arabic,
+    Tajawal,
     system-ui,
     sans-serif;
   font-size: 27px;
@@ -6686,7 +6688,7 @@
   padding: 0;
   font-family:
     Inter,
-    IBM Plex Sans Arabic,
+    Tajawal,
     system-ui,
     sans-serif;
   font-size: 12.5px;
@@ -6871,7 +6873,7 @@
   color: var(--k-ink);
   font-family:
     Inter,
-    IBM Plex Sans Arabic,
+    Tajawal,
     system-ui,
     sans-serif;
   font-size: 21px;

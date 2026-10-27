@@ -1,8 +1,18 @@
 import electronRenderer from "electron/renderer";
+import type { QuoteReminderPayload } from "./services/quoteReminderWindow.js";
 
 const { contextBridge, ipcRenderer } = electronRenderer;
 
 contextBridge.exposeInMainWorld("khaliduo", {
+  showQuoteReminder: (payload: QuoteReminderPayload) => ipcRenderer.invoke("quote:show", payload),
+  getQuoteReminder: () => ipcRenderer.invoke("quote:get"),
+  dismissQuoteReminder: () => ipcRenderer.invoke("quote:dismiss"),
+  resizeQuoteReminder: (height: number) => ipcRenderer.send("quote:resize", height),
+  onQuoteReminderChanged: (callback: (payload: QuoteReminderPayload) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, payload: QuoteReminderPayload) => callback(payload);
+    ipcRenderer.on("quote:changed", listener);
+    return () => ipcRenderer.removeListener("quote:changed", listener);
+  },
   getAgentStatus: () => ipcRenderer.invoke("agent:get-status"),
   getAppearance: (scope: string) => ipcRenderer.invoke("agent:get-appearance", scope),
   setAppearance: (scope: string, patch: { skin?: "orbit" | "ember" | "forest"; mode?: "light" | "dark" }) => ipcRenderer.invoke("agent:set-appearance", scope, patch),
@@ -100,6 +110,12 @@ contextBridge.exposeInMainWorld("khaliduo", {
   setUpdateAttention: (active: boolean) =>
     ipcRenderer.send("agent:set-update-attention", active),
   minimizeWindow: () => ipcRenderer.invoke("window:minimize"),
+  isWindowExpanded: () => ipcRenderer.invoke("window:is-expanded"),
+  onWindowExpandedChanged: (callback: (expanded: boolean) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, expanded: boolean) => callback(expanded);
+    ipcRenderer.on("window:expanded-changed", listener);
+    return () => ipcRenderer.removeListener("window:expanded-changed", listener);
+  },
   toggleMaximizeWindow: () => ipcRenderer.invoke("window:toggle-maximize"),
   closeWindow: () => ipcRenderer.invoke("window:close"),
   checkForUpdates: () => ipcRenderer.invoke("agent:check-for-updates"),

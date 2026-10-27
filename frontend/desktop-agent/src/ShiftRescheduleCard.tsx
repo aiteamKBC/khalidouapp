@@ -10,6 +10,7 @@ import type {
   ShiftRescheduleDay,
   ShiftReschedulesPayload,
 } from "./types/electron";
+import { TrackerIcon } from "./tracker-ui/TrackerIcon";
 
 function formatDateLabel(dateKey: string) {
   const [year, month, day] = dateKey.split("-").map(Number);
@@ -178,17 +179,19 @@ export function ShiftRescheduleCard({ enrolled }: { enrolled: boolean }) {
   return (
     <section className="k-panel k-request-card k-shift-reschedule">
       <header className="k-request-card-header">
+        <span className="k-request-icon"><TrackerIcon className="ri-calendar-event-line" aria-hidden="true" /></span>
         <div>
           <h2>Shift reschedule</h2>
           <p className="k-muted">
-            Work a different time on one day. The new time must be the same
-            length as your normal shift, end before midnight, and be requested
-            at least {payload?.policy.notice_days ?? 2} days ahead. HR reviews
-            it; if it is still pending when the day starts, your normal shift
-            applies.
+            Need different hours for one day? Request a new start time.
           </p>
         </div>
       </header>
+      <div className="request-reschedule-rules" aria-label="Reschedule requirements">
+        <span>Same shift length</span>
+        <span>{payload?.policy.notice_days ?? 2} days&apos; notice</span>
+        <span>Ends before midnight</span>
+      </div>
       {loadError && <p className="k-error">{loadError}</p>}
       <form className="k-form" onSubmit={handleSubmit}>
         <div className="k-form-grid">
@@ -252,8 +255,10 @@ export function ShiftRescheduleCard({ enrolled }: { enrolled: boolean }) {
           className="k-primary"
           disabled={submitting || !day?.scheduled_day || !computedEnd}
         >
+          <TrackerIcon className="ri-send-plane-line" aria-hidden="true" />
           {submitting ? "Sending..." : "Request shift reschedule"}
         </button>
+        <p className="request-reschedule-note">Subject to HR approval. If your request is still pending when the day starts, your normal shift applies.</p>
         {error && <p className="k-error">{error}</p>}
         {success && <p className="k-success">{success}</p>}
       </form>
