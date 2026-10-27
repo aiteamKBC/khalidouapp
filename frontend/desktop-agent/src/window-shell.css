@@ -1,23 +1,50 @@
-/* Keep the native window rounded across every page, size and display mode. */
+/* Round floating windows; use square corners when they fill the display. */
+html {
+  --native-window-radius: 24px;
+}
+
+html[data-window-expanded="true"] {
+  --native-window-radius: 0px;
+}
+
 html,
 body,
 #root {
   background: transparent !important;
-  border-radius: 24px;
+  border-radius: var(--native-window-radius);
 }
 
 html {
   /* Include dialogs rendered outside React's root in the transparent corners. */
-  clip-path: inset(0 round 24px);
+  clip-path: inset(0 round var(--native-window-radius));
 }
 
 #root {
   overflow: hidden;
 }
 
+/* Hide tracks across the native popup, including nested panels and dialogs. */
+html,
+body,
+body * {
+  scrollbar-width: none !important;
+}
+
+html::-webkit-scrollbar,
+body::-webkit-scrollbar,
+body *::-webkit-scrollbar {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+}
+
 .readdy-tracker-ui.readdy-tracker-ui.tracker-frame.tracker-native,
 .workspace-login.desktop-login {
-  border-radius: 24px;
+  border-radius: var(--native-window-radius);
+}
+
+html[data-window-expanded="true"] .readdy-tracker-ui.readdy-tracker-ui.tracker-frame.tracker-native {
+  border-radius: 0;
 }
 
 body.swal2-shown [data-native-window-controls] {

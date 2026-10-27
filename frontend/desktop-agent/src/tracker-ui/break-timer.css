@@ -11,16 +11,17 @@
 .tracker-break-timer time { font-weight: 600; }
 .tracker-break-timer small { font-size: inherit; opacity: .75; }
 .compact-time-info > .tracker-break-timer { margin-top: 6px; }
-.readdy-tracker-ui.readdy-tracker-ui.tracker-frame .v211-timer-face { position: relative; }
-.v211-timer-face > .tracker-break-timer {
-  position: absolute;
-  left: 50%;
-  bottom: -14px;
-  transform: translateX(-50%);
+.readdy-tracker-ui.readdy-tracker-ui.tracker-frame .v211-timer-face {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
 }
-.v211-timer-face[data-timer-style="minimal"] > .tracker-break-timer {
-  top: calc(50% + 30px);
-  bottom: auto;
+.v211-timer-face > .tracker-break-timer {
+  flex: none;
+  justify-content: center;
+  min-height: 20px;
+  font-size: 11px;
 }
 .tracker-break-timer.is-warning { color: #b42318; font-weight: 600; }
 [data-theme="dark"] .tracker-break-timer.is-warning { color: #ff9090; }

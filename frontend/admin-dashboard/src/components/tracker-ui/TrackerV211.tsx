@@ -22,7 +22,7 @@ import "./readdy-alignment.css";
 const TimerContext = createContext<{
   style: TimerStyle;
   change: (style: TimerStyle) => void;
-}>({ style: "minimal", change: () => {} });
+}>({ style: "ring", change: () => {} });
 export type TrackerSection = { id: string; label: string; icon: string };
 export type TrackerTask = { id: string; name: string; projectId: string };
 export type TrackerTimelineRow = {
@@ -98,7 +98,7 @@ export function TrackerFrame({
   useEffect(() => {
     if (contentRef.current) contentRef.current.scrollTop = 0;
   }, [view]);
-  const [style, setStyle] = useState<TimerStyle>("minimal");
+  const [style, setStyle] = useState<TimerStyle>("ring");
   const [localSkin, setLocalSkin] = useState("violet");
   const skin = appearance ? (appearance.skin === "orbit" ? "violet" : appearance.skin) : localSkin;
   const setSkin = (value: string) => {
@@ -108,9 +108,10 @@ export function TrackerFrame({
   };
   const [preferencesLoaded, setPreferencesLoaded] = useState(false);
   useEffect(() => {
-    const savedStyle = savedPreference("khaliduo-timer-style-v3", "minimal");
+    const savedStyle = savedPreference("khaliduo-timer-style-v3", "ring");
     const savedSkin = savedPreference("khaliduo-app-skin-v4", "violet");
-    if (isTimerStyle(savedStyle)) setStyle(savedStyle);
+    if (savedStyle === "bar") setStyle("minimal");
+    else if (isTimerStyle(savedStyle)) setStyle(savedStyle);
     if (["ember", "forest", "violet"].includes(savedSkin)) setLocalSkin(savedSkin);
     setPreferencesLoaded(true);
   }, []);

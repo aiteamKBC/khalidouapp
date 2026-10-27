@@ -1,4 +1,3 @@
-import { TrackerIcon } from "./TrackerIcon";
 import { useEffect, useState } from "react";
 
 type Props = {
@@ -35,19 +34,24 @@ function FlipDigit({
   useEffect(() => {
     if (char === rest) return undefined;
     setNext(char);
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      setRest(char);
+      setFlipping(false);
+      return undefined;
+    }
     setFlipping(true);
     setFlipKey((key) => key + 1);
     const timer = window.setTimeout(() => {
       setRest(char);
       setFlipping(false);
-    }, 720);
+    }, 500); // Fallback if the animation is cancelled or the window is hidden.
     return () => window.clearTimeout(timer);
   }, [char, rest]);
 
   return (
     <span
       className={`sf-slot${accent ? " is-accent" : ""}`}
-      style={{ animationDelay: `${130 + slot * 62}ms` }}
+      style={{ animationDelay: `${60 + slot * 32}ms` }}
       aria-hidden="true"
     >
       <span className="sf-card">
@@ -63,7 +67,15 @@ function FlipDigit({
             <span key={`top-${flipKey}`} className="sf-leaf sf-leaf-top">
               <span className="sf-glyph">{rest}</span>
             </span>
-            <span key={`bot-${flipKey}`} className="sf-leaf sf-leaf-bot">
+            <span
+              key={`bot-${flipKey}`}
+              className="sf-leaf sf-leaf-bot"
+              onAnimationEnd={(event) => {
+                if (event.target !== event.currentTarget) return;
+                setRest(char);
+                setFlipping(false);
+              }}
+            >
               <span className="sf-glyph">{next}</span>
             </span>
           </>
@@ -99,8 +111,8 @@ function DigitGroup({
 function Colon({ live }: { live: boolean }) {
   return (
     <span className={`sf-colon${live ? " is-live" : ""}`} aria-hidden="true">
-      <TrackerIcon />
-      <TrackerIcon />
+      <i />
+      <i />
     </span>
   );
 }

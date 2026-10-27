@@ -69,6 +69,7 @@ export function context(overrides: Record<string, unknown> = {}) {
     Promise,
     exports: {},
     log,
+    quoteReminder: { dispose: noop },
     path,
     fs,
     process: { platform: "win32", env: {}, cwd: () => desktop },

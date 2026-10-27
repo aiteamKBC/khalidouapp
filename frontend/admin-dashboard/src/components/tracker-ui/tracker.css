@@ -498,11 +498,10 @@
   flex: 1;
 }
 .readdy-tracker-ui.readdy-tracker-ui.tracker-frame .v211-timeline li.is-idle {
-  margin: 8px 0;
-  padding-inline: 12px;
+  margin: 8px -8px;
+  padding-inline: 8px;
   border-radius: 10px;
   background: color-mix(in srgb, var(--k-rose) 8%, var(--k-card));
-  box-shadow: inset 3px 0 var(--k-rose);
 }
 .readdy-tracker-ui.readdy-tracker-ui.tracker-frame .v211-timeline li.is-idle > i {
   background: var(--k-rose);

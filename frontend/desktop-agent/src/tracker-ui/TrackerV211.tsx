@@ -26,7 +26,7 @@ import "./progressive-tracker.css";
 const TimerContext = createContext<{
   style: TimerStyle;
   change: (style: TimerStyle) => void;
-}>({ style: "minimal", change: () => {} });
+}>({ style: "ring", change: () => {} });
 export type TrackerSection = { id: string; label: string; icon: string };
 export type TrackerTask = { id: string; name: string; projectId: string };
 export type TrackerTimelineRow = {
@@ -109,8 +109,9 @@ export function TrackerFrame({
     if (contentRef.current) contentRef.current.scrollTop = 0;
   }, [view]);
   const [style, setStyle] = useState<TimerStyle>(() => {
-    const saved = savedPreference("khaliduo-timer-style-v3", "minimal");
-    return isTimerStyle(saved) ? saved : "minimal";
+    const saved = savedPreference("khaliduo-timer-style-v3", "ring");
+    if (saved === "bar") return "minimal";
+    return isTimerStyle(saved) ? saved : "ring";
   });
   const [localSkin, setLocalSkin] = useState(() => {
     const saved = savedPreference("khaliduo-app-skin-v4", "violet");
