@@ -512,19 +512,15 @@ export function TrackerStage({
           <TrackerIcon className="ri-quill-pen-line" aria-hidden="true" />
           <input
             id="live-note"
-            aria-label="Session note"
+            aria-label="New task name"
             disabled={noteSaving}
             value={note}
             onChange={(event) => onNoteChange(event.target.value)}
-            maxLength={1000}
-            placeholder="Add activity note or sprint reference"
+            maxLength={255}
+            placeholder="Create a new task…"
           />
           {onNoteSubmit ? (
-            <button
-              type="submit"
-              disabled={!taskId || !note.trim() || noteSaving}
-              className="v211-save-note"
-            >
+            <button type="submit" disabled={!note.trim() || noteSaving} className="v211-save-note">
               {noteSaving ? "Saving…" : "Save"}
             </button>
           ) : null}
@@ -651,14 +647,16 @@ export function TrackerStage({
                   <li
                     key={row.id}
                     className={
-                      row.kind === "worked" || row.kind === "manual" ? "is-work" : "is-away"
+                      row.kind === "idle"
+                        ? "is-away is-idle"
+                        : row.kind === "worked" || row.kind === "manual" ? "is-work" : "is-away"
                     }
                   >
                     <i />
                     <div>
                       <div className="v216-timeline-heading">
                         <strong>
-                          {row.current
+                          {row.current && row.kind === "worked"
                             ? "Worked (Current Session)"
                             : ({
                                 worked: "Worked",
@@ -675,7 +673,7 @@ export function TrackerStage({
                       <small>{row.label}</small>
                     </div>
                     <span
-                      className={`tp-tl-chip ${row.current ? "is-live" : row.kind === "break" ? "is-rest" : row.category ? "is-overtime" : ""}`}
+                      className={`tp-tl-chip ${row.kind === "idle" ? "is-idle" : row.current ? "is-live" : row.kind === "break" ? "is-rest" : row.category ? "is-overtime" : ""}`}
                       title={clock(row.seconds)}
                     >
                       {row.current

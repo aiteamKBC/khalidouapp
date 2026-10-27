@@ -22,6 +22,7 @@ import {
   ImagePlus,
   Inbox,
   LayoutGrid,
+  Languages,
   ListTodo,
   LogOut,
   MessageSquare,
@@ -36,6 +37,7 @@ import {
 } from "lucide-react";
 
 const icons = {
+  "ri-translate-line": Languages,
   "ri-add-line": Plus,
   "ri-alarm-warning-line": AlarmClock,
   "ri-arrow-down-line": ArrowDown,

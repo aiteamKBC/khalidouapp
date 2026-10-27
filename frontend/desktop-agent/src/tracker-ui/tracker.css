@@ -105,6 +105,13 @@
   white-space: nowrap;
   padding: 0 10px;
 }
+.readdy-tracker-ui.readdy-tracker-ui.tracker-frame
+  :is(.app-nav-pill, .app-dock-tab) > svg {
+  position: relative;
+  z-index: 1;
+  flex: none;
+  color: inherit;
+}
 .readdy-tracker-ui.readdy-tracker-ui.tracker-frame .v211-top-actions {
   display: flex;
   align-items: center;
@@ -167,21 +174,28 @@
   color: var(--k-muted);
 }
 .readdy-tracker-ui.readdy-tracker-ui.tracker-frame .v211-avatar {
+  position: relative;
   display: grid;
   place-items: center;
-  width: 34px;
-  height: 34px;
-  flex: none;
-  border: 1px solid var(--k-pink);
+  width: 40px;
+  height: 40px;
+  flex: 0 0 40px;
+  aspect-ratio: 1;
+  overflow: hidden;
+  border: 2px solid var(--k-pink);
   border-radius: 50%;
   background: var(--k-pink-2);
   color: var(--k-plum);
 }
 .readdy-tracker-ui.readdy-tracker-ui.tracker-frame .v211-avatar img {
+  position: absolute;
+  inset: 0;
+  display: block;
   width: 100%;
   height: 100%;
   border-radius: 50%;
   object-fit: cover;
+  object-position: center;
 }
 .readdy-tracker-ui.readdy-tracker-ui.tracker-frame .v211-theme-picker {
   position: relative;
@@ -456,6 +470,7 @@
 }
 .readdy-tracker-ui.readdy-tracker-ui.tracker-frame .v211-timeline {
   display: flex;
+  border-right: 0;
   flex-direction: column;
   flex: 1;
 }
@@ -500,6 +515,25 @@
 .readdy-tracker-ui.readdy-tracker-ui.tracker-frame .v211-timeline li > div {
   min-width: 0;
   flex: 1;
+}
+.readdy-tracker-ui.readdy-tracker-ui.tracker-frame .v211-timeline li.is-idle {
+  margin: 8px 0;
+  padding-inline: 12px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--k-rose) 8%, var(--k-card));
+  box-shadow: inset 3px 0 var(--k-rose);
+}
+.readdy-tracker-ui.readdy-tracker-ui.tracker-frame .v211-timeline li.is-idle > i {
+  background: var(--k-rose);
+  box-shadow: 0 0 0 4px var(--k-rose-2);
+}
+.readdy-tracker-ui.readdy-tracker-ui.tracker-frame .v211-timeline li.is-idle strong,
+.readdy-tracker-ui.readdy-tracker-ui.tracker-frame .v211-timeline .tp-tl-chip.is-idle {
+  color: var(--k-rose);
+}
+.readdy-tracker-ui.readdy-tracker-ui.tracker-frame .v211-timeline .tp-tl-chip.is-idle {
+  border-color: color-mix(in srgb, var(--k-rose) 40%, transparent);
+  background: var(--k-rose-2);
 }
 .readdy-tracker-ui.readdy-tracker-ui.tracker-frame .v211-timeline strong {
   display: block;
@@ -633,6 +667,7 @@
 .readdy-tracker-ui.readdy-tracker-ui.tracker-frame
   .v211-dock-nav
   .app-dock-tab {
+  isolation: isolate;
   display: flex;
   align-items: center;
   flex-direction: row;
@@ -933,6 +968,19 @@
     .tp-stat-value {
     font-size: 18px;
   }
+}
+.readdy-tracker-ui.readdy-tracker-ui.tracker-frame .v211-save-note {
+  border: 0;
+  background: transparent;
+  color: var(--k-pink);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 5px 8px;
+  cursor: pointer;
+}
+.readdy-tracker-ui.readdy-tracker-ui.tracker-frame .v211-save-note:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 @media (prefers-reduced-motion: reduce) {
   .readdy-tracker-ui.readdy-tracker-ui.tracker-frame *,

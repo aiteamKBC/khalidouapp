@@ -7,19 +7,22 @@
     }
     .readdy-tracker-ui.readdy-tracker-ui.tracker-frame.tracker-native[data-view="home"]
       .rd-workspace {
-      height: auto;
+      height: 100%;
     }
     .readdy-tracker-ui.readdy-tracker-ui.tracker-frame.tracker-native[data-view="home"]
       .v211-tracker {
-      height: auto;
+      height: 100%;
+      min-height: 0;
       display: flex;
       gap: 16px;
     }
     .readdy-tracker-ui.readdy-tracker-ui.tracker-frame.tracker-native[data-view="home"]
       .compact-tracker-card {
       order: 1;
-      flex: none;
-      height: clamp(318px, calc(100dvh - 240px), 500px);
+      flex: 1;
+      height: auto;
+      min-height: 0;
+      gap: clamp(12px, 2dvh, 22px);
       padding: 18px 22px 24px;
       background: var(--compact-bg);
       border: 1px solid var(--compact-track);
@@ -29,6 +32,7 @@
       .v211-tracker
       > .v211-quickbar {
       display: grid;
+      flex-shrink: 0;
       order: 0;
       grid-template-columns: 1fr 1fr;
       animation: tracker-reveal 0.18s ease-out;
@@ -43,7 +47,12 @@
       .v211-stage-messages {
       order: 4;
       position: static;
-      max-height: none;
+      flex-shrink: 0;
+      max-height: 36px;
+    }
+    .readdy-tracker-ui.readdy-tracker-ui.tracker-frame.tracker-native[data-view="home"]
+      .v211-stage-messages:empty {
+      display: none;
     }
   }
   @media (min-width: 760px) and (min-height: 600px) {
@@ -51,9 +60,14 @@
       .v211-tracker
       > .v211-stats {
       display: grid;
+      flex-shrink: 0;
       order: 3;
       grid-template-columns: repeat(3, minmax(0, 1fr));
       animation: tracker-reveal 0.18s ease-out;
+    }
+    .readdy-tracker-ui.readdy-tracker-ui.tracker-frame.tracker-native[data-view="home"]
+      .v211-stats .tp-stat {
+      min-height: 100px;
     }
     .readdy-tracker-ui.readdy-tracker-ui.tracker-frame.tracker-native[data-view="home"]
       .v211-tracker
@@ -67,6 +81,7 @@
       .v211-tracker {
       display: grid;
       grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
+      grid-template-rows: auto minmax(0, 1fr) auto;
       align-items: stretch;
     }
     .readdy-tracker-ui.readdy-tracker-ui.tracker-frame.tracker-native[data-view="home"]
@@ -94,7 +109,7 @@
       display: grid;
       grid-column: 2;
       grid-row: 2;
-      height: clamp(318px, calc(100dvh - 240px), 500px);
+      height: 100%;
       min-height: 0;
       grid-template-rows: minmax(0, 1fr);
       animation: tracker-reveal 0.18s ease-out;

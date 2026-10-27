@@ -3,6 +3,8 @@ import {
   consumeDueQuote,
   defaultQuoteSettings,
   loadQuoteSettings,
+  validQuoteMinutes,
+  translateQuote,
   type QuoteSettings,
 } from "../../shared/quote-reminders";
 
@@ -66,25 +68,37 @@ export function useQuoteReminders(scope: string | null) {
     return () => window.clearTimeout(timer);
   }, [message]);
 
-  const setEnabled = (enabled: boolean) => {
-    if (!storageKey) return;
+  const savePreferences = (changes: Partial<Pick<QuoteSettings, "enabled" | "minutes">>) => {
+    if (!storageKey) return false;
     try {
       const current = loadQuoteSettings(localStorage, storageKey);
-      const next = { ...current, enabled, nextAt: enabled ? Date.now() + current.minutes * 60_000 : 0 };
+      const next = { ...current, ...changes };
+      next.nextAt = next.enabled ? Date.now() + next.minutes * 60_000 : 0;
       localStorage.setItem(storageKey, JSON.stringify(next));
       setState({ key: storageKey, settings: next });
       setMessage(null);
       setError(null);
+      return true;
     } catch {
       setError("Your quote preference could not be saved. Please try again.");
+      return false;
     }
   };
 
   return {
     enabled: state.key === storageKey ? state.settings.enabled : true,
+    minutes: state.key === storageKey ? state.settings.minutes : 60,
     message: message?.key === storageKey ? message.text : null,
     dismiss: () => setMessage(null),
-    setEnabled,
+    translate: () => setMessage(current => current ? { ...current, text: translateQuote(current.text) } : null),
+    setEnabled: (enabled: boolean) => savePreferences({ enabled }),
+    setMinutes: (minutes: number) => {
+      if (!validQuoteMinutes(minutes)) {
+        setError("Choose a whole number from 1 to 1440 minutes.");
+        return false;
+      }
+      return savePreferences({ minutes });
+    },
     error,
   };
 }

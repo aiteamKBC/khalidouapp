@@ -494,7 +494,6 @@ let unpaidPauseActive = false;
 // server session without accruing the time spent away or closing another device's session.
 let breakSessionSnapshot: { id: string; activeSeconds: number; idleSeconds: number } | null = null;
 let isHandlingWindowClose = false;
-let hasShownMinimizeBalloon = false;
 let updateCheckTimer: ReturnType<typeof setInterval> | null = null;
 let initialUpdateCheckTimer: ReturnType<typeof setTimeout> | null = null;
 let updateRetryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -5890,6 +5889,7 @@ async function createMainWindow() {
     transparent: true,
     backgroundColor: "#00000000",
     roundedCorners: true,
+    skipTaskbar: false,
     autoHideMenuBar: true,
     title: "Khaliduo Status",
     icon: getAppIconPath(),
@@ -5913,17 +5913,9 @@ async function createMainWindow() {
   });
 
   mainWindow.on("minimize", () => {
-    mainWindow?.hide();
+    // Minimize belongs on the taskbar. Hiding is an explicit Close/tray action.
+    mainWindow?.setSkipTaskbar(false);
     rebuildTrayMenu();
-    if (process.platform === "win32" && !hasShownMinimizeBalloon) {
-      hasShownMinimizeBalloon = true;
-      tray?.displayBalloon({
-        title: "Khaliduo is running in the background",
-        content:
-          "Open it from the Khaliduo icon beside the Wi-Fi and sound icons.",
-        iconType: "info",
-      });
-    }
   });
 
   mainWindow.on("close", (event) => {
@@ -5983,6 +5975,9 @@ async function createMainWindow() {
             });
           }
         }
+      })
+      .catch((error) => {
+        log.error("Could not complete the window close action", safeErrorForLog(error));
       })
       .finally(() => {
         isHandlingWindowClose = false;
@@ -6051,6 +6046,18 @@ function showMainWindow(
   }
 }
 
+function applyWindowAttention() {
+  const window = mainWindow;
+  if (!window || window.isDestroyed()) return;
+  const active = idleAlertAttentionActive || updateAttentionActive;
+  window.setAlwaysOnTop(active, "screen-saver");
+  // A pending idle/update decision must never disable Windows controls.
+  // Tracking policy still applies independently while the window is minimized.
+  window.setMinimizable(true);
+  window.setClosable(true);
+  window.flashFrame(active);
+}
+
 function setIdleAlertAttention(active: boolean) {
   idleAlertAttentionActive = active;
   if (!active) {
@@ -6065,10 +6072,7 @@ function setIdleAlertAttention(active: boolean) {
   if (!window || window.isDestroyed()) {
     return;
   }
-  window.setAlwaysOnTop(active, "screen-saver");
-  window.setMinimizable(!active);
-  window.setClosable(!active);
-  window.flashFrame(active);
+  applyWindowAttention();
   if (active) {
     window.show();
     window.moveTop();
@@ -6082,10 +6086,7 @@ function setUpdateAttention(active: boolean) {
   if (!window || window.isDestroyed()) {
     return;
   }
-  window.setAlwaysOnTop(active || idleAlertAttentionActive, "screen-saver");
-  window.setMinimizable(!active && !idleAlertAttentionActive);
-  window.setClosable(!active && !idleAlertAttentionActive);
-  window.flashFrame(active);
+  applyWindowAttention();
   if (active) {
     showMainWindow({ forceForeground: true, centerOnPointerDisplay: true });
   }

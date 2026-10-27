@@ -1,4 +1,5 @@
 import { useState, type FormEvent, type ReactNode } from "react";
+import { NativeWindowControls } from "./NativeWindowControls";
 import "./workspace-login.css";
 import "./DesktopLogin.css";
 
@@ -82,29 +83,7 @@ export default function DesktopLogin({
             >
               <LoginIcon name={theme === "dark" ? "sun" : "moon"} />
             </button>
-            <div className="rd-window-controls">
-              <button
-                type="button"
-                aria-label="Minimize"
-                onClick={() => void window.khaliduo?.minimizeWindow()}
-              >
-                −
-              </button>
-              <button
-                type="button"
-                aria-label="Maximize or restore"
-                onClick={() => void window.khaliduo?.toggleMaximizeWindow()}
-              >
-                □
-              </button>
-              <button
-                type="button"
-                aria-label="Close"
-                onClick={() => void window.khaliduo?.closeWindow()}
-              >
-                ×
-              </button>
-            </div>
+            <NativeWindowControls />
           </div>
         </header>
         {updateNotice}

@@ -7,11 +7,6 @@ import type { AgentStatus, AgentTask } from "./types/electron";
 export type DesktopView =
   "home" | "tasks" | "requests" | "meeting" | "settings";
 
-function duration(seconds: number) {
-  const minutes = Math.floor(Math.max(0, seconds) / 60);
-  return `${Math.floor(minutes / 60)}h ${String(minutes % 60).padStart(2, "0")}m`;
-}
-
 export function ReaddyHome({
   status,
   workedSeconds,
@@ -25,6 +20,8 @@ export function ReaddyHome({
   submittingTask,
   sessionNote,
   onSessionNoteChange,
+  onCreateQuickTask,
+  creatingQuickTask,
   message,
   error,
   taskRequest,
@@ -48,6 +45,8 @@ export function ReaddyHome({
   submittingTask: boolean;
   sessionNote: string;
   onSessionNoteChange: (note: string) => void;
+  onCreateQuickTask: () => void;
+  creatingQuickTask: boolean;
   message: string | null;
   error: string | null;
   taskRequest: ReactNode;
@@ -87,9 +86,11 @@ export function ReaddyHome({
         }))}
         taskId={status.selectedTask?.id ?? ""}
         onTaskChange={(id) => onTaskChange(id || "none")}
-        selectionDisabled={submittingTask}
+        selectionDisabled={submittingTask || creatingQuickTask}
         note={sessionNote}
         onNoteChange={onSessionNoteChange}
+        onNoteSubmit={onCreateQuickTask}
+        noteSaving={creatingQuickTask}
         running={running}
         stateLabel={
           status.breakStartedAt ? "On break" : status.trackingPaused
@@ -182,39 +183,6 @@ export function ReaddyHome({
         {manualRequest}
         {children}
       </details>
-    </section>
-  );
-}
-
-export function NativeInsights({ status }: { status: AgentStatus }) {
-  return (
-    <section className="k-page">
-      <h1 className="tracker-heading">Insights</h1>
-      {(["today", "week", "month"] as const).map((key) => {
-        const period = status.timeSummary?.[key];
-        return (
-          <article className="rd-card" key={key}>
-            <h2>
-              {key === "today"
-                ? "Today"
-                : key === "week"
-                  ? "This week"
-                  : "This month"}
-            </h2>
-            <strong className="app-num" style={{ fontSize: 28 }}>
-              {duration(period?.active_seconds ?? 0)}
-            </strong>
-            <p>
-              Tracked {duration(period?.tracked_active_seconds ?? 0)} · Manual
-              approved {duration(period?.manual_approved_seconds ?? 0)}
-            </p>
-            <p>
-              Pending {duration(period?.manual_pending_seconds ?? 0)} · Idle{" "}
-              {duration(period?.idle_seconds ?? 0)}
-            </p>
-          </article>
-        );
-      })}
     </section>
   );
 }

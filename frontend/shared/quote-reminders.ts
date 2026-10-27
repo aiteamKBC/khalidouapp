@@ -88,6 +88,11 @@ export function quoteAt(language: QuoteLanguage, sequence: number) {
   return quotes[index % quotes.length][column];
 }
 
+export function translateQuote(text: string): string {
+  const pair = quotes.find(([arabic, english]) => text === arabic || text === english);
+  return pair ? (text === pair[0] ? pair[1] : pair[0]) : text;
+}
+
 export function consumeDueQuote(settings: QuoteSettings, now: number) {
   if (!settings.enabled || now < settings.nextAt) return null;
   return {
