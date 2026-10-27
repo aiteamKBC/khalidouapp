@@ -57,3 +57,10 @@ docs/CLAUDE-*.md
 docs/desktop-*.md
 docs/*.md
 HANDOVER.md
+
+# Local end-to-end reports, isolated profiles, and service fixtures
+/e2e/.runtime/
+/e2e/native-report/
+/e2e/native-results/
+/e2e/playwright-report/
+/e2e/test-results/

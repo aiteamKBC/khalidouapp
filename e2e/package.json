@@ -7,6 +7,9 @@
     "e2e": "playwright test",
     "e2e:web": "playwright test --project=web",
     "e2e:desktop": "playwright test --project=desktop",
+    "e2e:desktop:native": "npm run build:desktop && playwright test --config desktop-native.config.ts",
+    "e2e:desktop:native:report": "playwright show-report native-report",
+    "typecheck": "tsc --noEmit",
     "e2e:journey": "playwright test --project=journey",
     "e2e:report": "playwright show-report",
     "build:desktop": "npm --prefix ../frontend/desktop-agent run build"
