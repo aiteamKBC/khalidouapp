@@ -38,14 +38,15 @@ export default function QuoteReminderWindow() {
 
   if (!quote) return null;
   const attribution = quoteAttribution(quote.text);
+  const translatedText = translateQuote(quote.text);
   return (
     <aside ref={card} className="native-quote-reminder" style={quote.colors as CSSProperties} role="status" aria-live="polite" aria-label="Quote reminder">
       <div>
         <strong>A moment of inspiration</strong>
         <div className="native-quote-actions">
-          <button type="button" aria-label="Translate quote" title="Translate quote" onClick={() => setQuote(current => current && { ...current, text: translateQuote(current.text) })}>
+          {translatedText !== quote.text && <button type="button" aria-label="Translate quote" title="Translate quote" onClick={() => setQuote(current => current && { ...current, text: translatedText })}>
             <TrackerIcon className="ri-translate-line" aria-hidden="true" />
-          </button>
+          </button>}
           <button type="button" aria-label="Dismiss quote" onClick={() => void window.khaliduo?.dismissQuoteReminder()}>
             ×
           </button>
@@ -56,6 +57,12 @@ export default function QuoteReminderWindow() {
         <footer className="native-quote-author" dir="auto" lang={attribution.language}>
           <cite title={attribution.source}>{attribution.author}</cite>
         </footer>
+      )}
+      {!attribution && quote.author && <footer className="native-quote-author" dir="auto" lang={/[\u0600-\u06ff]/.test(quote.author) ? "ar" : "en"}><cite>{quote.author}</cite></footer>}
+      {quote.provider && (
+        <button type="button" className="native-quote-provider" onClick={() => void window.khaliduo?.openQuoteSource()}>
+          Quotes via {quote.provider === "zenquotes" ? "ZenQuotes" : "Quote Unquote"} <span aria-hidden="true">↗</span>
+        </button>
       )}
     </aside>
   );

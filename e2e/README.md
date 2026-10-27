@@ -19,7 +19,7 @@ npx.cmd playwright test --config desktop-native.config.ts tracking.spec.ts
 npx.cmd playwright test --config desktop-native.config.ts --grep "quote"
 ```
 
-The 44 independent scenarios cover:
+The 47 independent scenarios cover:
 
 | Area | Checks | File |
 |---|---|---|
@@ -34,15 +34,16 @@ The 44 independent scenarios cover:
 | Account and tracking start | Cancelled sign-out, sign-out, invalid/valid credentials, password visibility/clearing, password help, inside/outside-shift prompts | `native/shell.spec.ts` |
 | Appearance | Six palettes, five timer faces, persistence after renderer reload | `native/shell.spec.ts` |
 | Quotes | Interval validation and persistence, opt-out, actual scheduled native window, bottom-right placement, minimized workspace, translation, Tajawal Arabic, attribution and dismissal | `native/shell.spec.ts` |
+| External quotes | Arabic/English feeds, English provider rotation, real feed-client batch rotation, author/source credit, Tajawal Arabic, source action and provider failure fallback | `native/quote-feed.spec.ts` |
 | Desktop shell | Native close request deduplication/reload, focus trap, cancellation, hide/pause/resume/quit choices and retry, maximize/restore, square expanded frame, compact layouts down to 460×360 | `native/shell.spec.ts` |
 | Updates | Check error, download progress, disabled controls, install action | `native/shell.spec.ts` |
 
 Each test launches a fresh Electron process with its own profile under
 `native-results/`. Failures retain a trace, screenshot and native-state attachment;
 the host also checks for uncaught renderer errors and tracking errors. There are
-no shared accounts or developer profile writes. The host never loads `.env` or
-imports the production network clients, and installer/external-browser actions
-are recorded rather than executed.
+no shared accounts or developer profile writes. The host never loads `.env`.
+Backend and quote-provider HTTP replies are fixtures, and installer/external-browser
+actions are recorded rather than executed.
 
 ### What the native suite proves
 

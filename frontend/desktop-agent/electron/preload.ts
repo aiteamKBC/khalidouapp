@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld("khaliduo", {
   showQuoteReminder: (payload: QuoteReminderPayload) => ipcRenderer.invoke("quote:show", payload),
   getQuoteReminder: () => ipcRenderer.invoke("quote:get"),
   dismissQuoteReminder: () => ipcRenderer.invoke("quote:dismiss"),
+  openQuoteSource: () => ipcRenderer.invoke("quote:open-source"),
   resizeQuoteReminder: (height: number) => ipcRenderer.send("quote:resize", height),
   onQuoteReminderChanged: (callback: (payload: QuoteReminderPayload) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, payload: QuoteReminderPayload) => callback(payload);

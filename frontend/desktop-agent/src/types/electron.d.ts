@@ -535,6 +535,7 @@ declare global {
       showQuoteReminder: (payload: QuoteReminderPayload) => Promise<void>;
       getQuoteReminder: () => Promise<QuoteReminderPayload | null>;
       dismissQuoteReminder: () => Promise<void>;
+      openQuoteSource: () => Promise<void>;
       resizeQuoteReminder: (height: number) => void;
       onQuoteReminderChanged: (callback: (payload: QuoteReminderPayload) => void) => () => void;
       isWindowExpanded: () => Promise<boolean>;

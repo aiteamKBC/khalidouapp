@@ -6,7 +6,7 @@ import { QuoteReminderWindow } from "../electron/services/quoteReminderWindow.ts
 
 const quote = { text: "Give one task your full attention.", colors: { "--k-card": "#fff" } };
 
-function fixture(load = async () => {}) {
+function fixture(load = async () => {}, resolveQuote?: () => Promise<{ text: string; author: string; provider: "zenquotes" } | null>) {
   const windows: FakeWindow[] = [];
   class FakeWindow extends EventEmitter {
     visible = false;
@@ -40,6 +40,7 @@ function fixture(load = async () => {}) {
     loadWindow: load,
     getWorkArea: () => ({ x: -1920, y: 100, width: 1920, height: 1040 }),
     preload: "/app/preload.js",
+    resolveQuote,
   });
   return { controller, windows, sender: () => windows[0].webContents as unknown as WebContents };
 }
@@ -56,6 +57,30 @@ test("quotes appear at the display's bottom right above the taskbar without acti
     assert.equal(window.options.skipTaskbar, true);
     assert.equal(window.options.parent, undefined);
     assert.equal(window.options.webPreferences?.nodeIntegration, false);
+  } finally { f.controller.dispose(); }
+});
+
+test("remote English quotes retain author and provider credit; offline replies use the original quote", async () => {
+  let online = true;
+  const f = fixture(async () => {}, async () => online ? { text: 'Keep discovering.', author: 'A scientist', provider: 'zenquotes' } : null);
+  try {
+    await f.controller.show({ ...quote, preferExternal: true });
+    assert.deepEqual(f.controller.getPayload(f.sender()), { text: 'Keep discovering.', author: 'A scientist', provider: 'zenquotes', colors: quote.colors });
+    online = false;
+    await f.controller.show({ ...quote, preferExternal: true });
+    assert.deepEqual(f.controller.getPayload(f.sender()), quote);
+  } finally { f.controller.dispose(); }
+});
+
+test("disabling reminders during an API fetch cannot show a late quote", async () => {
+  let complete!: (value: null) => void;
+  const f = fixture(async () => {}, () => new Promise(resolve => { complete = resolve; }));
+  try {
+    const pending = f.controller.show({ ...quote, preferExternal: true });
+    f.controller.dismiss();
+    complete(null);
+    await pending;
+    assert.equal(f.windows.length, 0);
   } finally { f.controller.dispose(); }
 });
 

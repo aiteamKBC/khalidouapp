@@ -5,6 +5,7 @@ import electronUpdater from "electron-updater";
 import dotenv from "dotenv";
 import { timedBreakState } from "./services/timedBreak.js";
 import { QuoteReminderWindow } from "./services/quoteReminderWindow.js";
+import { QuoteFeed, QuoteSources, type QuoteProvider, type QuoteFeedLanguage } from "./services/quoteFeed.js";
 import type { WindowCloseRequest, WindowCloseResult } from "./services/windowClosePrompt.js";
 import axios from "axios";
 import { execFile, fork, spawn, type ChildProcess } from "node:child_process";
@@ -418,7 +419,23 @@ const FOREGROUND_SEGMENT_MAX_MS = 60_000;
 const LONG_IDLE_SESSION_SPLIT_SECONDS = 4 * 60 * 60;
 
 let mainWindow: Electron.BrowserWindow | null = null;
+const createQuoteFeed = (name: string, provider: QuoteProvider, language: QuoteFeedLanguage) => new QuoteFeed({
+  provider, language,
+  readCache: () => JSON.parse(fs.readFileSync(path.join(app.getPath("userData"), `${name}.json`), "utf8")),
+  writeCache: cache => {
+    const file = path.join(app.getPath("userData"), `${name}.json`);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(`${file}.tmp`, JSON.stringify(cache), "utf8");
+    fs.renameSync(`${file}.tmp`, file);
+  },
+});
+const quoteSources = new QuoteSources({
+  zenquotes: createQuoteFeed("quote-feed", "zenquotes", "en"),
+  arabic: createQuoteFeed("quote-unquote-ar", "quote-unquote", "ar"),
+  english: createQuoteFeed("quote-unquote-en", "quote-unquote", "en"),
+});
 const quoteReminder = new QuoteReminderWindow({
+  resolveQuote: (language, sequence) => quoteSources.next(language, sequence),
   createWindow: options => new BrowserWindow(options),
   preload: path.join(__dirname, "preload.js"),
   getWorkArea: () => mainWindow && !mainWindow.isDestroyed()
@@ -7692,6 +7709,12 @@ ipcMain.handle("quote:show", async (event, payload: unknown) => {
 });
 
 ipcMain.handle("quote:get", event => quoteReminder.getPayload(event.sender));
+
+ipcMain.handle("quote:open-source", event => {
+  const quote = quoteReminder.getPayload(event.sender);
+  if (quote?.provider === "zenquotes") return shell.openExternal("https://zenquotes.io/");
+  if (quote?.provider === "quote-unquote") return shell.openExternal("https://gitlab.com/Assayyaad/quote-unquote");
+});
 
 ipcMain.handle("quote:dismiss", event => {
   if (event.sender === mainWindow?.webContents || quoteReminder.owns(event.sender)) quoteReminder.dismiss();

@@ -29,3 +29,15 @@ html[data-quote-window="true"] .native-quote-reminder {
 html[data-quote-window="true"] .native-quote-reminder::-webkit-scrollbar {
   display: none;
 }
+
+.native-quote-reminder .native-quote-provider {
+  gap: 4px;
+  margin: 8px 0 0;
+  padding: 0;
+  min-height: 20px;
+  border-radius: 3px;
+  font-size: 10px;
+  line-height: 1.5;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}

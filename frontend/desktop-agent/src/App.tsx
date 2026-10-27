@@ -4496,7 +4496,7 @@ function SettingsView({
           <span className="native-quote-settings-icon"><TrackerIcon className="ri-chat-quote-line" aria-hidden="true" /></span>
           <div>
             <h2>Quote notifications</h2>
-            <p>Choose when a quote appears on your desktop.</p>
+            <p>Arabic and English inspiration from Quote Unquote and ZenQuotes. Available offline too.</p>
           </div>
         </header>
         <label className="native-quote-toggle" htmlFor="native-quote-enabled">

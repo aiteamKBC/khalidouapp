@@ -41,7 +41,7 @@ export function useQuoteReminders(scope: string | null, appearance: Appearance) 
         if (!due) return;
         localStorage.setItem(storageKey, JSON.stringify(due.settings));
         setState({ key: storageKey, settings: due.settings });
-        void window.khaliduo.showQuoteReminder({ text: due.text, colors: colors.current }).then(() => {
+        void window.khaliduo.showQuoteReminder({ text: due.text, colors: colors.current, preferExternal: true, sequence: due.settings.sequence }).then(() => {
           if (active) setError(null);
         }).catch(() => {
           if (active) setError("Your desktop quote could not be displayed. Please try again.");

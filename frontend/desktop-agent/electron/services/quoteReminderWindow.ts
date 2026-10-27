@@ -1,8 +1,13 @@
 import type { BrowserWindow, BrowserWindowConstructorOptions, Rectangle, WebContents } from "electron";
+import type { FeedQuote, QuoteFeedLanguage, QuoteProvider } from "./quoteFeed.js";
 
 export type QuoteReminderPayload = {
   text: string;
   colors: Record<string, string>;
+  preferExternal?: boolean;
+  author?: string;
+  provider?: QuoteProvider;
+  sequence?: number;
 };
 
 type QuoteReminderWindowOptions = {
@@ -10,6 +15,7 @@ type QuoteReminderWindowOptions = {
   loadWindow: (window: BrowserWindow) => Promise<void>;
   getWorkArea: () => Rectangle;
   preload: string;
+  resolveQuote?: (language: QuoteFeedLanguage, sequence: number) => Promise<FeedQuote | null>;
 };
 
 const COLOR_KEYS = ["--k-card", "--k-line", "--k-ink", "--k-muted", "--k-bg-2", "--k-pink"];
@@ -21,6 +27,7 @@ export class QuoteReminderWindow {
   private timer: ReturnType<typeof setTimeout> | null = null;
   private area: Rectangle | null = null;
   private options: QuoteReminderWindowOptions;
+  private requestVersion = 0;
 
   constructor(options: QuoteReminderWindowOptions) {
     this.options = options;
@@ -42,8 +49,18 @@ export class QuoteReminderWindow {
       const color = candidate.colors?.[key];
       return typeof color === "string" && color.length <= 128 ? [[key, color]] : [];
     }));
-    const payload = { text: candidate.text, colors };
     this.dismiss();
+    const requestVersion = this.requestVersion;
+    const language = /[\u0600-\u06ff]/.test(candidate.text) ? "ar" : "en";
+    const sequence = Number.isSafeInteger(candidate.sequence) && candidate.sequence! >= 0 ? candidate.sequence! : 0;
+    const external = candidate.preferExternal === true
+      ? await this.options.resolveQuote?.(language, sequence).catch(() => null)
+      : null;
+    // Opt-out, sign-out, or a newer reminder can arrive during the HTTP request.
+    if (requestVersion !== this.requestVersion) return;
+    const payload: QuoteReminderPayload = external
+      ? { text: external.text, author: external.author, provider: external.provider, colors }
+      : { text: candidate.text, colors };
     this.payload = payload;
     this.area = this.options.getWorkArea();
 
@@ -119,6 +136,7 @@ export class QuoteReminderWindow {
   }
 
   dismiss() {
+    this.requestVersion++;
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
     this.payload = null;

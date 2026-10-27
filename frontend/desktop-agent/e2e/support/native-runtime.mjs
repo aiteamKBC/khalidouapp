@@ -25,7 +25,8 @@ export async function boot(profile) {
   let now = start, idleSince = null, lastInput = start, monitor;
   const calls = [], events = [], queued = [], delivered = [], errors = [];
   const failures = new Map();
-  let online = true, scheduled = false, shots = [], reschedules = [], pendingStart = null;
+  let online = true, scheduled = false, shots = [], reschedules = [], pendingStart = null, quoteReply = null;
+  const bilingualQuoteReply = { ar: null, en: null };
   const base = literal('src/App.tsx', 'fallbackStatus');
   const status = { ...base, enrolled: true, appearanceScope: null, employeeName: 'Desktop E2E', employeeEmail: 'desktop@e2e.example.test', deviceId: 'desktop-e2e', deviceName: 'Isolated test device', trackingStatus: 'active', trackingPaused: false, connectionStatus: 'online', sessionStartedAt: new Date(start).toISOString(), screenshotMonitoringEnabled: true, screenshotCaptureActive: true, powerSource: 'ac', agentVersion: 'e2e',
     requestPolicy: { timezone: 'Africa/Cairo', shift_start: '09:00', shift_end: '17:00', working_days: [0,1,2,3,4,5,6], weekly_early_leave_minutes: 120, weekly_early_leave_used_minutes: 0, weekly_early_leave_remaining_minutes: 120 },
@@ -138,9 +139,13 @@ export async function boot(profile) {
   register('window:toggle-maximize', () => main.isMaximized() ? main.unmaximize() : main.maximize());
   register('window:is-expanded', () => c.isMainWindowExpanded());
   const { QuoteReminderWindow } = await import(pathToFileURL(path.join(desktop, 'dist-electron-khaliduo/services/quoteReminderWindow.js')).href);
-  const quotes = new QuoteReminderWindow({ createWindow: options => new BrowserWindow(options), preload: path.join(desktop, 'dist-electron-khaliduo/preload.js'), getWorkArea: () => screen.getDisplayMatching(main.getBounds()).workArea, loadWindow: window => window.loadFile(path.join(desktop, 'dist-khaliduo/index.html'), { query: { window: 'quote' } }) });
+  const { QuoteFeed, QuoteSources } = await import(pathToFileURL(path.join(desktop, 'dist-electron-khaliduo/services/quoteFeed.js')).href);
+  const feedOptions = { now: () => now, random: () => 0.999, fetch: async url => { calls.push({ method: 'quote:http', url }); const reply = url.includes('zenquotes.io') ? quoteReply : bilingualQuoteReply[url.includes('%2Far%2F') ? 'ar' : 'en']; if (!reply) throw new Error('Fixture offline'); return new Response(JSON.stringify(reply)); } };
+  const sources = new QuoteSources({ zenquotes: new QuoteFeed(feedOptions), arabic: new QuoteFeed({ ...feedOptions, provider: 'quote-unquote', language: 'ar' }), english: new QuoteFeed({ ...feedOptions, provider: 'quote-unquote', language: 'en' }) });
+  const quotes = new QuoteReminderWindow({ resolveQuote: (language, sequence) => sources.next(language, sequence), createWindow: options => new BrowserWindow(options), preload: path.join(desktop, 'dist-electron-khaliduo/preload.js'), getWorkArea: () => screen.getDisplayMatching(main.getBounds()).workArea, loadWindow: window => window.loadFile(path.join(desktop, 'dist-khaliduo/index.html'), { query: { window: 'quote' } }) });
   register('quote:show', payload => quotes.show(payload));
   ipcMain.handle('quote:get', event => quotes.getPayload(event.sender));
+  ipcMain.handle('quote:open-source', event => { if (quotes.owns(event.sender)) calls.push({ method: 'quote:open-source' }); });
   ipcMain.handle('quote:dismiss', () => quotes.dismiss());
   ipcMain.on('quote:resize', (event, height) => quotes.resize(event.sender, height));
   register('window:get-close-request', () => c.windowCloseRequest);
@@ -161,6 +166,8 @@ export async function boot(profile) {
     else if (command === 'show') main.show();
     else if (command === 'size') main.setSize(value.width, value.height);
     else if (command === 'screenshots') shots = value;
+    else if (command === 'quote-feed') quoteReply = value;
+    else if (command === 'quote-feed-extra') bilingualQuoteReply[value.language] = value.rows;
     else if (command === 'restore-break') { c.loadTrackingPreferences(); c.lastDurationTickAt = now; }
     else if (command === 'start-prompt') { await stop('Before starting'); pendingStart = { id: crypto.randomUUID(), kind: 'tracking_start', lostSeconds: 0, eligibleLostSeconds: 0, outsideScheduledShift: Boolean(value), endedAt: new Date(now).toISOString() }; status.lastIdleAlert = pendingStart; send('agent:idle-alert', pendingStart); }
     else if (command === 'advance') {
