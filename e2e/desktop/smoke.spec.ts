@@ -15,7 +15,7 @@ test.afterAll(() => desktop?.kill());
 
 test("renderer boots on the sign-in screen with a locked-down bridge", async () => {
   const { window } = desktop;
-  await expect(window.getByRole("heading", { name: "Sign in to your account" })).toBeVisible();
+  await expect(window.getByRole("heading", { name: "Sign in to set up this computer" })).toBeVisible();
 
   const bridge = await window.evaluate(() => ({
     api: typeof (window as any).khaliduo,
@@ -33,7 +33,7 @@ test("renderer boots on the sign-in screen with a locked-down bridge", async () 
 test("wrong password shows an error and leaves the device un-enrolled", async () => {
   const { window } = desktop;
   await signIn(window, seed().employees.other.email, "definitely-wrong-password");
-  await expect(window.getByRole('alert')).toBeVisible();
+  await expect(window.locator(".k-error")).toBeVisible();
   expect((await desktop.status()).enrolled).toBe(false);
   await expect(window.locator("body")).not.toContainText(/\bNaN\b|Invalid Date/);
   expect(desktop.pageErrors).toEqual([]);

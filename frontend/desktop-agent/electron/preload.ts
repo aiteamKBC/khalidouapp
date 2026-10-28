@@ -1,23 +1,9 @@
 import electronRenderer from "electron/renderer";
-import type { QuoteReminderPayload } from "./services/quoteReminderWindow.js";
-import type { WindowCloseChoice, WindowCloseRequest } from "./services/windowClosePrompt.js";
 
 const { contextBridge, ipcRenderer } = electronRenderer;
 
 contextBridge.exposeInMainWorld("khaliduo", {
-  showQuoteReminder: (payload: QuoteReminderPayload) => ipcRenderer.invoke("quote:show", payload),
-  getQuoteReminder: () => ipcRenderer.invoke("quote:get"),
-  dismissQuoteReminder: () => ipcRenderer.invoke("quote:dismiss"),
-  openQuoteSource: () => ipcRenderer.invoke("quote:open-source"),
-  resizeQuoteReminder: (height: number) => ipcRenderer.send("quote:resize", height),
-  onQuoteReminderChanged: (callback: (payload: QuoteReminderPayload) => void) => {
-    const listener = (_event: Electron.IpcRendererEvent, payload: QuoteReminderPayload) => callback(payload);
-    ipcRenderer.on("quote:changed", listener);
-    return () => ipcRenderer.removeListener("quote:changed", listener);
-  },
   getAgentStatus: () => ipcRenderer.invoke("agent:get-status"),
-  getAppearance: (scope: string) => ipcRenderer.invoke("agent:get-appearance", scope),
-  setAppearance: (scope: string, patch: { skin?: "orbit" | "ember" | "forest"; mode?: "light" | "dark" }) => ipcRenderer.invoke("agent:set-appearance", scope, patch),
   syncNow: () => ipcRenderer.invoke("agent:sync-now"),
   onStatusChanged: (callback: (status: unknown) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, status: unknown) =>
@@ -27,10 +13,9 @@ contextBridge.exposeInMainWorld("khaliduo", {
   },
   enrollWithCredentials: (email: string, password: string) =>
     ipcRenderer.invoke("agent:enroll-with-credentials", email, password),
-  pauseTracking: (options?: { requestedMinutes?: number; reason?: string; takeBreak?: boolean }) =>
+  pauseTracking: (options?: { requestedMinutes?: number; reason?: string }) =>
     ipcRenderer.invoke("agent:pause-tracking", options),
   resumeTracking: () => ipcRenderer.invoke("agent:resume-tracking"),
-  endShift: () => ipcRenderer.invoke("agent:end-shift"),
   resumeAutomaticIdle: () => ipcRenderer.invoke("agent:resume-automatic-idle"),
   startMeeting: (input: {
     title: string;
@@ -95,8 +80,7 @@ contextBridge.exposeInMainWorld("khaliduo", {
     leaveType?: "annual" | "sick" | "unpaid";
     reason?: string;
   }) => ipcRenderer.invoke("agent:create-leave-request", input),
-  listShiftReschedules: () =>
-    ipcRenderer.invoke("agent:list-shift-reschedules"),
+  listShiftReschedules: () => ipcRenderer.invoke("agent:list-shift-reschedules"),
   getShiftRescheduleDay: (workDate: string) =>
     ipcRenderer.invoke("agent:get-shift-reschedule-day", workDate),
   createShiftReschedule: (input: {
@@ -112,21 +96,8 @@ contextBridge.exposeInMainWorld("khaliduo", {
   setUpdateAttention: (active: boolean) =>
     ipcRenderer.send("agent:set-update-attention", active),
   minimizeWindow: () => ipcRenderer.invoke("window:minimize"),
-  isWindowExpanded: () => ipcRenderer.invoke("window:is-expanded"),
-  onWindowExpandedChanged: (callback: (expanded: boolean) => void) => {
-    const listener = (_event: Electron.IpcRendererEvent, expanded: boolean) => callback(expanded);
-    ipcRenderer.on("window:expanded-changed", listener);
-    return () => ipcRenderer.removeListener("window:expanded-changed", listener);
-  },
   toggleMaximizeWindow: () => ipcRenderer.invoke("window:toggle-maximize"),
   closeWindow: () => ipcRenderer.invoke("window:close"),
-  getWindowCloseRequest: () => ipcRenderer.invoke("window:get-close-request"),
-  respondWindowClose: (requestId: string, choice: WindowCloseChoice) => ipcRenderer.invoke("window:respond-close", requestId, choice),
-  onWindowCloseRequested: (callback: (request: WindowCloseRequest | null) => void) => {
-    const listener = (_event: Electron.IpcRendererEvent, request: WindowCloseRequest | null) => callback(request);
-    ipcRenderer.on("window:close-requested", listener);
-    return () => ipcRenderer.removeListener("window:close-requested", listener);
-  },
   checkForUpdates: () => ipcRenderer.invoke("agent:check-for-updates"),
   installUpdate: () => ipcRenderer.invoke("agent:install-update"),
   onRequiredUpdate: (
