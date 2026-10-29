@@ -1,0 +1,397 @@
+/* ============================================================
+   Split-flap timer board  (/app  ·  timer style: flip)
+   Digits are mechanical leaves: each one falls on its own when
+   its value changes, and the whole board snaps together on entry.
+   ============================================================ */
+
+.sf-timer {
+  --sf-w: clamp(33px, 7.4vw, 43px);
+  --sf-h: calc(var(--sf-w) * 1.34);
+  --sf-fs: calc(var(--sf-w) * 0.76);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+}
+
+/* ---------- board plate ---------- */
+.sf-board {
+  position: relative;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 388px;
+  padding: 14px 14px 12px;
+  border: 1px solid var(--k-line);
+  border-radius: 14px;
+  overflow: hidden;
+  background:
+    radial-gradient(
+      118% 130% at 50% -28%,
+      color-mix(in srgb, var(--k-pink) 11%, transparent),
+      transparent 64%
+    ),
+    linear-gradient(
+      168deg,
+      color-mix(in srgb, var(--k-card) 93%, var(--k-plum-2)) 0%,
+      var(--k-card) 58%,
+      color-mix(in srgb, var(--k-card) 90%, var(--k-plum-2)) 100%
+    );
+}
+
+.sf-board::before {
+  content: '';
+  position: absolute;
+  left: 18%;
+  right: 18%;
+  top: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--k-pink), transparent);
+  opacity: 0.5;
+}
+
+/* single light pass across the plate when the board appears */
+.sf-sheen {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    104deg,
+    transparent 30%,
+    color-mix(in srgb, #ffffff 68%, transparent) 44%,
+    color-mix(in srgb, var(--k-pink) 16%, transparent) 52%,
+    transparent 66%
+  );
+  animation: sfSheen 1.25s cubic-bezier(0.4, 0, 0.3, 1) 0.36s both;
+}
+
+html.dark .sf-sheen,
+.app-shell.app-dark .sf-sheen {
+  background: linear-gradient(
+    104deg,
+    transparent 30%,
+    color-mix(in srgb, #ffffff 13%, transparent) 44%,
+    color-mix(in srgb, var(--k-pink) 22%, transparent) 52%,
+    transparent 66%
+  );
+}
+
+@keyframes sfSheen {
+  0% {
+    opacity: 0;
+    transform: translateX(-95%);
+  }
+  18% {
+    opacity: 1;
+  }
+  82% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(95%);
+  }
+}
+
+/* ---------- digits row ---------- */
+.sf-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 5px;
+}
+
+.sf-group {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.sf-digits {
+  display: flex;
+  gap: 4px;
+}
+
+.sf-label {
+  font-family: 'Inter Variable', 'IBM Plex Sans Arabic', system-ui, sans-serif;
+  font-size: 8px;
+  font-weight: 600;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--k-faint);
+}
+
+/* ---------- one digit ---------- */
+.sf-slot {
+  display: block;
+  animation: sfSlotIn 0.95s cubic-bezier(0.24, 0.74, 0.26, 1) both;
+  perspective: 620px;
+  will-change: transform, opacity;
+}
+
+@keyframes sfSlotIn {
+  0% {
+    opacity: 0;
+    transform: translateY(-10px) rotateX(-58deg) scale(0.94);
+  }
+  70% {
+    opacity: 1;
+    transform: translateY(0) rotateX(2deg) scale(1);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) rotateX(0deg) scale(1);
+  }
+}
+
+.sf-card {
+  position: relative;
+  display: block;
+  width: var(--sf-w);
+  height: var(--sf-h);
+  border-radius: 7px;
+  background: var(--k-line-2);
+  transform-style: preserve-3d;
+  perspective: 520px;
+}
+
+.sf-slot.is-accent .sf-glyph {
+  color: var(--k-pink);
+}
+
+.sf-glyph {
+  position: absolute;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: var(--sf-h);
+  font-size: var(--sf-fs);
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  color: var(--k-ink);
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* the two resting halves */
+.sf-half,
+.sf-leaf {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 50%;
+  overflow: hidden;
+  backface-visibility: hidden;
+}
+
+.sf-top,
+.sf-leaf-top {
+  top: 0;
+  border-radius: 7px 7px 3px 3px;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--k-card) 99%, var(--k-plum-2)) 0%,
+    color-mix(in srgb, var(--k-card) 86%, var(--k-plum-2)) 100%
+  );
+}
+
+.sf-bot,
+.sf-leaf-bot {
+  bottom: 0;
+  border-radius: 3px 3px 7px 7px;
+  background: linear-gradient(
+    0deg,
+    color-mix(in srgb, var(--k-card) 99%, var(--k-plum-2)) 0%,
+    color-mix(in srgb, var(--k-card) 84%, var(--k-plum-2)) 100%
+  );
+}
+
+.sf-top > .sf-glyph {
+  top: 0;
+}
+
+.sf-bot > .sf-glyph {
+  bottom: 0;
+}
+
+/* the hinge: hairline plus two notches */
+.sf-seam {
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  top: calc(50% - 0.5px);
+  height: 1px;
+  z-index: 5;
+  background: color-mix(in srgb, var(--k-plum-2) 22%, transparent);
+  pointer-events: none;
+}
+
+.sf-seam::before,
+.sf-seam::after {
+  content: '';
+  position: absolute;
+  top: -1.5px;
+  width: 3px;
+  height: 3px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--k-plum-2) 34%, transparent);
+}
+
+.sf-seam::before {
+  left: -1px;
+}
+
+.sf-seam::after {
+  right: -1px;
+}
+
+/* the flipping leaves */
+.sf-leaf {
+  z-index: 4;
+  will-change: transform;
+}
+
+.sf-leaf-top {
+  transform-origin: bottom center;
+  animation: sfFlipDown 0.36s cubic-bezier(0.42, 0, 0.9, 0.56) both;
+}
+
+.sf-leaf-bot {
+  transform-origin: top center;
+  transform: rotateX(88deg);
+  animation: sfFlipUp 0.34s cubic-bezier(0.2, 0.58, 0.36, 1) 0.36s both;
+}
+
+/* the falling leaf darkens as it tips away from the light */
+.sf-leaf-top::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--k-plum) 42%, transparent) 0%,
+    transparent 88%
+  );
+  opacity: 0;
+  animation: sfLeafShade 0.36s ease-in both;
+}
+
+@keyframes sfFlipDown {
+  0% {
+    transform: rotateX(0deg);
+  }
+  100% {
+    transform: rotateX(-88deg);
+  }
+}
+
+@keyframes sfFlipUp {
+  0% {
+    transform: rotateX(88deg);
+  }
+  100% {
+    transform: rotateX(0deg);
+  }
+}
+
+@keyframes sfLeafShade {
+  0% {
+    opacity: 0;
+  }
+  100% {
+    opacity: 0.55;
+  }
+}
+
+/* ---------- colon ---------- */
+.sf-colon {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  margin-top: calc((var(--sf-h) - 14px) / 2);
+}
+
+.sf-colon > i {
+  display: block;
+  width: 4px;
+  height: 4px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--k-plum-2) 55%, transparent);
+}
+
+.sf-colon.is-live > i {
+  animation: sfColonBlink 3.6s ease-in-out infinite;
+}
+
+.sf-colon.is-live > i:last-child {
+  animation-delay: 1.8s;
+}
+
+@keyframes sfColonBlink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+/* ---------- footer readout ---------- */
+.sf-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 11px;
+  font-family: 'Inter Variable', 'IBM Plex Sans Arabic', system-ui, sans-serif;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--k-faint);
+}
+
+.sf-meta-val {
+  color: var(--k-muted);
+}
+
+.sf-bar {
+  position: relative;
+  display: block;
+  margin-top: 7px;
+  height: 3px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--k-track);
+}
+
+.sf-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--k-ring-1), var(--k-ring-3) 74%, var(--k-ring-4));
+  transition: width 1.1s cubic-bezier(0.32, 0.72, 0.22, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sf-slot,
+  .sf-sheen,
+  .sf-leaf-top,
+  .sf-leaf-bot,
+  .sf-leaf-top::after,
+  .sf-colon.is-live > i {
+    animation: none !important;
+  }
+
+  .sf-slot {
+    opacity: 1;
+    transform: none;
+  }
+}

@@ -4,7 +4,6 @@ import {
   useMemo,
   useRef,
   useState,
-  type CSSProperties,
   type FormEvent,
   type ReactNode,
 } from "react";
@@ -19,8 +18,21 @@ import type {
   WorkdayTimeline,
 } from "./types/electron";
 import { StatusBar } from "./ui/shell/StatusBar";
-import { TopBar } from "./ui/shell/TopBar";
+import { TopBar, type ShellTone } from "./ui/shell/TopBar";
 import { useSkin } from "./ui/theme/skin";
+import { useTimerStyle, type TimerStyle } from "./ui/tracker/timerStyle";
+import {
+  BreakdownCard,
+  HeroCard,
+  QuickBar,
+  RecentTasksCard,
+  ShotCard,
+  StatTiles,
+  TimelineCard,
+  WorkdayStrip,
+  type HeroMode,
+  type TimelineRow,
+} from "./ui/tracker/TrackerCards";
 import {
   TIMELINE_LABELS,
   timelineIntervalsForDisplay,
@@ -533,6 +545,7 @@ function App() {
   const [screenshotError, setScreenshotError] = useState<string | null>(null);
   const [theme, setTheme] = useState<"light" | "dark">(initialTheme);
   const { skin, setSkin } = useSkin(theme);
+  const [timerStyle, setTimerStyle] = useTimerStyle();
   const shownIdleAlertId = useRef<string | null>(null);
   const screenshotsLoadedForEnrollment = useRef(false);
   const lastLoadedScreenshotAt = useRef<string | null>(null);
@@ -614,13 +627,6 @@ function App() {
   useEffect(() => {
     window.localStorage.setItem(THEME_STORAGE_KEY, theme);
   }, [theme]);
-
-  const statusLabel = useMemo(
-    () =>
-      status.trackingStatus.charAt(0).toUpperCase() +
-      status.trackingStatus.slice(1),
-    [status.trackingStatus],
-  );
 
   const taskTeams = useMemo(
     () =>
@@ -861,12 +867,15 @@ function App() {
   const runningBreakEndsAtMs = status.scheduledBreak
     ? Date.parse(status.scheduledBreak.endsAt)
     : null;
+  // The main timer shows the idle counter only for automatic idle outside
+  // any break; the tracker card's idle face follows the same flag.
+  const timerShowsIdle =
+    status.trackingStatus === "idle" &&
+    !isPaused &&
+    !onScheduledBreak &&
+    !onSavedBreak;
   const displayedTimerSeconds = mainTimerSeconds({
-    isAutomaticIdle:
-      status.trackingStatus === "idle" &&
-      !isPaused &&
-      !onScheduledBreak &&
-      !onSavedBreak,
+    isAutomaticIdle: timerShowsIdle,
     isExtraTime,
     currentIdleSeconds: status.currentIdleSeconds,
     extraSeconds,
@@ -1781,7 +1790,12 @@ function App() {
           {activeView === "home" && (
             <HomeView
               status={status}
-              statusLabel={statusLabel}
+              statusText={statusText}
+              timerTone={timerTone}
+              timerShowsIdle={timerShowsIdle}
+              onBreak={onScheduledBreak || onSavedBreak}
+              timerStyle={timerStyle}
+              onTimerStyleChange={setTimerStyle}
               selectedProject={selectedProject}
               projectFilterId={projectFilterId}
               visibleTasks={visibleTasks}
@@ -2127,7 +2141,12 @@ function Sidebar({
 
 function HomeView({
   status,
-  statusLabel,
+  statusText,
+  timerTone,
+  timerShowsIdle,
+  onBreak,
+  timerStyle,
+  onTimerStyleChange,
   selectedProject,
   projectFilterId,
   visibleTasks,
@@ -2157,7 +2176,12 @@ function HomeView({
   onRequestManualTime,
 }: {
   status: AgentStatus;
-  statusLabel: string;
+  statusText: string;
+  timerTone: ShellTone;
+  timerShowsIdle: boolean;
+  onBreak: boolean;
+  timerStyle: TimerStyle;
+  onTimerStyleChange: (style: TimerStyle) => void;
   selectedProject: AgentProject | null;
   projectFilterId: string;
   visibleTasks: AgentTask[];
@@ -2254,415 +2278,252 @@ function HomeView({
     breaksToday,
     localMinutesAt(new Date().toISOString(), workdayTimezone),
   );
-  const isAutomaticIdle =
-    status.trackingStatus === "idle" &&
-    !status.trackingPaused &&
-    !status.scheduledBreak;
-  const heroStatusLabel = !hasRunningSession
-    ? statusLabel
-    : status.scheduledBreak &&
-        !isPaused &&
-        ["idle", "locked", "sleeping"].includes(status.trackingStatus)
-      ? `On break · ${status.scheduledBreak.name}`
-      : isExtraTime &&
-        (isPaused ||
-          ["idle", "locked", "sleeping"].includes(status.trackingStatus))
-      ? "Off shift"
-      : isPaused
-        ? "Paused"
-        : isExtraTime
-          ? "Extra time active"
-          : ["idle", "locked", "sleeping"].includes(status.trackingStatus)
-            ? "Paid shift idle"
-            : "Paid shift active";
-  const arcDegrees = Math.round((targetProgress / 100) * 300);
+  // Card face from App's existing flags: a break wins, then the idle counter,
+  // otherwise the same tone the top bar uses.
+  const heroMode: HeroMode = onBreak
+    ? "break"
+    : timerShowsIdle
+      ? "idle"
+      : timerTone;
   return (
-    <section className="k-home">
-      <div className="k-center">
-        <div className="k-selectors">
-          <label>
-            Project
-            <select
-              value={projectFilterId}
-              onChange={(event) => onProjectChange(event.target.value)}
-            >
-              <option value="">All projects</option>
-              {status.projects.map((project) => (
-                <option key={project.id} value={project.id}>
-                  {project.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Task
-            <select
-              value={status.selectedTask?.id ?? "none"}
-              disabled={isSubmittingTask}
-              onChange={(event) => onTaskChange(event.target.value)}
-            >
-              <option value="none">Choose a task</option>
-              {visibleTasks.map((task) => (
-                <option key={task.id} value={task.id}>
-                  {task.name}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-        <input
-          className="k-note"
-          value={sessionNote}
-          onChange={(event) => onSessionNoteChange(event.target.value)}
-          placeholder="Add a note for this session (optional)..."
+    <section className="app-page">
+      <div className="flex min-w-0 flex-col gap-3.5">
+        <h1 className="text-[20px] font-bold tracking-[-0.015em] text-ink">
+          Welcome back, {status.employeeName.split(" ")[0] || "there"}
+        </h1>
+        <QuickBar
+          projects={status.projects}
+          projectId={projectFilterId}
+          onProjectChange={onProjectChange}
+          tasks={visibleTasks}
+          taskId={status.selectedTask?.id ?? "none"}
+          taskDisabled={isSubmittingTask}
+          onTaskChange={onTaskChange}
+          note={sessionNote}
+          onNoteChange={onSessionNoteChange}
         />
-
-        <div
-          className="k-hero"
-          style={
-            {
-              "--progress": targetProgress,
-              "--arc-degrees": `${arcDegrees}deg`,
-            } as CSSProperties
-          }
-        >
-          <span
-            className="k-hero-wireframe k-hero-wireframe-right"
-            aria-hidden="true"
-          />
-          <span className="k-hero-icon">
-            <KIcon name="briefcase" />
-          </span>
-          <div className="k-shift-context">
-            <span>Paid shift</span>
-            <strong>{paidShiftLabel}</strong>
-          </div>
-          {(breaksToday.length > 0 || savedBreak) && (
-            <ul className="k-break-times" aria-label="Today's breaks">
-              {breaksToday.map((item) => {
-                const state =
+        <div className="tp-layout">
+          <div className="flex min-w-0 flex-col gap-3.5">
+            <HeroCard
+              mode={heroMode}
+              statusText={statusText}
+              shiftLabel={paidShiftLabel}
+              breaks={breaksToday.map((item) => ({
+                key: `${item.name}-${item.start}`,
+                label: `${item.name}${item.prayer ? ` · ${item.prayer}` : ""}`,
+                range: `${formatScheduledTime(item.start)}–${formatScheduledTime(item.end)}`,
+                title: item.prayer
+                  ? `Starts at today's ${item.prayer} adhan`
+                  : undefined,
+                state:
                   breakNow.current === item
                     ? "now"
                     : breakNow.next === item
                       ? "next"
-                      : null;
-                return (
-                  <li
-                    key={`${item.name}-${item.start}`}
-                    data-state={state ?? undefined}
-                    title={
-                      item.prayer
-                        ? `Starts at today's ${item.prayer} adhan`
-                        : undefined
+                      : null,
+              }))}
+              savedBreak={
+                savedBreak
+                  ? {
+                      remaining: formatSavedMinutes(savedBreak.remaining_seconds),
+                      title: `Saved today ${formatSavedMinutes(savedBreak.earned_seconds)} · used on idle ${formatSavedMinutes(savedBreak.used_seconds ?? savedBreak.approved_seconds)}`,
                     }
-                  >
-                    <span>
-                      {item.name}
-                      {item.prayer ? ` · ${item.prayer}` : ""}
-                    </span>
-                    <strong>
-                      {formatScheduledTime(item.start)}–
-                      {formatScheduledTime(item.end)}
-                    </strong>
-                    {state === "now" && <em>Now</em>}
-                    {state === "next" && <em>Next</em>}
-                  </li>
-                );
-              })}
-              {savedBreak && (
-                <li
-                  data-state="saved"
-                  title={`Saved today ${formatSavedMinutes(savedBreak.earned_seconds)} · used on idle ${formatSavedMinutes(savedBreak.used_seconds ?? savedBreak.approved_seconds)}`}
-                >
-                  <span>Saved break</span>
-                  <strong>{formatSavedMinutes(savedBreak.remaining_seconds)}</strong>
-                </li>
-              )}
-            </ul>
-          )}
-          <span className="k-hero-pill">{heroStatusLabel}</span>
-          {overtimeLabel && (
-            <span className="k-overtime-pill">{overtimeLabel}</span>
-          )}
-          <div
-            className="k-ring"
-            aria-label={
-              isAutomaticIdle
-                ? `Idle for ${formatDuration(displayedTimerSeconds)} after the idle threshold`
-                : isExtraTime
-                  ? `Recorded overtime ${formatDuration(displayedTimerSeconds)}`
-                  : `Worked today ${formatDuration(trackedTodaySeconds)}; ${formatDuration(countedTodaySeconds)} counts toward the ${formatDuration(status.dailyTargetSeconds)} target`
-            }
-          >
-            <span className="k-gauge-mark mark-0">0h</span>
-            <span className="k-gauge-mark mark-2">2h</span>
-            <span className="k-gauge-mark mark-4">4h</span>
-            <span className="k-gauge-mark mark-6">6h</span>
-            <span className="k-gauge-mark mark-8">8h</span>
-            <div className="k-gauge-readout">
-              <strong>{formatDuration(displayedTimerSeconds)}</strong>
-              <small>
-                {isAutomaticIdle
+                  : null
+              }
+              overtimeLabel={overtimeLabel}
+              overtimeHelp={overtimeHelp}
+              eyebrow={
+                timerShowsIdle
                   ? "Idle time (outside breaks)"
                   : isExtraTime
                     ? "Overtime recorded today"
-                    : `Worked today · ${targetProgress}% of ${formatDuration(status.dailyTargetSeconds)} target`}
-              </small>
-            </div>
-          </div>
-          {overtimeHelp && <p className="k-overtime-note">{overtimeHelp}</p>}
-          <p>
-            {selectedProject?.name ??
-              status.selectedTask?.projectName ??
-              "No project"}{" "}
-            - {status.selectedTask?.name ?? "No task selected"}
-          </p>
-          <div className="k-actions">
-            <button
-              type="button"
-              className={shouldResume ? "k-primary" : "k-warning"}
-              onClick={onTrackingToggle}
-              disabled={isChangingTracking}
-            >
-              {isChangingTracking
-                ? "Please wait..."
-                : shouldResume
-                  ? "Resume"
-                  : "Pause"}
-            </button>
-          </div>
-          <div className="k-hero-meta">
-            <div>
-              <KIcon name="tasks" />
-              <span>Activity</span>
-              <strong>{status.activityPercent}%</strong>
-            </div>
-            <div>
-              <KIcon name="timer" />
-              <span>Current session</span>
-              <strong>{formatDuration(status.activeSeconds)}</strong>
-            </div>
-            <div>
-              <KIcon name="worked" />
-              <span>Normal</span>
-              <strong>{formatDuration(normalSeconds)}</strong>
-            </div>
-            <div>
-              <KIcon name="dashboard" />
-              <span>Overtime</span>
-              <strong>{formatDuration(extraSeconds)}</strong>
-              <small className="k-meta-note">{overtimeStatus}</small>
-            </div>
-            <div>
-              <KIcon name="idle" />
-              <span>Idle</span>
-              <strong>{formatDuration(todayIdleSeconds)}</strong>
-              <small className="k-meta-note">
-                {requestableIdleMinuteTotal > 0
-                  ? `${requestableIdleMinuteTotal} min requestable`
-                  : "No requestable time"}
-              </small>
-              <button
-                type="button"
-                className="k-meta-action"
-                onClick={() => onRequestManualTime(idleRequestOptions[0])}
-                disabled={!idleRequestOptions.length}
-              >
-                Explain idle
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <section
-          className="k-workday-time-strip"
-          aria-label="Today's workday timing"
-        >
-          <div>
-            <span>Started at</span>
-            <strong>
-              {status.todayTimeline?.first_started_at
-                ? formatTimelineStart(status.todayTimeline)
-                : workdayTiming.startedAt
-                  ? formatClock(workdayTiming.startedAt, workdayTimezone)
-                  : "Not started"}
-            </strong>
-          </div>
-          <div>
-            <span>Last activity</span>
-            <strong>
-              {status.todayTimeline?.last_activity_at
-                ? formatClock(
-                    status.todayTimeline.last_activity_at,
-                    status.todayTimeline.timezone,
-                  )
-                : workdayTiming.localSyncPending
-                  ? "Sync pending"
-                  : "—"}
-            </strong>
-          </div>
-          <div>
-            <span>{workdayTiming.isRunning ? "Session" : "Signed out"}</span>
-            <strong>
-              {status.todayTimeline?.is_running
-                ? "Still running - no sign-out yet"
-                : workdayTiming.localSyncPending
-                  ? "Running locally - syncing"
-                  : status.todayTimeline?.last_ended_at
+                    : "Worked today"
+              }
+              clock={formatDuration(displayedTimerSeconds)}
+              targetProgress={targetProgress}
+              goalLabel={`${formatDuration(countedTodaySeconds)} of ${formatDuration(status.dailyTargetSeconds)}`}
+              live={timerTone === "running"}
+              timerAriaLabel={
+                timerShowsIdle
+                  ? `Idle for ${formatDuration(displayedTimerSeconds)} after the idle threshold`
+                  : isExtraTime
+                    ? `Recorded overtime ${formatDuration(displayedTimerSeconds)}`
+                    : `Worked today ${formatDuration(trackedTodaySeconds)}; ${formatDuration(countedTodaySeconds)} counts toward the ${formatDuration(status.dailyTargetSeconds)} target`
+              }
+              projectTaskLabel={`${
+                selectedProject?.name ??
+                status.selectedTask?.projectName ??
+                "No project"
+              } - ${status.selectedTask?.name ?? "No task selected"}`}
+              toggleLabel={
+                isChangingTracking
+                  ? "Please wait..."
+                  : shouldResume
+                    ? "Resume"
+                    : "Pause"
+              }
+              toggleResumes={shouldResume}
+              toggleDisabled={isChangingTracking}
+              onToggle={onTrackingToggle}
+              explainLabel={
+                requestableIdleMinuteTotal > 0
+                  ? `Explain idle · ${requestableIdleMinuteTotal} min`
+                  : "Explain idle"
+              }
+              explainDisabled={!idleRequestOptions.length}
+              onExplain={() => onRequestManualTime(idleRequestOptions[0])}
+              timerStyle={timerStyle}
+              onTimerStyle={onTimerStyleChange}
+            />
+            <StatTiles
+              tiles={[
+                {
+                  key: "session",
+                  icon: "ri-timer-line",
+                  label: "Current session",
+                  value: formatDuration(status.activeSeconds),
+                },
+                {
+                  key: "week",
+                  icon: "ri-calendar-2-line",
+                  label: "This week",
+                  value: formatDuration(
+                    status.timeSummary?.week.tracked_active_seconds ?? 0,
+                  ),
+                },
+                {
+                  key: "normal",
+                  icon: "ri-briefcase-4-line",
+                  label: "Normal",
+                  value: formatDuration(normalSeconds),
+                  bar: targetProgress,
+                  note: `${targetProgress}% of daily target`,
+                },
+                {
+                  key: "activity",
+                  icon: "ri-line-chart-line",
+                  label: "Activity",
+                  value: `${status.activityPercent}%`,
+                  tone: "ok",
+                },
+                {
+                  key: "idle",
+                  icon: "ri-hourglass-2-line",
+                  label: "Idle",
+                  value: formatDuration(todayIdleSeconds),
+                  note:
+                    requestableIdleMinuteTotal > 0
+                      ? `${requestableIdleMinuteTotal} min requestable`
+                      : "No requestable time",
+                  tone: requestableIdleMinuteTotal > 0 ? "warn" : undefined,
+                },
+                {
+                  key: "overtime",
+                  icon: "ri-moon-clear-line",
+                  label: "Overtime",
+                  value: formatDuration(extraSeconds),
+                  note: overtimeStatus,
+                  tone: "accent",
+                },
+              ]}
+            />
+            <WorkdayStrip
+              cells={[
+                {
+                  label: "Started at",
+                  value: status.todayTimeline?.first_started_at
+                    ? formatTimelineStart(status.todayTimeline)
+                    : workdayTiming.startedAt
+                      ? formatClock(workdayTiming.startedAt, workdayTimezone)
+                      : "Not started",
+                },
+                {
+                  label: "Last activity",
+                  value: status.todayTimeline?.last_activity_at
                     ? formatClock(
-                        status.todayTimeline.last_ended_at,
+                        status.todayTimeline.last_activity_at,
                         status.todayTimeline.timezone,
                       )
-                    : "—"}
-            </strong>
+                    : workdayTiming.localSyncPending
+                      ? "Sync pending"
+                      : "—",
+                },
+                {
+                  label: workdayTiming.isRunning ? "Session" : "Signed out",
+                  value: status.todayTimeline?.is_running
+                    ? "Still running - no sign-out yet"
+                    : workdayTiming.localSyncPending
+                      ? "Running locally - syncing"
+                      : status.todayTimeline?.last_ended_at
+                        ? formatClock(
+                            status.todayTimeline.last_ended_at,
+                            status.todayTimeline.timezone,
+                          )
+                        : "—",
+                },
+              ]}
+            />
+            <BreakdownCard
+              summary={`${formatDuration(countedTodaySeconds)} / ${formatDuration(status.dailyTargetSeconds)} - ${targetProgress}%`}
+              segments={timeBreakdown.segments.map((segment) => ({
+                key: segment.label,
+                label: segment.label,
+                value: formatDuration(segment.seconds),
+                className: segment.className,
+                widthPercent:
+                  segment.seconds > 0
+                    ? (segment.seconds / timeBreakdown.total) * 100
+                    : 0,
+              }))}
+            />
           </div>
-        </section>
-
-        <div className="k-stat-grid">
-          <Stat label="Today" value={formatDuration(trackedTodaySeconds)} />
-          <Stat
-            label="This week"
-            value={formatDuration(
-              status.timeSummary?.week.tracked_active_seconds ?? 0,
-            )}
-          />
-          <Stat label="Session" value={formatDuration(status.activeSeconds)} />
-          <Stat
-            label="Activity"
-            value={`${status.activityPercent}%`}
-            tone="good"
-          />
-          <Stat
-            label="Idle"
-            value={formatDuration(todayIdleSeconds)}
-            tone="warn"
-          />
-        </div>
-
-        <section className="k-breakdown">
-          <div className="k-row">
-            <strong>Daily target</strong>
-            <span>
-              {formatDuration(countedTodaySeconds)} /{" "}
-              {formatDuration(status.dailyTargetSeconds)} - {targetProgress}%
-            </span>
-          </div>
-          <div className="k-breakdown-bar">
-            {timeBreakdown.segments.map((segment) =>
-              segment.seconds > 0 ? (
-                <i
-                  key={segment.label}
-                  className={`segment-${segment.className}`}
-                  style={{
-                    width: `${(segment.seconds / timeBreakdown.total) * 100}%`,
-                  }}
-                  title={`${segment.label}: ${formatDuration(segment.seconds)}`}
-                />
-              ) : null,
-            )}
-          </div>
-          <div className="k-legend">
-            {timeBreakdown.segments.map((segment) => (
-              <span key={segment.label}>
-                <i className={`segment-${segment.className}`} /> {segment.label}{" "}
-                {formatDuration(segment.seconds)}
-              </span>
-            ))}
-          </div>
-        </section>
-      </div>
-
-      <aside className="k-right">
-        <section className="k-side-section">
-          <div className="k-row">
-            <strong>Latest screenshot</strong>
-            <button
-              type="button"
-              onClick={onOpenScreenshots}
-              disabled={isOpeningDashboard}
-            >
-              View all
-            </button>
-          </div>
-          {!recentScreenshots && (
-            <button
-              type="button"
-              className="k-shot-placeholder"
-              onClick={onLoadScreenshots}
-              disabled={isLoadingScreenshots}
-            >
-              {isLoadingScreenshots ? "Loading..." : "Show latest capture"}
-            </button>
-          )}
-          {recentScreenshots?.[0] && (
-            <figure className="k-shot">
-              <img
-                src={recentScreenshots[0].dataUrl}
-                alt={recentScreenshots[0].displayName ?? "Latest screenshot"}
+          <div className="flex min-w-0 flex-col gap-3.5">
+            <ShotCard
+              shot={
+                recentScreenshots?.[0]
+                  ? {
+                      src: recentScreenshots[0].dataUrl,
+                      alt:
+                        recentScreenshots[0].displayName ?? "Latest screenshot",
+                      time: formatTimestamp(recentScreenshots[0].capturedAt),
+                      syncLabel: screenshotSyncLabel(status.connectionStatus),
+                      synced: status.connectionStatus === "online",
+                    }
+                  : null
+              }
+              showLoadButton={!recentScreenshots}
+              loading={isLoadingScreenshots}
+              onLoad={onLoadScreenshots}
+              onViewAll={onOpenScreenshots}
+              viewAllDisabled={isOpeningDashboard}
+              empty={recentScreenshots?.length === 0}
+              errors={[screenshotError, dashboardError].filter(
+                (error): error is string => Boolean(error),
+              )}
+            />
+            {status.todayTimeline && (
+              <Timeline
+                timeline={status.todayTimeline}
+                locallyEndedIdleAt={status.locallyEndedIdleAt}
+                idleRequestOptions={idleRequestOptions}
+                onRequestIdleTime={onRequestManualTime}
               />
-              <figcaption>
-                <span>{formatTimestamp(recentScreenshots[0].capturedAt)}</span>
-                <b
-                  className={
-                    status.connectionStatus === "online" ? "k-ok" : "k-muted"
-                  }
-                >
-                  {screenshotSyncLabel(status.connectionStatus)}
-                </b>
-              </figcaption>
-            </figure>
-          )}
-          {recentScreenshots?.length === 0 && (
-            <p className="k-muted">No screenshots have been uploaded yet.</p>
-          )}
-          {screenshotError && <p className="k-error">{screenshotError}</p>}
-          {dashboardError && <p className="k-error">{dashboardError}</p>}
-        </section>
-        {status.todayTimeline && (
-          <Timeline
-            timeline={status.todayTimeline}
-            locallyEndedIdleAt={status.locallyEndedIdleAt}
-            idleRequestOptions={idleRequestOptions}
-            onRequestIdleTime={onRequestManualTime}
-          />
-        )}
-        {status.recentTasks.length > 0 && (
-          <section className="k-side-section">
-            <strong>Recent tasks</strong>
-            <div className="k-task-list">
-              {status.recentTasks.map((task) => (
-                <button
-                  key={task.id}
-                  type="button"
-                  onClick={() => onTaskChange(task.id)}
-                >
-                  <span>{task.name}</span>
-                  <small>{task.projectName}</small>
-                  <b>{formatDuration(task.trackedSeconds)}</b>
-                </button>
-              ))}
-            </div>
-          </section>
-        )}
-      </aside>
+            )}
+            {status.recentTasks.length > 0 && (
+              <RecentTasksCard
+                tasks={status.recentTasks.map((task) => ({
+                  id: task.id,
+                  name: task.name,
+                  project: task.projectName,
+                  tracked: formatDuration(task.trackedSeconds),
+                }))}
+                onPick={onTaskChange}
+              />
+            )}
+          </div>
+        </div>
+      </div>
     </section>
-  );
-}
-
-function Stat({
-  label,
-  value,
-  tone,
-}: {
-  label: string;
-  value: string;
-  tone?: "good" | "warn";
-}) {
-  return (
-    <div className={tone ? `k-stat k-${tone}` : "k-stat"}>
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </div>
   );
 }
 
@@ -2678,115 +2539,73 @@ function Timeline({
   onRequestIdleTime: (option: IdleRequestOption) => void;
 }) {
   const requestableMinutes = totalRequestableIdleMinutes(idleRequestOptions);
+  const rows: TimelineRow[] =
+    timeline.intervals.length === 0 && timeline.approved_leave
+      ? [
+          {
+            key: "leave",
+            displayType: "leave",
+            label: "Leave",
+            detail: "Approved",
+            range: "Today",
+            duration: "",
+            isCurrent: false,
+          },
+        ]
+      : [];
+  timelineIntervalsForDisplay(timeline.intervals).forEach((interval, index) => {
+    const presentation = timelineIntervalPresentation(
+      interval,
+      locallyEndedIdleAt,
+    );
+    const displayType = timelineDisplayType(
+      interval.type,
+      Boolean(timeline.approved_leave),
+      interval.work_category,
+      interval.saved_break_cover,
+    );
+    const displaysWork =
+      displayType === "worked" ||
+      displayType === "extra" ||
+      displayType === "break_work";
+    rows.push({
+      key: `${interval.session_id}-${interval.started_at}-${index}`,
+      displayType,
+      label: TIMELINE_LABELS[displayType],
+      detail:
+        displaysWork && (interval.task_name || interval.project_name)
+          ? (interval.task_name ?? interval.project_name)
+          : null,
+      range: `${formatClock(interval.started_at, timeline.timezone)} - ${
+        presentation.isCurrent
+          ? "Until now"
+          : formatClock(presentation.endedAt, timeline.timezone)
+      }`,
+      duration: formatDuration(
+        presentation.isCurrent
+          ? Math.max(
+              0,
+              Math.floor(
+                (Date.now() - new Date(interval.started_at).getTime()) / 1000,
+              ),
+            )
+          : presentation.durationSeconds,
+      ),
+      isCurrent: presentation.isCurrent,
+    });
+  });
   return (
-    <section className="k-side-section">
-      {idleRequestOptions.length ? (
-        <section
-          className="k-idle-needs"
-          aria-label="Idle periods needing explanation"
-        >
-          <header>
-            <strong>Needs explanation</strong>
-            <span>{requestableMinutes} min requestable</span>
-          </header>
-          <div className="k-idle-needs-list">
-            {idleRequestOptions.map((option) => (
-              <button
-                key={option.key}
-                type="button"
-                className="k-idle-needs-item"
-                onClick={() => onRequestIdleTime(option)}
-              >
-                <i className="k-timeline-icon">
-                  <KIcon name="idle" />
-                </i>
-                <span>
-                  {formatClock(option.startedAt, timeline.timezone)} -{" "}
-                  {formatClock(option.endedAt, timeline.timezone)}
-                </span>
-                <small>
-                  {formatDuration(option.durationSeconds)} idle period
-                </small>
-                <b>Explain up to {requestableIdleMinutes(option)} min</b>
-              </button>
-            ))}
-          </div>
-        </section>
-      ) : null}
-      <strong>Today's timeline</strong>
-      <div className="k-timeline">
-        {timeline.intervals.length === 0 && timeline.approved_leave ? (
-          <div className="k-line-leave">
-            <i className="k-timeline-icon">
-              <KIcon name="idle" />
-            </i>
-            <span>Today</span>
-            <b>Leave</b>
-            <small>Approved</small>
-          </div>
-        ) : null}
-        {timelineIntervalsForDisplay(timeline.intervals).map((interval, index) => {
-          const presentation = timelineIntervalPresentation(
-            interval,
-            locallyEndedIdleAt,
-          );
-          const displayType = timelineDisplayType(
-            interval.type,
-            Boolean(timeline.approved_leave),
-            interval.work_category,
-            interval.saved_break_cover,
-          );
-          const displaysWork =
-            displayType === "worked" ||
-            displayType === "extra" ||
-            displayType === "break_work";
-          return (
-            <div
-              key={`${interval.session_id}-${interval.started_at}-${index}`}
-              className={`k-line-${displayType}`}
-            >
-              <i className="k-timeline-icon">
-                <KIcon name={interval.type} />
-              </i>
-              <span>
-                {formatClock(interval.started_at, timeline.timezone)} -{" "}
-                {presentation.isCurrent
-                  ? "Until now"
-                  : formatClock(presentation.endedAt, timeline.timezone)}
-              </span>
-              <b
-                title={
-                  displaysWork
-                    ? (interval.task_name ??
-                      interval.project_name ??
-                      TIMELINE_LABELS[displayType])
-                    : TIMELINE_LABELS[displayType]
-                }
-              >
-                {TIMELINE_LABELS[displayType]}
-                {displaysWork && (interval.task_name || interval.project_name)
-                  ? ` · ${interval.task_name ?? interval.project_name}`
-                  : ""}
-              </b>
-              <small>
-                {formatDuration(
-                  presentation.isCurrent
-                    ? Math.max(
-                        0,
-                        Math.floor(
-                          (Date.now() -
-                            new Date(interval.started_at).getTime()) /
-                            1000,
-                        ),
-                      )
-                    : presentation.durationSeconds,
-                )}
-              </small>
-            </div>
-          );
-        })}
-      </div>
-    </section>
+    <TimelineCard
+      rows={rows}
+      needsSummary={`${requestableMinutes} min requestable`}
+      needs={idleRequestOptions.map((option) => ({
+        key: option.key,
+        range: `${formatClock(option.startedAt, timeline.timezone)} - ${formatClock(option.endedAt, timeline.timezone)}`,
+        detail: `${formatDuration(option.durationSeconds)} idle period`,
+        action: `Explain up to ${requestableIdleMinutes(option)} min`,
+        onClick: () => onRequestIdleTime(option),
+      }))}
+    />
   );
 }
 

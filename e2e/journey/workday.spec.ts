@@ -226,7 +226,7 @@ test("07 · paid break: resting is paid break, working through it saves minutes 
 
   // Home shows what she saved, next to today's breaks.
   await nav(window, "Tracker");
-  const savedChip = window.locator('.k-break-times li[data-state="saved"]');
+  const savedChip = window.getByRole("list", { name: "Today's breaks" }).locator('li[data-state="saved"]');
   await expect(savedChip).toContainText("Saved break", { timeout: 60_000 });
 
   // After the break, a normal idle period the saved minutes cover by themselves.

@@ -1,0 +1,870 @@
+/* ============================================================
+   Reskin tracker screen (phase 3)
+
+   Card, clock, pill and timeline rules ported from the Readdy design's
+   tracker-luxe.css, plus the states the design did not have: idle,
+   break / saved break, paused and extra time. Every colour reads the
+   theme tokens so the skins and light/dark apply.
+   ============================================================ */
+
+/* teal marks paid break time (scheduled break or saved-break cover) */
+.app-shell {
+  --k-teal: #0d9488;
+  --k-teal-2: color-mix(in srgb, #14b8a6 14%, var(--k-card));
+}
+
+.app-shell.app-dark {
+  --k-teal: #5eead4;
+  --k-teal-2: color-mix(in srgb, #5eead4 14%, var(--k-card));
+}
+
+/* ---------- page ---------- */
+.k-app.app-shell[data-theme] > .app-page {
+  grid-row: 3;
+  grid-column: 1 / -1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px 16px 18px;
+  font-family: "Inter Variable", "Inter", "IBM Plex Sans Arabic", system-ui, sans-serif;
+  color: var(--k-ink);
+}
+
+/* Tailwind's base reset is off: give the new screens a neutral start.
+   :where() keeps these at zero specificity so utilities still win. */
+:where(.app-page) :where(h1, h2, h3, p, ul, figure) {
+  margin: 0;
+}
+
+:where(.app-page) :where(ul) {
+  padding: 0;
+  list-style: none;
+}
+
+:where(.app-page) :where(button) {
+  font-family: inherit;
+}
+
+.tp-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+
+/* ---------- surfaces ---------- */
+.tp-card {
+  position: relative;
+  min-width: 0;
+  box-sizing: border-box;
+  border: 1px solid var(--k-line);
+  border-radius: 18px;
+  background: var(--k-card);
+}
+
+.tp-card-icon {
+  display: flex;
+  height: 26px;
+  width: 26px;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--k-pink) 12%, var(--k-card));
+  color: var(--k-plum-2);
+}
+
+.tp-eyebrow {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--k-muted);
+}
+
+/* ---------- hero card + its daily-goal rail ---------- */
+@property --tp-deg {
+  syntax: "<angle>";
+  inherits: true;
+  initial-value: 0deg;
+}
+
+.tp-hero {
+  --tp-rail: 5px;
+  --tp-mode: var(--k-pink);
+  --tp-mode-2: var(--k-pink-2);
+}
+
+.tp-hero::after {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  z-index: 3;
+  padding: var(--tp-rail);
+  border-radius: 20px;
+  pointer-events: none;
+  background-image: conic-gradient(
+    from 180deg,
+    var(--k-bar-1) 0deg,
+    var(--k-bar-2) calc(var(--tp-deg) * 0.54),
+    var(--k-bar-3) var(--tp-deg),
+    var(--k-track) var(--tp-deg),
+    var(--k-track) 360deg
+  );
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  transition: --tp-deg 0.9s cubic-bezier(0.32, 0.72, 0.22, 1);
+}
+
+.tp-hero > * {
+  position: relative;
+  z-index: 4;
+}
+
+/* Card faces. The mode comes from App.tsx's existing flags. */
+.tp-hero[data-mode="running"] {
+  --tp-mode: var(--k-green);
+  --tp-mode-2: var(--k-green-2);
+}
+
+.tp-hero[data-mode="idle"],
+.tp-hero[data-mode="paused"] {
+  --tp-mode: var(--k-amber);
+  --tp-mode-2: var(--k-amber-2);
+}
+
+.tp-hero[data-mode="idle"] {
+  background: color-mix(in srgb, var(--k-amber) 7%, var(--k-card));
+  border-color: color-mix(in srgb, var(--k-amber) 30%, var(--k-line));
+  --k-ring-1: #f6c66d;
+  --k-ring-2: #e0a03a;
+  --k-ring-3: #c27c14;
+  --k-ring-4: #f8d99a;
+  --k-glow: color-mix(in srgb, var(--k-amber) 18%, transparent);
+}
+
+.tp-hero[data-mode="break"] {
+  --tp-mode: var(--k-teal);
+  --tp-mode-2: var(--k-teal-2);
+  background: color-mix(in srgb, var(--k-teal) 7%, var(--k-card));
+  border-color: color-mix(in srgb, var(--k-teal) 30%, var(--k-line));
+  --k-ring-1: #5eead4;
+  --k-ring-2: #2dd4bf;
+  --k-ring-3: #0d9488;
+  --k-ring-4: #99f6e4;
+  --k-glow: color-mix(in srgb, var(--k-teal) 18%, transparent);
+}
+
+.tp-hero[data-mode="overtime"] {
+  --tp-mode: var(--k-pink);
+  --tp-mode-2: var(--k-pink-2);
+  background: color-mix(in srgb, var(--k-pink) 6%, var(--k-card));
+}
+
+.tp-hero[data-mode="stopped"] {
+  --tp-mode: var(--k-faint);
+  --tp-mode-2: var(--k-line-2);
+}
+
+.tp-hero[data-mode="idle"] .tp-clock,
+.tp-hero[data-mode="idle"] .tp-clock .tp-colon {
+  color: var(--k-amber);
+}
+
+.tp-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 5px 11px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--tp-mode) 32%, transparent);
+  background: var(--tp-mode-2);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--tp-mode);
+  white-space: nowrap;
+}
+
+.tp-tag-dot {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 999px;
+  background: var(--tp-mode);
+}
+
+.tp-hero[data-mode="running"] .tp-tag-dot {
+  animation: appLiveHalo 2.8s ease-out infinite;
+}
+
+.tp-shift {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--k-muted);
+  white-space: nowrap;
+}
+
+.tp-overtime {
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--k-pink) 34%, transparent);
+  background: var(--k-pink-2);
+  color: var(--k-pink);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+/* break chips (today's breaks + the saved break balance) */
+.tp-breaks {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+}
+
+.tp-breaks li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--k-line);
+  background: var(--k-card);
+  font-size: 10px;
+  color: var(--k-muted);
+}
+
+.tp-breaks strong {
+  color: var(--k-ink-2);
+  font-weight: 600;
+}
+
+.tp-breaks em {
+  font-style: normal;
+  font-size: 8.5px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.tp-breaks li[data-state="now"],
+.tp-breaks li[data-state="saved"] {
+  border-color: color-mix(in srgb, var(--k-teal) 34%, transparent);
+  background: var(--k-teal-2);
+  color: var(--k-teal);
+}
+
+.tp-breaks li[data-state="next"] em {
+  color: var(--k-plum-2);
+}
+
+/* ---------- the big clock ---------- */
+.tp-clock {
+  display: flex;
+  align-items: baseline;
+  gap: 0.14em;
+  user-select: none;
+  font-variant-numeric: tabular-nums;
+  font-size: 54px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.035em;
+  color: var(--k-ink);
+}
+
+.tp-clock .tp-colon {
+  color: var(--k-pink);
+  font-weight: 600;
+  transform: translateY(-0.04em);
+}
+
+.app-ring-glow {
+  filter: drop-shadow(0 0 5px color-mix(in srgb, var(--k-ring-3) 35%, transparent));
+  transition: stroke-dashoffset 1.35s cubic-bezier(0.32, 0.72, 0.22, 1);
+}
+
+/* swipe between faces */
+@keyframes k-face-slide-from-right {
+  0% {
+    opacity: 0;
+    transform: translateX(46px) rotateY(9deg) scale(0.965);
+    filter: blur(3px);
+  }
+  60% {
+    opacity: 1;
+    filter: blur(0);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(0) rotateY(0deg) scale(1);
+  }
+}
+
+@keyframes k-face-slide-from-left {
+  0% {
+    opacity: 0;
+    transform: translateX(-46px) rotateY(-9deg) scale(0.965);
+    filter: blur(3px);
+  }
+  60% {
+    opacity: 1;
+    filter: blur(0);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(0) rotateY(0deg) scale(1);
+  }
+}
+
+.k-face-in-next {
+  animation: k-face-slide-from-right 0.5s cubic-bezier(0.22, 0.9, 0.24, 1) both;
+}
+
+.k-face-in-prev {
+  animation: k-face-slide-from-left 0.5s cubic-bezier(0.22, 0.9, 0.24, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .k-face-in-next,
+  .k-face-in-prev {
+    animation: none;
+  }
+}
+
+/* ---------- quick bar ---------- */
+.tp-pill {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  box-sizing: border-box;
+  height: 42px;
+  min-width: 0;
+  padding: 0 12px;
+  border: 1px solid var(--k-line);
+  border-radius: 13px;
+  background: var(--k-card);
+  color: var(--k-ink);
+  transition: border-color 0.16s ease;
+}
+
+.tp-pill:hover,
+.tp-pill:focus-within {
+  border-color: color-mix(in srgb, var(--k-pink) 30%, var(--k-line));
+}
+
+.tp-pill-key {
+  flex: none;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--k-muted);
+}
+
+.k-app.app-shell .tp-select,
+.k-app.app-shell .tp-note-input {
+  min-width: 0;
+  flex: 1 1 auto;
+  height: 30px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--k-ink);
+  outline: none;
+}
+
+.k-app.app-shell .tp-select {
+  cursor: pointer;
+  text-overflow: ellipsis;
+}
+
+.k-app.app-shell .tp-select option {
+  background: var(--k-card);
+  color: var(--k-ink);
+}
+
+.k-app.app-shell .tp-note-input {
+  font-weight: 500;
+}
+
+.k-app.app-shell .tp-note-input::placeholder {
+  color: var(--k-faint);
+  font-weight: 400;
+}
+
+/* ---------- actions ---------- */
+.tp-cta,
+.tp-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 42px;
+  padding: 0 20px;
+  border-radius: 12px;
+  font-size: 12.5px;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.tp-cta {
+  border: 0;
+  background: linear-gradient(135deg, var(--k-cta-grad-1) 0%, var(--k-cta-grad-2) 100%);
+  color: #ffffff;
+  transition: filter 0.16s ease, transform 0.12s ease;
+}
+
+.tp-cta:hover:not(:disabled) {
+  filter: brightness(1.06);
+}
+
+.tp-cta:active:not(:disabled) {
+  transform: scale(0.99);
+}
+
+.tp-action {
+  border: 1px solid var(--k-line);
+  background: var(--k-card);
+  color: var(--k-ink-2);
+  font-weight: 600;
+  transition: border-color 0.16s ease, background 0.16s ease, color 0.16s ease;
+}
+
+.tp-action:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--k-pink) 48%, var(--k-line));
+  background: color-mix(in srgb, var(--k-pink) 12%, var(--k-card));
+  color: var(--k-ink);
+}
+
+/* while idle, explaining it is the useful next step */
+.tp-hero[data-mode="idle"] .tp-action:not(:disabled) {
+  border-color: color-mix(in srgb, var(--k-amber) 44%, transparent);
+  background: var(--k-amber-2);
+  color: var(--k-amber);
+}
+
+/* ---------- stat tiles ---------- */
+/* tiles sit under the hero card, so three per row at every window size */
+.tp-tiles {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.tp-stat {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 7px;
+  padding: 12px 13px 13px;
+  border: 1px solid var(--k-line);
+  border-radius: 14px;
+  background: var(--k-card);
+}
+
+.tp-stat-label {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--k-muted);
+}
+
+.tp-stat-icon {
+  flex: none;
+  color: var(--k-faint);
+}
+
+.tp-stat-value {
+  font-variant-numeric: tabular-nums;
+  font-size: 19px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.025em;
+  color: var(--k-ink);
+}
+
+.tp-stat-note {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--k-muted);
+}
+
+.tp-stat[data-tone="ok"] .tp-stat-note {
+  color: var(--k-green);
+}
+
+.tp-stat[data-tone="warn"] .tp-stat-note {
+  color: var(--k-amber);
+}
+
+.tp-stat[data-tone="accent"] .tp-stat-note {
+  color: var(--k-plum-2);
+}
+
+.tp-target-track {
+  position: relative;
+  display: block;
+  height: 4px;
+  width: 100%;
+  overflow: hidden;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--k-pink) 16%, var(--k-card));
+}
+
+.tp-target-track > span {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--k-bar-1) 0%, var(--k-bar-2) 62%, var(--k-bar-3) 100%);
+  transition: width 0.9s cubic-bezier(0.32, 0.72, 0.22, 1);
+}
+
+/* ---------- workday strip ---------- */
+.tp-workday {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.tp-workday > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+  padding: 11px 14px;
+}
+
+.tp-workday > div + div {
+  border-left: 1px solid var(--k-line-2);
+}
+
+.tp-workday span {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--k-muted);
+}
+
+.tp-workday strong {
+  overflow: hidden;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--k-ink);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------- daily target breakdown ---------- */
+.tp-breakdown-bar {
+  display: flex;
+  height: 9px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--k-track);
+}
+
+.tp-breakdown-bar > i {
+  display: block;
+  height: 100%;
+}
+
+.tp-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin-top: 10px;
+  font-size: 10.5px;
+  color: var(--k-muted);
+}
+
+.tp-legend > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.tp-legend > span > i {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 3px;
+}
+
+.tp-legend b {
+  font-weight: 600;
+  color: var(--k-ink-2);
+}
+
+.app-page .segment-worked {
+  background: var(--k-plum-2);
+}
+
+.app-page .segment-overtime {
+  background: var(--k-pink);
+}
+
+.app-page .segment-idle {
+  background: var(--k-amber);
+}
+
+.app-page .segment-approved {
+  background: var(--k-green);
+}
+
+.app-page .segment-pending {
+  background: color-mix(in srgb, var(--k-green) 40%, var(--k-line));
+}
+
+.app-page .segment-rejected {
+  background: var(--k-rose);
+}
+
+/* ---------- timeline ---------- */
+.tp-timeline {
+  display: flex;
+  flex-direction: column;
+  padding: 0 14px 8px;
+}
+
+.tp-tl-row {
+  --tl-color: var(--k-plum-2);
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 9px 2px;
+}
+
+.tp-tl-row + .tp-tl-row {
+  border-top: 1px solid var(--k-line-2);
+}
+
+.tp-tl-row[data-type="worked"] {
+  --tl-color: var(--k-green);
+}
+
+/* fixed pink, so work rows never blend with the violet break row */
+.tp-tl-row[data-type="extra"],
+.tp-tl-row[data-type="break_work"] {
+  --tl-color: #db2777;
+}
+
+.app-shell.app-dark .tp-tl-row[data-type="extra"],
+.app-shell.app-dark .tp-tl-row[data-type="break_work"] {
+  --tl-color: #f472b6;
+}
+
+.tp-tl-row[data-type="idle"] {
+  --tl-color: var(--k-amber);
+}
+
+.tp-tl-row[data-type="break"] {
+  --tl-color: #8b5cf6;
+}
+
+.tp-tl-row[data-type="saved_break"] {
+  --tl-color: var(--k-teal);
+}
+
+.tp-tl-row[data-type="manual"],
+.tp-tl-row[data-type="leave"] {
+  --tl-color: #38bdf8;
+}
+
+.tp-tl-row[data-type="untracked"] {
+  --tl-color: var(--k-rose);
+}
+
+.tp-tl-row[data-type="locked"],
+.tp-tl-row[data-type="sleeping"] {
+  --tl-color: var(--k-faint);
+}
+
+.tp-tl-label {
+  color: var(--tl-color);
+}
+
+.tp-tl-dot {
+  position: relative;
+  z-index: 1;
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: 999px;
+  background: var(--tl-color);
+}
+
+.tp-tl-dot.is-live {
+  animation: appLiveHalo 2.8s ease-out infinite;
+}
+
+.tp-tl-line {
+  position: absolute;
+  top: 16px;
+  height: calc(100% + 4px);
+  width: 1.5px;
+  background: var(--k-line);
+}
+
+.tp-tl-chip {
+  border-radius: 999px;
+  border: 1px solid var(--k-line);
+  padding: 1px 8px;
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.tp-tl-chip.is-live {
+  border-color: color-mix(in srgb, var(--k-green) 30%, transparent);
+  background: var(--k-green-2);
+  color: var(--k-green);
+}
+
+.tp-needs {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0 12px 8px;
+  padding: 10px;
+  border: 1px solid color-mix(in srgb, var(--k-amber) 30%, var(--k-line));
+  border-radius: 12px;
+  background: var(--k-amber-2);
+}
+
+.tp-needs header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--k-amber);
+}
+
+.tp-needs header strong {
+  color: var(--k-ink);
+}
+
+.tp-needs-item {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 9px;
+  border: 1px solid var(--k-line);
+  border-radius: 9px;
+  background: var(--k-card);
+  color: var(--k-ink-2);
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.tp-needs-item small {
+  color: var(--k-muted);
+}
+
+.tp-needs-item b {
+  color: var(--k-amber);
+  font-size: 10.5px;
+}
+
+.tp-needs-item:hover {
+  border-color: color-mix(in srgb, var(--k-amber) 44%, var(--k-line));
+}
+
+/* ---------- screenshot ---------- */
+.tp-shot-placeholder {
+  display: flex;
+  height: 150px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px dashed var(--k-line);
+  border-radius: 12px;
+  background: var(--k-bg-2);
+  color: var(--k-muted);
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.tp-shot-placeholder:hover:not(:disabled) {
+  border-color: var(--k-plum-2);
+  color: var(--k-plum);
+}
+
+.tp-shot {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--k-line);
+  border-radius: 12px;
+}
+
+.tp-shot img {
+  display: block;
+  width: 100%;
+  height: 160px;
+  object-fit: cover;
+  object-position: top;
+}
+
+.tp-shot figcaption {
+  position: absolute;
+  inset: auto 0 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 26px 10px 8px;
+  background: linear-gradient(180deg, transparent, rgba(10, 8, 20, 0.72));
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 9.5px;
+  letter-spacing: 0.06em;
+}
+
+.tp-shot figcaption b {
+  padding: 1px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  border-radius: 999px;
+  font-size: 9px;
+}
+
+.tp-shot figcaption b.is-synced {
+  border-color: #4ecfa0;
+  color: #4ecfa0;
+}
+
+/* ---------- recent tasks ---------- */
+.tp-recent {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.tp-recent:hover {
+  background: var(--k-hover);
+}
