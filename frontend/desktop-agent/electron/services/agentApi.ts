@@ -429,6 +429,16 @@ export async function getAgentConfig() {
   return response.data.data;
 }
 
+export async function getAgentAppearance() {
+  const response = await axios.get<ApiSuccess<unknown>>(`${getApiBaseUrl()}/agent/appearance`, { headers: getAuthHeaders() });
+  return response.data.data;
+}
+
+export async function setAgentAppearance(patch: { skin?: "orbit" | "ember" | "forest"; mode?: "light" | "dark" }) {
+  const response = await axios.patch<ApiSuccess<unknown>>(`${getApiBaseUrl()}/agent/appearance`, patch, { headers: getAuthHeaders() });
+  return response.data.data;
+}
+
 export async function listAgentTasks() {
   const response = await axios.get<ApiSuccess<AgentTask[]>>(
     `${getApiBaseUrl()}/agent/tasks`,

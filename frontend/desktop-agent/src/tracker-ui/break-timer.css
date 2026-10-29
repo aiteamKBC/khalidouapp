@@ -1,0 +1,27 @@
+.tracker-break-timer {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--k-muted);
+  font-size: 10px;
+  line-height: 14px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.tracker-break-timer time { font-weight: 600; }
+.tracker-break-timer small { font-size: inherit; opacity: .75; }
+.compact-time-info > .tracker-break-timer { margin-top: 6px; }
+.readdy-tracker-ui.readdy-tracker-ui.tracker-frame .v211-timer-face {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+.v211-timer-face > .tracker-break-timer {
+  flex: none;
+  justify-content: center;
+  min-height: 20px;
+  font-size: 11px;
+}
+.tracker-break-timer.is-warning { color: #b42318; font-weight: 600; }
+[data-theme="dark"] .tracker-break-timer.is-warning { color: #ff9090; }

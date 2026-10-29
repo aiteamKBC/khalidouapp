@@ -1,0 +1,177 @@
+﻿/* The native window starts with just the timer. Expanding reveals the workspace. */
+.compact-tracker-card,
+.compact-window-bar {
+  display: none;
+}
+
+@media (max-width: 1023px), (max-height: 719px) {
+  .readdy-tracker-ui.readdy-tracker-ui.tracker-frame.tracker-native[data-view="home"] {
+    --compact-bg: var(--k-card);
+    --compact-ink: var(--k-ink);
+    --compact-muted: var(--k-muted);
+    --compact-soft: var(--k-bg-2);
+    --compact-track: var(--k-line);
+    --compact-accent: var(--k-pink);
+    --compact-rose: var(--k-plum-2);
+    background: var(--compact-bg);
+    color: var(--compact-ink);
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    border-radius: 24px;
+    overflow: hidden;
+  }
+
+  .readdy-tracker-ui.readdy-tracker-ui.tracker-frame.tracker-native[data-view="home"] :is(.v211-topbar, .v211-watermark, .v211-dock, .tracker-statusbar) {
+    display: none;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui.tracker-frame.tracker-native[data-view="home"]::before,
+  .readdy-tracker-ui.readdy-tracker-ui.tracker-frame.tracker-native[data-view="home"]::after { display: none; }
+
+  .readdy-tracker-ui.readdy-tracker-ui.tracker-frame.tracker-native[data-view="home"] .compact-window-bar {
+    position: relative;
+    z-index: 20;
+    display: flex;
+    align-items: center;
+    flex: 0 0 26px;
+    height: 26px;
+    padding-left: 16px;
+    color: var(--compact-muted);
+    -webkit-app-region: drag;
+  }
+
+  .compact-drag-handle { flex: 1; align-self: stretch; }
+  .compact-drag-handle::before {
+    content: "";
+    display: block;
+    margin: 10px 0;
+    width: 24px;
+    height: 3px;
+    border-radius: 9px;
+    background: currentColor;
+    opacity: .2;
+  }
+
+  .readdy-tracker-ui.readdy-tracker-ui.tracker-frame.tracker-native .compact-window-bar :is(button, .rd-window-controls, .compact-palette-picker) {
+    -webkit-app-region: no-drag;
+  }
+
+  .readdy-tracker-ui.readdy-tracker-ui.tracker-frame.tracker-native .compact-window-bar button {
+    width: 30px;
+    height: 24px;
+    padding: 4px;
+    border: 0;
+    border-radius: 5px;
+    background: transparent;
+    color: inherit;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: none;
+    cursor: pointer;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui.tracker-frame.tracker-native .compact-window-bar button:hover { background: var(--compact-soft); }
+  .readdy-tracker-ui.readdy-tracker-ui.tracker-frame.tracker-native .compact-window-bar .rd-window-controls { display: flex; gap: 0; padding: 0 4px; }
+  .readdy-tracker-ui.readdy-tracker-ui.tracker-frame.tracker-native .compact-window-bar .app-nav-btn { display: none; }
+  .compact-palette-picker { position: relative; display: flex; }
+  .compact-palette-panel {
+    position: absolute;
+    top: 30px;
+    right: 0;
+    width: 176px;
+    padding: 10px;
+    display: grid;
+    gap: 5px;
+    border: 1px solid var(--compact-track);
+    border-radius: 14px;
+    background: var(--compact-bg);
+    color: var(--compact-ink);
+    box-shadow: 0 8px 30px #0003;
+  }
+  .compact-palette-panel > strong { padding: 2px 8px 6px; font-size: 11px; }
+  .readdy-tracker-ui.readdy-tracker-ui.tracker-frame.tracker-native .compact-window-bar .compact-palette-panel button {
+    width: 100%; height: 34px; padding: 7px 8px; gap: 9px;
+    border-radius: 8px; justify-content: flex-start; font-size: 11px; color: var(--compact-ink);
+  }
+  .readdy-tracker-ui.readdy-tracker-ui.tracker-frame.tracker-native .compact-window-bar .compact-palette-panel button[aria-pressed="true"] { background: var(--compact-soft); }
+  .compact-palette-panel button > svg { margin-left: auto; }
+  .compact-palette-swatch { width: 15px; height: 15px; border-radius: 50%; flex: 0 0 auto; }
+  .compact-palette-swatch.is-violet { background: #9b87ff; }
+  .compact-palette-swatch.is-ember { background: #ec9362; }
+  .compact-palette-swatch.is-forest { background: #65b78b; }
+
+  .readdy-tracker-ui.readdy-tracker-ui.tracker-frame.tracker-native[data-view="home"] .tracker-content {
+    flex: 1;
+    width: 100%;
+    max-width: none;
+    min-height: 0;
+    margin: 0;
+    padding: 0;
+    overflow: clip;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui.tracker-frame.tracker-native[data-view="home"] .v211-tracker { position: relative; height: 100%; min-height: 318px; display: block; }
+  .readdy-tracker-ui.readdy-tracker-ui.tracker-frame.tracker-native[data-view="home"] .rd-workspace { height: 100%; }
+  .readdy-tracker-ui.readdy-tracker-ui.tracker-frame.tracker-native[data-view="home"] .rd-workday-details { display: none; }
+  .readdy-tracker-ui.readdy-tracker-ui.tracker-frame.tracker-native[data-view="home"] .v211-tracker > :is(.v211-quickbar, .v211-stage-grid, .v211-stats, .v211-time-details, .v216-secondary-details) { display: none; }
+  .readdy-tracker-ui.readdy-tracker-ui.tracker-frame.tracker-native[data-view="home"] .v211-stage-messages { position: absolute; top: 30px; left: 22px; right: 22px; max-height: 44px; overflow: auto; }
+  .readdy-tracker-ui.readdy-tracker-ui.tracker-frame.tracker-native[data-view="home"] .v211-stage-messages :is(.rd-message, .rd-error) { margin: 0; padding: 2px 0; background: transparent; border: 0; font-size: 10px; }
+
+  .readdy-tracker-ui.readdy-tracker-ui.tracker-frame.tracker-native .compact-tracker-card {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 318px;
+    padding: 0 22px 24px;
+    gap: 22px;
+    box-sizing: border-box;
+    color: var(--compact-ink);
+    font-size: 11px;
+  }
+
+  .compact-tracker-header { display: flex; align-items: center; gap: 8px; min-height: 22px; font-size: 9px; white-space: nowrap; }
+  .compact-tracker-state, .compact-device { display: inline-flex; align-items: center; gap: 5px; padding: 4px 9px; border-radius: 20px; background: var(--compact-soft); }
+  .compact-tracker-state { color: var(--compact-accent); font-size: 8px; font-weight: 600; text-transform: uppercase; }
+  [data-theme="light"] .compact-tracker-state { background: color-mix(in srgb, var(--compact-accent) 16%, var(--compact-bg)); color: var(--compact-rose); }
+  .compact-tracker-state i, .compact-sync i { width: 6px; height: 6px; background: var(--compact-accent); border-radius: 50%; flex: 0 0 auto; }
+  .compact-device { color: var(--compact-muted); max-width: 100px; overflow: hidden; text-overflow: ellipsis; }
+  .compact-sync { margin-left: auto; display: flex; align-items: center; gap: 5px; color: var(--compact-muted); font-size: 8px; }
+  .compact-sync.is-synced i { background: #2a9e71; }
+  .compact-tracker-session { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex: 1; min-height: 112px; }
+  .compact-time-info { min-width: 0; }
+  .compact-eyebrow { margin: 0 0 5px; text-transform: uppercase; font-size: 9px; letter-spacing: .8px; font-weight: 600; color: var(--compact-muted); }
+  .compact-clock { display: flex; white-space: nowrap; font-size: clamp(36px, 8.8vw, 58px); font-weight: 750; letter-spacing: -1.5px; line-height: 1.15; font-variant-numeric: tabular-nums; }
+  .compact-clock b { color: color-mix(in srgb, var(--compact-accent) 65%, var(--compact-bg)); font-weight: inherit; padding: 0 3px; }
+  [data-theme="dark"] .compact-clock b { color: inherit; }
+  .compact-task-caption { display: flex; align-items: center; gap: 6px; color: var(--compact-muted); font-size: 9px; margin: 7px 0 0; line-height: 1.5; }
+  .compact-task-caption svg { color: var(--compact-rose); flex: 0 0 auto; }
+  .compact-task-caption span { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+  .compact-goal { position: relative; width: 110px; height: 110px; flex: 0 0 110px; }
+  .compact-goal svg { display: block; width: 100%; height: 100%; transform: rotate(-90deg); fill: none; stroke-width: 10; }
+  .compact-goal-track { stroke: var(--compact-track); }
+  .compact-goal-fill { stroke: var(--compact-rose); stroke-linecap: round; transition: stroke-dashoffset .3s; }
+  .compact-goal > div { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; }
+  .compact-goal strong { font-size: 20px; font-weight: 700; }
+  .compact-goal span { font-size: 8px; text-transform: uppercase; }
+  .compact-progress-panel { flex: 0 0 auto; background: var(--compact-soft); padding: 11px 12px; border-radius: 13px; }
+  .compact-progress-panel > div:first-child { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 7px; font-size: 9px; }
+  .compact-progress-panel > div:first-child > span + span { font-size: 8px; color: var(--compact-muted); white-space: nowrap; }
+  .compact-progress-track { height: 5px; background: var(--compact-bg); border-radius: 10px; overflow: hidden; }
+  .compact-progress-track > span { display: block; height: 100%; background: linear-gradient(90deg, var(--compact-accent), var(--compact-rose)); border-radius: inherit; transition: width .3s; }
+  [data-theme="dark"] .compact-progress-panel { background: none; padding: 0; border-radius: 0; }
+  [data-theme="dark"] .compact-progress-track { background: var(--compact-track); }
+  .compact-tracker-controls { display: flex; align-items: center; gap: 9px; flex: 0 0 auto; }
+  .readdy-tracker-ui.readdy-tracker-ui.tracker-frame.tracker-native .compact-tracker-controls button {
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+    min-height: 36px; padding: 0 18px; border: none; border-radius: 24px;
+    font: inherit; font-weight: 600; cursor: pointer; white-space: nowrap;
+    background: var(--compact-soft); color: var(--compact-rose); box-shadow: none;
+  }
+  .readdy-tracker-ui.readdy-tracker-ui.tracker-frame.tracker-native .compact-tracker-controls .compact-toggle { background: var(--compact-accent); color: var(--k-bg); box-shadow: 0 4px 18px color-mix(in srgb, var(--compact-accent) 25%, transparent); }
+  .compact-tracker-controls button svg { width: 14px !important; height: 14px !important; }
+  .compact-tracker-controls button:disabled { opacity: .5; cursor: default; }
+  .readdy-tracker-ui.readdy-tracker-ui.tracker-frame.tracker-native[data-theme="dark"] .compact-tracker-controls .compact-break { color: #eadbea; }
+  .compact-shortcut { margin-left: auto; padding: 5px 7px; border-radius: 5px; background: var(--compact-soft); font-size: 8px; white-space: nowrap; color: var(--compact-muted); }
+  .compact-shortcut kbd { background: var(--compact-bg); border-radius: 3px; padding: 2px 4px; margin-left: 4px; font-size: 8px; }
+  .compact-tracker-card button:focus-visible, .compact-window-bar button:focus-visible { outline: 2px solid var(--compact-rose); outline-offset: 3px; }
+}
+

@@ -106,3 +106,36 @@ only in the first-run form and the IPC request and is never written to disk;
 the short-lived employee token exists only in the Electron main process during
 the exchange. Only the resulting device token is persisted, encrypted with
 Electron `safeStorage` (Windows DPAPI).
+
+## Desktop quote reminders
+
+Reminders use two public sources; no API key or `.env` change is needed:
+
+- [ZenQuotes](https://docs.zenquotes.io/zenquotes-documentation/): English batches from `https://zenquotes.io/api/quotes`.
+- [Quote Unquote](https://gitlab.com/Assayyaad/quote-unquote): Arabic and English collections from its public GitLab Repository Files API (`data/ar/quotes.json` and `data/en/quotes.json`). The provider's website was unavailable during verification, so the app reads the public JSON files directly through GitLab's API.
+
+The main process fetches up to 50 quotes per collection, shuffles each batch,
+and rotates through it before repeating. Each provider/language keeps its own
+batch and cursor in the app's user-data directory: `quote-feed.json`,
+`quote-unquote-ar.json`, and `quote-unquote-en.json`. Batches refresh when a
+reminder is due after one hour. Public quote requests do not use the
+employee/device API client or its credentials.
+
+The existing Arabic/English reminder schedule is preserved. Arabic turns prefer
+Quote Unquote; English turns alternate between both sources, with the other
+English source as a fallback. Every external quote displays its author and a
+clickable provider credit. Arabic text and authors retain Tajawal and RTL
+direction. The external collections are independent, rather than paired
+translations: the Translate action appears only for catalogue quotes with a
+known translation.
+
+Each request has a four-second timeout. On a provider/network error, the app uses
+its cached batch, the other English provider, or the bundled quote, and waits
+five minutes before retrying the failed source. Turning reminders off or signing out cancels display of an in-flight
+quote. Settings → Quote notifications controls the interval and enabled state.
+
+```powershell
+node --test tests/quoteFeed.test.ts tests/quoteReminderWindow.test.ts
+# From ../../e2e after building the desktop app:
+npx.cmd playwright test --config desktop-native.config.ts --grep "quote"
+```

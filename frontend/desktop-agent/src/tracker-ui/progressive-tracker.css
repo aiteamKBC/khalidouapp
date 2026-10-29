@@ -1,0 +1,198 @@
+﻿/* Each larger workspace adds useful content before revealing the full shell. */
+@media (max-width: 1023px), (max-height: 719px) {
+  @media (min-width: 640px) and (min-height: 480px) {
+    .readdy-tracker-ui.readdy-tracker-ui.tracker-frame.tracker-native[data-view="home"]
+      .tracker-content {
+      padding: 16px 18px 24px;
+    }
+    .readdy-tracker-ui.readdy-tracker-ui.tracker-frame.tracker-native[data-view="home"]
+      .rd-workspace {
+      height: 100%;
+    }
+    .readdy-tracker-ui.readdy-tracker-ui.tracker-frame.tracker-native[data-view="home"]
+      .v211-tracker {
+      height: 100%;
+      min-height: 0;
+      display: flex;
+      gap: 16px;
+    }
+    .readdy-tracker-ui.readdy-tracker-ui.tracker-frame.tracker-native[data-view="home"]
+      .compact-tracker-card {
+      order: 1;
+      flex: 1;
+      height: auto;
+      min-height: 0;
+      gap: clamp(12px, 2dvh, 22px);
+      padding: 18px 22px 24px;
+      background: var(--compact-bg);
+      border: 1px solid var(--compact-track);
+      border-radius: 20px;
+    }
+    .readdy-tracker-ui.readdy-tracker-ui.tracker-frame.tracker-native[data-view="home"]
+      .v211-tracker
+      > .v211-quickbar {
+      display: grid;
+      flex-shrink: 0;
+      order: 0;
+      grid-template-columns: 1fr 1fr;
+      animation: tracker-reveal 0.18s ease-out;
+    }
+    .readdy-tracker-ui.readdy-tracker-ui.tracker-frame.tracker-native[data-view="home"]
+      .v211-tracker
+      > .v211-quickbar
+      > :is(form, button) {
+      display: none;
+    }
+    .readdy-tracker-ui.readdy-tracker-ui.tracker-frame.tracker-native[data-view="home"]
+      .v211-stage-messages {
+      order: 4;
+      position: static;
+      flex-shrink: 0;
+      max-height: 36px;
+    }
+    .readdy-tracker-ui.readdy-tracker-ui.tracker-frame.tracker-native[data-view="home"]
+      .v211-stage-messages:empty {
+      display: none;
+    }
+  }
+  @media (min-width: 760px) and (min-height: 600px) {
+    .readdy-tracker-ui.readdy-tracker-ui.tracker-frame.tracker-native[data-view="home"]
+      .v211-tracker
+      > .v211-stats {
+      display: grid;
+      flex-shrink: 0;
+      order: 3;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      animation: tracker-reveal 0.18s ease-out;
+    }
+    .readdy-tracker-ui.readdy-tracker-ui.tracker-frame.tracker-native[data-view="home"]
+      .v211-stats .tp-stat {
+      min-height: 100px;
+    }
+    .readdy-tracker-ui.readdy-tracker-ui.tracker-frame.tracker-native[data-view="home"]
+      .v211-tracker
+      > .v211-stats
+      > :nth-child(n + 4) {
+      display: none;
+    }
+  }
+  @media (min-width: 900px) and (min-height: 600px) {
+    .readdy-tracker-ui.readdy-tracker-ui.tracker-frame.tracker-native[data-view="home"]
+      .v211-tracker {
+      display: grid;
+      grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
+      grid-template-rows: auto minmax(0, 1fr) auto;
+      align-items: stretch;
+    }
+    .readdy-tracker-ui.readdy-tracker-ui.tracker-frame.tracker-native[data-view="home"]
+      .v211-tracker
+      > .v211-quickbar {
+      grid-column: 1/-1;
+      grid-row: 1;
+    }
+    .readdy-tracker-ui.readdy-tracker-ui.tracker-frame.tracker-native[data-view="home"]
+      .compact-tracker-card {
+      grid-column: 1;
+      grid-row: 2;
+    }
+    .readdy-tracker-ui.readdy-tracker-ui.tracker-frame.tracker-native[data-view="home"]
+      .v211-tracker
+      > .v211-stage-grid {
+      display: contents;
+    }
+    .readdy-tracker-ui.readdy-tracker-ui.tracker-frame.tracker-native[data-view="home"]
+      .v211-hero {
+      display: none;
+    }
+    .readdy-tracker-ui.readdy-tracker-ui.tracker-frame.tracker-native[data-view="home"]
+      .v211-right-rail {
+      display: grid;
+      grid-column: 2;
+      grid-row: 2;
+      height: 100%;
+      min-height: 0;
+      grid-template-rows: minmax(0, 1fr);
+      animation: tracker-reveal 0.18s ease-out;
+    }
+    .readdy-tracker-ui.readdy-tracker-ui.tracker-frame.tracker-native[data-view="home"]
+      .v211-latest-shot {
+      display: none;
+    }
+    .readdy-tracker-ui.readdy-tracker-ui.tracker-frame.tracker-native[data-view="home"]
+      :is(.v211-stats, .v211-stage-messages) {
+      grid-column: 1/-1;
+    }
+    .readdy-tracker-ui.readdy-tracker-ui.tracker-frame.tracker-native[data-view="home"]
+      .v211-tracker
+      > .v211-stats {
+      grid-row: 3;
+    }
+  }
+  @media (min-width: 1000px) and (min-height: 640px) {
+    .readdy-tracker-ui.readdy-tracker-ui.tracker-frame.tracker-native[data-view="home"]
+      .v211-tracker
+      > .v211-quickbar {
+      grid-template-columns: 1fr 1fr 1.6fr;
+    }
+    .readdy-tracker-ui.readdy-tracker-ui.tracker-frame.tracker-native[data-view="home"]
+      .v211-tracker
+      > .v211-quickbar
+      > form {
+      display: flex;
+      grid-column: auto;
+    }
+  }
+  @media (min-width: 1100px) and (min-height: 660px) {
+    .readdy-tracker-ui.readdy-tracker-ui.tracker-frame.tracker-native[data-view="home"]
+      .v211-right-rail {
+      grid-template-rows: minmax(0, 1.24fr) minmax(0, 1fr);
+    }
+    .readdy-tracker-ui.readdy-tracker-ui.tracker-frame.tracker-native[data-view="home"]
+      .v211-latest-shot {
+      display: flex;
+      animation: tracker-reveal 0.18s ease-out;
+    }
+    .readdy-tracker-ui.readdy-tracker-ui.tracker-frame.tracker-native[data-view="home"]
+      .tracker-screenshot {
+      min-height: 72px;
+    }
+    .readdy-tracker-ui.readdy-tracker-ui.tracker-frame.tracker-native[data-view="home"]
+      .v216-empty-capture {
+      padding: 10px;
+      gap: 6px;
+    }
+    .readdy-tracker-ui.readdy-tracker-ui.tracker-frame.tracker-native[data-view="home"]
+      .v216-empty-capture
+      > svg {
+      width: 20px !important;
+      height: 20px !important;
+    }
+    .readdy-tracker-ui.readdy-tracker-ui.tracker-frame.tracker-native[data-view="home"]
+      .v211-tracker
+      > .v211-stats {
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+    }
+    .readdy-tracker-ui.readdy-tracker-ui.tracker-frame.tracker-native[data-view="home"]
+      .v211-tracker
+      > .v211-stats
+      > :nth-child(n + 4) {
+      display: flex;
+    }
+  }
+}
+@keyframes tracker-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tracker-native
+    :is(.v211-quickbar, .v211-stats, .v211-right-rail, .v211-latest-shot) {
+    animation: none !important;
+  }
+}

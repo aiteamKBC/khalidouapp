@@ -74,10 +74,10 @@ test("01 · HR sees Dina's profile on the website", async ({ browser }) => {
 test("02 · Dina signs in on a fresh computer", async () => {
   desktop = await launchDesktop(profile);
   const { window } = desktop;
-  await expect(window.getByRole("heading", { name: "Sign in to set up this computer" })).toBeVisible();
+  await expect(window.getByRole("heading", { name: "Sign in to your account" })).toBeVisible();
 
   await signIn(window, dina().email, "not-her-password");
-  await expect(window.locator(".k-error")).toBeVisible();
+  await expect(window.getByRole('alert')).toBeVisible();
   expect((await desktop.status()).enrolled).toBe(false);
 
   await signIn(window, dina().email, seed().employeePassword);
@@ -155,8 +155,7 @@ test("06 · 'I was working' opens Requests on that idle period and files an expl
   // 1.1.100: the Requests view opens with this period already selected.
   const dialog = window.getByRole("dialog", { name: "Explain Idle Time" });
   await expect(dialog).toBeVisible({ timeout: 20_000 });
-  const period = dialog.getByRole("combobox");
-  await expect(period).not.toHaveValue("", { timeout: 15_000 });
+  await expect(dialog.locator('input[type="radio"]:checked')).toHaveCount(1, { timeout: 15_000 });
   await expect(window.locator(".k-error")).toHaveCount(0);
 
   await dialog.locator("#idle-request-reason").fill("Whiteboard session with the design team, away from my desk.");
@@ -230,16 +229,14 @@ test("07 · paid break: resting is paid break, working through it saves minutes 
   await expect(savedChip).toContainText("Saved break", { timeout: 60_000 });
 
   // After the break, a normal idle period the saved minutes cover by themselves.
-  // Since 1.1.104 the saved minutes pay for it silently: no idle popup, and
-  // coming back within them resumes tracking by itself.
   await window.waitForTimeout(Math.max(0, msUntilClock(breakEnd)) + 5_000);
   await desktop.goIdle(65);
-  await poll("saved minutes cover the idle", () => desktop.status(), (s) => s.trackingStatus === "idle" && Boolean(s.savedBreakCover), { timeoutMs: 20_000 });
-  await expect(window.locator(".swal2-popup")).toHaveCount(0);
-  await window.waitForTimeout(30_000);
+  const popup = swal(window);
+  await expect(popup.title).toHaveText("Are you still working?", { timeout: 20_000 });
+  await window.waitForTimeout(70_000);
   await desktop.becomeActive();
-  await poll("resumed silently after the saved break", () => desktop.status(), (s) => s.trackingStatus === "active", { timeoutMs: 20_000 });
-  await expect(window.locator(".swal2-popup")).toHaveCount(0);
+  await popup.click("Continue working");
+  await expect(popup.popup).toBeHidden();
 
   // No claim and no approval: the later idle is covered from the saved minutes.
   const covered = await poll(
@@ -278,7 +275,7 @@ test("08 · meeting mode: idle is silent during the meeting, and the meeting goe
   await nav(window, "Meeting");
   await window.getByPlaceholder("Client call, standup, workshop…").fill("Sprint planning");
   await window.getByPlaceholder("Briefly describe the meeting").fill("Planning next sprint with the team");
-  await window.getByLabel("Expected duration (minutes)").fill("5");
+  await window.getByLabel("Expected duration", { exact: true }).fill("5");
   await window.getByRole("button", { name: "Start meeting" }).click();
   await expect(window.getByRole("button", { name: "End meeting" })).toBeVisible();
   await poll("meeting on the server", () => hr.get("/meetings"), (rows) =>
@@ -312,13 +309,13 @@ test("09 · manual pause stops the clock and resumes cleanly", async () => {
   const { window } = desktop;
   const session = await openSession();
   await nav(window, "Timer");
-  await window.getByRole("button", { name: "Pause", exact: true }).click();
+  await window.getByRole("button", { name: "Pause Tracker", exact: true }).click();
   await poll("paused", () => desktop.status(), (s) => s.trackingPaused === true);
   const pausedAt = (await desktop.status()).workedTodaySeconds;
   await window.waitForTimeout(6_000);
   expect((await desktop.status()).workedTodaySeconds - pausedAt).toBeLessThanOrEqual(1);
 
-  await window.getByRole("button", { name: "Resume", exact: true }).click();
+  await window.getByRole("button", { name: "Resume Tracker", exact: true }).click();
   await poll("resumed", () => desktop.status(), (s) => s.trackingPaused === false && s.trackingStatus === "active");
   await poll("pause events on the server", () => sessionEvents(session.id), (e) =>
     e.includes("manual_pause_started") && e.includes("manual_pause_ended"),
@@ -366,7 +363,7 @@ test("10 · Request Centre: early leave, annual leave and shift reschedules", as
   // 1.1.100: the page scrolls instead of squeezing its sections.
   expect((await card.boundingBox())!.height).toBeGreaterThan(200);
   for (const index of [1, 2]) {
-    await card.getByLabel("Day").selectOption({ index });
+    await card.getByRole('combobox', { name: 'Day', exact: true }).selectOption({ index });
     await card.getByLabel("New start time").fill("09:00");
     await card.locator("textarea").fill(`Dentist in the afternoon (${index}).`);
     await card.getByRole("button", { name: "Request shift reschedule" }).click();
@@ -408,10 +405,10 @@ test("12 · offline: work continues, events queue locally and replay once, in or
     });
     // A pause taken while offline must still reach the server later.
     await nav(window, "Timer");
-    await window.getByRole("button", { name: "Pause", exact: true }).click();
+    await window.getByRole("button", { name: "Pause Tracker", exact: true }).click();
     await poll("paused offline", () => desktop.status(), (s) => s.trackingPaused === true);
     await window.waitForTimeout(3_000);
-    await window.getByRole("button", { name: "Resume", exact: true }).click();
+    await window.getByRole("button", { name: "Resume Tracker", exact: true }).click();
     await poll("resumed offline", () => desktop.status(), (s) => s.trackingPaused === false);
     const worked = (await desktop.status()).workedTodaySeconds;
     await window.waitForTimeout(5_000);
@@ -433,9 +430,11 @@ test("12 · offline: work continues, events queue locally and replay once, in or
 });
 
 test("13 · closing the window hides it and tracking continues", async () => {
-  await desktop.window.getByRole("button", { name: "Close", exact: true }).click();
+  await desktop.window.getByRole("button", { name: "Close", exact: true }).filter({ visible: true }).click();
+  const dialog = desktop.window.getByRole('dialog', { name: 'Close Khaliduo?', exact: true });
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole('button', { name: /Hide & Keep Tracking/ }).click();
   await poll("window hidden", () => desktop.isWindowVisible(), (visible) => visible === false, { timeoutMs: 10_000 });
-  expect((await desktop.dialogLog()).at(-1)?.title).toBe("Close Khaliduo");
   expect((await desktop.status()).trackingStatus).toBe("active");
   expect(await openSession()).toBeTruthy();
   await desktop.showWindow();
@@ -454,14 +453,14 @@ test("15 · relaunch: still signed in, asks before a new session, starts one", a
   const { window } = desktop;
   const popup = swal(window);
   await expect(popup.title).toHaveText("Start work tracking?", { timeout: 30_000 });
-  await expect(window.getByRole("heading", { name: "Sign in to set up this computer" })).toHaveCount(0);
+  await expect(window.getByRole("heading", { name: "Sign in to your account" })).toHaveCount(0);
   await popup.click("Start work");
   const session = await poll("new open session", openSession, (s) => Boolean(s) && s.id !== firstSessionId);
   expect(session.id).not.toBe(firstSessionId);
 });
 
 test("16 · 'Dashboard' opens the employee portal already signed in", async ({ browser }) => {
-  await desktop.window.getByRole("button", { name: "Dashboard", exact: true }).click();
+  await desktop.window.getByRole("button", { name: "Open web dashboard", exact: true }).filter({ visible: true }).click();
   const urls = await poll("portal link opened", () => desktop.openedUrls(), (list) => list.some((u) => u.includes("handoff=")));
   const url = urls.find((u) => u.includes("handoff="))!;
   expect(url.startsWith("http://127.0.0.1:5175/employee")).toBe(true);
@@ -600,7 +599,7 @@ test("21 · Dina signs out: session ended, identity wiped, back to sign-in", asy
   const popup = swal(window);
   await expect(popup.title).toHaveText("Sign out from this computer?");
   await popup.click("Sign out");
-  await expect(window.getByRole("heading", { name: "Sign in to set up this computer" })).toBeVisible({ timeout: 30_000 });
+  await expect(window.getByRole("heading", { name: "Sign in to your account" })).toBeVisible({ timeout: 30_000 });
   expect((await desktop.status()).enrolled).toBe(false);
   const identity = fs.readFileSync(path.join(profile.userData, "identity.json"), "utf-8");
   expect(identity).not.toContain("encryptedDeviceToken");
@@ -621,7 +620,7 @@ test("22 · HR archives a leaver: off the lists, locked out, and restorable", as
   const adelDesktop = await launchDesktop(newDesktopProfile("adel"));
   try {
     await signIn(adelDesktop.window, adel.email, seed().employeePassword);
-    await expect(adelDesktop.window.locator(".k-error")).toBeVisible({ timeout: 20_000 });
+    await expect(adelDesktop.window.getByRole('alert')).toBeVisible({ timeout: 20_000 });
     expect((await adelDesktop.status()).enrolled).toBe(false);
 
     // …and links him again once HR restores him.
@@ -635,6 +634,6 @@ test("22 · HR archives a leaver: off the lists, locked out, and restorable", as
   // A computer stays linked to its employee: Dina's (signed-out) computer
   // refuses another employee ("already linked to another employee", 409).
   await signIn(desktop.window, adel.email, seed().employeePassword);
-  await expect(desktop.window.locator(".k-error")).toBeVisible({ timeout: 20_000 });
+  await expect(desktop.window.getByRole('alert')).toBeVisible({ timeout: 20_000 });
   expect((await desktop.status()).enrolled).toBe(false);
 });

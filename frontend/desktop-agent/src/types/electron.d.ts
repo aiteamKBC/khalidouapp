@@ -1,4 +1,8 @@
+import type { QuoteReminderPayload } from "../../electron/services/quoteReminderWindow";
+import type { WindowCloseChoice, WindowCloseRequest, WindowCloseResult } from "../../electron/services/windowClosePrompt";
+
 export type AgentStatus = {
+  appearanceScope?: string | null;
   enrolled: boolean;
   employeeName: string;
   employeeEmail: string | null;
@@ -17,6 +21,8 @@ export type AgentStatus = {
     | "offline"
     | "error";
   trackingPaused: boolean;
+  breakStartedAt?: string | null;
+  breakElapsedSeconds?: number;
   sessionStartedAt: string | null;
   workedTodaySeconds: number;
   activeSeconds: number;
@@ -172,7 +178,14 @@ export type WorkdayTimeline = {
   approved_leave?: boolean;
   leave_seconds?: number;
   intervals: Array<{
-    type: "worked" | "idle" | "locked" | "sleeping" | "untracked" | "break" | "manual";
+    type:
+      | "worked"
+      | "idle"
+      | "locked"
+      | "sleeping"
+      | "untracked"
+      | "break"
+      | "manual";
     started_at: string;
     ended_at: string | null;
     duration_seconds: number;
@@ -360,6 +373,8 @@ declare global {
   interface Window {
     khaliduo?: {
       getAgentStatus: () => Promise<AgentStatus>;
+      getAppearance: (scope: string) => Promise<unknown>;
+      setAppearance: (scope: string, patch: { skin?: "orbit" | "ember" | "forest"; mode?: "light" | "dark" }) => Promise<unknown>;
       syncNow: () => Promise<{ success: boolean }>;
       onStatusChanged: (callback: (status: AgentStatus) => void) => () => void;
       enrollWithCredentials: (
@@ -367,10 +382,12 @@ declare global {
         password: string,
       ) => Promise<{ success: boolean; message?: string }>;
       pauseTracking: (options?: {
+        takeBreak?: boolean;
         requestedMinutes?: number;
         reason?: string;
       }) => Promise<{ success: boolean; message?: string }>;
       resumeTracking: () => Promise<{ success: boolean; message?: string }>;
+      endShift: () => Promise<{ success: boolean; message?: string }>;
       resumeAutomaticIdle: () => Promise<{
         success: boolean;
         message?: string;
@@ -463,7 +480,8 @@ declare global {
       createTimeAdjustmentRequest: (input: {
         requestedMinutes: number;
         reason: string;
-        requestType?: "idle_time" | "early_leave" | "manual_time" | "delayed_break";
+        requestType?:
+          "idle_time" | "early_leave" | "manual_time" | "delayed_break";
         requestedDate?: string;
         workSessionId?: string;
         sourceStartAt?: string;
@@ -514,8 +532,19 @@ declare global {
       setIdleAlertAttention: (active: boolean) => void;
       setUpdateAttention: (active: boolean) => void;
       minimizeWindow: () => Promise<void>;
+      showQuoteReminder: (payload: QuoteReminderPayload) => Promise<void>;
+      getQuoteReminder: () => Promise<QuoteReminderPayload | null>;
+      dismissQuoteReminder: () => Promise<void>;
+      openQuoteSource: () => Promise<void>;
+      resizeQuoteReminder: (height: number) => void;
+      onQuoteReminderChanged: (callback: (payload: QuoteReminderPayload) => void) => () => void;
+      isWindowExpanded: () => Promise<boolean>;
+      onWindowExpandedChanged: (callback: (expanded: boolean) => void) => () => void;
       toggleMaximizeWindow: () => Promise<void>;
       closeWindow: () => Promise<void>;
+      getWindowCloseRequest: () => Promise<WindowCloseRequest | null>;
+      respondWindowClose: (requestId: string, choice: WindowCloseChoice) => Promise<WindowCloseResult>;
+      onWindowCloseRequested: (callback: (request: WindowCloseRequest | null) => void) => () => void;
       checkForUpdates: () => Promise<{ success: boolean; message?: string }>;
     };
   }
