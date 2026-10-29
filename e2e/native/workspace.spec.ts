@@ -206,14 +206,27 @@ test('failed meeting sync shows its error and can be retried', async ({ desktop:
   expect((await d.control('inspect')).calls.some((row: any) => row.method === 'agent:retry-meeting-sync')).toBe(true);
 });
 
-test('screenshots refresh, render captures, and open the portal action', async ({ desktop: d }) => {
+test('screenshots refresh, render both monitors, and open the portal action', async ({ desktop: d }) => {
   await d.nav('Shots');
   await expect(d.page.getByRole('heading', { name: 'No screenshots yet' })).toBeVisible();
-  await d.control('screenshots', [{ id: 'shot-a', displayName: 'Test display', capturedAt: '2026-10-27T09:00:00Z', dataUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a6p8AAAAASUVORK5CYII=' }]);
+  const dataUrl = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a6p8AAAAASUVORK5CYII=';
+  await d.control('screenshots', [
+    { id: 'shot-a', displayName: 'Screen 1', capturedAt: '2026-10-27T09:00:00Z', dataUrl },
+    { id: 'shot-b', displayName: 'Screen 2', capturedAt: '2026-10-27T09:00:00Z', dataUrl },
+    { id: 'older-shot', displayName: 'Older capture', capturedAt: '2026-10-27T08:00:00Z', dataUrl },
+  ]);
   await d.page.getByRole('button', { name: 'Refresh screenshots' }).click();
-  await expect(d.page.getByRole('img', { name: 'Test display' })).toBeVisible();
+  await expect(d.page.getByRole('img', { name: 'Screen 1', exact: true })).toBeVisible();
+  await expect(d.page.getByRole('img', { name: 'Screen 2', exact: true })).toBeVisible();
   await d.page.getByRole('button', { name: 'Manage screenshots in web dashboard' }).click();
   expect((await d.control('inspect')).calls.some((row: any) => row.method === 'agent:open-employee-dashboard')).toBe(true);
+  await d.nav('Tracker');
+  const preview = d.page.getByRole('button', { name: 'Open latest screenshots', exact: true });
+  await expect(preview.getByRole('img', { name: 'Screen 1', exact: true })).toBeVisible();
+  await expect(preview.getByRole('img', { name: 'Screen 2', exact: true })).toBeVisible();
+  await expect(preview.getByRole('img', { name: 'Older capture', exact: true })).toHaveCount(0);
+  await preview.click();
+  await expect(d.page.getByRole('heading', { name: 'Recent captures', exact: true })).toBeVisible();
 });
 
 test('screenshots show policy-disabled and recoverable error states', async ({ desktop: d }) => {

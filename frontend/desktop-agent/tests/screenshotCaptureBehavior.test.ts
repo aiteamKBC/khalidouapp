@@ -143,3 +143,44 @@ test("an eligible capture with no interruption uploads normally", async () => {
   await c.captureAndUploadScreenshot();
   assert.deepEqual(counts(), { captures: 1, uploads: 1 });
 });
+
+test("one capture uploads both monitors with distinct images and the correct display identities", async () => {
+  const metadata: Record<string, unknown>[] = [];
+  const uploads: { id: string; content: string }[] = [];
+  const completed: string[] = [];
+  const { c } = screenshotContext({
+    screen: { getAllDisplays: () => [
+      { id: 10, size: { width: 1920, height: 1080 } },
+      { id: 20, size: { width: 2560, height: 1440 } },
+    ] },
+    desktopCapturer: {
+      getSources: async (options: { types: string[]; thumbnailSize: { width: number; height: number } }) => {
+        assert.deepEqual(Array.from(options.types), ["screen"]);
+        assert.equal(options.thumbnailSize.width, 2560);
+        assert.equal(options.thumbnailSize.height, 1440);
+        // Electron's source order can differ from screen.getAllDisplays().
+        return [20, 10].map((id) => ({
+          display_id: String(id), name: `Monitor ${id}`,
+          thumbnail: {
+            isEmpty: () => false,
+            getSize: () => ({ width: id === 20 ? 2560 : 1920, height: id === 20 ? 1440 : 1080 }),
+            toJPEG: () => Buffer.from(`monitor-${id}-jpeg`),
+          },
+        }));
+      },
+    },
+    initiateScreenshot: async (value: Record<string, unknown>) => { metadata.push(value); },
+    uploadScreenshot: async (id: string, content: Buffer) => { uploads.push({ id, content: content.toString() }); },
+    completeScreenshot: async (value: { screenshotId: string }) => { completed.push(value.screenshotId); },
+  });
+  await c.captureAndUploadScreenshot();
+  assert.equal(metadata.length, 2);
+  assert.equal(new Set(metadata.map((shot) => shot.screenshotId)).size, 2);
+  assert.equal(new Set(metadata.map((shot) => shot.capturedAt)).size, 1);
+  assert.deepEqual(metadata.map((shot) => shot.displayId), ["20", "10"]);
+  assert.deepEqual(metadata.map((shot) => shot.displayName), ["Monitor 20", "Monitor 10"]);
+  assert.ok(metadata.every((shot) => shot.displayCount === 2 && shot.sessionId === "A"));
+  assert.deepEqual(uploads.map((shot) => shot.content), ["monitor-20-jpeg", "monitor-10-jpeg"]);
+  assert.deepEqual(uploads.map((shot) => shot.id), metadata.map((shot) => shot.screenshotId));
+  assert.deepEqual(completed, uploads.map((shot) => shot.id));
+});

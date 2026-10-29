@@ -10,6 +10,9 @@ export type DesktopView =
 export function ReaddyHome({
   status,
   workedSeconds,
+  timerSeconds,
+  timerLabel,
+  stateLabel,
   visibleTasks,
   projectFilterId,
   onProjectChange,
@@ -34,6 +37,9 @@ export function ReaddyHome({
 }: {
   status: AgentStatus;
   workedSeconds: number;
+  timerSeconds: number;
+  timerLabel: string;
+  stateLabel: string;
   activeSeconds: number;
   visibleTasks: AgentTask[];
   projectFilterId: string;
@@ -71,6 +77,9 @@ export function ReaddyHome({
         })
       : null;
   const latest = recentScreenshots?.[0];
+  const latestDisplays = recentScreenshots?.filter(
+    (shot) => shot.capturedAt === latest?.capturedAt,
+  ) ?? [];
   return (
     <section className="rd-workspace" aria-label="Time tracking workspace">
       <TrackerStage
@@ -92,16 +101,10 @@ export function ReaddyHome({
         onNoteSubmit={onCreateQuickTask}
         noteSaving={creatingQuickTask}
         running={running}
-        stateLabel={
-          status.breakStartedAt ? "On break" : status.trackingPaused
-            ? "Paused"
-            : status.scheduledBreak
-              ? "On break"
-              : status.trackingStatus === "active"
-                ? "Paid shift active"
-                : status.trackingStatus
-        }
+        stateLabel={status.breakStartedAt ? "On break" : stateLabel}
         seconds={workedSeconds}
+        timerSeconds={timerSeconds}
+        timerLabel={timerLabel}
         targetSeconds={status.dailyTargetSeconds}
         sessionSeconds={status.activeSeconds}
         weekSeconds={status.timeSummary?.week.active_seconds ?? 0}
@@ -142,7 +145,16 @@ export function ReaddyHome({
             ?.setAttribute("open", "")
         }
         screenshot={
-          latest ? (
+          latestDisplays.length > 1 ? (
+            <span className="tracker-display-previews">
+              {latestDisplays.map((shot) => (
+                <span className="tracker-display-preview" key={shot.id}>
+                  <img src={shot.dataUrl} alt={shot.displayName ?? "Workplace screenshot"} />
+                  <span>{shot.displayName ?? "Display"}</span>
+                </span>
+              ))}
+            </span>
+          ) : latest ? (
             <img
               src={latest.dataUrl}
               alt={latest.displayName ?? "Latest workplace screenshot"}

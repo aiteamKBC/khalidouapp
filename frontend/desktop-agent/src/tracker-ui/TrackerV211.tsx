@@ -15,6 +15,7 @@ import { TrackerIcon } from "./TrackerIcon";
 import type { Appearance, AppearancePatch } from "../../../shared/appearance-store";
 import { appearanceVariables } from "../../../shared/appearance-palettes";
 import { timedBreakState } from "../../electron/services/timedBreak";
+import { screenshotSyncLabel } from "../screenshotRecovery";
 import "./break-timer.css";
 import "./readdy-reference.css";
 import "./tracker.css";
@@ -442,6 +443,8 @@ export function TrackerStage({
   running,
   stateLabel,
   seconds,
+  timerSeconds = seconds,
+  timerLabel = "Elapsed work time",
   targetSeconds,
   sessionSeconds,
   weekSeconds,
@@ -487,6 +490,8 @@ export function TrackerStage({
   running: boolean;
   stateLabel: string;
   seconds: number;
+  timerSeconds?: number;
+  timerLabel?: string;
   targetSeconds: number;
   sessionSeconds: number;
   weekSeconds: number;
@@ -554,7 +559,7 @@ export function TrackerStage({
       label: "Current session",
       value: clock(sessionSeconds),
       icon: "ri-timer-line",
-      note: running ? "Active right now" : stateLabel,
+      note: stateLabel,
     },
     {
       label: "Weekly total",
@@ -599,7 +604,7 @@ export function TrackerStage({
       <section className="compact-tracker-card" aria-label="Compact work timer">
         <header className="compact-tracker-header">
           <span className="compact-tracker-state">
-            <i />{running ? "Tracking active" : stateLabel}
+            <i />{stateLabel}
           </span>
           {deviceLabel && <span className="compact-device">#{deviceLabel}</span>}
           <span className={`compact-sync ${synced ? "is-synced" : ""}`}>
@@ -608,9 +613,9 @@ export function TrackerStage({
         </header>
         <div className="compact-tracker-session">
           <div className="compact-time-info">
-            <p className="compact-eyebrow">Elapsed work session</p>
-            <div className="compact-clock" aria-label={`Elapsed work time ${clock(counted)}`}>
-              {clock(counted).split(":").map((part, index) => (
+            <p className="compact-eyebrow">{timerLabel}</p>
+            <div className="compact-clock" aria-label={`${timerLabel} ${clock(timerSeconds)}`}>
+              {clock(timerSeconds).split(":").map((part, index) => (
                 <span key={index}>{index > 0 && <b>:</b>}{part}</span>
               ))}
             </div>
@@ -764,12 +769,12 @@ export function TrackerStage({
             ) : null}
           </header>
           <div className="v211-timer-area">
-            <p className="tp-eyebrow">Elapsed work time</p>
+            <p className="tp-eyebrow">{timerLabel}</p>
             <div className="v211-timer-face" data-timer-style={timer.style}>
               <SwipeTimer
                 style={timer.style}
                 onChange={timer.change}
-                seconds={counted}
+                seconds={timerSeconds}
                 targetSeconds={targetSeconds}
                 running={running}
                 compact
@@ -938,7 +943,7 @@ export function TrackerStage({
               {screenshot && screenshotTime ? (
                 <span className="v216-shot-meta">
                   {screenshotTime}
-                  <span>Synced</span>
+                  <span>{screenshotSyncLabel(synced ? "online" : "offline")}</span>
                 </span>
               ) : null}
             </button>

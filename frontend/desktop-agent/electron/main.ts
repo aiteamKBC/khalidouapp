@@ -7788,9 +7788,8 @@ ipcMain.handle("agent:get-recent-screenshots", async () => {
           displayName: screenshot.display_name,
           dataUrl: `data:${image.mimeType};base64,${image.content.toString("base64")}`,
         });
-        // The home panel renders only the latest capture. Avoid downloading
-        // three full images that it never displays.
-        break;
+        // Keep every monitor's image: the gallery and latest-capture preview
+        // share this response, including captures with the same timestamp.
       } catch (error) {
         // A legacy database row may outlive its local image. Try the next
         // recent capture instead of failing the entire panel.

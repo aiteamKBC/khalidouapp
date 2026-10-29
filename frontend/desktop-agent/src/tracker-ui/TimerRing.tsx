@@ -1,3 +1,5 @@
+import { clampProgress } from "./timer-style";
+
 type Props = {
   seconds: number;
   targetSeconds: number;
@@ -23,7 +25,7 @@ export default function TimerRing({
   running,
   compact = false,
 }: Props) {
-  const progress = Math.min(1, Math.max(0, seconds / targetSeconds));
+  const progress = clampProgress(seconds, targetSeconds);
   const percent = Math.round(progress * 100);
 
   const boxClass = compact

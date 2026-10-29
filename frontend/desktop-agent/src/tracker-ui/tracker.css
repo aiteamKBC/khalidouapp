@@ -580,6 +580,29 @@
   object-fit: cover;
   object-position: top;
 }
+.readdy-tracker-ui.readdy-tracker-ui.tracker-frame .tracker-display-previews {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  padding: 6px 6px 30px;
+  box-sizing: border-box;
+}
+.readdy-tracker-ui.readdy-tracker-ui.tracker-frame .tracker-display-preview {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: 4px;
+  min-width: 0;
+  min-height: 0;
+  font-size: 10px;
+}
+.readdy-tracker-ui.readdy-tracker-ui.tracker-frame .tracker-display-preview img {
+  min-height: 0;
+  object-fit: contain;
+  object-position: center;
+}
 .readdy-tracker-ui.readdy-tracker-ui.tracker-frame .v211-stats {
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));

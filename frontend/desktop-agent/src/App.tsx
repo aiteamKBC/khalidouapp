@@ -479,6 +479,12 @@ function countWorkingDays(start: string, end: string, workingDays: number[]) {
 
 function App() {
   const [status, setStatus] = useState<AgentStatus>(fallbackStatus);
+  const enrollmentScope = status.enrolled
+    ? JSON.stringify([status.deviceId, status.employeeEmail, status.appearanceScope])
+    : null;
+  const enrollmentScopeRef = useRef(enrollmentScope);
+  enrollmentScopeRef.current = enrollmentScope;
+  const initializedProjectScope = useRef<string | null>(null);
   const [employeeEmail, setEmployeeEmail] = useState("");
   const [employeePassword, setEmployeePassword] = useState("");
   const [enrollmentError, setEnrollmentError] = useState<string | null>(null);
@@ -540,9 +546,12 @@ function App() {
   const [isOpeningDashboard, setIsOpeningDashboard] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
-  const [recentScreenshots, setRecentScreenshots] = useState<
-    RecentScreenshot[] | null
-  >(null);
+  const [screenshotCache, setScreenshotCache] = useState<{
+    scope: string | null; images: RecentScreenshot[] | null;
+  }>({ scope: null, images: null });
+  const recentScreenshots = screenshotCache.scope === enrollmentScope
+    ? screenshotCache.images : null;
+  const screenshotLoad = useRef<{ scope: string } | null>(null);
   const [isLoadingScreenshots, setIsLoadingScreenshots] = useState(false);
   const [screenshotError, setScreenshotError] = useState<string | null>(null);
   const [loginTheme, setLoginTheme] = useState<"light" | "dark">(initialTheme);
@@ -601,19 +610,20 @@ function App() {
   }, [status.selectedTask?.projectId]);
 
   useEffect(() => {
-    if (
-      projectFilterId ||
-      status.selectedTask ||
-      status.projects.length === 0
-    ) {
+    if (!enrollmentScope) {
+      initializedProjectScope.current = null;
+      setProjectFilterId("");
       return;
     }
+    if (initializedProjectScope.current === enrollmentScope || status.projects.length === 0) return;
+    initializedProjectScope.current = enrollmentScope;
+    if (status.selectedTask) return;
     const defaultProject =
       status.projects.find(
         (project) => project.name.trim().toLowerCase() === "general work",
       ) ?? status.projects[0];
     setProjectFilterId(defaultProject.id);
-  }, [projectFilterId, status.projects, status.selectedTask]);
+  }, [enrollmentScope, status.projects, status.selectedTask]);
 
   useEffect(() => {
     setTaskCompletionNote("");
@@ -1465,29 +1475,48 @@ function App() {
   }
 
   const handleLoadRecentScreenshots = useCallback(async () => {
-    if (!window.khaliduo || isLoadingScreenshots) return;
+    if (!window.khaliduo || !enrollmentScope || screenshotLoad.current?.scope === enrollmentScope) return;
+    const request = { scope: enrollmentScope };
+    screenshotLoad.current = request;
+    const isCurrent = () => screenshotLoad.current === request
+      && enrollmentScopeRef.current === request.scope;
     setIsLoadingScreenshots(true);
     setScreenshotError(null);
     try {
       const result = await window.khaliduo.getRecentScreenshots();
+      if (!isCurrent()) return;
       if (!result.success) {
         setScreenshotError(
           result.message ?? "Recent screenshots could not be loaded.",
         );
         return;
       }
-      setRecentScreenshots(result.screenshots);
+      setScreenshotCache({ scope: request.scope, images: result.screenshots });
     } catch (error) {
+      if (!isCurrent()) return;
       setScreenshotError(
         ipcErrorMessage(error, "Recent screenshots could not be loaded."),
       );
     } finally {
-      setIsLoadingScreenshots(false);
+      if (isCurrent()) {
+        screenshotLoad.current = null;
+        setIsLoadingScreenshots(false);
+      }
     }
-  }, [isLoadingScreenshots]);
+  }, [enrollmentScope]);
+
+  useEffect(() => {
+    screenshotLoad.current = null;
+    screenshotsLoadedForEnrollment.current = false;
+    lastLoadedScreenshotAt.current = null;
+    setScreenshotCache({ scope: enrollmentScope, images: null });
+    setScreenshotError(null);
+    setIsLoadingScreenshots(false);
+  }, [enrollmentScope]);
 
   useEffect(() => {
     if (!status.enrolled) return;
+    if (screenshotLoad.current) return;
     if (
       screenshotsLoadedForEnrollment.current &&
       status.lastScreenshotAt === lastLoadedScreenshotAt.current
@@ -1497,7 +1526,7 @@ function App() {
     screenshotsLoadedForEnrollment.current = true;
     lastLoadedScreenshotAt.current = status.lastScreenshotAt;
     void handleLoadRecentScreenshots();
-  }, [handleLoadRecentScreenshots, status.enrolled, status.lastScreenshotAt]);
+  }, [handleLoadRecentScreenshots, isLoadingScreenshots, status.enrolled, status.lastScreenshotAt]);
 
   useEffect(() => {
     const previousConnectionStatus = previousScreenshotConnectionStatus.current;
@@ -1943,7 +1972,13 @@ function App() {
             onOpenAttendance={() => setActiveView("attendance")}
             onEndShift={() => void handleEndShift()}
             status={status}
-            workedSeconds={trackedTodaySeconds}
+            workedSeconds={countedTodaySeconds}
+            timerSeconds={displayedTimerSeconds}
+            timerLabel={
+              status.trackingStatus === "idle" && !isPaused && !onScheduledBreak && !onSavedBreak
+                ? "Current idle time" : isExtraTime ? "Extra time" : "Elapsed work time"
+            }
+            stateLabel={statusText}
             activeSeconds={Math.max(
               status.workedTodaySeconds,
               status.timeSummary?.today.tracked_active_seconds ?? 0,
