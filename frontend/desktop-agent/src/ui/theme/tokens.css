@@ -1,0 +1,165 @@
+/* ============================================================
+   Reskin design tokens (from the Readdy design export)
+
+   Phase 1 of the desktop reskin: these variables are defined but no
+   existing screen reads them yet, so the current app looks unchanged.
+   Base palette on :root / html.dark, then the derived surfaces the
+   workspace components use (scoped to .app-shell, which the current
+   app does not render). Skins live in skins.css.
+   ============================================================ */
+
+:root {
+  /* brand identity */
+  --k-brand: #412c6f;
+  --k-brand-deep: #2e2355;
+  --k-brand-accent: #9d145e;
+
+  --k-bg: #f5f2fa;
+  --k-bg-2: #ece6f5;
+  --k-card: #ffffff;
+  --k-ink: #1c1636;
+  --k-ink-2: #3a2f5c;
+  --k-muted: #6f6790;
+  --k-faint: #a497b9;
+  --k-dot: #c8bddc;
+  --k-line: #e4ddf0;
+  --k-line-2: #f0ebf7;
+  --k-plum: #2e2355;
+  --k-plum-2: #412c6f;
+  --k-pink: #9d145e;
+  --k-pink-2: #fbe6f0;
+  --k-green: #17795a;
+  --k-green-2: #e2f3ea;
+  --k-amber: #96660f;
+  --k-amber-2: #fbeed6;
+  --k-rose: #a8223f;
+  --k-rose-2: #fbe3e7;
+
+  /* solid action surfaces (buttons that carry white text) */
+  --k-solid: #2e2355;
+  --k-solid-2: #412c6f;
+  /* supporting surfaces */
+  --k-hover: #faf7fd;
+  --k-field: #fdfcff;
+  --k-check-line: #cdc3e0;
+  --k-overlay: #1c1636;
+}
+
+/* ---------- dark mode ---------- */
+html.dark {
+  --k-brand: #6a4dae;
+  --k-brand-deep: #241a3d;
+  --k-brand-accent: #b9327a;
+
+  --k-bg: #120f1c;
+  --k-bg-2: #1a1428;
+  --k-card: #1b1629;
+  --k-ink: #f1edfa;
+  --k-ink-2: #cdc4e0;
+  --k-muted: #9a90b6;
+  --k-faint: #6d6488;
+  --k-dot: #463c5f;
+  --k-line: #2c2440;
+  --k-line-2: #241d36;
+  --k-plum: #d9cdf7;
+  --k-plum-2: #8b6fd6;
+  --k-pink: #f472b6;
+  --k-pink-2: #35182b;
+  --k-green: #4ecfa0;
+  --k-green-2: #122e26;
+  --k-amber: #e0b062;
+  --k-amber-2: #30240f;
+  --k-rose: #ff8798;
+  --k-rose-2: #35141c;
+
+  --k-solid: #5b3fa0;
+  --k-solid-2: #6d4dbb;
+  --k-hover: #201a31;
+  --k-field: #171225;
+  --k-check-line: #4a4166;
+  --k-overlay: #06040d;
+}
+
+
+:root {
+  --k-navy: #1b2a4e;
+  --k-navy-2: #1b2a4e;
+  --k-navy-soft: #e7ecfa;
+  --k-navy-text: #22345f;
+  --k-navy-line: #c9d4ee;
+}
+
+html.dark {
+  --k-navy: #33477d;
+  --k-navy-2: #3d5391;
+  --k-navy-soft: rgba(122, 150, 214, 0.16);
+  --k-navy-text: #b9c8ef;
+  --k-navy-line: rgba(150, 172, 226, 0.28);
+}
+
+.app-shell {
+  --k-cta-ink: #ffffff;
+
+  /* ---------- derived surfaces (light face) ---------- */
+  --k-surface-topbar: color-mix(in srgb, var(--k-bg) 82%, var(--k-card));
+  --k-surface-status: color-mix(in srgb, var(--k-bg) 88%, var(--k-card));
+  --k-surface-side: color-mix(in srgb, var(--k-card) 76%, var(--k-bg));
+  --k-card-surface: var(--k-card);
+  --k-quickbar: color-mix(in srgb, var(--k-card) 94%, var(--k-bg));
+  --k-hero-surface: linear-gradient(160deg, var(--k-hero-grad-1) 0%, var(--k-hero-grad-2) 100%);
+  --k-stat-surface: color-mix(in srgb, var(--k-card) 95%, var(--k-bg));
+  --k-chip-bg: color-mix(in srgb, var(--k-plum-2) 8%, transparent);
+  --k-chip-line: color-mix(in srgb, var(--k-plum-2) 24%, transparent);
+  --k-search-bg: color-mix(in srgb, var(--k-card) 60%, transparent);
+  --k-bar-1: var(--k-plum-2);
+  --k-bar-2: var(--k-pink);
+  --k-bar-3: var(--k-ring-1);
+  --k-cta-shadow: color-mix(in srgb, var(--k-cta-grad-2) 42%, transparent);
+  --k-dock-bg: color-mix(in srgb, var(--k-card) 88%, transparent);
+  --k-shot-meta: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--k-bg) 0%, transparent) 0%,
+    color-mix(in srgb, var(--k-bg) 82%, transparent) 44%,
+    color-mix(in srgb, var(--k-bg) 95%, transparent) 100%
+  );
+  --k-select-ink: #ffffff;
+  --k-select-bg: var(--k-pink);
+}
+
+/* ---------- dark face adjustments ---------- */
+.app-shell.app-dark {
+  --k-surface-topbar: color-mix(in srgb, var(--k-bg) 72%, var(--k-card));
+  --k-surface-status: color-mix(in srgb, var(--k-bg) 78%, var(--k-card));
+  --k-surface-side: color-mix(in srgb, var(--k-card) 68%, var(--k-bg));
+  --k-card-surface: linear-gradient(
+    170deg,
+    color-mix(in srgb, var(--k-card) 96%, #ffffff) 0%,
+    color-mix(in srgb, var(--k-card) 74%, var(--k-bg)) 100%
+  );
+  --k-quickbar: linear-gradient(
+    120deg,
+    color-mix(in srgb, var(--k-card) 92%, var(--k-pink)) 0%,
+    color-mix(in srgb, var(--k-bg) 82%, var(--k-card)) 100%
+  );
+  --k-stat-surface: linear-gradient(
+    165deg,
+    color-mix(in srgb, var(--k-card) 94%, var(--k-pink)) 0%,
+    color-mix(in srgb, var(--k-card) 62%, var(--k-bg)) 100%
+  );
+  --k-chip-bg: color-mix(in srgb, var(--k-pink) 11%, transparent);
+  --k-chip-line: color-mix(in srgb, var(--k-pink) 26%, transparent);
+  --k-search-bg: color-mix(in srgb, var(--k-pink) 7%, transparent);
+  --k-bar-1: var(--k-plum-2);
+  --k-bar-2: var(--k-pink);
+  --k-bar-3: var(--k-plum);
+  --k-dock-bg: color-mix(in srgb, var(--k-card) 80%, transparent);
+  --k-shot-meta: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--k-bg) 0%, transparent) 0%,
+    color-mix(in srgb, var(--k-bg) 86%, transparent) 44%,
+    color-mix(in srgb, var(--k-bg) 97%, transparent) 100%
+  );
+  --k-select-ink: #17111c;
+  --k-select-bg: var(--k-pink);
+}
+
