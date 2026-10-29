@@ -168,7 +168,7 @@ export function killTree(app: ElectronApplication) {
 export async function signIn(window: Page, email: string, password: string) {
   await window.locator('input[type="email"]').fill(email);
   await window.locator('input[type="password"]').fill(password);
-  await window.getByRole("button", { name: "Sign in", exact: true }).click();
+  await window.getByRole("button", { name: "Sign in and link device" }).click();
 }
 
 /** The SweetAlert2 popup currently on screen. */
@@ -181,20 +181,14 @@ export function swal(window: Page) {
   };
 }
 
-export async function nav(window: Page, view: "Timer" | "Tracker" | "Tasks" | "Requests" | "Meeting" | "Meetings" | "Settings" | "Shots" | "Shift" | "Insights") {
+export async function nav(window: Page, view: "Timer" | "Tasks" | "Requests" | "Meeting" | "Settings") {
   // A request dialog stays open after submitting and covers the header; close it first.
   const openDialog = window.locator(".k-request-form-shell");
   if (await openDialog.count()) {
     await openDialog.getByRole("button", { name: "Close request" }).first().click();
     await expect(openDialog).toHaveCount(0);
   }
-  const name = view === 'Timer' ? 'Tracker' : view === 'Meeting' ? 'Meetings' : view;
-  if (name === 'Requests' || name === 'Meetings') {
-    await window.getByLabel('Account and more sections', { exact: true }).click();
-    await window.locator('.v216-account-panel').getByRole('button', { name, exact: true }).click();
-  } else {
-    await window.getByRole('navigation', { name: /^(Tracker sections|Workspace dock)$/ }).filter({ visible: true }).first().getByRole('button', { name, exact: true }).click();
-  }
+  await window.getByRole("navigation", { name: "Primary navigation" }).getByRole("button", { name: view, exact: true }).click();
 }
 
 // ---------------------------------------------------------------- network switch

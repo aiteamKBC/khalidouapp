@@ -3,10 +3,6 @@ import electronMain from "electron/main";
 import log from "electron-log/main";
 import electronUpdater from "electron-updater";
 import dotenv from "dotenv";
-import { timedBreakState } from "./services/timedBreak.js";
-import { QuoteReminderWindow } from "./services/quoteReminderWindow.js";
-import { QuoteFeed, QuoteSources, type QuoteProvider, type QuoteFeedLanguage } from "./services/quoteFeed.js";
-import type { WindowCloseRequest, WindowCloseResult } from "./services/windowClosePrompt.js";
 import axios from "axios";
 import { execFile, fork, spawn, type ChildProcess } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
@@ -21,8 +17,6 @@ import {
   getLocalNetworkInfo,
   endSession,
   getAgentConfig,
-  getAgentAppearance,
-  setAgentAppearance,
   getAgentSummary,
   getCurrentSession,
   completeScreenshot,
@@ -265,8 +259,6 @@ type AgentRuntimeStatus = {
     | "offline"
     | "error";
   trackingPaused: boolean;
-  breakStartedAt: string | null;
-  breakElapsedSeconds: number;
   sessionStartedAt: string | null;
   workedTodaySeconds: number;
   activeSeconds: number;
@@ -419,40 +411,6 @@ const FOREGROUND_SEGMENT_MAX_MS = 60_000;
 const LONG_IDLE_SESSION_SPLIT_SECONDS = 4 * 60 * 60;
 
 let mainWindow: Electron.BrowserWindow | null = null;
-const createQuoteFeed = (name: string, provider: QuoteProvider, language: QuoteFeedLanguage) => new QuoteFeed({
-  provider, language,
-  readCache: () => JSON.parse(fs.readFileSync(path.join(app.getPath("userData"), `${name}.json`), "utf8")),
-  writeCache: cache => {
-    const file = path.join(app.getPath("userData"), `${name}.json`);
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(`${file}.tmp`, JSON.stringify(cache), "utf8");
-    fs.renameSync(`${file}.tmp`, file);
-  },
-});
-const quoteSources = new QuoteSources({
-  zenquotes: createQuoteFeed("quote-feed", "zenquotes", "en"),
-  arabic: createQuoteFeed("quote-unquote-ar", "quote-unquote", "ar"),
-  english: createQuoteFeed("quote-unquote-en", "quote-unquote", "en"),
-});
-const quoteReminder = new QuoteReminderWindow({
-  resolveQuote: (language, sequence) => quoteSources.next(language, sequence),
-  createWindow: options => new BrowserWindow(options),
-  preload: path.join(__dirname, "preload.js"),
-  getWorkArea: () => mainWindow && !mainWindow.isDestroyed()
-    ? screen.getDisplayMatching(mainWindow.getBounds()).workArea
-    : screen.getPrimaryDisplay().workArea,
-  loadWindow: async window => {
-    if (process.env.VITE_DEV_SERVER_URL) {
-      const url = new URL(process.env.VITE_DEV_SERVER_URL);
-      url.searchParams.set("window", "quote");
-      await window.loadURL(url.toString());
-    } else {
-      await window.loadFile(path.join(__dirname, "..", "dist-khaliduo", "index.html"), {
-        query: { window: "quote" },
-      });
-    }
-  },
-});
 let tray: Electron.Tray | null = null;
 let isQuitting = false;
 let crashRecoveryWatchdog: ChildProcess | null = null;
@@ -527,11 +485,8 @@ let workedTodayBaseSeconds = 0;
 let activeCounterDate: string | null = null;
 let trackingPausedByUser = false;
 let unpaidPauseActive = false;
-// Captured at the pause boundary, so a crash/relaunch can finalize the same
-// server session without accruing the time spent away or closing another device's session.
-let breakSessionSnapshot: { id: string; activeSeconds: number; idleSeconds: number } | null = null;
 let isHandlingWindowClose = false;
-let windowCloseRequest: WindowCloseRequest | null = null;
+let hasShownMinimizeBalloon = false;
 let updateCheckTimer: ReturnType<typeof setInterval> | null = null;
 let initialUpdateCheckTimer: ReturnType<typeof setTimeout> | null = null;
 let updateRetryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -632,8 +587,6 @@ const runtimeStatus: AgentRuntimeStatus = {
   overtimeEnabled: false,
   extraTimeStatus: "none",
   paidPauseEndsAt: null,
-  breakStartedAt: null,
-  breakElapsedSeconds: 0,
   paidPauseRemainingSeconds: 0,
   paidPauseBalanceRemainingSeconds: null,
   recentTasks: [],
@@ -732,9 +685,7 @@ dotenv.config({
 function runtimeDiagnostics() {
   return {
     buildIdentifier: `${app.getVersion()}${app.isPackaged ? "" : "-dev"}`,
-    environment: app.isPackaged
-      ? ("packaged" as const)
-      : ("development" as const),
+    environment: app.isPackaged ? ("packaged" as const) : ("development" as const),
     processId: process.pid,
     userDataPath: app.getPath("userData"),
     apiBaseUrl: getApiBaseUrl(),
@@ -886,8 +837,6 @@ function clearedPersonalRuntimeStatus(): Partial<AgentRuntimeStatus> {
     extraTimeStatus: "none",
     dailyTargetProgressPercent: 0,
     paidPauseEndsAt: null,
-    breakStartedAt: null,
-    breakElapsedSeconds: 0,
     paidPauseRemainingSeconds: 0,
     paidPauseBalanceRemainingSeconds: null,
     activeMeeting: null,
@@ -896,7 +845,6 @@ function clearedPersonalRuntimeStatus(): Partial<AgentRuntimeStatus> {
 }
 
 function resetForDeviceReenrollment() {
-  clearTimedBreak();
   // Keep pending local screenshots/events on disk. They can be retried after
   // the employee signs in again; only the invalid local credential is cleared.
   recalculateWorkedTime();
@@ -975,7 +923,6 @@ async function activateEnrolledDevice(identity: StoredIdentity) {
   }
   enrollmentGeneration += 1;
   const activationGeneration = enrollmentGeneration;
-  clearTimedBreak();
   isSigningOut = false;
   runtimeStatus.enrolled = true;
   runtimeStatus.employeeName = identity.employeeName ?? "Enrolled employee";
@@ -997,24 +944,15 @@ async function activateEnrolledDevice(identity: StoredIdentity) {
   // A logout / re-enrollment during any of these awaits invalidates this
   // activation. Stop applying its refresh chain rather than repopulating a
   // now-signed-out or newer identity's runtime (D2).
-  if (
-    enrollmentGeneration !== activationGeneration ||
-    !runtimeStatus.enrolled
-  ) {
+  if (enrollmentGeneration !== activationGeneration || !runtimeStatus.enrolled) {
     return;
   }
   await refreshTasks();
-  if (
-    enrollmentGeneration !== activationGeneration ||
-    !runtimeStatus.enrolled
-  ) {
+  if (enrollmentGeneration !== activationGeneration || !runtimeStatus.enrolled) {
     return;
   }
   await refreshTimeAdjustmentRequests();
-  if (
-    enrollmentGeneration !== activationGeneration ||
-    !runtimeStatus.enrolled
-  ) {
+  if (enrollmentGeneration !== activationGeneration || !runtimeStatus.enrolled) {
     return;
   }
   await refreshLeaveRequests();
@@ -1201,34 +1139,16 @@ function loadTrackingPreferences(resumeForWindowsStartup = false) {
     ) as {
       paused_by_user?: boolean;
       unpaid_pause_active?: boolean;
-      timed_break?: {
-        startedAt: string | null;
-        elapsedSeconds?: number;
-        deviceId: string;
-        session: typeof breakSessionSnapshot;
-      } | null;
       request_policy?: RequestPolicy | null;
     };
-    const savedBreak = preferences.timed_break;
-    const elapsedSeconds = savedBreak?.elapsedSeconds ?? 0;
-    const validSavedBreak = runtimeStatus.enrolled &&
-      savedBreak?.deviceId === runtimeStatus.deviceId &&
-      Boolean(timedBreakState(savedBreak?.startedAt, Date.now(), elapsedSeconds));
-    const validBreak = validSavedBreak && preferences.unpaid_pause_active === true &&
-      Boolean(timedBreakState(savedBreak?.startedAt, Date.now())?.running);
-    runtimeStatus.breakStartedAt = validBreak ? savedBreak!.startedAt : null;
-    runtimeStatus.breakElapsedSeconds = validSavedBreak && Number.isSafeInteger(elapsedSeconds)
-      ? Math.max(0, elapsedSeconds) : 0;
-    breakSessionSnapshot = validBreak ? (savedBreak!.session ?? null) : null;
     trackingPausedByUser =
       !resumeForWindowsStartup && preferences.paused_by_user === true;
     unpaidPauseActive =
-      validBreak || (!resumeForWindowsStartup && preferences.unpaid_pause_active === true);
+      !resumeForWindowsStartup && preferences.unpaid_pause_active === true;
     runtimeStatus.requestPolicy = preferences.request_policy ?? null;
   } catch {
     trackingPausedByUser = false;
     unpaidPauseActive = false;
-    clearTimedBreak();
   }
   runtimeStatus.trackingPaused = trackingPausedByUser || unpaidPauseActive;
   if (resumeForWindowsStartup) {
@@ -1266,12 +1186,6 @@ function saveTrackingPreferences() {
       {
         paused_by_user: trackingPausedByUser,
         unpaid_pause_active: unpaidPauseActive,
-        timed_break: runtimeStatus.breakStartedAt || runtimeStatus.breakElapsedSeconds > 0 ? {
-          startedAt: runtimeStatus.breakStartedAt,
-          elapsedSeconds: runtimeStatus.breakElapsedSeconds,
-          deviceId: runtimeStatus.deviceId,
-          session: breakSessionSnapshot,
-        } : null,
         request_policy: runtimeStatus.requestPolicy,
       },
       null,
@@ -1739,11 +1653,7 @@ async function promotePendingLocalTrackingSessions(
           ),
           eventId: randomUUID(),
         });
-        markLocalTrackingSessionSynced(
-          pendingSession.sessionId,
-          undefined,
-          serverSessionId,
-        );
+        markLocalTrackingSessionSynced(pendingSession.sessionId, undefined, serverSessionId);
         continue;
       }
 
@@ -1800,11 +1710,7 @@ async function promotePendingLocalTrackingSessions(
           endedAt: recoveryEndTimestampIso(detachedEndAt, currentTimezone()),
           eventId: randomUUID(),
         });
-        markLocalTrackingSessionSynced(
-          pendingSession.sessionId,
-          undefined,
-          serverSessionId,
-        );
+        markLocalTrackingSessionSynced(pendingSession.sessionId, undefined, serverSessionId);
         continue;
       }
       const latestLocalActiveSeconds = runtimeStatus.activeSeconds;
@@ -1851,11 +1757,7 @@ async function promotePendingLocalTrackingSessions(
       runtimeStatus.trackingStatus = latestStatus;
       runtimeStatus.workedTodaySeconds =
         workedTodayBaseSeconds + runtimeStatus.activeSeconds;
-      markLocalTrackingSessionSynced(
-        pendingSession.sessionId,
-        undefined,
-        serverSessionId,
-      );
+      markLocalTrackingSessionSynced(pendingSession.sessionId, undefined, serverSessionId);
     }
     runtimeStatus.connectionStatus = "online";
     runtimeStatus.lastSuccessfulSyncAt = new Date().toISOString();
@@ -1935,12 +1837,9 @@ function removeOwnedScreenshotFile(filePath: string): ScreenshotFileRemoval {
   const resolved = path.resolve(filePath);
   const relative = path.relative(directory, resolved);
   if (relative.startsWith("..") || path.isAbsolute(relative)) {
-    log.warn(
-      "Refused to delete a screenshot file outside the owned directory",
-      {
-        filePath,
-      },
-    );
+    log.warn("Refused to delete a screenshot file outside the owned directory", {
+      filePath,
+    });
     // The path is not one of our files, so retiring the row orphans nothing of
     // ours; treat it as safe to retire rather than looping on it forever.
     return "refused";
@@ -1952,10 +1851,7 @@ function removeOwnedScreenshotFile(filePath: string): ScreenshotFileRemoval {
   } catch (error) {
     // The owned file is still on disk (e.g. EPERM / in use). Report failure so
     // the caller keeps the row for a later retry instead of orphaning the JPEG.
-    log.warn(
-      "Could not remove a terminal screenshot file",
-      safeErrorForLog(error),
-    );
+    log.warn("Could not remove a terminal screenshot file", safeErrorForLog(error));
     return "failed";
   }
 }
@@ -2140,7 +2036,7 @@ function newWorkdayStartTick() {
     workdayWatchDate = today;
     newWorkdayStartPending = true;
   }
-  if (!newWorkdayStartPending || isQuitting || isSigningOut || runtimeStatus.breakStartedAt) {
+  if (!newWorkdayStartPending || isQuitting || isSigningOut) {
     return;
   }
   const action = newWorkdayStartAction({
@@ -2158,7 +2054,6 @@ function newWorkdayStartTick() {
   trackingPausedByUser = false;
   unpaidPauseActive = false;
   freshSessionStartConfirmed = false;
-  clearTimedBreak();
   // An unanswered prompt from yesterday is replaced by a fresh one on input.
   freshSessionStartPromptActive = false;
   runtimeStatus.trackingPaused = false;
@@ -2264,24 +2159,16 @@ function todaysBreakWindows(nowMs = Date.now()): BreakWindow[] {
   const shiftStart = timeToMinuteOfDay(policy.shift_start);
   const shiftEnd = timeToMinuteOfDay(policy.shift_end);
   if (shiftStart === null || shiftEnd === null) return [];
-  const approvedEarlyLeave = timeToMinuteOfDay(
-    policy.approved_early_leave_from,
-  );
+  const approvedEarlyLeave = timeToMinuteOfDay(policy.approved_early_leave_from);
   const secondOfDay =
-    Number(part("hour")) * 3600 +
-    Number(part("minute")) * 60 +
-    Number(part("second"));
+    Number(part("hour")) * 3600 + Number(part("minute")) * 60 + Number(part("second"));
   const localMidnightMs = nowMs - secondOfDay * 1000 - (nowMs % 1000);
   const windows: BreakWindow[] = [];
   for (const rule of policy.break_rules ?? []) {
     const start = timeToMinuteOfDay(rule.start_time);
     let end = timeToMinuteOfDay(rule.end_time);
     if (start === null || end === null) continue;
-    end = Math.min(
-      end,
-      shiftEnd,
-      approvedEarlyLeave ?? Number.POSITIVE_INFINITY,
-    );
+    end = Math.min(end, shiftEnd, approvedEarlyLeave ?? Number.POSITIVE_INFINITY);
     const boundedStart = Math.max(start, shiftStart);
     if (end <= boundedStart) continue;
     windows.push({
@@ -3191,9 +3078,7 @@ function showSavedBreakNotification(seconds: number) {
 
 function showIdleStartedNotification() {
   const runningBreak = breakWindowAt(Date.now(), todaysBreakWindows());
-  const title = runningBreak
-    ? `On break · ${runningBreak.name}`
-    : "You are now idle";
+  const title = runningBreak ? `On break · ${runningBreak.name}` : "You are now idle";
   const body = runningBreak
     ? "You're away during your scheduled break. Break time is paid and is not counted as idle."
     : `No keyboard or mouse activity was detected for ${trackingConfig.idle_threshold_minutes} minutes. ` +
@@ -3281,24 +3166,23 @@ function updateMeetingRuntime() {
   const activeRecord = deriveActiveMeeting(records);
   activeMeeting = activeRecord ? recordToActiveMeeting(activeRecord) : null;
   runtimeStatus.activeMeeting = activeMeeting;
-  runtimeStatus.meetings = mergeMeetingsForDisplay(
-    records,
-    lastServerMeetings,
-  ).map((item) => ({
-    id: item.id,
-    idempotencyKey: item.idempotencyKey,
-    title: item.title,
-    reason: item.reason,
-    startedAt: item.startedAt,
-    expectedEndAt: item.expectedEndAt,
-    endedAt: item.endedAt,
-    lifecycleState: item.lifecycleState,
-    status: item.status,
-    recordedSeconds: item.recordedSeconds,
-    approvedSeconds: item.approvedSeconds,
-    syncState: item.syncState,
-    lastError: item.lastError,
-  }));
+  runtimeStatus.meetings = mergeMeetingsForDisplay(records, lastServerMeetings).map(
+    (item) => ({
+      id: item.id,
+      idempotencyKey: item.idempotencyKey,
+      title: item.title,
+      reason: item.reason,
+      startedAt: item.startedAt,
+      expectedEndAt: item.expectedEndAt,
+      endedAt: item.endedAt,
+      lifecycleState: item.lifecycleState,
+      status: item.status,
+      recordedSeconds: item.recordedSeconds,
+      approvedSeconds: item.approvedSeconds,
+      syncState: item.syncState,
+      lastError: item.lastError,
+    }),
+  );
   notifyRendererStatus();
 }
 
@@ -3327,9 +3211,7 @@ function applyServerMeetingToRecord(
 
 // Deliver every remaining step (start, then end) for one meeting, so an End
 // recorded before the start was confirmed is not left waiting for a manual sync.
-async function syncMeetingRecordFully(
-  record: LocalMeetingRecord,
-): Promise<void> {
+async function syncMeetingRecordFully(record: LocalMeetingRecord): Promise<void> {
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const step = nextSyncStep(record);
     if (step === null) return;
@@ -3368,8 +3250,7 @@ async function syncMeetingRecord(record: LocalMeetingRecord): Promise<void> {
       });
       applyServerMeetingToRecord(record, server);
       record.lastError = null;
-      record.syncState =
-        record.endedAt !== null ? "end_pending" : "start_synced";
+      record.syncState = record.endedAt !== null ? "end_pending" : "start_synced";
       if (
         server.ended_at &&
         record.endedAt !== null &&
@@ -3408,8 +3289,7 @@ async function syncMeetingRecord(record: LocalMeetingRecord): Promise<void> {
       record.syncState = step === "start" ? "start_pending" : "end_pending";
       record.lastError = null;
     }
-    runtimeStatus.connectionStatus =
-      connectionStatusAfterApiFailure(responseStatus);
+    runtimeStatus.connectionStatus = connectionStatusAfterApiFailure(responseStatus);
     log.warn("Meeting sync failed", safeErrorForLog(error));
   }
   record.updatedAt = new Date().toISOString();
@@ -3420,18 +3300,14 @@ async function syncMeetingRecord(record: LocalMeetingRecord): Promise<void> {
 
 // Attempt delivery for every meeting that still needs it. Independent per
 // meeting: one failure does not stop the others.
-async function syncMeetings(
-  options: { retryErrors?: boolean } = {},
-): Promise<void> {
+async function syncMeetings(options: { retryErrors?: boolean } = {}): Promise<void> {
   if (!runtimeStatus.enrolled || !runtimeStatus.deviceId) {
     return;
   }
   for (const record of Array.from(meetingRecords.values())) {
     if (options.retryErrors) {
-      if (record.syncState === "start_error")
-        record.syncState = "start_pending";
-      else if (record.syncState === "end_error")
-        record.syncState = "end_pending";
+      if (record.syncState === "start_error") record.syncState = "start_pending";
+      else if (record.syncState === "end_error") record.syncState = "end_pending";
     }
     if (nextSyncStep(record) !== null) {
       await syncMeetingRecordFully(record);
@@ -3447,8 +3323,7 @@ async function meetingMaintenanceTick() {
   if (!runtimeStatus.enrolled || isSyncingMeetingsPeriodically) return;
   maybeAutoEndMeeting();
   const needsSync = Array.from(meetingRecords.values()).some(
-    (record) =>
-      nextSyncStep(record) !== null && !record.syncState.endsWith("_error"),
+    (record) => nextSyncStep(record) !== null && !record.syncState.endsWith("_error"),
   );
   if (!needsSync) return;
   isSyncingMeetingsPeriodically = true;
@@ -3464,10 +3339,7 @@ async function refreshMeetingsList() {
     return;
   }
   if (!runtimeStatus.deviceId) {
-    return {
-      success: false,
-      message: "Device identity is unavailable. Sign in again.",
-    };
+    return { success: false, message: "Device identity is unavailable. Sign in again." };
   }
   try {
     lastServerMeetings = await listMeetings();
@@ -3489,12 +3361,8 @@ async function refreshMeetingsList() {
         // A local end EARLIER than the server's auto-end is still delivered so
         // the server can shorten the meeting to the real end.
         record.syncState = "synced";
-      } else if (
-        record.serverId !== null &&
-        record.syncState === "start_pending"
-      ) {
-        record.syncState =
-          record.endedAt !== null ? "end_pending" : "start_synced";
+      } else if (record.serverId !== null && record.syncState === "start_pending") {
+        record.syncState = record.endedAt !== null ? "end_pending" : "start_synced";
       }
     }
     persistMeetingRecords();
@@ -3512,23 +3380,14 @@ async function startMeeting(options: {
   taskId?: string | null;
 }) {
   if (!runtimeStatus.enrolled) {
-    return {
-      success: false,
-      message: "Enroll this device before starting a meeting.",
-    };
+    return { success: false, message: "Enroll this device before starting a meeting." };
   }
   const deviceId = runtimeStatus.deviceId;
   if (!deviceId) {
-    return {
-      success: false,
-      message: "Device identity is unavailable. Sign in again.",
-    };
+    return { success: false, message: "Device identity is unavailable. Sign in again." };
   }
   if (activeMeeting) {
-    return {
-      success: false,
-      message: "A meeting is already running. End it first.",
-    };
+    return { success: false, message: "A meeting is already running. End it first." };
   }
   const title = options.title.trim();
   const reason = options.reason.trim();
@@ -3538,10 +3397,7 @@ async function startMeeting(options: {
   if (reason.length < 3) {
     return { success: false, message: "Describe the meeting reason." };
   }
-  const minutes = Math.max(
-    1,
-    Math.min(720, Math.floor(options.expectedEndMinutes || 0)),
-  );
+  const minutes = Math.max(1, Math.min(720, Math.floor(options.expectedEndMinutes || 0)));
   const startedAt = new Date();
   const expectedEndAt = new Date(startedAt.getTime() + minutes * 60_000);
   const nowIso = startedAt.toISOString();
@@ -3582,10 +3438,7 @@ async function startMeeting(options: {
     persistMeetingRecords();
     updateMeetingRuntime();
     rebuildTrayMenu();
-    return {
-      success: false,
-      message: saved.lastError ?? "Could not start the meeting.",
-    };
+    return { success: false, message: saved.lastError ?? "Could not start the meeting." };
   }
   if (saved?.syncState === "start_synced") {
     return { success: true, message: "Meeting started and is in progress." };
@@ -3632,10 +3485,7 @@ async function endMeeting() {
   await syncMeetingRecordFully(activeRecord);
   const saved = meetingRecords.get(activeRecord.idempotencyKey);
   if (saved?.syncState === "synced") {
-    return {
-      success: true,
-      message: "Meeting ended. It is now pending review.",
-    };
+    return { success: true, message: "Meeting ended. It is now pending review." };
   }
   if (saved?.syncState === "end_error" || saved?.syncState === "start_error") {
     return {
@@ -3675,10 +3525,7 @@ function migrateStrandedMeetingEvents() {
       markPendingEventIgnored(event.id);
       continue;
     }
-    const key =
-      typeof payload.idempotency_key === "string"
-        ? payload.idempotency_key
-        : null;
+    const key = typeof payload.idempotency_key === "string" ? payload.idempotency_key : null;
     if (!key) {
       markPendingEventIgnored(event.id);
       continue;
@@ -3688,26 +3535,17 @@ function migrateStrandedMeetingEvents() {
       if (!existing) {
         const nowIso = new Date().toISOString();
         meetingRecords.set(key, {
-          deviceId:
-            typeof payload.device_id === "string" ? payload.device_id : "",
+          deviceId: typeof payload.device_id === "string" ? payload.device_id : "",
           idempotencyKey: key,
           title: typeof payload.title === "string" ? payload.title : "Meeting",
           reason: typeof payload.reason === "string" ? payload.reason : "",
-          startedAt:
-            typeof payload.started_at === "string"
-              ? payload.started_at
-              : nowIso,
+          startedAt: typeof payload.started_at === "string" ? payload.started_at : nowIso,
           expectedEndAt:
-            typeof payload.expected_end_at === "string"
-              ? payload.expected_end_at
-              : nowIso,
+            typeof payload.expected_end_at === "string" ? payload.expected_end_at : nowIso,
           endedAt: null,
           workSessionId:
-            typeof payload.work_session_id === "string"
-              ? payload.work_session_id
-              : null,
-          projectId:
-            typeof payload.project_id === "string" ? payload.project_id : null,
+            typeof payload.work_session_id === "string" ? payload.work_session_id : null,
+          projectId: typeof payload.project_id === "string" ? payload.project_id : null,
           taskId: typeof payload.task_id === "string" ? payload.task_id : null,
           syncState: "start_pending",
           lastError: null,
@@ -3724,9 +3562,7 @@ function migrateStrandedMeetingEvents() {
       const target = meetingRecords.get(key);
       if (target && target.endedAt === null) {
         target.endedAt =
-          typeof payload.ended_at === "string"
-            ? payload.ended_at
-            : new Date().toISOString();
+          typeof payload.ended_at === "string" ? payload.ended_at : new Date().toISOString();
         imported = true;
       }
     }
@@ -3760,10 +3596,7 @@ function loadMeetings() {
   try {
     migrateStrandedMeetingEvents();
   } catch (error) {
-    log.warn(
-      "Failed to migrate stranded meeting events",
-      safeErrorForLog(error),
-    );
+    log.warn("Failed to migrate stranded meeting events", safeErrorForLog(error));
   }
   updateMeetingRuntime();
   void syncMeetings().then(() => refreshMeetingsList());
@@ -3882,10 +3715,7 @@ function startIdleMonitor() {
         // order), so there is nothing to review until they run out.
         const seconds = savedBreakSecondsLeft();
         const startedAtMs = idleWallClockStartedAt ?? Date.now();
-        savedBreakCover = {
-          startedAtMs,
-          endsAtMs: startedAtMs + seconds * 1000,
-        };
+        savedBreakCover = { startedAtMs, endsAtMs: startedAtMs + seconds * 1000 };
         showSavedBreakNotification(seconds);
       } else {
         // Show the review the instant idle begins, not on input return.
@@ -4406,15 +4236,11 @@ async function heartbeatTick(options: { refreshMetadata?: boolean } = {}) {
  * on this computer moves tracking back.
  */
 function handleTrackingMovedToAnotherDevice(deviceName: string) {
-  clearTimedBreak();
   log.info("Tracking moved to another device; this device stops tracking", {
     deviceName,
   });
   recalculateWorkedTime();
-  closeActiveLocalTrackingSession(
-    new Date().toISOString(),
-    "moved_to_other_device",
-  );
+  closeActiveLocalTrackingSession(new Date().toISOString(), "moved_to_other_device");
   currentSessionId = null;
   runtimeStatus.sessionStartedAt = null;
   waitingForInputAfterIdleSessionClose = false;
@@ -4691,9 +4517,7 @@ async function captureAndUploadScreenshot() {
   // tracking is local-only (offline), record the local session id so the upload
   // can resolve it to the recovered server session after promotion.
   const captureSessionId = currentSessionId;
-  const captureLocalSessionId = currentSessionId
-    ? null
-    : localTrackingSessionId;
+  const captureLocalSessionId = currentSessionId ? null : localTrackingSessionId;
   const captureRemainsAllowed = () =>
     captureRemainsEligible({
       blockReasonNow: screenshotCaptureBlockReason(),
@@ -4761,9 +4585,8 @@ async function captureAndUploadScreenshot() {
   let uploadSessionId = captureSessionId;
   let deferForSessionPromotion = false;
   if (!uploadSessionId && captureLocalSessionId) {
-    const resolvedSessionId = getServerSessionIdForLocalSession(
-      captureLocalSessionId,
-    );
+    const resolvedSessionId =
+      getServerSessionIdForLocalSession(captureLocalSessionId);
     if (resolvedSessionId) {
       uploadSessionId = resolvedSessionId;
     } else {
@@ -5023,11 +4846,7 @@ async function syncPendingQueuesOnce(forcePendingQueues: boolean) {
       // antivirus, disk issue). The upload can never succeed, so drop the row
       // permanently and remove any leftover file instead of retrying forever
       // and stalling the head of the queue on every pass.
-      markPendingScreenshotFailed(
-        screenshot.screenshotId,
-        screenshot.attempts,
-        true,
-      );
+      markPendingScreenshotFailed(screenshot.screenshotId, screenshot.attempts, true);
       log.warn("Dropped unreadable pending screenshot", safeErrorForLog(error));
       continue;
     }
@@ -5226,9 +5045,9 @@ async function startTrackingAutomatically() {
     }
     const hasOpenServerSession = Boolean(
       currentBeforeRecovery.session &&
-      !currentBeforeRecovery.session.ended_at &&
-      currentBeforeRecovery.session.status !== "ended" &&
-      currentBeforeRecovery.session.status !== "offline",
+        !currentBeforeRecovery.session.ended_at &&
+        currentBeforeRecovery.session.status !== "ended" &&
+        currentBeforeRecovery.session.status !== "offline",
     );
     // A graceful quit closes a local-only row so time is bounded precisely.
     // Recover those closed rows before creating the next server session. If a
@@ -5496,7 +5315,6 @@ async function endOrphanedStartupSession(
 
 async function stopTrackingSession(reason = "Stopped by employee") {
   recalculateWorkedTime();
-  clearTimedBreak();
   trackingPausedByUser = true;
   waitingForInputAfterIdleSessionClose = false;
   freshSessionStartConfirmed = false;
@@ -5569,10 +5387,7 @@ async function stopTrackingSession(reason = "Stopped by employee") {
       }
     }
     // Exclude our own durable End row (above) when checking for real predecessors.
-    if (
-      !predecessorDelivered ||
-      hasPendingEventsForSession(sessionId, eventId)
-    ) {
+    if (!predecessorDelivered || hasPendingEventsForSession(sessionId, eventId)) {
       // A predecessor is queued: leave the durable, sentinel-ordered End and flush
       // the queue in causal order.
       try {
@@ -5655,11 +5470,8 @@ async function stopTrackingSession(reason = "Stopped by employee") {
 }
 
 async function pauseTracking(
-  options?: string | { requestedMinutes?: number; reason?: string; takeBreak?: boolean },
+  _options?: string | { requestedMinutes?: number; reason?: string },
 ) {
-  if (isSigningOut || isQuitting || trackingPausedByUser) {
-    return { success: false, message: "Start your shift before taking a break." };
-  }
   if (!runtimeStatus.enrolled || !hasTrackingSession()) {
     return {
       success: false,
@@ -5671,14 +5483,6 @@ async function pauseTracking(
   }
 
   recalculateWorkedTime();
-  if (typeof options === "object" && options.takeBreak) {
-    runtimeStatus.breakStartedAt = new Date().toISOString();
-    breakSessionSnapshot = currentSessionId ? {
-      id: currentSessionId,
-      activeSeconds: runtimeStatus.activeSeconds,
-      idleSeconds: runtimeStatus.idleSeconds,
-    } : null;
-  }
   unpaidPauseActive = true;
   runtimeStatus.trackingPaused = true;
   invalidateInFlightScreenshotCaptures();
@@ -5690,43 +5494,10 @@ async function pauseTracking(
   // the timer stops; sendStateEvent persists failed delivery in the local queue.
   void dispatchManualPauseTransition("manual_pause_started", "idle");
   rebuildTrayMenu();
-  notifyRendererStatus();
   return {
     success: true,
-    message: runtimeStatus.breakStartedAt
-      ? "Break timer running. Your shift will end after 60 total break minutes unless you resume."
-      : "Paused. Tracking and screenshots stop until you resume.",
+    message: "Paused. Tracking and screenshots stop until you resume.",
   };
-}
-
-function clearTimedBreak() {
-  runtimeStatus.breakStartedAt = null;
-  runtimeStatus.breakElapsedSeconds = 0;
-  breakSessionSnapshot = null;
-}
-
-function pauseTimedBreak() {
-  const state = timedBreakState(runtimeStatus.breakStartedAt, Date.now(), runtimeStatus.breakElapsedSeconds);
-  runtimeStatus.breakElapsedSeconds = state?.seconds ?? 0;
-  runtimeStatus.breakStartedAt = null;
-  breakSessionSnapshot = null;
-}
-
-async function endExpiredBreak() {
-  const state = timedBreakState(runtimeStatus.breakStartedAt, Date.now(), runtimeStatus.breakElapsedSeconds);
-  if (!state?.expired || !state.running || !unpaidPauseActive || !runtimeStatus.enrolled ||
-      isSigningOut || isQuitting) return;
-  // After a crash there may be no in-memory session. Restore only the captured
-  // session for finalization; never fetch/stop a newer session on another device.
-  if (!hasTrackingSession() && breakSessionSnapshot) {
-    currentSessionId = breakSessionSnapshot.id;
-    runtimeStatus.activeSeconds = breakSessionSnapshot.activeSeconds;
-    runtimeStatus.idleSeconds = breakSessionSnapshot.idleSeconds;
-  }
-  // stopTrackingSession clears the deadline and persists Stop before its first
-  // await. Repeated ticks cannot finalize twice; offline delivery uses its outbox.
-  await stopTrackingSession("Break reached 60 minutes in total; shift ended automatically");
-  notifyRendererStatus();
 }
 
 async function resumeTracking() {
@@ -5745,11 +5516,6 @@ async function resumeTracking() {
       success: false,
       message: "Signing out. Try again once sign-out finishes.",
     };
-  }
-  const resumeGeneration = enrollmentGeneration;
-  await endExpiredBreak();
-  if (!runtimeStatus.enrolled || isSigningOut || isQuitting || enrollmentGeneration !== resumeGeneration) {
-    return { success: false, message: "The employee session changed. Try again after signing in." };
   }
   const isPaidPause =
     Boolean(currentSessionId) &&
@@ -5780,7 +5546,6 @@ async function resumeTracking() {
 
   if (unpaidPauseActive && hasTrackingSession()) {
     recalculateWorkedTime();
-    pauseTimedBreak();
     unpaidPauseActive = false;
     runtimeStatus.trackingPaused = false;
     idleSecondsBeforeCurrentIdle = runtimeStatus.idleSeconds;
@@ -5798,7 +5563,6 @@ async function resumeTracking() {
   }
 
   trackingPausedByUser = false;
-  pauseTimedBreak();
   waitingForInputAfterIdleSessionClose = false;
   freshSessionStartPromptActive = false;
   if (!hasTrackingSession()) {
@@ -5844,9 +5608,6 @@ async function logoutDevice() {
   // Bank the pre-intent interval once before isSigningOut freezes accrual (G3).
   recalculateWorkedTime({ finalCheckpoint: true });
   isSigningOut = true;
-  clearWindowClosePrompt();
-  quoteReminder.dispose();
-  clearTimedBreak();
   invalidateInFlightScreenshotCaptures();
   trackingPausedByUser = true;
   unpaidPauseActive = false;
@@ -5915,74 +5676,14 @@ async function syncNow() {
   }
 }
 
-function isMainWindowExpanded() {
-  if (!mainWindow || mainWindow.isDestroyed()) return false;
-  const bounds = mainWindow.getBounds();
-  return mainWindow.isMaximized() || mainWindow.isFullScreen() ||
-    bounds.width >= screen.getDisplayMatching(bounds).workArea.width;
-}
-
-function clearWindowClosePrompt() {
-  windowCloseRequest = null;
-  if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
-    mainWindow.webContents.send("window:close-requested", null);
-  }
-}
-
-async function handleWindowCloseChoice(requestId: unknown, choice: unknown): Promise<WindowCloseResult> {
-  const request = windowCloseRequest;
-  const window = mainWindow;
-  if (!request || request.id !== requestId || !["hide", "toggle", "quit", "cancel"].includes(choice as string)) {
-    return { success: false, message: "This close request is no longer active." };
-  }
-  if (isHandlingWindowClose) return { success: false, message: "Please wait for the current action to finish." };
-  if (choice === "cancel") {
-    clearWindowClosePrompt();
-    return { success: true };
-  }
-  if (!window || window.isDestroyed() || !runtimeStatus.enrolled || isSigningOut || isQuitting) {
-    clearWindowClosePrompt();
-    return { success: false, message: "The employee session changed. Please try again." };
-  }
-  const generation = enrollmentGeneration;
-  isHandlingWindowClose = true;
-  try {
-    if (choice === "toggle") {
-      const result = request.paused
-        ? await resumeTracking()
-        : await pauseTracking("Paused while closing the status window");
-      if (!result.success) return result;
-    }
-    if (windowCloseRequest !== request || generation !== enrollmentGeneration || isSigningOut || isQuitting || window.isDestroyed()) {
-      return { success: false, message: "The employee session changed. Please try again." };
-    }
-    clearWindowClosePrompt();
-    if (choice === "quit") app.quit();
-    else window.hide();
-    return { success: true };
-  } catch (error) {
-    log.error("Could not complete the window close action", safeErrorForLog(error));
-    return { success: false, message: "Could not complete this action. Please try again." };
-  } finally {
-    isHandlingWindowClose = false;
-  }
-}
-
 async function createMainWindow() {
-  const display = screen.getDisplayNearestPoint(
-    screen.getCursorScreenPoint(),
-  ).workAreaSize;
   mainWindow = new BrowserWindow({
-    width: Math.min(1040, display.width),
-    height: Math.min(840, display.height),
-    minWidth: 460,
-    minHeight: 360,
+    width: 1100,
+    height: 720,
+    minWidth: 980,
+    minHeight: 640,
     show: false,
     frame: false,
-    transparent: true,
-    backgroundColor: "#00000000",
-    roundedCorners: true,
-    skipTaskbar: false,
     autoHideMenuBar: true,
     title: "Khaliduo Status",
     icon: getAppIconPath(),
@@ -5990,8 +5691,6 @@ async function createMainWindow() {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
-      // Desktop reminders still run while the workspace is minimized or hidden.
-      backgroundThrottling: false,
       // The preload is an ESM bundle; Electron sandboxed preloads cannot load
       // ESM imports. Context isolation and disabled Node integration still
       // keep application APIs behind the narrow contextBridge surface.
@@ -6000,28 +5699,25 @@ async function createMainWindow() {
   });
 
   mainWindow.setMenuBarVisibility(false);
-  const updateWindowShape = () => {
-    mainWindow?.webContents.send("window:expanded-changed", isMainWindowExpanded());
-  };
-  mainWindow.on("maximize", updateWindowShape);
-  mainWindow.on("unmaximize", updateWindowShape);
-  mainWindow.on("enter-full-screen", updateWindowShape);
-  mainWindow.on("leave-full-screen", updateWindowShape);
-  mainWindow.on("resize", updateWindowShape);
-  mainWindow.on("move", updateWindowShape);
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   mainWindow.webContents.on("will-navigate", (event, url) => {
     if (url !== mainWindow?.webContents.getURL()) {
       event.preventDefault();
     }
   });
-  mainWindow.webContents.on("render-process-gone", clearWindowClosePrompt);
-  mainWindow.on("closed", clearWindowClosePrompt);
 
   mainWindow.on("minimize", () => {
-    // Minimize belongs on the taskbar. Hiding is an explicit Close/tray action.
-    mainWindow?.setSkipTaskbar(false);
+    mainWindow?.hide();
     rebuildTrayMenu();
+    if (process.platform === "win32" && !hasShownMinimizeBalloon) {
+      hasShownMinimizeBalloon = true;
+      tray?.displayBalloon({
+        title: "Khaliduo is running in the background",
+        content:
+          "Open it from the Khaliduo icon beside the Wi-Fi and sound icons.",
+        iconType: "info",
+      });
+    }
   });
 
   mainWindow.on("close", (event) => {
@@ -6037,12 +5733,54 @@ async function createMainWindow() {
     if (isHandlingWindowClose) {
       return;
     }
-    windowCloseRequest ??= {
-      id: randomUUID(),
-      paused: trackingPausedByUser || unpaidPauseActive || runtimeStatus.trackingPaused,
-    };
-    mainWindow?.webContents.send("window:close-requested", windowCloseRequest);
-    showMainWindow({ forceForeground: true });
+    isHandlingWindowClose = true;
+    void dialog
+      .showMessageBox(mainWindow!, {
+        type: "question",
+        title: "Close Khaliduo",
+        message: trackingPausedByUser
+          ? "Khaliduo is currently paused."
+          : unpaidPauseActive
+            ? "Khaliduo is currently paused."
+            : runtimeStatus.trackingPaused
+              ? "Khaliduo is currently paused."
+              : "Tracking and screenshots are currently active.",
+        detail:
+          "Choose whether Khaliduo should keep tracking, hide, or quit completely.",
+        buttons: trackingPausedByUser
+          ? ["Hide (Keep Paused)", "Resume Tracking & Hide", "Quit Khaliduo"]
+          : runtimeStatus.trackingPaused
+            ? ["Hide (Keep Paused)", "Resume Tracking & Hide", "Quit Khaliduo"]
+            : ["Hide & Keep Tracking", "Pause & Hide", "Quit Khaliduo"],
+        defaultId: 0,
+        cancelId: 0,
+        noLink: true,
+      })
+      .then(async ({ response }) => {
+        if (response === 1) {
+          if (trackingPausedByUser || runtimeStatus.trackingPaused) {
+            await resumeTracking();
+          } else {
+            await pauseTracking("Paused while closing the status window");
+          }
+          mainWindow?.hide();
+        } else if (response === 2) {
+          app.quit();
+        } else {
+          mainWindow?.hide();
+          if (process.platform === "win32") {
+            tray?.displayBalloon({
+              title: "Khaliduo is still running",
+              content:
+                "Tracking continues in the notification area. Right-click the Khaliduo icon to pause or reopen it.",
+              iconType: "info",
+            });
+          }
+        }
+      })
+      .finally(() => {
+        isHandlingWindowClose = false;
+      });
   });
 
   if (process.env.VITE_DEV_SERVER_URL) {
@@ -6107,18 +5845,6 @@ function showMainWindow(
   }
 }
 
-function applyWindowAttention() {
-  const window = mainWindow;
-  if (!window || window.isDestroyed()) return;
-  const active = idleAlertAttentionActive || updateAttentionActive;
-  window.setAlwaysOnTop(active, "screen-saver");
-  // A pending idle/update decision must never disable Windows controls.
-  // Tracking policy still applies independently while the window is minimized.
-  window.setMinimizable(true);
-  window.setClosable(true);
-  window.flashFrame(active);
-}
-
 function setIdleAlertAttention(active: boolean) {
   idleAlertAttentionActive = active;
   if (!active) {
@@ -6133,7 +5859,10 @@ function setIdleAlertAttention(active: boolean) {
   if (!window || window.isDestroyed()) {
     return;
   }
-  applyWindowAttention();
+  window.setAlwaysOnTop(active, "screen-saver");
+  window.setMinimizable(!active);
+  window.setClosable(!active);
+  window.flashFrame(active);
   if (active) {
     window.show();
     window.moveTop();
@@ -6147,14 +5876,16 @@ function setUpdateAttention(active: boolean) {
   if (!window || window.isDestroyed()) {
     return;
   }
-  applyWindowAttention();
+  window.setAlwaysOnTop(active || idleAlertAttentionActive, "screen-saver");
+  window.setMinimizable(!active && !idleAlertAttentionActive);
+  window.setClosable(!active && !idleAlertAttentionActive);
+  window.flashFrame(active);
   if (active) {
     showMainWindow({ forceForeground: true, centerOnPointerDisplay: true });
   }
 }
 
 function runtimeStatusPayload() {
-  const identity = runtimeStatus.enrolled ? loadIdentity() : null;
   const screenshotBlockReason = screenshotCaptureBlockReason();
   const nowMs = Date.now();
   const breakWindows = todaysBreakWindows(nowMs);
@@ -6181,13 +5912,9 @@ function runtimeStatusPayload() {
       : 0;
   return {
     ...runtimeStatus,
-    appearanceScope: identity?.companyId && identity.employeeId ? `${identity.companyId}:${identity.employeeId}` : null,
     currentIdleSeconds,
     scheduledBreak: runningBreak
-      ? {
-          name: runningBreak.name,
-          endsAt: new Date(runningBreak.endMs).toISOString(),
-        }
+      ? { name: runningBreak.name, endsAt: new Date(runningBreak.endMs).toISOString() }
       : null,
     savedBreakCover:
       savedBreakCover && runtimeStatus.trackingStatus === "idle"
@@ -6225,9 +5952,7 @@ function configureAutoStart(enabled = runtimeStatus.enrolled) {
   });
 
   if (!enabled) {
-    log.info(
-      "Windows automatic startup is disabled until enrollment is completed",
-    );
+    log.info("Windows automatic startup is disabled until enrollment is completed");
     return;
   }
   // getLoginItemSettings cannot look an entry up by name, so it always reported
@@ -6255,11 +5980,7 @@ async function readStartupCommand(): Promise<string | null> {
  * re-downloads the update and installs it again, forever.
  */
 async function ensureStartupEntryPointsHere(reason: string) {
-  if (
-    process.platform !== "win32" ||
-    !app.isPackaged ||
-    !runtimeStatus.enrolled
-  ) {
+  if (process.platform !== "win32" || !app.isPackaged || !runtimeStatus.enrolled) {
     return;
   }
   await reenableStartupDisabledInTaskManager(reason);
@@ -6288,10 +6009,7 @@ async function ensureStartupEntryPointsHere(reason: string) {
       previous: current,
     });
   } catch (error) {
-    log.warn(
-      "Could not repair the Windows startup entry",
-      safeErrorForLog(error),
-    );
+    log.warn("Could not repair the Windows startup entry", safeErrorForLog(error));
   }
 }
 
@@ -6320,17 +6038,11 @@ async function reenableStartupDisabledInTaskManager(reason: string) {
       ["delete", STARTUP_APPROVED_KEY, "/v", STARTUP_VALUE_NAME, "/f"],
       { windowsHide: true },
     );
-    log.info(
-      "Re-enabled Khaliduo automatic startup that was disabled in Task Manager",
-      {
-        reason,
-      },
-    );
+    log.info("Re-enabled Khaliduo automatic startup that was disabled in Task Manager", {
+      reason,
+    });
   } catch (error) {
-    log.warn(
-      "Could not re-enable Khaliduo automatic startup",
-      safeErrorForLog(error),
-    );
+    log.warn("Could not re-enable Khaliduo automatic startup", safeErrorForLog(error));
   }
 }
 
@@ -6346,10 +6058,7 @@ const LEGACY_CLEANUP_PROMPT_INTERVAL_MS = 24 * 60 * 60 * 1000;
  * helper script relaunches this per-user Khaliduo if the old uninstaller
  * closed it.
  */
-type LegacyCleanupState = {
-  lastPromptedAt?: number;
-  cleanupStartedAt?: number;
-};
+type LegacyCleanupState = { lastPromptedAt?: number; cleanupStartedAt?: number };
 
 function readLegacyCleanupState(): LegacyCleanupState {
   try {
@@ -6363,10 +6072,7 @@ function writeLegacyCleanupState(state: LegacyCleanupState) {
   try {
     fs.writeFileSync(getLegacyCleanupStatePath(), JSON.stringify(state));
   } catch (error) {
-    log.warn(
-      "Could not record the legacy cleanup state",
-      safeErrorForLog(error),
-    );
+    log.warn("Could not record the legacy cleanup state", safeErrorForLog(error));
   }
 }
 
@@ -6395,9 +6101,7 @@ function finishLegacyCleanupIfDone() {
       icon: process.execPath,
       iconIndex: 0,
     });
-    log.info("Old all-users Khaliduo removed; desktop icon restored", {
-      created,
-    });
+    log.info("Old all-users Khaliduo removed; desktop icon restored", { created });
   } else {
     log.info("Old all-users Khaliduo removed");
   }
@@ -6421,10 +6125,7 @@ async function maybeOfferLegacyCleanup() {
     directory: legacy.directory,
   });
   const state = readLegacyCleanupState();
-  if (
-    Date.now() - Number(state.lastPromptedAt ?? 0) <
-    LEGACY_CLEANUP_PROMPT_INTERVAL_MS
-  ) {
+  if (Date.now() - Number(state.lastPromptedAt ?? 0) < LEGACY_CLEANUP_PROMPT_INTERVAL_MS) {
     return;
   }
   writeLegacyCleanupState({ ...state, lastPromptedAt: Date.now() });
@@ -6460,10 +6161,7 @@ async function maybeOfferLegacyCleanup() {
       { detached: true, stdio: "ignore", windowsHide: true },
     );
     child.unref();
-    writeLegacyCleanupState({
-      ...readLegacyCleanupState(),
-      cleanupStartedAt: Date.now(),
-    });
+    writeLegacyCleanupState({ ...readLegacyCleanupState(), cleanupStartedAt: Date.now() });
     log.info("Started removal of the old all-users Khaliduo", {
       directory: legacy.directory,
     });
@@ -6475,10 +6173,7 @@ async function maybeOfferLegacyCleanup() {
       if (finishLegacyCleanupIfDone() || checks >= 60) clearInterval(poll);
     }, 10_000);
   } catch (error) {
-    log.error(
-      "Could not start removal of the old Khaliduo",
-      safeErrorForLog(error),
-    );
+    log.error("Could not start removal of the old Khaliduo", safeErrorForLog(error));
   }
 }
 
@@ -7189,8 +6884,6 @@ app.on("second-instance", (_event, commandLine) => {
 
 app.on("before-quit", (event) => {
   isQuitting = true;
-  clearWindowClosePrompt();
-  quoteReminder.dispose();
   stopCrashRecoveryWatchdog();
   updateDisplaySleepBlocker();
   if (shouldClearInstallRecoveryOnBeforeQuit(isInstallingUpdate)) {
@@ -7374,12 +7067,9 @@ app.whenReady().then(async () => {
     const launchedByWindowsStartup =
       process.argv.includes("--autostart") || process.argv.includes("--hidden");
     const launchedAfterSilentUpdate =
-      process.argv.includes("--updated") ||
-      process.argv.includes("--force-run");
+      process.argv.includes("--updated") || process.argv.includes("--force-run");
     const launchedInBackground =
-      launchedByWindowsStartup ||
-      launchedAfterSilentUpdate ||
-      launchedForCrashRecovery;
+      launchedByWindowsStartup || launchedAfterSilentUpdate || launchedForCrashRecovery;
     // Load persisted intent and decide whether a crash-recovery relaunch has
     // anything to recover. A Windows-login launch resets a saved pause; a crash
     // recovery relaunch preserves the employee's saved Stop/Pause so the watchdog
@@ -7430,14 +7120,6 @@ app.whenReady().then(async () => {
     rebuildTrayMenu();
 
     await createMainWindow();
-    await endExpiredBreak();
-    // Independent of work-accrual timers: continues while paused or hidden and
-    // compares wall time after sleep rather than adding interval ticks.
-    setInterval(() => {
-      void endExpiredBreak().catch((error) =>
-        log.error("Could not finalize expired break", safeErrorForLog(error)),
-      );
-    }, 1000);
     configureAutoUpdater();
     if (!launchedInBackground) {
       showMainWindow();
@@ -7465,24 +7147,6 @@ app.whenReady().then(async () => {
 app.on("window-all-closed", () => undefined);
 
 ipcMain.handle("agent:get-status", () => runtimeStatusPayload());
-
-function checkAppearanceScope(scope: string) {
-  const identity = loadIdentity();
-  if (!runtimeStatus.enrolled || isSigningOut || !identity.companyId || !identity.employeeId ||
-      scope !== `${identity.companyId}:${identity.employeeId}`) throw new Error("Employee session changed");
-}
-ipcMain.handle("agent:get-appearance", async (_event, scope: string) => {
-  checkAppearanceScope(scope);
-  return getAgentAppearance();
-});
-ipcMain.handle("agent:set-appearance", async (_event, scope: string, patch: { skin?: "orbit" | "ember" | "forest"; mode?: "light" | "dark" }) => {
-  checkAppearanceScope(scope);
-  if (!patch || typeof patch !== "object" ||
-      Object.keys(patch).some(key => !["skin", "mode"].includes(key)) ||
-      (patch.skin !== undefined && !["orbit", "ember", "forest"].includes(patch.skin)) ||
-      (patch.mode !== undefined && !["light", "dark"].includes(patch.mode))) throw new Error("Invalid appearance");
-  return setAgentAppearance(patch);
-});
 
 ipcMain.handle("agent:sync-now", async () => {
   await syncNow();
@@ -7557,8 +7221,7 @@ ipcMain.handle(
     if (activeEnrollmentToken !== null) {
       return {
         success: false,
-        message:
-          "A sign-in is already in progress. Please wait for it to finish.",
+        message: "A sign-in is already in progress. Please wait for it to finish.",
       };
     }
     const enrollmentToken = ++enrollmentOperationSeq;
@@ -7618,7 +7281,8 @@ ipcMain.handle(
       if (!stillOwnsEnrollment()) {
         return {
           success: false,
-          message: "Sign-in was interrupted before it completed. Try again.",
+          message:
+            "Sign-in was interrupted before it completed. Try again.",
         };
       }
       runtimeStatus.trackingStatus = "error";
@@ -7654,16 +7318,6 @@ ipcMain.handle("agent:pause-tracking", (_event, options) =>
 );
 
 ipcMain.handle("agent:resume-tracking", () => resumeTracking());
-async function endShift() {
-  if (!runtimeStatus.enrolled)
-    return { success: false, message: "Sign in before ending a shift." };
-  if (isSigningOut || isQuitting)
-    return { success: false, message: "Sign-out is already saving your shift." };
-  const result = await stopTrackingSession("Employee ended shift");
-  notifyRendererStatus();
-  return result;
-}
-ipcMain.handle("agent:end-shift", () => endShift());
 
 ipcMain.handle("agent:resume-automatic-idle", () => resumeAutomaticIdle());
 
@@ -7701,27 +7355,6 @@ ipcMain.handle("agent:decline-tracking-start", () =>
 
 ipcMain.handle("agent:logout", () => logoutDevice());
 
-ipcMain.handle("window:is-expanded", () => isMainWindowExpanded());
-
-ipcMain.handle("quote:show", async (event, payload: unknown) => {
-  if (event.sender !== mainWindow?.webContents || !runtimeStatus.enrolled || isSigningOut || isQuitting) return;
-  await quoteReminder.show(payload);
-});
-
-ipcMain.handle("quote:get", event => quoteReminder.getPayload(event.sender));
-
-ipcMain.handle("quote:open-source", event => {
-  const quote = quoteReminder.getPayload(event.sender);
-  if (quote?.provider === "zenquotes") return shell.openExternal("https://zenquotes.io/");
-  if (quote?.provider === "quote-unquote") return shell.openExternal("https://gitlab.com/Assayyaad/quote-unquote");
-});
-
-ipcMain.handle("quote:dismiss", event => {
-  if (event.sender === mainWindow?.webContents || quoteReminder.owns(event.sender)) quoteReminder.dismiss();
-});
-
-ipcMain.on("quote:resize", (event, height: unknown) => quoteReminder.resize(event.sender, height));
-
 ipcMain.handle("window:minimize", () => {
   mainWindow?.minimize();
 });
@@ -7738,15 +7371,7 @@ ipcMain.handle("window:toggle-maximize", () => {
   }
 });
 
-ipcMain.handle("window:get-close-request", event => event.sender === mainWindow?.webContents ? windowCloseRequest : null);
-
-ipcMain.handle("window:respond-close", (event, requestId: unknown, choice: unknown) => {
-  if (event.sender !== mainWindow?.webContents) return { success: false, message: "This window cannot close the workspace." };
-  return handleWindowCloseChoice(requestId, choice);
-});
-
-ipcMain.handle("window:close", event => {
-  if (event.sender !== mainWindow?.webContents) return;
+ipcMain.handle("window:close", () => {
   mainWindow?.close();
 });
 
@@ -7788,8 +7413,9 @@ ipcMain.handle("agent:get-recent-screenshots", async () => {
           displayName: screenshot.display_name,
           dataUrl: `data:${image.mimeType};base64,${image.content.toString("base64")}`,
         });
-        // Keep every monitor's image: the gallery and latest-capture preview
-        // share this response, including captures with the same timestamp.
+        // The home panel renders only the latest capture. Avoid downloading
+        // three full images that it never displays.
+        break;
       } catch (error) {
         // A legacy database row may outlive its local image. Try the next
         // recent capture instead of failing the entire panel.
@@ -8000,8 +7626,7 @@ ipcMain.handle(
     input: {
       requestedMinutes: number;
       reason: string;
-      requestType?:
-        "idle_time" | "early_leave" | "manual_time" | "delayed_break";
+      requestType?: "idle_time" | "early_leave" | "manual_time" | "delayed_break";
       requestedDate?: string;
       workSessionId?: string;
       sourceStartAt?: string;
@@ -8087,10 +7712,7 @@ ipcMain.handle(
   "agent:get-shift-reschedule-day",
   async (_, workDate: string) => {
     try {
-      if (
-        typeof workDate !== "string" ||
-        !/^\d{4}-\d{2}-\d{2}$/.test(workDate)
-      ) {
+      if (typeof workDate !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(workDate)) {
         return { success: false, message: "Choose a valid date." };
       }
       const data = await getShiftRescheduleDay(workDate);
@@ -8099,10 +7721,7 @@ ipcMain.handle(
       log.warn("Failed to load shift for date", safeErrorForLog(error));
       return {
         success: false,
-        message: getUserFacingError(
-          error,
-          "Could not load your shift for that day.",
-        ),
+        message: getUserFacingError(error, "Could not load your shift for that day."),
       };
     }
   },

@@ -13,7 +13,7 @@ import {
 
 after(cleanupTemporaryDirectories);
 
-function screenshotDependencies(c: Record<string, unknown>, displayIds = [1]) {
+function screenshotDependencies(c: Record<string, unknown>) {
   const image = {
     isEmpty: () => false,
     getSize: () => ({ width: 20, height: 20 }),
@@ -27,11 +27,11 @@ function screenshotDependencies(c: Record<string, unknown>, displayIds = [1]) {
     observedIdleSeconds: () => 0,
     readForegroundActivity: async () => null,
     isWhatsAppScreenshotActivity: () => false,
-    screen: { getAllDisplays: () => displayIds.map((id) => ({ id, size: { width: 20, height: 20 } })) },
+    screen: { getAllDisplays: () => [{ id: 1, size: { width: 20, height: 20 } }] },
     desktopCapturer: {
-      getSources: async () => displayIds.map((id) => ({
-        name: `Screen ${id}`, display_id: String(id), thumbnail: image,
-      })),
+      getSources: async () => [
+        { name: "Screen", display_id: "1", thumbnail: image },
+      ],
     },
     getPendingScreenshotDirectory: () =>
       (c as { testDirectory: string }).testDirectory,
@@ -66,14 +66,14 @@ type Ctx = Record<string, unknown> & {
     at: string | undefined,
     serverId: string,
   ) => void;
-  initiateScreenshot: (m: { sessionId?: string | null; displayId?: string; displayCount?: number }) => Promise<void>;
+  initiateScreenshot: (m: { sessionId?: string | null }) => Promise<void>;
   currentSessionId: string | null;
   localTrackingSessionId: string | null;
 };
 
-test("both offline monitor screenshots replay against their recovered server session", async () => {
+test("an offline screenshot replays against its recovered server session", async () => {
   const c = (await databaseContext()) as unknown as Ctx;
-  screenshotDependencies(c as never, [1, 2]);
+  screenshotDependencies(c as never);
   // Establish the durable local→server mapping the promotion would write.
   c.createLocalTrackingSession({
     sessionId: "local",
@@ -94,17 +94,17 @@ test("both offline monitor screenshots replay against their recovered server ses
   // Now online on a DIFFERENT current session; replay must not use it.
   c.currentSessionId = "some-other-current-session";
   c.localTrackingSessionId = null;
-  const replayed: { sessionId?: string | null; displayId?: string; displayCount?: number }[] = [];
+  let replayed: { sessionId?: string | null } | undefined;
   c.initiateScreenshot = async (metadata) => {
-    replayed.push(metadata);
+    replayed = metadata;
   };
   await c.syncPendingQueuesOnce(true);
 
-  assert.equal(replayed.length, 2, "both monitors must survive the offline queue");
-  assert.deepEqual(replayed.map((shot) => shot.displayId), ["1", "2"]);
-  assert.ok(replayed.every((shot) => shot.displayCount === 2));
-  assert.ok(replayed.every((shot) => shot.sessionId === "recovered-server-session"),
-    "each screenshot must attach to its recovered session, not the current one");
+  assert.equal(
+    replayed?.sessionId,
+    "recovered-server-session",
+    "the screenshot must attach to its recovered session, not the current one",
+  );
 });
 
 test("an offline screenshot is deferred (not uploaded sessionless) until promotion", async () => {

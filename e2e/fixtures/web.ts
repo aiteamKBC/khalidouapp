@@ -19,8 +19,8 @@ export async function signInAs(page: Page, key: AdminKey) {
 /** Signs in through the real login form. Uses the per-IP login budget; keep rare. */
 export async function signInWithForm(page: Page, key: AdminKey, { remember = true } = {}) {
   await fillLoginForm(page, seed().admins[key].email, seed().adminPassword);
-  const checkbox = page.getByRole("checkbox");
-  if ((await checkbox.getAttribute("data-state")) === "checked" !== remember) await checkbox.click();
+  // The workspace login uses a native checkbox (ticked by default).
+  await page.getByRole("checkbox", { name: /Remember me/ }).setChecked(remember);
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await expect(page).not.toHaveURL(/\/login/, { timeout: 30_000 });
 }
