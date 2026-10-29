@@ -18,6 +18,9 @@ import type {
   RecentScreenshot,
   WorkdayTimeline,
 } from "./types/electron";
+import { StatusBar } from "./ui/shell/StatusBar";
+import { TopBar } from "./ui/shell/TopBar";
+import { useSkin } from "./ui/theme/skin";
 import {
   TIMELINE_LABELS,
   timelineIntervalsForDisplay,
@@ -529,6 +532,7 @@ function App() {
   const [isLoadingScreenshots, setIsLoadingScreenshots] = useState(false);
   const [screenshotError, setScreenshotError] = useState<string | null>(null);
   const [theme, setTheme] = useState<"light" | "dark">(initialTheme);
+  const { skin, setSkin } = useSkin(theme);
   const shownIdleAlertId = useRef<string | null>(null);
   const screenshotsLoadedForEnrollment = useRef(false);
   const lastLoadedScreenshotAt = useRef<string | null>(null);
@@ -1673,215 +1677,49 @@ function App() {
     status.updateStatus === "installing";
 
   return (
-    <main className="k-app" data-tone={timerTone} data-theme={theme}>
-      <header className="k-titlebar">
-        <div className="k-brand">
-          <img src="./khaliduo-icon.png" alt="Khaliduo" />
-          <strong>Kent Consultancy</strong>
-        </div>
-        <span className="k-chip">
-          {statusText}{" "}
-          {status.enrolled ? formatDuration(displayedTimerSeconds) : ""}
-        </span>
-        <span className="k-spacer" />
-        <div className="k-header-actions">
-        {status.enrolled && (
-          <nav className="k-header-nav" aria-label="Primary navigation">
-            <button
-              type="button"
-              className={activeView === "home" ? "active" : ""}
-              onClick={() => setActiveView("home")}
-              title="Timer"
-              aria-label="Timer"
-            >
-              <KIcon name="timer" />
-            </button>
-            <button
-              type="button"
-              className={activeView === "tasks" ? "active" : ""}
-              onClick={() => setActiveView("tasks")}
-              title="Tasks"
-              aria-label="Tasks"
-            >
-              <KIcon name="tasks" />
-            </button>
-            <button
-              type="button"
-              className={activeView === "requests" ? "active" : ""}
-              onClick={() => setActiveView("requests")}
-              title="Requests"
-              aria-label="Requests"
-            >
-              <KIcon name="calendar" />
-            </button>
-            <button
-              type="button"
-              className={activeView === "meeting" ? "active" : ""}
-              onClick={() => setActiveView("meeting")}
-              title="Meeting"
-              aria-label="Meeting"
-            >
-              <KIcon name="meeting" />
-            </button>
-            <button
-              type="button"
-              className={activeView === "settings" ? "active" : ""}
-              onClick={() => setActiveView("settings")}
-              title="Settings"
-              aria-label="Settings"
-            >
-              <KIcon name="settings" />
-            </button>
-            <button
-              type="button"
-              onClick={() => void handleOpenDashboard()}
-              title="Dashboard"
-              aria-label="Dashboard"
-            >
-              <KIcon name="dashboard" />
-            </button>
-          </nav>
-        )}
-        {status.screenshotMonitoringEnabled && (
-          <span
-            className={`k-capture-indicator ${
-              status.screenshotCaptureActive
-                ? status.connectionStatus === "online"
-                  ? "is-active"
-                  : "is-queued"
-                : "is-paused"
-            }`}
-            title={
-              status.screenshotCaptureActive &&
-              status.connectionStatus === "offline"
-                ? "Screenshots are captured locally and queued until the API connection returns"
-                : status.screenshotCaptureActive
-                  ? "Workplace screenshots are active and syncing"
-                  : status.powerSource === "battery"
-                    ? "Screenshots pause while this device is on battery"
-                    : "Screenshot monitoring is temporarily paused"
-            }
-          >
-            <span aria-hidden="true">●</span>
-            {status.screenshotCaptureActive
-              ? status.connectionStatus === "online"
-                ? "Screenshots active"
-                : "Screenshots queued"
-              : "Screenshots paused"}
-          </span>
-        )}
-        <button
-          type="button"
-          className={`k-sync k-sync-${status.connectionStatus}`}
-          onClick={() => void refreshStatusAfterEnrollment()}
-          title={
-            status.connectionStatus === "online"
-              ? "API connection is healthy"
-              : "API sync is offline; click to retry. Local tracking and queued screenshots are preserved."
-          }
-        >
-          {status.connectionStatus === "online"
-            ? "Synced"
-            : isTracking
-              ? "Offline - tracking locally"
-              : "Offline"}
-        </button>
-        {status.enrolled && (
-          <button
-            type="button"
-            className="k-title-button"
-            onClick={() => void handleOpenDashboard()}
-            disabled={isOpeningDashboard}
-          >
-            Dashboard
-          </button>
-        )}
-        <button
-          type="button"
-          className="k-theme-button"
-          onClick={() => void handleUpdateButton()}
-          disabled={updateButtonDisabled}
-          aria-label={updateButtonLabel}
-          title={
-            status.updateStatus === "ready"
-              ? "Install the downloaded Khaliduo update now"
-              : "Check for Khaliduo updates now"
-          }
-        >
-          <KIcon name="update" />
-          <span className="k-control-label">{updateButtonLabel}</span>
-        </button>
-        <button
-          type="button"
-          className="k-theme-button"
-          onClick={() =>
-            setTheme((current) => (current === "dark" ? "light" : "dark"))
-          }
-          aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
-          title={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
-        >
-          <KIcon name={theme === "dark" ? "sun" : "moon"} />
-          <span className="k-control-label">
-            {theme === "dark" ? "Light" : "Dark"}
-          </span>
-        </button>
-        </div>
-        {status.enrolled && (
-          <div className="k-header-user" aria-label="Current employee">
-            <span className="k-header-avatar">
-              {status.employeeAvatarUrl ? (
-                <img src={status.employeeAvatarUrl} alt="" />
-              ) : (
-                initials(status.employeeName)
-              )}
-            </span>
-            <span>
-              <strong>{status.employeeName}</strong>
-              <small
-                className={
-                  status.connectionStatus === "online" || isTracking
-                    ? "k-ok"
-                    : "k-danger"
-                }
-              >
-                {status.connectionStatus === "online" || isTracking
-                  ? "Active"
-                  : "Offline"}
-              </small>
-            </span>
-          </div>
-        )}
-        <div className="k-window-controls" aria-label="Window controls">
-          <button
-            type="button"
-            aria-label="Minimize"
-            onClick={() => void window.khaliduo?.minimizeWindow()}
-          >
-            −
-          </button>
-          <button
-            type="button"
-            aria-label="Maximize or restore"
-            onClick={() => void window.khaliduo?.toggleMaximizeWindow()}
-          >
-            □
-          </button>
-          <button
-            type="button"
-            aria-label="Close"
-            className="k-window-close"
-            onClick={() => void window.khaliduo?.closeWindow()}
-          >
-            ×
-          </button>
-        </div>
-        {status.enrolled && (
-          <h1 className="k-welcome-title">
-            Welcome back {status.employeeName.split(" ")[0] || "there"}
-          </h1>
-        )}
-        <span className="k-header-stripes" aria-hidden="true" />
-      </header>
+    <main
+      className={`k-app app-shell${theme === "dark" ? " app-dark" : ""}`}
+      data-tone={timerTone}
+      data-theme={theme}
+    >
+      <TopBar
+        enrolled={status.enrolled}
+        activeView={activeView}
+        onViewChange={setActiveView}
+        onOpenDashboard={() => void handleOpenDashboard()}
+        isOpeningDashboard={isOpeningDashboard}
+        statusText={statusText}
+        timerLabel={formatDuration(displayedTimerSeconds)}
+        tone={timerTone}
+        updateLabel={updateButtonLabel}
+        updateTitle={
+          status.updateStatus === "ready"
+            ? "Install the downloaded Khaliduo update now"
+            : "Check for Khaliduo updates now"
+        }
+        updateDisabled={updateButtonDisabled}
+        updateHighlighted={[
+          "available",
+          "downloading",
+          "ready",
+          "installing",
+          "error",
+        ].includes(status.updateStatus)}
+        onUpdate={() => void handleUpdateButton()}
+        skin={skin}
+        mode={theme}
+        onSkin={setSkin}
+        onMode={setTheme}
+        employeeName={status.employeeName}
+        employeeAvatarUrl={status.employeeAvatarUrl}
+        employeeInitials={initials(status.employeeName)}
+        presenceLabel={
+          status.connectionStatus === "online" || isTracking
+            ? "Active"
+            : "Offline"
+        }
+        presenceOk={status.connectionStatus === "online" || isTracking}
+      />
 
       {(status.updateRequired ||
         ["available", "downloading", "ready", "installing"].includes(
@@ -2081,23 +1919,54 @@ function App() {
         </>
       )}
 
-      <footer className="k-statusbar">
-        <span>
-          {isPaused ? "Timer paused" : isRunning ? "Timer running" : "Idle"}
-        </span>
-        <span
-          className={status.connectionStatus === "online" ? "k-ok" : "k-danger"}
-        >
-          {status.connectionStatus === "online"
+      <StatusBar
+        tone={timerTone}
+        timerStateLabel={
+          isPaused ? "Timer paused" : isRunning ? "Timer running" : "Idle"
+        }
+        syncOk={status.connectionStatus === "online"}
+        syncLabel={
+          status.connectionStatus === "online"
             ? "Synced"
             : isTracking
               ? "Sync pending - time saved locally"
-              : "Offline"}
-        </span>
-        <span>Worked today {formatDuration(trackedTodaySeconds)}</span>
-        <span>Activity {status.activityPercent}%</span>
-        <span>v{status.agentVersion}</span>
-      </footer>
+              : "Offline"
+        }
+        syncTitle={
+          status.connectionStatus === "online"
+            ? "API connection is healthy"
+            : "API sync is offline; click to retry. Local tracking and queued screenshots are preserved."
+        }
+        onSync={() => void refreshStatusAfterEnrollment()}
+        capture={
+          status.screenshotMonitoringEnabled
+            ? {
+                state: status.screenshotCaptureActive
+                  ? status.connectionStatus === "online"
+                    ? "active"
+                    : "queued"
+                  : "paused",
+                label: status.screenshotCaptureActive
+                  ? status.connectionStatus === "online"
+                    ? "Screenshots active"
+                    : "Screenshots queued"
+                  : "Screenshots paused",
+                title:
+                  status.screenshotCaptureActive &&
+                  status.connectionStatus === "offline"
+                    ? "Screenshots are captured locally and queued until the API connection returns"
+                    : status.screenshotCaptureActive
+                      ? "Workplace screenshots are active and syncing"
+                      : status.powerSource === "battery"
+                        ? "Screenshots pause while this device is on battery"
+                        : "Screenshot monitoring is temporarily paused",
+              }
+            : null
+        }
+        workedTodayLabel={formatDuration(trackedTodaySeconds)}
+        activityPercent={status.activityPercent}
+        agentVersion={status.agentVersion}
+      />
     </main>
   );
 }

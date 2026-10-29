@@ -181,7 +181,7 @@ export function swal(window: Page) {
   };
 }
 
-export async function nav(window: Page, view: "Timer" | "Tasks" | "Requests" | "Meeting" | "Settings") {
+export async function nav(window: Page, view: "Tracker" | "Tasks" | "Requests" | "Meeting" | "Settings") {
   // A request dialog stays open after submitting and covers the header; close it first.
   const openDialog = window.locator(".k-request-form-shell");
   if (await openDialog.count()) {

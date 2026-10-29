@@ -10,6 +10,7 @@
 @import "./theme/remixicon.css";
 @import "./theme/tokens.css";
 @import "./theme/skins.css";
+@import "./shell/shell.css";
 
 @tailwind components;
 @tailwind utilities;
