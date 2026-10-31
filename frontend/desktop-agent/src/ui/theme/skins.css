@@ -13,13 +13,15 @@
    ============================================================ */
 
 /* ---------- fallbacks (orbit — the workspace default) ---------- */
-.app-shell {
+.app-shell,
+.swal2-container {
   --k-hero-1: #4b3bb0;
   --k-hero-2: #241a63;
   --k-hero-accent: var(--k-plum);
 }
 
-.app-shell.app-dark {
+.app-shell.app-dark,
+html.dark .swal2-container {
   --k-hero-1: #2a1f57;
   --k-hero-2: #14112e;
   --k-hero-accent: var(--k-plum);
@@ -28,7 +30,8 @@
 /* ============================================================
    1 · EMBER
    ============================================================ */
-html[data-skin='ember'] .app-shell {
+html[data-skin='ember'] .app-shell,
+html[data-skin='ember'] .swal2-container {
   --k-bg: #fdf7f0;
   --k-bg-2: #f8ede2;
   --k-card: #ffffff;
@@ -81,7 +84,8 @@ html[data-skin='ember'] .app-shell {
   --k-hero-accent: #f7d7b6;
 }
 
-html[data-skin='ember'] .app-shell.app-dark {
+html[data-skin='ember'] .app-shell.app-dark,
+html.dark[data-skin='ember'] .swal2-container {
   --k-bg: #17111c;
   --k-bg-2: #1f1626;
   --k-card: #241a2c;
@@ -137,7 +141,8 @@ html[data-skin='ember'] .app-shell.app-dark {
 /* ============================================================
    2 · FOREST
    ============================================================ */
-html[data-skin='forest'] .app-shell {
+html[data-skin='forest'] .app-shell,
+html[data-skin='forest'] .swal2-container {
   --k-bg: #f3faf6;
   --k-bg-2: #e7f5ee;
   --k-card: #ffffff;
@@ -190,7 +195,8 @@ html[data-skin='forest'] .app-shell {
   --k-hero-accent: #b5f0dc;
 }
 
-html[data-skin='forest'] .app-shell.app-dark {
+html[data-skin='forest'] .app-shell.app-dark,
+html.dark[data-skin='forest'] .swal2-container {
   --k-bg: #06120f;
   --k-bg-2: #0a1d18;
   --k-card: #0d241e;
@@ -246,7 +252,8 @@ html[data-skin='forest'] .app-shell.app-dark {
 /* ============================================================
    3 · ORBIT
    ============================================================ */
-html[data-skin='violet'] .app-shell {
+html[data-skin='violet'] .app-shell,
+html[data-skin='violet'] .swal2-container {
   --k-bg: #f6f5fe;
   --k-bg-2: #eceafa;
   --k-card: #ffffff;
@@ -299,7 +306,8 @@ html[data-skin='violet'] .app-shell {
   --k-hero-accent: #d4c8ff;
 }
 
-html[data-skin='violet'] .app-shell.app-dark {
+html[data-skin='violet'] .app-shell.app-dark,
+html.dark[data-skin='violet'] .swal2-container {
   --k-bg: #0a0918;
   --k-bg-2: #12102a;
   --k-card: #171336;

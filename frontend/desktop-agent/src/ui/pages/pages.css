@@ -203,7 +203,8 @@ small.pg-muted {
   color: var(--k-ink);
 }
 
-.pg-form > .pg-btn {
+.pg-form > .pg-btn,
+.pg-card > .pg-btn {
   align-self: flex-start;
 }
 

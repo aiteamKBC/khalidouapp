@@ -88,7 +88,7 @@ export function TopBar(props: Props) {
         {enrolled ? (
           <>
             <span className="app-hide-below-wide h-6 w-px flex-none bg-line" aria-hidden="true" />
-            <nav className="flex min-w-0 items-center gap-1" aria-label="Primary navigation">
+            <nav className="flex flex-none items-center gap-1" aria-label="Primary navigation">
               {NAV.map((item) => {
                 const active = item.key === activeView;
                 return (
@@ -116,7 +116,7 @@ export function TopBar(props: Props) {
         ) : null}
 
         <div className="ml-auto flex min-w-0 items-center gap-2">
-          <span className="app-pill max-w-[260px] shrink-0" data-tone={tone} title={statusText} role="status">
+          <span className="app-pill min-w-[150px] max-w-[260px]" data-tone={tone} title={statusText} role="status">
             <span className="app-tone-dot" aria-hidden="true" />
             <span className="truncate">{statusText}</span>
             {enrolled ? <span className="app-num flex-none font-semibold text-ink">{timerLabel}</span> : null}

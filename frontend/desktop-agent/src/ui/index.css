@@ -11,6 +11,7 @@
 @import "./theme/tokens.css";
 @import "./theme/skins.css";
 @import "./shell/shell.css";
+@import "./shell/dialogs.css";
 @import "./tracker/tracker.css";
 @import "./tracker/splitflap.css";
 @import "./pages/pages.css";

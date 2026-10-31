@@ -300,6 +300,13 @@
     display: none !important;
   }
 
+  /* six labelled pills plus a long status (e.g. "Tracking on <device>")
+     only fit the default 1100 px window with tighter pills */
+  .app-nav-pill {
+    gap: 5px;
+    padding: 0 9px;
+  }
+
   /* the update banner carries the text; the pill keeps just the icon */
   .app-update-btn {
     width: 34px;

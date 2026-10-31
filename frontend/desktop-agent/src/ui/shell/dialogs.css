@@ -1,0 +1,179 @@
+/* ============================================================
+   SweetAlert popups in the Readdy style (phase 5)
+
+   Covers the idle / tracking-start review, confirmations and error
+   popups. Swal mounts on <body>, outside .app-shell, so skins.css also
+   targets .swal2-container. Nothing in the Swal.fire calls changed:
+   App.tsx still passes confirmButtonColor / denyButtonColor, which Swal
+   writes into each button's inline style; those values pick the
+   intent below (green = continue or confirm, red = stop or delete).
+   !important is needed against Swal's own stylesheet and App.css's
+   old .swal2-popup rule.
+   ============================================================ */
+
+.swal2-container.swal2-backdrop-show {
+  background: color-mix(in srgb, var(--k-overlay) 55%, transparent) !important;
+  backdrop-filter: blur(3px);
+}
+
+.swal2-container .swal2-popup {
+  width: min(460px, calc(100vw - 40px)) !important;
+  padding: 26px 24px 22px !important;
+  border: 1px solid var(--k-line) !important;
+  border-radius: 20px !important;
+  background: var(--k-card) !important;
+  box-shadow: 0 30px 70px -32px rgba(10, 6, 30, 0.55) !important;
+  font-family: "Inter Variable", "Inter", "IBM Plex Sans Arabic", system-ui, sans-serif !important;
+  color: var(--k-ink) !important;
+}
+
+.swal2-container .swal2-title {
+  padding: 4px 8px 0 !important;
+  font-size: 20px !important;
+  font-weight: 800 !important;
+  letter-spacing: -0.02em;
+  color: var(--k-ink) !important;
+}
+
+.swal2-container .swal2-html-container {
+  margin: 10px 10px 0 !important;
+  font-size: 13px !important;
+  line-height: 1.55 !important;
+  color: var(--k-muted) !important;
+}
+
+/* icons follow the palette instead of Swal's defaults */
+.swal2-container .swal2-icon {
+  margin-top: 4px !important;
+  transform: scale(0.82);
+}
+
+.swal2-container .swal2-icon.swal2-warning {
+  border-color: color-mix(in srgb, var(--k-amber) 60%, transparent) !important;
+  color: var(--k-amber) !important;
+}
+
+.swal2-container .swal2-icon.swal2-success {
+  border-color: color-mix(in srgb, var(--k-green) 45%, transparent) !important;
+  color: var(--k-green) !important;
+}
+
+.swal2-container .swal2-icon.swal2-success [class^="swal2-success-line"] {
+  background-color: var(--k-green) !important;
+}
+
+.swal2-container .swal2-icon.swal2-success .swal2-success-ring {
+  border-color: color-mix(in srgb, var(--k-green) 35%, transparent) !important;
+}
+
+.swal2-container .swal2-icon.swal2-success [class^="swal2-success-circular-line"],
+.swal2-container .swal2-icon.swal2-success .swal2-success-fix {
+  background-color: var(--k-card) !important;
+}
+
+.swal2-container .swal2-icon.swal2-error {
+  border-color: color-mix(in srgb, var(--k-rose) 50%, transparent) !important;
+  color: var(--k-rose) !important;
+}
+
+.swal2-container .swal2-icon.swal2-error [class^="swal2-x-mark-line"] {
+  background-color: var(--k-rose) !important;
+}
+
+/* ---------- actions ---------- */
+.swal2-container .swal2-actions {
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 20px !important;
+}
+
+.swal2-container .swal2-actions .swal2-styled {
+  min-height: 42px;
+  margin: 0 !important;
+  padding: 0 18px !important;
+  border: 1px solid var(--k-line) !important;
+  border-radius: 12px !important;
+  background: var(--k-card) !important;
+  box-shadow: none !important;
+  font-family: inherit !important;
+  font-size: 13px !important;
+  font-weight: 700 !important;
+  color: var(--k-ink-2) !important;
+}
+
+.swal2-container .swal2-actions .swal2-styled:hover {
+  border-color: color-mix(in srgb, var(--k-pink) 45%, var(--k-line)) !important;
+  background: color-mix(in srgb, var(--k-pink) 10%, var(--k-card)) !important;
+  background-image: none !important;
+  color: var(--k-ink) !important;
+}
+
+.swal2-container .swal2-actions .swal2-styled:focus-visible {
+  outline: 2px solid var(--k-pink) !important;
+  outline-offset: 2px;
+}
+
+/* main action: the skin's call-to-action gradient */
+.swal2-container .swal2-actions .swal2-confirm {
+  border-color: transparent !important;
+  background: linear-gradient(135deg, var(--k-cta-grad-1) 0%, var(--k-cta-grad-2) 100%) !important;
+  color: #ffffff !important;
+}
+
+/* "Continue working" / "Start work" / "OK" were green in the app: keep the
+   go-ahead meaning in the palette's green */
+.swal2-container .swal2-actions .swal2-confirm[style*="#1f7a4d"] {
+  background: var(--k-green) !important;
+}
+
+/* destructive confirmations (delete checklist items, sign out) */
+.swal2-container .swal2-actions .swal2-confirm:is([style*="#dc2626"], [style*="#842029"]) {
+  background: var(--k-rose) !important;
+}
+
+.swal2-container .swal2-actions .swal2-confirm:hover {
+  border-color: transparent !important;
+  filter: brightness(1.06);
+  color: #ffffff !important;
+}
+
+.swal2-container .swal2-actions .swal2-confirm:hover:not([style*="#1f7a4d"]):not([style*="#dc2626"]):not([style*="#842029"]) {
+  background: linear-gradient(135deg, var(--k-cta-grad-1) 0%, var(--k-cta-grad-2) 100%) !important;
+}
+
+.swal2-container .swal2-actions .swal2-confirm[style*="#1f7a4d"]:hover {
+  background: var(--k-green) !important;
+}
+
+.swal2-container .swal2-actions .swal2-confirm:is([style*="#dc2626"], [style*="#842029"]):hover {
+  background: var(--k-rose) !important;
+}
+
+/* "Stop tracking" / "Not working": a clear but quieter red */
+.swal2-container .swal2-actions .swal2-deny {
+  border-color: color-mix(in srgb, var(--k-rose) 40%, var(--k-line)) !important;
+  background: var(--k-rose-2) !important;
+  color: var(--k-rose) !important;
+}
+
+.swal2-container .swal2-actions .swal2-deny:hover {
+  border-color: var(--k-rose) !important;
+  background: var(--k-rose-2) !important;
+  color: var(--k-rose) !important;
+}
+
+/* "I was working during this idle period" / "Keep me signed in": full row
+   under the two main choices on the idle review */
+.swal2-container .swal2-actions:has(.swal2-deny:not([style*="display: none"])) .swal2-cancel {
+  flex-basis: 100%;
+}
+
+.swal2-container .swal2-actions .swal2-cancel {
+  color: var(--k-plum-2) !important;
+}
+
+/* the dark faces use light greens and roses: dark text keeps them readable */
+html.dark .swal2-container .swal2-actions .swal2-confirm:is([style*="#1f7a4d"], [style*="#dc2626"], [style*="#842029"]),
+html.dark .swal2-container .swal2-actions .swal2-confirm:is([style*="#1f7a4d"], [style*="#dc2626"], [style*="#842029"]):hover {
+  color: #0b0a14 !important;
+}
