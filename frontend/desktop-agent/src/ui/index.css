@@ -13,6 +13,7 @@
 @import "./shell/shell.css";
 @import "./tracker/tracker.css";
 @import "./tracker/splitflap.css";
+@import "./pages/pages.css";
 
 @tailwind components;
 @tailwind utilities;

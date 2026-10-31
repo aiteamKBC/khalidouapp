@@ -1,0 +1,1061 @@
+/* ============================================================
+   Reskin pages (phase 4): Tasks, Requests, Meeting, Insights,
+   Settings and sign-in, in the Readdy style.
+
+   The page markup in App.tsx keeps its logic; its old k-* classes were
+   swapped for these pg-* ones. Form controls are scoped under
+   .k-app.app-shell[data-theme] .pg-page so they outrank App.css's global
+   label / input / textarea rules (strongest: 0,3,1).
+   ============================================================ */
+
+/* ---------- page frame ---------- */
+.pg-page {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.pg-head h1 {
+  font-size: 24px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: var(--k-ink);
+}
+
+.pg-head p {
+  margin-top: 3px;
+  font-size: 12px;
+  color: var(--k-muted);
+}
+
+.pg-head-row {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.pg-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+}
+
+.pg-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.pg-card-head > div {
+  min-width: 0;
+}
+
+.pg-card-head:has(> .tp-card-icon:first-child) {
+  justify-content: flex-start;
+}
+
+.pg-card-head > div > span {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--k-muted);
+}
+
+.pg-card h2 {
+  font-size: 14.5px;
+  font-weight: 700;
+  color: var(--k-ink);
+}
+
+.pg-card-head > span:not(.tp-card-icon):not(.pg-status) {
+  font-size: 11px;
+  color: var(--k-muted);
+}
+
+.pg-muted {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--k-muted);
+}
+
+small.pg-muted {
+  font-size: 10.5px;
+}
+
+.pg-row-between {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 11.5px;
+  color: var(--k-muted);
+}
+
+.pg-row-between strong {
+  color: var(--k-ink);
+  font-size: 12.5px;
+}
+
+.k-app.app-shell[data-theme] .app-page .pg-mono {
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 11px;
+  word-break: break-all;
+}
+
+/* ---------- form controls ---------- */
+.pg-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.pg-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.pg-grid-4 {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.pg-wide {
+  grid-column: 1 / -1;
+}
+
+.k-app.app-shell[data-theme] .app-page :is(h1, h2, h3, label, summary, dt, dd, button, input, select, textarea) {
+  font-family: "Inter Variable", "Inter", "IBM Plex Sans Arabic", system-ui, sans-serif;
+}
+
+.k-app.app-shell[data-theme] :is(.pg-page, .pg-signin) label {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 5px;
+  margin: 0;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--k-muted);
+}
+
+.k-app.app-shell[data-theme] :is(.pg-page, .pg-signin) label small {
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--k-faint);
+}
+
+.k-app.app-shell[data-theme] :is(.pg-page, .pg-signin) :is(input:not(:where([type="checkbox"], [type="radio"])), select, textarea) {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: 38px;
+  margin: 0;
+  padding: 8px 11px;
+  border: 1px solid var(--k-line);
+  border-radius: 10px;
+  background: var(--k-field);
+  box-shadow: none;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--k-ink);
+  color-scheme: inherit;
+}
+
+.k-app.app-shell[data-theme] :is(.pg-page, .pg-signin) textarea {
+  min-height: 74px;
+  resize: vertical;
+}
+
+.k-app.app-shell[data-theme] :is(.pg-page, .pg-signin) :is(input, select, textarea)::placeholder {
+  color: var(--k-faint);
+}
+
+.k-app.app-shell[data-theme] :is(.pg-page, .pg-signin) :is(input:not(:where([type="checkbox"])), select, textarea):hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--k-pink) 30%, var(--k-line));
+}
+
+.k-app.app-shell[data-theme] :is(.pg-page, .pg-signin) :is(input:not(:where([type="checkbox"])), select, textarea):focus {
+  border-color: color-mix(in srgb, var(--k-pink) 55%, var(--k-line));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--k-pink) 14%, transparent);
+  outline: none;
+}
+
+.k-app.app-shell[data-theme] :is(.pg-page, .pg-signin) :is(input, select, textarea):disabled {
+  background: var(--k-bg-2);
+  color: var(--k-muted);
+  opacity: 1;
+}
+
+.k-app.app-shell[data-theme] :is(.pg-page, .pg-signin) select option {
+  background: var(--k-card);
+  color: var(--k-ink);
+}
+
+.pg-form > .pg-btn {
+  align-self: flex-start;
+}
+
+.pg-form-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 11px;
+  color: var(--k-muted);
+}
+
+.pg-field-action {
+  display: flex;
+  align-items: flex-end;
+  padding-bottom: 9px;
+}
+
+.pg-field-block textarea {
+  margin-top: 2px;
+}
+
+.pg-calc {
+  display: grid;
+  grid-template-columns: auto 1fr auto 1fr;
+  gap: 4px 10px;
+  align-items: baseline;
+  padding: 10px 12px;
+  border: 1px solid var(--k-line-2);
+  border-radius: 10px;
+  background: var(--k-bg-2);
+  font-size: 11px;
+  color: var(--k-muted);
+}
+
+.pg-calc strong {
+  color: var(--k-ink);
+  font-size: 12.5px;
+}
+
+/* ---------- buttons ---------- */
+.k-app.app-shell .pg-btn {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 38px;
+  padding: 0 16px;
+  border: 1px solid var(--k-line);
+  border-radius: 11px;
+  background: var(--k-card);
+  box-shadow: none;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+  color: var(--k-ink-2);
+  cursor: pointer;
+}
+
+.k-app.app-shell .pg-btn:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--k-pink) 45%, var(--k-line));
+  background: color-mix(in srgb, var(--k-pink) 10%, var(--k-card));
+  color: var(--k-ink);
+}
+
+.k-app.app-shell .pg-btn-primary {
+  border-color: transparent;
+  background: linear-gradient(135deg, var(--k-cta-grad-1) 0%, var(--k-cta-grad-2) 100%);
+  color: #ffffff;
+}
+
+.k-app.app-shell .pg-btn-primary:hover:not(:disabled) {
+  border-color: transparent;
+  background: linear-gradient(135deg, var(--k-cta-grad-1) 0%, var(--k-cta-grad-2) 100%);
+  color: #ffffff;
+  filter: brightness(1.06);
+}
+
+.k-app.app-shell .pg-btn-danger {
+  border-color: color-mix(in srgb, var(--k-rose) 40%, var(--k-line));
+  background: var(--k-rose-2);
+  color: var(--k-rose);
+}
+
+.k-app.app-shell .pg-btn-danger:hover:not(:disabled) {
+  border-color: var(--k-rose);
+  background: var(--k-rose-2);
+  color: var(--k-rose);
+}
+
+.k-app.app-shell .pg-btn-sm {
+  height: 32px;
+  padding: 0 13px;
+  border-radius: 9px;
+  font-size: 11.5px;
+}
+
+.k-app.app-shell .pg-btn-xs {
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 8px;
+  font-size: 10.5px;
+}
+
+.k-app.app-shell .pg-btn[aria-pressed="true"] {
+  border-color: var(--k-pink);
+  background: var(--k-pink-2);
+  color: var(--k-pink);
+}
+
+.k-app.app-shell .pg-link {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--k-plum-2);
+  cursor: pointer;
+}
+
+.k-app.app-shell .pg-link:hover:not(:disabled) {
+  text-decoration: underline;
+}
+
+/* ---------- chips, statuses ---------- */
+.pg-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  padding: 3px;
+  border: 1px solid var(--k-line);
+  border-radius: 12px;
+  background: var(--k-card);
+}
+
+.k-app.app-shell .pg-chips > button {
+  height: 28px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--k-muted);
+  cursor: pointer;
+}
+
+.k-app.app-shell .pg-chips > button:hover {
+  color: var(--k-ink);
+}
+
+.k-app.app-shell .pg-chips > button.active {
+  background: var(--k-solid);
+  color: #ffffff;
+}
+
+.pg-chips-static {
+  align-self: flex-start;
+  padding: 4px 10px;
+  font-size: 11px;
+  color: var(--k-muted);
+}
+
+.pg-status {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border: 1px solid var(--k-line);
+  border-radius: 999px;
+  background: var(--k-bg-2);
+  font-size: 9.5px;
+  font-style: normal;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  color: var(--k-ink-2);
+}
+
+.pg-status::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+.pg-status:is(.approved, .online, .completed, .in_progress, .inprogress) {
+  border-color: color-mix(in srgb, var(--k-green) 30%, transparent);
+  background: var(--k-green-2);
+  color: var(--k-green);
+}
+
+.pg-status:is(.pending, .waiting, .ready_for_review, .assigned) {
+  border-color: color-mix(in srgb, var(--k-amber) 32%, transparent);
+  background: var(--k-amber-2);
+  color: var(--k-amber);
+}
+
+.pg-status:is(.rejected, .failed, .offline, .blocked) {
+  border-color: color-mix(in srgb, var(--k-rose) 32%, transparent);
+  background: var(--k-rose-2);
+  color: var(--k-rose);
+}
+
+.pg-status:is(.cancelled, .backlog) {
+  color: var(--k-muted);
+}
+
+/* ---------- inline messages kept as e2e hooks ---------- */
+.k-app.app-shell :is(.pg-page, .pg-signin) :is(.k-error, .k-success) {
+  margin: 0;
+  padding: 8px 11px;
+  border-radius: 10px;
+  font-size: 11.5px;
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.k-app.app-shell :is(.pg-page, .pg-signin) .k-error {
+  border: 1px solid color-mix(in srgb, var(--k-rose) 30%, transparent);
+  background: var(--k-rose-2);
+  color: var(--k-rose);
+}
+
+.k-app.app-shell :is(.pg-page, .pg-signin) .k-success {
+  border: 1px solid color-mix(in srgb, var(--k-green) 30%, transparent);
+  background: var(--k-green-2);
+  color: var(--k-green);
+}
+
+.k-app.app-shell :is(.pg-page, .pg-signin) small.k-error {
+  display: inline;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+/* ---------- request centre options ---------- */
+.pg-option + .pg-option {
+  border-top: 1px solid var(--k-line-2);
+}
+
+.pg-option-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) minmax(0, 0.9fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 2px;
+}
+
+.pg-option-copy h3 {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--k-ink);
+}
+
+.pg-option-copy p {
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--k-muted);
+}
+
+.pg-option-state {
+  font-size: 11px;
+  font-weight: 600;
+  text-align: right;
+  color: var(--k-ink-2);
+}
+
+.tp-card-icon .k-icon {
+  width: 15px;
+  height: 15px;
+}
+
+/* ---------- dialogs (shell keeps App.css's fixed backdrop) ---------- */
+.k-app.app-shell .k-request-form-shell {
+  background: color-mix(in srgb, var(--k-overlay) 58%, transparent);
+  backdrop-filter: blur(3px);
+}
+
+.k-app.app-shell .pg-dialog {
+  box-sizing: border-box;
+  width: min(760px, calc(100vw - 48px));
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+  padding: 20px;
+  border: 1px solid var(--k-line);
+  border-radius: 18px;
+  background: var(--k-card);
+  box-shadow: 0 30px 60px -30px rgba(10, 6, 30, 0.45);
+  font-family: "Inter Variable", "Inter", "IBM Plex Sans Arabic", system-ui, sans-serif;
+  color: var(--k-ink);
+  animation: pg-dialog-in 180ms ease-out;
+}
+
+@keyframes pg-dialog-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.pg-dialog-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.pg-dialog-head h2 {
+  font-size: 17px;
+  font-weight: 800;
+  color: var(--k-ink);
+}
+
+.pg-dialog-head p {
+  margin-top: 3px;
+  font-size: 11.5px;
+  color: var(--k-muted);
+}
+
+.k-app.app-shell .pg-dialog-close {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid var(--k-line);
+  border-radius: 999px;
+  background: var(--k-card);
+  font-size: 18px;
+  line-height: 1;
+  color: var(--k-muted);
+  cursor: pointer;
+}
+
+.k-app.app-shell .pg-dialog-close:hover {
+  color: var(--k-ink);
+  border-color: var(--k-plum-2);
+}
+
+/* the dialog is portalled by position only; it still lives in .pg-page,
+   so the scoped form rules above apply inside it */
+
+/* ---------- request history ---------- */
+.pg-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.pg-record + .pg-record,
+.pg-list > .pg-record-row + .pg-record-row {
+  border-top: 1px solid var(--k-line-2);
+}
+
+.pg-record-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) auto auto auto auto;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 2px;
+  font-size: 11.5px;
+  color: var(--k-muted);
+}
+
+.pg-record-row strong {
+  color: var(--k-ink);
+  font-size: 12px;
+}
+
+.pg-list > .pg-record-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.pg-list > .pg-record-row > span:last-child {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.k-app.app-shell .pg-record-row > button {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--k-plum-2);
+  cursor: pointer;
+}
+
+.pg-record-details {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 12px;
+  margin: 0 2px 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--k-bg-2);
+  font-size: 11.5px;
+}
+
+.pg-record-details span {
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--k-muted);
+}
+
+.pg-record-details p {
+  color: var(--k-ink-2);
+}
+
+.pg-empty {
+  margin: 0;
+  padding: 22px 0;
+  font-size: 11.5px;
+  text-align: center;
+  color: var(--k-muted);
+}
+
+/* ---------- saved break card + stat cells ---------- */
+.pg-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.pg-stats > div {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 11px 13px;
+  border: 1px solid var(--k-line);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--k-teal) 6%, var(--k-card));
+}
+
+.pg-stats strong {
+  font-size: 18px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--k-ink);
+}
+
+.pg-stat-label {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--k-muted);
+}
+
+.k-break-bank > p:not(.pg-muted) {
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--k-muted);
+}
+
+/* ---------- meeting ---------- */
+.pg-meeting-live {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 18px 12px;
+  border: 1px solid color-mix(in srgb, var(--k-green) 28%, var(--k-line));
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--k-green) 6%, var(--k-card));
+  text-align: center;
+}
+
+.pg-live-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 11px;
+  border-radius: 999px;
+  background: var(--k-green-2);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--k-green);
+}
+
+.pg-live-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--k-green);
+  animation: appLiveHalo 2.8s ease-out infinite;
+}
+
+.pg-meeting-clock {
+  margin: 0;
+  font-size: 40px;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  color: var(--k-ink);
+}
+
+.pg-meeting-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--k-ink);
+}
+
+.pg-meeting-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 2px;
+  font-size: 12px;
+  color: var(--k-ink);
+}
+
+.pg-meeting-list li + li {
+  border-top: 1px solid var(--k-line-2);
+}
+
+/* ---------- settings ---------- */
+.pg-details-panel > summary {
+  font-size: 14.5px;
+  font-weight: 700;
+  color: var(--k-ink);
+  cursor: pointer;
+}
+
+.pg-dl {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+}
+
+.pg-dl > div {
+  display: grid;
+  grid-template-columns: 170px minmax(0, 1fr);
+  gap: 12px;
+  padding: 9px 2px;
+  font-size: 12px;
+}
+
+.pg-dl > div + div {
+  border-top: 1px solid var(--k-line-2);
+}
+
+.pg-dl dt {
+  font-weight: 600;
+  color: var(--k-muted);
+}
+
+.pg-dl dd {
+  margin: 0;
+  color: var(--k-ink);
+}
+
+/* ---------- tasks ---------- */
+.pg-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.pg-search {
+  position: relative;
+  min-width: 0;
+  flex: 1;
+}
+
+.pg-search > i {
+  position: absolute;
+  top: 50%;
+  left: 12px;
+  z-index: 1;
+  transform: translateY(-50%);
+  color: var(--k-faint);
+}
+
+.k-app.app-shell[data-theme] .pg-page .pg-search input {
+  padding-left: 34px;
+}
+
+.pg-task-table {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--k-line);
+  border-radius: 12px;
+}
+
+.pg-task-row {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1.1fr) 120px 90px;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 10px 14px;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  color: var(--k-ink);
+}
+
+.k-app.app-shell button.pg-task-row {
+  border-radius: 0;
+  cursor: pointer;
+}
+
+.pg-task-row + .pg-task-row {
+  border-top: 1px solid var(--k-line-2);
+}
+
+.k-app.app-shell button.pg-task-row:hover:not(:disabled) {
+  background: var(--k-hover);
+}
+
+.k-app.app-shell button.pg-task-row.is-selected {
+  background: color-mix(in srgb, var(--k-pink) 9%, var(--k-card));
+}
+
+.pg-task-row-head {
+  padding-block: 8px;
+  background: var(--k-bg-2);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--k-muted);
+}
+
+.pg-task-name {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+}
+
+.pg-task-name > i {
+  flex: none;
+  font-size: 16px;
+  color: var(--k-faint);
+}
+
+.is-selected .pg-task-name > i {
+  color: var(--k-pink);
+}
+
+.pg-task-name strong,
+.pg-task-name small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pg-task-name strong {
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.pg-task-name small {
+  margin-top: 1px;
+  font-size: 10.5px;
+  color: var(--k-muted);
+}
+
+.pg-task-cell {
+  overflow: hidden;
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--k-ink-2);
+}
+
+.pg-task-row > span:last-child {
+  text-align: right;
+}
+
+.pg-checklist {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--k-line-2);
+  border-radius: 12px;
+  background: var(--k-bg-2);
+}
+
+.pg-checklist-items {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.pg-check-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 10px;
+  border: 1px solid var(--k-line);
+  border-radius: 10px;
+  background: var(--k-card);
+}
+
+.pg-check-item.selected {
+  border-color: var(--k-pink);
+}
+
+.k-app.app-shell[data-theme] .pg-page .pg-check-item label {
+  flex-direction: row;
+  align-items: center;
+  gap: 9px;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--k-ink);
+}
+
+.pg-check-item.done label span {
+  color: var(--k-muted);
+  text-decoration: line-through;
+}
+
+.pg-check-item input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--k-pink);
+}
+
+.pg-danger-row {
+  padding: 6px 10px;
+  border-radius: 10px;
+  background: var(--k-rose-2);
+  color: var(--k-rose);
+}
+
+.pg-inline-add {
+  display: flex;
+  gap: 8px;
+}
+
+/* ---------- insights ---------- */
+.pg-insights {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.pg-insight-total {
+  display: block;
+  margin-top: 4px;
+  font-size: 30px;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  color: var(--k-plum-2);
+}
+
+.pg-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.pg-bar-row {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.pg-bar-row b {
+  color: var(--k-ink);
+  font-size: 12px;
+}
+
+.pg-bar-row .tp-breakdown-bar {
+  height: 7px;
+}
+
+/* ---------- sign-in ---------- */
+.k-app.app-shell[data-theme] > .pg-signin {
+  grid-row: 3;
+  grid-column: 1 / -1;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--k-bg) 35%, transparent), var(--k-bg) 92%),
+    url("../assets/login-bg.jpg") center / cover no-repeat;
+}
+
+.pg-signin-card {
+  box-sizing: border-box;
+  display: flex;
+  width: min(420px, 100%);
+  flex-direction: column;
+  gap: 14px;
+  padding: 26px 26px 24px;
+  box-shadow: 0 30px 60px -36px rgba(10, 6, 30, 0.55);
+}
+
+/* brand mark above the heading (decorative, so it stays out of the markup) */
+.pg-signin-card::before {
+  content: "";
+  width: 46px;
+  height: 46px;
+  border: 1px solid var(--k-line);
+  border-radius: 999px;
+  background: #ffffff url("../assets/khaliduo-logo.png") center / 38px no-repeat;
+}
+
+.pg-signin-card h2 {
+  font-size: 21px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: var(--k-ink);
+}
+
+.pg-signin-card > p {
+  margin: -6px 0 0;
+  font-size: 12px;
+  color: var(--k-muted);
+}
+
+.pg-signin-card .pg-btn {
+  width: 100%;
+  height: 42px;
+}
+
+@media (max-width: 1100px) {
+  .pg-grid-4 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}

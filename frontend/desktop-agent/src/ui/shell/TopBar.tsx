@@ -2,7 +2,7 @@ import logoUrl from "../assets/khaliduo-logo.png";
 import type { Mode, Skin } from "../theme/skin";
 import { ThemePicker } from "./ThemePicker";
 
-export type ShellView = "home" | "tasks" | "requests" | "meeting" | "settings";
+export type ShellView = "home" | "tasks" | "requests" | "meeting" | "insights" | "settings";
 
 /** Matches App.tsx's timerTone; the shell only colours by it. */
 export type ShellTone = "running" | "paused" | "stopped" | "overtime";
@@ -40,6 +40,7 @@ const NAV: { key: ShellView; label: string; icon: string; activeIcon: string }[]
   { key: "tasks", label: "Tasks", icon: "ri-task-line", activeIcon: "ri-task-fill" },
   { key: "requests", label: "Requests", icon: "ri-calendar-check-line", activeIcon: "ri-calendar-check-fill" },
   { key: "meeting", label: "Meeting", icon: "ri-video-chat-line", activeIcon: "ri-video-chat-fill" },
+  { key: "insights", label: "Insights", icon: "ri-bar-chart-2-line", activeIcon: "ri-bar-chart-2-fill" },
   { key: "settings", label: "Settings", icon: "ri-settings-3-line", activeIcon: "ri-settings-3-fill" },
 ];
 

@@ -492,7 +492,7 @@ function App() {
   const [enrollmentError, setEnrollmentError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [activeView, setActiveView] = useState<
-    "home" | "tasks" | "requests" | "meeting" | "settings"
+    "home" | "tasks" | "requests" | "meeting" | "insights" | "settings"
   >("home");
   const [projectFilterId, setProjectFilterId] = useState("");
   const [sessionNote, setSessionNote] = useState("");
@@ -1923,6 +1923,7 @@ function App() {
               }}
             />
           )}
+          {activeView === "insights" && <InsightsView status={status} />}
           {activeView === "settings" && (
             <SettingsView
               status={status}
@@ -2005,11 +2006,11 @@ function EnrollmentView({
   onCredentialEnrollment: (event: FormEvent<HTMLFormElement>) => void;
 }) {
   return (
-    <section className="k-enrollment">
-      <div className="k-panel k-enroll-card">
+    <section className="app-page pg-signin">
+      <div className="tp-card pg-signin-card">
         <h2>Sign in to set up this computer</h2>
         <p>Your device will be linked to your employee account.</p>
-        <form className="k-form" onSubmit={onCredentialEnrollment}>
+        <form className="pg-form" onSubmit={onCredentialEnrollment}>
           <label>
             Work email
             <input
@@ -2037,7 +2038,7 @@ function EnrollmentView({
           </label>
           <button
             type="submit"
-            className="k-primary k-enroll-submit"
+            className="pg-btn pg-btn-primary"
             disabled={isSubmitting || !isDesktopRuntime}
           >
             {isSubmitting ? "Signing in..." : "Sign in and link device"}
@@ -2056,10 +2057,10 @@ function Sidebar({
   onOpenDashboard,
   isTracking,
 }: {
-  activeView: "home" | "tasks" | "requests" | "meeting" | "settings";
+  activeView: "home" | "tasks" | "requests" | "meeting" | "insights" | "settings";
   status: AgentStatus;
   onViewChange: (
-    view: "home" | "tasks" | "requests" | "meeting" | "settings",
+    view: "home" | "tasks" | "requests" | "meeting" | "insights" | "settings",
   ) => void;
   onOpenDashboard: () => void;
   isTracking: boolean;
@@ -2714,12 +2715,299 @@ function TasksView({
     if (deleted) setSelectedChecklistItemIds([]);
   }
 
+  // View-only filtering of the same trackable task list; picking a row calls
+  // the existing onTaskChange.
+  const [taskQuery, setTaskQuery] = useState("");
+  const [taskStageFilter, setTaskStageFilter] = useState<string>("all");
+  const stageFilters = [
+    "all",
+    ...["backlog", "assigned", "in_progress"].filter((stage) =>
+      trackableTasks.some((task) => task.stage === stage),
+    ),
+  ];
+  const query = taskQuery.trim().toLowerCase();
+  const visibleTaskRows = trackableTasks.filter(
+    (task) =>
+      (taskStageFilter === "all" || task.stage === taskStageFilter) &&
+      (!query ||
+        [task.name, task.projectName, task.teamName]
+          .join(" ")
+          .toLowerCase()
+          .includes(query)),
+  );
+
   return (
-    <section className="k-page">
-      <div className="k-panel">
-        <h2>Create task request</h2>
-        <div className="k-form-grid">
-          <label className="wide">
+    <section className="app-page pg-page">
+      <header className="pg-head pg-head-row">
+        <div>
+          <h1>My tasks</h1>
+          <p>Choose what the tracker files your time under.</p>
+        </div>
+        <button
+          type="button"
+          className={`pg-btn${status.trackingPaused ? " pg-btn-primary" : ""}`}
+          onClick={onTrackingToggle}
+        >
+          {status.trackingPaused ? "Resume" : "Pause"}
+        </button>
+      </header>
+      {trackingControlMessage && (
+        <p className="k-success">{trackingControlMessage}</p>
+      )}
+      {taskError && <p className="k-error">{taskError}</p>}
+
+      <section className="tp-card pg-card" aria-label="Your tasks">
+        <div className="pg-toolbar">
+          <label className="pg-search">
+            <i className="ri-search-line" aria-hidden="true" />
+            <input
+              value={taskQuery}
+              onChange={(event) => setTaskQuery(event.target.value)}
+              placeholder="Search tasks, projects or teams"
+              aria-label="Search tasks"
+            />
+          </label>
+          <div className="pg-chips" aria-label="Filter tasks">
+            {stageFilters.map((stage) => (
+              <button
+                key={stage}
+                type="button"
+                className={taskStageFilter === stage ? "active" : ""}
+                onClick={() => setTaskStageFilter(stage)}
+              >
+                {stage === "all" ? "All" : taskStageLabel(stage)}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="pg-task-table">
+          <div className="pg-task-row pg-task-row-head" aria-hidden="true">
+            <span>Task</span>
+            <span>Project</span>
+            <span>Stage</span>
+            <span>Tracked</span>
+          </div>
+          {visibleTaskRows.map((task) => {
+            const selected = status.selectedTask?.id === task.id;
+            return (
+              <button
+                key={task.id}
+                type="button"
+                className={`pg-task-row${selected ? " is-selected" : ""}`}
+                aria-pressed={selected}
+                disabled={isSubmittingTask}
+                onClick={() => onTaskChange(task.id)}
+              >
+                <span className="pg-task-name">
+                  <i
+                    className={selected ? "ri-checkbox-circle-fill" : "ri-checkbox-blank-circle-line"}
+                    aria-hidden="true"
+                  />
+                  <span>
+                    <strong dir="auto">{task.name}</strong>
+                    <small>{task.teamName}</small>
+                  </span>
+                </span>
+                <span className="pg-task-cell">{task.projectName}</span>
+                <span>
+                  <em className={`pg-status ${task.stage}`}>
+                    {taskStageLabel(task.stage)}
+                  </em>
+                </span>
+                <span className="pg-task-cell app-num">
+                  {formatDuration(task.activeSeconds)}
+                </span>
+              </button>
+            );
+          })}
+          {visibleTaskRows.length === 0 && (
+            <p className="pg-empty">
+              {trackableTasks.length
+                ? "No tasks match this filter."
+                : "No tasks are assigned to you yet."}
+            </p>
+          )}
+        </div>
+      </section>
+
+      {selectedTask && (
+        <section className="tp-card pg-card pg-task-panel">
+          <div className="pg-card-head">
+            <div>
+              <h2 dir="auto">{selectedTask.name}</h2>
+              <p className="pg-muted">
+                {selectedTask.teamName} / {selectedTask.projectName}
+                {selectedTask.description
+                  ? ` · ${selectedTask.description}`
+                  : ""}
+              </p>
+            </div>
+            <span className={`pg-status ${selectedTask.stage}`}>
+              {selectedTask.stage.replaceAll("_", " ")}
+            </span>
+          </div>
+
+          <div className="pg-grid">
+            <label>
+              Stage
+              <select
+                value={status.selectedTask?.stage ?? "assigned"}
+                disabled={
+                  !status.selectedTask ||
+                  isSubmittingTask ||
+                  !status.selectedTask.canUpdateStage
+                }
+                onChange={(event) =>
+                  onTaskStage(
+                    event.target.value as
+                      "assigned" | "in_progress" | "ready_for_review" | "blocked",
+                  )
+                }
+              >
+                {status.selectedTask?.stage === "backlog" && (
+                  <option value="backlog">Backlog</option>
+                )}
+                <option value="assigned">Assigned</option>
+                <option value="in_progress">In progress</option>
+                <option value="ready_for_review">Submit as finished</option>
+                <option value="blocked">Report blocked</option>
+              </select>
+            </label>
+            <div className="pg-field-action">
+              <button
+                type="button"
+                className="pg-link"
+                disabled={isSubmittingTask}
+                onClick={() => onTaskChange("none")}
+              >
+                Stop filing time under this task
+              </button>
+            </div>
+          </div>
+
+          <div className="pg-checklist">
+            <div className="pg-row-between">
+              <strong>Checklist</strong>
+              <small>
+                {completedChecklistCount}/{checklist.length || 0} complete
+              </small>
+            </div>
+            {checklist.length > 0 ? (
+              <div className="pg-checklist-items">
+                {checklist.map((item) => {
+                  const selected = selectedChecklistItemIds.includes(item.id);
+                  return (
+                    <div
+                      key={item.id}
+                      className={`pg-check-item${item.completed ? " done" : ""}${selected ? " selected" : ""}`}
+                    >
+                      <label>
+                        <input
+                          type="checkbox"
+                          checked={item.completed}
+                          disabled={!canEditSelectedTask || isSubmittingTask}
+                          onChange={(event) =>
+                            onChecklistToggle(item.id, event.target.checked)
+                          }
+                        />
+                        <span dir="auto">{item.title}</span>
+                      </label>
+                      {canEditSelectedTask && (
+                        <button
+                          type="button"
+                          className="pg-btn pg-btn-xs"
+                          aria-pressed={selected}
+                          disabled={isSubmittingTask}
+                          onClick={() => toggleChecklistSelection(item.id)}
+                        >
+                          {selected ? "Selected" : "Select"}
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+                {canEditSelectedTask && selectedChecklistItemIds.length > 0 && (
+                  <div className="pg-row-between pg-danger-row">
+                    <span>{selectedChecklistItemIds.length} selected</span>
+                    <button
+                      type="button"
+                      className="pg-btn pg-btn-sm pg-btn-danger"
+                      disabled={isSubmittingTask}
+                      onClick={() => void deleteSelectedChecklistItems()}
+                    >
+                      {isSubmittingTask
+                        ? "Deleting..."
+                        : `Delete selected (${selectedChecklistItemIds.length})`}
+                    </button>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <p className="pg-muted">
+                No checklist yet. Add the steps you need to finish.
+              </p>
+            )}
+            {canEditSelectedTask && (
+              <div className="pg-inline-add">
+                <input
+                  value={newChecklistTitle}
+                  maxLength={500}
+                  placeholder="Add a checklist step..."
+                  disabled={isSubmittingTask}
+                  onChange={(event) => onChecklistTitleChange(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      onAddChecklistItem();
+                    }
+                  }}
+                />
+                <button
+                  type="button"
+                  className="pg-btn"
+                  disabled={!newChecklistTitle.trim() || isSubmittingTask}
+                  onClick={onAddChecklistItem}
+                >
+                  Add
+                </button>
+              </div>
+            )}
+          </div>
+
+          <label className="pg-field-block">
+            What did you do?
+            <textarea
+              value={taskCompletionNote}
+              maxLength={1000}
+              rows={3}
+              placeholder="Write what you completed, links, blockers, or delivery notes..."
+              disabled={!canEditSelectedTask || isSubmittingTask}
+              onChange={(event) => onTaskCompletionNoteChange(event.target.value)}
+            />
+          </label>
+          <div className="pg-form-foot">
+            <span>Submitting moves the task to review.</span>
+            <button
+              type="button"
+              className="pg-btn pg-btn-primary"
+              disabled={!canEditSelectedTask || isSubmittingTask}
+              onClick={() => onTaskStage("ready_for_review", taskCompletionNote)}
+            >
+              {isSubmittingTask ? "Submitting..." : "Complete / submit work"}
+            </button>
+          </div>
+        </section>
+      )}
+
+      <section className="tp-card pg-card" aria-label="Create task request">
+        <div className="pg-card-head">
+          <div>
+            <h2>Create task request</h2>
+            <p className="pg-muted">Ask for a new task to be added to your list.</p>
+          </div>
+        </div>
+        <div className="pg-grid">
+          <label className="pg-wide">
             Task name
             <input
               value={newTaskName}
@@ -2729,16 +3017,14 @@ function TasksView({
               onChange={(event) => onNewTaskNameChange(event.target.value)}
             />
           </label>
-          <label className="wide">
+          <label className="pg-wide">
             Description
             <input
               value={newTaskDescription}
               maxLength={1000}
               placeholder="Expected outcome or useful context"
               disabled={isSubmittingTask}
-              onChange={(event) =>
-                onNewTaskDescriptionChange(event.target.value)
-              }
+              onChange={(event) => onNewTaskDescriptionChange(event.target.value)}
             />
           </label>
           <label>
@@ -2793,218 +3079,26 @@ function TasksView({
             />
           </label>
         </div>
-        <button
-          className="k-primary"
-          disabled={!newTaskName.trim() || isSubmittingTask}
-          onClick={onCreateTask}
-        >
-          {isSubmittingTask ? "Submitting..." : "Submit request"}
-        </button>
-      </div>
-
-      <div className="k-panel">
-        <h2>Current task</h2>
-        <div className="k-form-grid">
-          <label>
-            Task
-            <select
-              value={status.selectedTask?.id ?? "none"}
-              disabled={isSubmittingTask}
-              onChange={(event) => onTaskChange(event.target.value)}
-            >
-              <option value="none">Choose a task</option>
-              {trackableTasks.map((task) => (
-                <option key={task.id} value={task.id}>
-                  {task.teamName} / {task.projectName} / {task.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Stage
-            <select
-              value={status.selectedTask?.stage ?? "assigned"}
-              disabled={
-                !status.selectedTask ||
-                isSubmittingTask ||
-                !status.selectedTask.canUpdateStage
-              }
-              onChange={(event) =>
-                onTaskStage(
-                  event.target.value as
-                    "assigned" | "in_progress" | "ready_for_review" | "blocked",
-                )
-              }
-            >
-              {status.selectedTask?.stage === "backlog" && (
-                <option value="backlog">Backlog</option>
-              )}
-              <option value="assigned">Assigned</option>
-              <option value="in_progress">In progress</option>
-              <option value="ready_for_review">Submit as finished</option>
-              <option value="blocked">Report blocked</option>
-            </select>
-          </label>
+        <div className="pg-form-foot">
+          <span />
+          <button
+            type="button"
+            className="pg-btn pg-btn-primary"
+            disabled={!newTaskName.trim() || isSubmittingTask}
+            onClick={onCreateTask}
+          >
+            {isSubmittingTask ? "Submitting..." : "Submit request"}
+          </button>
         </div>
-        {selectedTask && (
-          <div className="k-task-work-card">
-            <div className="k-task-work-header">
-              <div>
-                <h3>{selectedTask.name}</h3>
-                <p>
-                  {selectedTask.teamName} / {selectedTask.projectName}
-                  {selectedTask.description
-                    ? ` · ${selectedTask.description}`
-                    : ""}
-                </p>
-              </div>
-              <span className="k-task-stage-pill">
-                {selectedTask.stage.replaceAll("_", " ")}
-              </span>
-            </div>
-
-            <div className="k-checklist-box">
-              <div className="k-section-row">
-                <strong>Checklist</strong>
-                <small>
-                  {completedChecklistCount}/{checklist.length || 0} complete
-                </small>
-              </div>
-              {checklist.length > 0 ? (
-                <div className="k-checklist-items">
-                  {checklist.map((item) => {
-                    const selected = selectedChecklistItemIds.includes(item.id);
-                    return (
-                      <div
-                        key={item.id}
-                        className={`k-checklist-item${item.completed ? " done" : ""}${selected ? " selected" : ""}`}
-                      >
-                        <label>
-                          <input
-                            type="checkbox"
-                            checked={item.completed}
-                            disabled={!canEditSelectedTask || isSubmittingTask}
-                            onChange={(event) =>
-                              onChecklistToggle(item.id, event.target.checked)
-                            }
-                          />
-                          <span>{item.title}</span>
-                        </label>
-                        {canEditSelectedTask && (
-                          <button
-                            type="button"
-                            className="k-checklist-select"
-                            aria-pressed={selected}
-                            disabled={isSubmittingTask}
-                            onClick={() => toggleChecklistSelection(item.id)}
-                          >
-                            {selected ? "Selected" : "Select"}
-                          </button>
-                        )}
-                      </div>
-                    );
-                  })}
-                  {canEditSelectedTask &&
-                    selectedChecklistItemIds.length > 0 && (
-                      <div className="k-checklist-delete-row">
-                        <span>{selectedChecklistItemIds.length} selected</span>
-                        <button
-                          type="button"
-                          disabled={isSubmittingTask}
-                          onClick={() => void deleteSelectedChecklistItems()}
-                        >
-                          {isSubmittingTask
-                            ? "Deleting..."
-                            : `Delete selected (${selectedChecklistItemIds.length})`}
-                        </button>
-                      </div>
-                    )}
-                </div>
-              ) : (
-                <p className="k-muted">
-                  No checklist yet. Add the steps you need to finish.
-                </p>
-              )}
-              {canEditSelectedTask && (
-                <div className="k-checklist-add">
-                  <input
-                    value={newChecklistTitle}
-                    maxLength={500}
-                    placeholder="Add a checklist step..."
-                    disabled={isSubmittingTask}
-                    onChange={(event) =>
-                      onChecklistTitleChange(event.target.value)
-                    }
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter") {
-                        event.preventDefault();
-                        onAddChecklistItem();
-                      }
-                    }}
-                  />
-                  <button
-                    type="button"
-                    disabled={!newChecklistTitle.trim() || isSubmittingTask}
-                    onClick={onAddChecklistItem}
-                  >
-                    Add
-                  </button>
-                </div>
-              )}
-            </div>
-
-            <label className="k-completion-note">
-              What did you do?
-              <textarea
-                value={taskCompletionNote}
-                maxLength={1000}
-                rows={3}
-                placeholder="Write what you completed, links, blockers, or delivery notes..."
-                disabled={!canEditSelectedTask || isSubmittingTask}
-                onChange={(event) =>
-                  onTaskCompletionNoteChange(event.target.value)
-                }
-              />
-            </label>
-            <button
-              className="k-primary"
-              disabled={!canEditSelectedTask || isSubmittingTask}
-              onClick={() =>
-                onTaskStage("ready_for_review", taskCompletionNote)
-              }
-            >
-              {isSubmittingTask ? "Submitting..." : "Complete / submit work"}
-            </button>
-          </div>
-        )}
-        <div className="k-task-list k-task-list-grid">
-          {trackableTasks.map((task) => (
-            <button
-              key={task.id}
-              type="button"
-              className={status.selectedTask?.id === task.id ? "active" : ""}
-              disabled={isSubmittingTask}
-              onClick={() => onTaskChange(task.id)}
-            >
-              <span>{task.name}</span>
-              <small>{task.projectName}</small>
-              <b>{formatDuration(task.activeSeconds)}</b>
-            </button>
-          ))}
-        </div>
-        <button
-          className={status.trackingPaused ? "k-primary" : "k-warning"}
-          onClick={onTrackingToggle}
-        >
-          {status.trackingPaused ? "Resume" : "Pause"}
-        </button>
-        {trackingControlMessage && (
-          <p className="k-success">{trackingControlMessage}</p>
-        )}
-        {taskError && <p className="k-error">{taskError}</p>}
-      </div>
+      </section>
     </section>
   );
+}
+
+function taskStageLabel(stage: string) {
+  if (stage === "in_progress") return "In progress";
+  if (stage === "ready_for_review") return "In review";
+  return stage.charAt(0).toUpperCase() + stage.slice(1).replaceAll("_", " ");
 }
 
 type RequestCentreProps = {
@@ -3145,8 +3239,8 @@ function RequestCentreView(props: RequestCentreProps) {
   }, [expandedRequest, props]);
 
   return (
-    <section className="k-page k-requests-page">
-      <header className="k-page-header">
+    <section className="app-page pg-page">
+      <header className="pg-head">
         <div>
           <h1>Time &amp; Leave Requests</h1>
           <p>
@@ -3155,7 +3249,7 @@ function RequestCentreView(props: RequestCentreProps) {
         </div>
       </header>
 
-      <section className="k-summary-strip" aria-label="Request balances">
+      <section className="tp-card tp-workday" aria-label="Request balances">
         <div>
           <span>Today&apos;s scheduled shift</span>
           <strong>{scheduledShift}</strong>
@@ -3174,33 +3268,33 @@ function RequestCentreView(props: RequestCentreProps) {
 
       {props.leadingContent}
 
-      <section className="k-request-centre">
-        <div className="k-section-heading">
+      <section className="tp-card pg-card">
+        <div className="pg-card-head">
           <h2>Request Centre</h2>
           <span>Choose one request type</span>
         </div>
 
         <article
-          className={`k-request-option ${expandedRequest === "idle" ? "is-open" : ""}`}
+          className={`pg-option ${expandedRequest === "idle" ? "is-open" : ""}`}
         >
-          <div className="k-request-option-row">
-            <span className="k-request-icon">
+          <div className="pg-option-row">
+            <span className="tp-card-icon">
               <KIcon name="idle" />
             </span>
-            <div className="k-request-copy">
+            <div className="pg-option-copy">
               <h3>Explain Idle Time</h3>
               <p>
                 Explain an idle period detected during your scheduled shift.
               </p>
             </div>
-            <strong className="k-request-state">
+            <strong className="pg-option-state">
               {idleRequestOptions.length
                 ? `${idleRequestOptions.length} idle period${idleRequestOptions.length === 1 ? "" : "s"} require explanation`
                 : "No unexplained idle periods during your scheduled working hours."}
             </strong>
             <button
               type="button"
-              className="k-request-action"
+              className="pg-btn pg-btn-sm"
               disabled={!idleRequestOptions.length}
               aria-expanded={expandedRequest === "idle"}
               onClick={() => toggle("idle")}
@@ -3218,13 +3312,13 @@ function RequestCentreView(props: RequestCentreProps) {
               }}
             >
               <form
-                className="k-form k-request-dialog"
+                className="pg-form pg-dialog"
                 role="dialog"
                 aria-modal="true"
                 aria-labelledby="idle-request-title"
                 onSubmit={props.onSubmitIdleTimeRequest}
               >
-                <header className="k-request-dialog-header">
+                <header className="pg-dialog-head">
                   <div>
                     <h2 id="idle-request-title">Explain Idle Time</h2>
                     <p>
@@ -3234,14 +3328,14 @@ function RequestCentreView(props: RequestCentreProps) {
                   </div>
                   <button
                     type="button"
-                    className="k-dialog-close"
+                    className="pg-dialog-close"
                     aria-label="Close request"
                     onClick={() => props.onExpandedRequestChange(null)}
                   >
                     ×
                   </button>
                 </header>
-                <div className="k-request-form-grid">
+                <div className="pg-grid">
                   <label>
                     Idle period
                     <select
@@ -3291,7 +3385,7 @@ function RequestCentreView(props: RequestCentreProps) {
                   />
                   <small>Required · at least 10 characters</small>
                 </label>
-                <div className="k-form-footer">
+                <div className="pg-form-foot">
                   <span>
                     Idle period:{" "}
                     {selectedIdle
@@ -3302,7 +3396,7 @@ function RequestCentreView(props: RequestCentreProps) {
                       : ""}
                   </span>
                   <button
-                    className="k-primary"
+                    className="pg-btn pg-btn-primary"
                     disabled={
                       props.isSubmittingTimeRequest ||
                       !selectedIdle ||
@@ -3326,24 +3420,24 @@ function RequestCentreView(props: RequestCentreProps) {
         </article>
 
         <article
-          className={`k-request-option ${expandedRequest === "early" ? "is-open" : ""}`}
+          className={`pg-option ${expandedRequest === "early" ? "is-open" : ""}`}
         >
-          <div className="k-request-option-row">
-            <span className="k-request-icon">
+          <div className="pg-option-row">
+            <span className="tp-card-icon">
               <KIcon name="timer" />
             </span>
-            <div className="k-request-copy">
+            <div className="pg-option-copy">
               <h3>Early Leave Permission</h3>
               <p>
                 Request permission to leave before your scheduled shift ends.
               </p>
             </div>
-            <strong className="k-request-state">
+            <strong className="pg-option-state">
               {weeklyRemaining} of {weeklyAllowance} weekly minutes remaining
             </strong>
             <button
               type="button"
-              className="k-request-action"
+              className="pg-btn pg-btn-sm"
               disabled={weeklyRemaining < 1 || !policy?.shift_end}
               aria-expanded={expandedRequest === "early"}
               onClick={() => toggle("early")}
@@ -3361,13 +3455,13 @@ function RequestCentreView(props: RequestCentreProps) {
               }}
             >
               <form
-                className="k-form k-request-dialog"
+                className="pg-form pg-dialog"
                 role="dialog"
                 aria-modal="true"
                 aria-labelledby="early-request-title"
                 onSubmit={props.onSubmitEarlyLeaveRequest}
               >
-                <header className="k-request-dialog-header">
+                <header className="pg-dialog-head">
                   <div>
                     <h2 id="early-request-title">Early Leave Permission</h2>
                     <p>
@@ -3377,14 +3471,14 @@ function RequestCentreView(props: RequestCentreProps) {
                   </div>
                   <button
                     type="button"
-                    className="k-dialog-close"
+                    className="pg-dialog-close"
                     aria-label="Close request"
                     onClick={() => props.onExpandedRequestChange(null)}
                   >
                     ×
                   </button>
                 </header>
-                <div className="k-request-form-grid k-request-form-grid-four">
+                <div className="pg-grid pg-grid-4">
                   <label>
                     Selected date
                     <input
@@ -3437,13 +3531,13 @@ function RequestCentreView(props: RequestCentreProps) {
                     required
                   />
                 </label>
-                <div className="k-form-footer">
+                <div className="pg-form-foot">
                   <span>
                     {Math.max(0, weeklyRemaining - earlyLeaveMinutes)} min would
                     remain
                   </span>
                   <button
-                    className="k-primary"
+                    className="pg-btn pg-btn-primary"
                     disabled={
                       props.isSubmittingTimeRequest ||
                       earlyLeaveMinutes < 1 ||
@@ -3468,22 +3562,22 @@ function RequestCentreView(props: RequestCentreProps) {
         </article>
 
         <article
-          className={`k-request-option ${expandedRequest === "leave" ? "is-open" : ""}`}
+          className={`pg-option ${expandedRequest === "leave" ? "is-open" : ""}`}
         >
-          <div className="k-request-option-row">
-            <span className="k-request-icon">
+          <div className="pg-option-row">
+            <span className="tp-card-icon">
               <KIcon name="calendar" />
             </span>
-            <div className="k-request-copy">
+            <div className="pg-option-copy">
               <h3>Annual Leave</h3>
               <p>Request one or more complete working days of annual leave.</p>
             </div>
-            <strong className="k-request-state">
+            <strong className="pg-option-state">
               {leaveBalance} working days available
             </strong>
             <button
               type="button"
-              className="k-request-action"
+              className="pg-btn pg-btn-sm"
               disabled={leaveBalance <= 0}
               aria-expanded={expandedRequest === "leave"}
               onClick={() => toggle("leave")}
@@ -3501,27 +3595,27 @@ function RequestCentreView(props: RequestCentreProps) {
               }}
             >
               <form
-                className="k-form k-request-dialog"
+                className="pg-form pg-dialog"
                 role="dialog"
                 aria-modal="true"
                 aria-labelledby="leave-request-title"
                 onSubmit={props.onSubmitLeaveRequest}
               >
-                <header className="k-request-dialog-header">
+                <header className="pg-dialog-head">
                   <div>
                     <h2 id="leave-request-title">Annual Leave</h2>
                     <p>Request one or more complete scheduled working days.</p>
                   </div>
                   <button
                     type="button"
-                    className="k-dialog-close"
+                    className="pg-dialog-close"
                     aria-label="Close request"
                     onClick={() => props.onExpandedRequestChange(null)}
                   >
                     ×
                   </button>
                 </header>
-                <div className="k-request-form-grid k-request-form-grid-four">
+                <div className="pg-grid pg-grid-4">
                   <label>
                     From date
                     <input
@@ -3558,7 +3652,7 @@ function RequestCentreView(props: RequestCentreProps) {
                     <input value={`${expectedLeaveBalance} days`} disabled />
                   </label>
                 </div>
-                <div className="k-request-calculation">
+                <div className="pg-calc">
                   <span>Current balance</span>
                   <strong>{leaveBalance} days</strong>
                   <span>After approval</span>
@@ -3575,10 +3669,10 @@ function RequestCentreView(props: RequestCentreProps) {
                     placeholder="Add any helpful context for HR..."
                   />
                 </label>
-                <div className="k-form-footer">
+                <div className="pg-form-foot">
                   <span>Only scheduled working days are counted.</span>
                   <button
-                    className="k-primary"
+                    className="pg-btn pg-btn-primary"
                     disabled={
                       props.isSubmittingLeaveRequest ||
                       selectedLeaveDays < 1 ||
@@ -3602,13 +3696,13 @@ function RequestCentreView(props: RequestCentreProps) {
         </article>
       </section>
 
-      <section className="k-request-history">
-        <div className="k-section-heading k-history-heading">
+      <section className="tp-card pg-card">
+        <div className="pg-card-head">
           <div>
             <h2>My Requests</h2>
             <span>Track every request from one place</span>
           </div>
-          <div className="k-filter-chips" aria-label="Filter requests">
+          <div className="pg-chips" aria-label="Filter requests">
             {(
               ["all", "pending", "approved", "rejected", "cancelled"] as const
             ).map((filter) => (
@@ -3623,16 +3717,16 @@ function RequestCentreView(props: RequestCentreProps) {
             ))}
           </div>
         </div>
-        <div className="k-request-list">
+        <div className="pg-list">
           {filteredRequests.length ? (
             filteredRequests.map((request) => (
-              <div className="k-request-record" key={request.id}>
-                <div className="k-request-record-row">
+              <div className="pg-record" key={request.id}>
+                <div className="pg-record-row">
                   <strong>{request.type}</strong>
                   <span>{request.period}</span>
                   <span>{request.duration}</span>
                   <span>Submitted {formatTimestamp(request.createdAt)}</span>
-                  <em className={`k-request-status ${request.status}`}>
+                  <em className={`pg-status ${request.status}`}>
                     {request.status}
                   </em>
                   <button
@@ -3649,7 +3743,7 @@ function RequestCentreView(props: RequestCentreProps) {
                   </button>
                 </div>
                 {openRequestId === request.id && (
-                  <div className="k-request-record-details">
+                  <div className="pg-record-details">
                     <span>Reason</span>
                     <p>{request.reason || "No notes provided."}</p>
                     {request.note && (
@@ -3663,7 +3757,7 @@ function RequestCentreView(props: RequestCentreProps) {
               </div>
             ))
           ) : (
-            <div className="k-empty-request-list">
+            <div className="pg-empty">
               No {requestFilter === "all" ? "" : `${requestFilter} `}requests
               yet.
             </div>
@@ -3727,29 +3821,29 @@ function BreakBankCard({ status }: { status: AgentStatus }) {
   const used = bank.used_seconds ?? bank.approved_seconds;
 
   return (
-    <section className="k-panel k-break-bank">
+    <section className="tp-card pg-card k-break-bank">
       <h2>Saved break time</h2>
       <p>
         When you work through a scheduled break, those minutes are saved. Idle
         time later today is covered from them automatically. There is nothing to
         claim. Saved minutes do not carry over to the next day.
       </p>
-      <div className="k-break-bank-stats">
+      <div className="pg-stats">
         <div>
-          <span className="k-break-bank-label">Left today</span>
+          <span className="pg-stat-label">Left today</span>
           <strong>{formatDuration(bank.remaining_seconds)}</strong>
         </div>
         <div>
-          <span className="k-break-bank-label">Saved today</span>
+          <span className="pg-stat-label">Saved today</span>
           <strong>{formatDuration(bank.earned_seconds)}</strong>
         </div>
         <div>
-          <span className="k-break-bank-label">Used on idle</span>
+          <span className="pg-stat-label">Used on idle</span>
           <strong>{formatDuration(used)}</strong>
         </div>
       </div>
       {bank.paid_late_allowance_seconds > 0 && (
-        <p className="k-break-bank-hint">
+        <p className="pg-muted">
           Paid late allowance applied today:{" "}
           {formatDuration(bank.paid_late_allowance_seconds)}.
         </p>
@@ -3853,15 +3947,15 @@ function MeetingView({
     : "";
 
   return (
-    <section className="k-page k-requests-page">
-      <article className="k-panel k-request-card">
-        <header className="k-request-card-header">
-          <span className="k-request-icon">
+    <section className="app-page pg-page">
+      <article className="tp-card pg-card">
+        <header className="pg-card-head">
+          <span className="tp-card-icon">
             <KIcon name="meeting" />
           </span>
           <div>
             <h2>Meeting Mode</h2>
-            <p className="k-muted">
+            <p className="pg-muted">
               Record an offline meeting or call. Screenshot capture continues as
               normal. The time is sent for review once it ends; approved meetings
               are paid, and genuine activity is preserved if it is rejected.
@@ -3870,17 +3964,17 @@ function MeetingView({
         </header>
 
         {active ? (
-          <div className="k-meeting-active">
-            <span className="k-meeting-live-chip">
-              <span className="k-meeting-live-dot" aria-hidden="true" />
+          <div className="pg-meeting-live">
+            <span className="pg-live-chip">
+              <span className="pg-live-dot" aria-hidden="true" />
               {meetingStateLabel(active.syncState, "pending", "active")}
             </span>
-            <p className="k-meeting-elapsed" aria-live="polite">
+            <p className="pg-meeting-clock app-num" aria-live="polite">
               {formatDuration(elapsedSeconds)}
             </p>
-            <p className="k-meeting-active-title">{active.title}</p>
-            <p className="k-muted">{active.reason}</p>
-            <p className="k-meeting-hint">
+            <p className="pg-meeting-title">{active.title}</p>
+            <p className="pg-muted">{active.reason}</p>
+            <p className="pg-muted">
               Becomes “Pending review” once its end is confirmed · ends
               automatically by {expectedEndClock}
             </p>
@@ -3889,7 +3983,7 @@ function MeetingView({
             )}
             <button
               type="button"
-              className="k-primary"
+              className="pg-btn pg-btn-primary"
               onClick={() => void handleEnd()}
               disabled={submitting}
             >
@@ -3897,7 +3991,7 @@ function MeetingView({
             </button>
           </div>
         ) : (
-          <form className="k-form" onSubmit={handleStart}>
+          <form className="pg-form" onSubmit={handleStart}>
             <label>
               Title
               <input
@@ -3936,7 +4030,7 @@ function MeetingView({
                 required
               />
             </label>
-            <button type="submit" className="k-primary" disabled={submitting}>
+            <button type="submit" className="pg-btn pg-btn-primary" disabled={submitting}>
               {submitting ? "Starting…" : "Start meeting"}
             </button>
           </form>
@@ -3945,20 +4039,20 @@ function MeetingView({
         {message && <p className="k-success">{message}</p>}
       </article>
 
-      <article className="k-panel k-request-card">
-        <header className="k-request-card-header">
-          <span className="k-request-icon">
+      <article className="tp-card pg-card">
+        <header className="pg-card-head">
+          <span className="tp-card-icon">
             <KIcon name="calendar" />
           </span>
           <div>
             <h2>Recent meetings</h2>
-            <p className="k-muted">Your latest Meeting Mode periods.</p>
+            <p className="pg-muted">Your latest Meeting Mode periods.</p>
           </div>
         </header>
         {status.meetings.length === 0 ? (
-          <p className="k-meeting-hint">No meetings recorded yet.</p>
+          <p className="pg-muted">No meetings recorded yet.</p>
         ) : (
-          <ul className="k-meeting-list">
+          <ul className="pg-list pg-meeting-list">
             {status.meetings.map((meeting) => {
               const isActive = meeting.lifecycleState === "active";
               const badgeKind = meetingStateKind(
@@ -3988,7 +4082,7 @@ function MeetingView({
                 <li key={meeting.id}>
                   <div>
                     <strong>{meeting.title}</strong>
-                    <span className="k-meeting-hint">
+                    <span className="pg-muted">
                       {" "}
                       · {formatDuration(rowSeconds)}
                     </span>
@@ -3998,7 +4092,7 @@ function MeetingView({
                     {failed && (
                       <button
                         type="button"
-                        className="k-linklike"
+                        className="pg-link"
                         onClick={() => void handleRetry()}
                         disabled={retrying}
                       >
@@ -4006,7 +4100,7 @@ function MeetingView({
                       </button>
                     )}
                   </div>
-                  <span className={`k-meeting-badge k-meeting-${badgeKind}`}>
+                  <span className={`pg-status ${badgeKind}`}>
                     {badgeLabel}
                   </span>
                 </li>
@@ -4015,6 +4109,82 @@ function MeetingView({
           </ul>
         )}
       </article>
+    </section>
+  );
+}
+
+function InsightsView({ status }: { status: AgentStatus }) {
+  const periods = [
+    { key: "today", title: "Today", summary: status.timeSummary?.today ?? null },
+    { key: "week", title: "This week", summary: status.timeSummary?.week ?? null },
+  ];
+  return (
+    <section className="app-page pg-page">
+      <header className="pg-head">
+        <div>
+          <h1>Insights</h1>
+          <p>How your tracked time adds up today and this week.</p>
+        </div>
+      </header>
+      {!status.timeSummary ? (
+        <section className="tp-card pg-card">
+          <p className="pg-empty">Your time summary has not loaded yet.</p>
+        </section>
+      ) : (
+        <div className="pg-insights">
+          {periods.map(({ key, title, summary }) => {
+            if (!summary) return null;
+            const rows = [
+              { label: "Worked", seconds: summary.tracked_active_seconds, tone: "worked" },
+              { label: "Manual approved", seconds: summary.manual_approved_seconds, tone: "approved" },
+              { label: "Manual pending", seconds: summary.manual_pending_seconds, tone: "pending" },
+              { label: "Idle", seconds: summary.idle_seconds, tone: "idle" },
+            ];
+            const largest = Math.max(1, ...rows.map((row) => row.seconds));
+            return (
+              <section key={key} className="tp-card pg-card" aria-label={title}>
+                <div className="pg-card-head">
+                  <div>
+                    <span className="pg-stat-label">{title}</span>
+                    <strong className="pg-insight-total app-num">
+                      {formatDuration(summary.tracked_active_seconds)}
+                    </strong>
+                    <p className="pg-muted">Tracked work</p>
+                  </div>
+                  <span className="tp-card-icon">
+                    <i
+                      className={key === "today" ? "ri-sun-line" : "ri-calendar-2-line"}
+                      aria-hidden="true"
+                    />
+                  </span>
+                </div>
+                <div className="pg-bars">
+                  {rows.map((row) => (
+                    <div key={row.label} className="pg-bar-row">
+                      <div className="pg-row-between">
+                        <span>{row.label}</span>
+                        <b className="app-num">{formatDuration(row.seconds)}</b>
+                      </div>
+                      <span className="tp-breakdown-bar">
+                        <i
+                          className={`segment-${row.tone}`}
+                          style={{ width: `${(row.seconds / largest) * 100}%` }}
+                        />
+                      </span>
+                    </div>
+                  ))}
+                </div>
+                <div className="pg-chips pg-chips-static">
+                  <span>
+                    <i className="ri-camera-line" aria-hidden="true" />{" "}
+                    {summary.screenshot_count} screenshots
+                  </span>
+                </div>
+              </section>
+            );
+          })}
+        </div>
+      )}
     </section>
   );
 }
@@ -4029,16 +4199,16 @@ function SettingsView({
   isLoggingOut: boolean;
 }) {
   return (
-    <section className="k-page k-settings-page">
-      <header className="k-page-header">
+    <section className="app-page pg-page">
+      <header className="pg-head">
         <div>
           <h1>Settings</h1>
           <p>Device information and account controls.</p>
         </div>
       </header>
-      <details className="k-panel k-system-panel" open>
+      <details className="tp-card pg-card pg-details-panel" open>
         <summary>System details</summary>
-        <dl className="k-details">
+        <dl className="pg-dl">
           <div>
             <dt>Current session</dt>
             <dd>{formatTimestamp(status.sessionStartedAt)}</dd>
@@ -4074,11 +4244,11 @@ function SettingsView({
               </div>
               <div>
                 <dt>API base URL</dt>
-                <dd className="k-details-mono">{status.diagnostics.apiBaseUrl}</dd>
+                <dd className="pg-mono">{status.diagnostics.apiBaseUrl}</dd>
               </div>
               <div>
                 <dt>Data directory</dt>
-                <dd className="k-details-mono">
+                <dd className="pg-mono">
                   {status.diagnostics.userDataPath}
                 </dd>
               </div>
@@ -4086,21 +4256,21 @@ function SettingsView({
           )}
         </dl>
       </details>
-      <section className="k-panel k-device-account">
-        <div className="k-device-account-heading">
+      <section className="tp-card pg-card">
+        <div className="pg-card-head">
           <div>
             <h2>Signed-in account</h2>
-            <p className="k-muted">
+            <p className="pg-muted">
               This employee account is linked to this Windows device.
             </p>
           </div>
           <span
-            className={`k-connection-badge ${status.enrolled ? "online" : "offline"}`}
+            className={`pg-status ${status.enrolled ? "online" : "offline"}`}
           >
             {status.enrolled ? "Enrolled" : "Not enrolled"}
           </span>
         </div>
-        <dl className="k-details k-identity-details">
+        <dl className="pg-dl">
           <div>
             <dt>Employee</dt>
             <dd>{status.employeeName || "—"}</dd>
@@ -4115,25 +4285,25 @@ function SettingsView({
           </div>
           <div>
             <dt>Device ID</dt>
-            <dd className="k-mono">{status.deviceId || "—"}</dd>
+            <dd className="pg-mono">{status.deviceId || "—"}</dd>
           </div>
           <div>
             <dt>MAC address</dt>
-            <dd className="k-mono">{status.macAddress || "—"}</dd>
+            <dd className="pg-mono">{status.macAddress || "—"}</dd>
           </div>
           <div>
             <dt>Local IP</dt>
-            <dd className="k-mono">{status.localIpAddress || "—"}</dd>
+            <dd className="pg-mono">{status.localIpAddress || "—"}</dd>
           </div>
         </dl>
       </section>
-      <section className="k-panel k-device-account k-device-actions">
+      <section className="tp-card pg-card">
         <h2>Device account</h2>
-        <p className="k-muted">
+        <p className="pg-muted">
           Sign out only when this computer should stop tracking this employee.
         </p>
         <button
-          className="k-danger-button"
+          className="pg-btn pg-btn-danger"
           onClick={onLogout}
           disabled={isLoggingOut}
         >
