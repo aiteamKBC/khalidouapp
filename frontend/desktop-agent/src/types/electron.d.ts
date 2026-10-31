@@ -78,6 +78,9 @@ export type AgentStatus = {
   meetings: MeetingSummary[];
   breakBank: BreakBank | null;
   diagnostics?: RuntimeDiagnostics | null;
+  /** e.g. "Windows 11 Pro · 64-bit"; absent outside the desktop runtime. */
+  platformLabel?: string;
+  screenshotIntervalMinutes?: number;
 };
 
 export type RuntimeDiagnostics = {
@@ -228,6 +231,8 @@ export type AgentTask = {
   activeSeconds: number;
   idleSeconds: number;
   trackedSeconds: number;
+  priority?: "low" | "medium" | "high" | "urgent" | null;
+  deadline?: string | null;
 };
 
 export type RequestPolicy = {

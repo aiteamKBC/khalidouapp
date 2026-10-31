@@ -345,3 +345,157 @@
 .app-status-btn:hover {
   background: color-mix(in srgb, var(--k-plum-2) 9%, transparent);
 }
+
+/* ---------- canvas: colour wash, dot grid, brand marks (Readdy design) ---------- */
+.k-app.app-shell[data-theme] {
+  position: relative;
+  isolation: isolate;
+  background:
+    radial-gradient(980px 560px at 58% -18%, var(--k-wash-1), transparent 66%),
+    radial-gradient(760px 460px at 0% 2%, var(--k-wash-2), transparent 68%),
+    radial-gradient(940px 620px at 104% 108%, var(--k-wash-3), transparent 70%),
+    var(--k-bg);
+  color: var(--k-ink);
+}
+
+/* App.css drew its own grid lines and glows on these pseudo-elements */
+.k-app.app-shell[data-theme]::before,
+.k-app.app-shell[data-theme]::after {
+  display: none;
+}
+
+.app-shell .app-grid {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-image: radial-gradient(var(--k-grid-dot) 1px, transparent 1px);
+  background-size: 28px 28px;
+  -webkit-mask-image: radial-gradient(720px 520px at 12% 74%, #000 0%, transparent 72%);
+  mask-image: radial-gradient(720px 520px at 12% 74%, #000 0%, transparent 72%);
+  opacity: 0.3;
+}
+
+.app-shell .k-wm {
+  position: fixed;
+  z-index: -1;
+  pointer-events: none;
+  aspect-ratio: 1 / 1;
+  user-select: none;
+}
+
+.app-shell .k-wm-art {
+  opacity: 0.06;
+  mix-blend-mode: multiply;
+}
+
+.app-shell .k-wm-art img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+/* on dark faces the plum-to-pink ink muddies: a faint white silhouette */
+.app-shell.app-dark .k-wm-art {
+  opacity: 0.055;
+  mix-blend-mode: normal;
+  filter: brightness(0) invert(1);
+}
+
+.app-shell .k-wm-horse {
+  top: 1%;
+  right: -5%;
+  width: min(840px, 70vw);
+  transform: rotate(-4deg);
+}
+
+.app-shell .k-wm-bird {
+  bottom: 1%;
+  left: -4%;
+  width: min(800px, 66vw);
+  transform: rotate(-4deg);
+}
+
+/* ---------- toasts ---------- */
+.app-toast-stack {
+  position: fixed;
+  bottom: 44px;
+  left: 50%;
+  z-index: 80;
+  display: flex;
+  width: min(92vw, 26rem);
+  flex-direction: column-reverse;
+  gap: 8px;
+  transform: translateX(-50%);
+  pointer-events: none;
+  font-family: "Inter Variable", "Inter", "IBM Plex Sans Arabic", system-ui, sans-serif;
+}
+
+.app-toast {
+  --toast-tone: var(--k-green);
+  --toast-tone-2: var(--k-green-2);
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 9px 11px;
+  border: 1px solid color-mix(in srgb, var(--toast-tone) 45%, var(--k-line));
+  border-radius: 10px;
+  background: var(--k-card);
+  box-shadow: 0 18px 40px -26px rgba(10, 6, 30, 0.45);
+  pointer-events: auto;
+  animation: appToastIn 0.22s ease-out both;
+}
+
+.app-toast[data-tone="warning"] {
+  --toast-tone: var(--k-amber);
+  --toast-tone-2: var(--k-amber-2);
+}
+
+.app-toast[data-tone="error"] {
+  --toast-tone: var(--k-rose);
+  --toast-tone-2: var(--k-rose-2);
+}
+
+.app-toast-icon {
+  display: flex;
+  width: 20px;
+  height: 20px;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  margin-top: 1px;
+  border-radius: 999px;
+  background: var(--toast-tone-2);
+  color: var(--toast-tone);
+  font-size: 12px;
+}
+
+.app-toast-label {
+  display: block;
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--toast-tone);
+}
+
+.app-toast-text {
+  display: block;
+  margin-top: 1px;
+  font-size: 11.5px;
+  font-weight: 500;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  color: var(--k-ink);
+}
+
+@keyframes appToastIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}

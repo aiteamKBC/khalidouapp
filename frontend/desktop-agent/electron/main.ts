@@ -7,6 +7,7 @@ import axios from "axios";
 import { execFile, fork, spawn, type ChildProcess } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
@@ -364,6 +365,8 @@ type RuntimeTask = {
   canUpdateStage: boolean;
   reviewNote: string | null;
   completionNote: string | null;
+  priority: "low" | "medium" | "high" | "urgent" | null;
+  deadline: string | null;
   checklist: Array<{
     id: string;
     title: string;
@@ -694,6 +697,9 @@ function runtimeDiagnostics() {
 
 log.info("Khaliduo runtime diagnostics", runtimeDiagnostics());
 
+// Shown in Settings; fixed for the life of the process, so read once.
+const platformLabel = `${os.version()} · ${process.arch === "x64" ? "64-bit" : process.arch}`;
+
 function normalizeTrackingConfig(config: TrackingConfig): TrackingConfig {
   const configuredIdleThreshold = Number(config.idle_threshold_minutes);
   return {
@@ -726,6 +732,8 @@ function mapTask(task: ApiAgentTask): RuntimeTask {
     canUpdateStage: task.can_update_stage,
     reviewNote: task.review_note ?? null,
     completionNote: task.completion_note ?? null,
+    priority: task.priority ?? null,
+    deadline: task.deadline ?? null,
     checklist: (task.checklist ?? []).map((item) => ({
       id: item.id,
       title: item.title,
@@ -5929,6 +5937,8 @@ function runtimeStatusPayload() {
     powerSource: onAcPower ? "ac" : "battery",
     privacyNotice,
     diagnostics: runtimeDiagnostics(),
+    platformLabel,
+    screenshotIntervalMinutes: trackingConfig.screenshot_interval_minutes,
   };
 }
 

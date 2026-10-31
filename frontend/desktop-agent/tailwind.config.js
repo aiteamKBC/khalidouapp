@@ -1,8 +1,9 @@
 /** @type {import('tailwindcss').Config} */
 export default {
-  // Only the reskin components are scanned, so utilities never get generated
-  // for class names already used by App.tsx / App.css.
-  content: ["./src/ui/**/*.{ts,tsx}"],
+  // The reskin components plus App.tsx, whose new page markup uses a few
+  // layout utilities. App.tsx's older class names are all k-* / pg-*, so no
+  // utility collides with them (checked when this was widened).
+  content: ["./src/ui/**/*.{ts,tsx}", "./src/App.tsx"],
   // The reskin's dark face follows the theme hook's html.dark class.
   darkMode: "class",
   corePlugins: {

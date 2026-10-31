@@ -17,9 +17,12 @@ import type {
   RecentScreenshot,
   WorkdayTimeline,
 } from "./types/electron";
+import { Backdrop } from "./ui/shell/Backdrop";
 import { StatusBar } from "./ui/shell/StatusBar";
+import { ToastStack } from "./ui/shell/ToastStack";
+import { useToasts } from "./ui/shell/toastQueue";
 import { TopBar, type ShellTone } from "./ui/shell/TopBar";
-import { useSkin } from "./ui/theme/skin";
+import { SKINS, useSkin, type Skin } from "./ui/theme/skin";
 import { useTimerStyle, type TimerStyle } from "./ui/tracker/timerStyle";
 import {
   BreakdownCard,
@@ -546,6 +549,7 @@ function App() {
   const [theme, setTheme] = useState<"light" | "dark">(initialTheme);
   const { skin, setSkin } = useSkin(theme);
   const [timerStyle, setTimerStyle] = useTimerStyle();
+  const { toasts, push: pushToast, dismiss: dismissToast } = useToasts();
   const shownIdleAlertId = useRef<string | null>(null);
   const screenshotsLoadedForEnrollment = useRef(false);
   const lastLoadedScreenshotAt = useRef<string | null>(null);
@@ -627,6 +631,22 @@ function App() {
   useEffect(() => {
     window.localStorage.setItem(THEME_STORAGE_KEY, theme);
   }, [theme]);
+
+  // Toasts echo the messages the app already sets; the inline messages stay.
+  useEffect(() => {
+    if (trackingControlMessage) pushToast(trackingControlMessage, "success");
+  }, [trackingControlMessage, pushToast]);
+  useEffect(() => {
+    if (timeRequestSuccess) pushToast(timeRequestSuccess, "success");
+  }, [timeRequestSuccess, pushToast]);
+  useEffect(() => {
+    if (leaveRequestSuccess) pushToast(leaveRequestSuccess, "success");
+  }, [leaveRequestSuccess, pushToast]);
+  useEffect(() => {
+    for (const error of [taskError, timeRequestError, leaveRequestError, dashboardError, screenshotError]) {
+      if (error) pushToast(error, "error");
+    }
+  }, [taskError, timeRequestError, leaveRequestError, dashboardError, screenshotError, pushToast]);
 
   const taskTeams = useMemo(
     () =>
@@ -1691,6 +1711,7 @@ function App() {
       data-tone={timerTone}
       data-theme={theme}
     >
+      <Backdrop />
       <TopBar
         enrolled={status.enrolled}
         activeView={activeView}
@@ -1923,12 +1944,23 @@ function App() {
               }}
             />
           )}
-          {activeView === "insights" && <InsightsView status={status} />}
+          {activeView === "insights" && (
+            <InsightsView
+              status={status}
+              countedTodaySeconds={countedTodaySeconds}
+              extraSeconds={extraSeconds}
+            />
+          )}
           {activeView === "settings" && (
             <SettingsView
               status={status}
               onLogout={() => void handleLogout()}
               isLoggingOut={isLoggingOut}
+              theme={theme}
+              onThemeChange={setTheme}
+              skin={skin}
+              onSkinChange={setSkin}
+              onNotify={pushToast}
             />
           )}
         </>
@@ -1982,6 +2014,7 @@ function App() {
         activityPercent={status.activityPercent}
         agentVersion={status.agentVersion}
       />
+      <ToastStack toasts={toasts} onDismiss={dismissToast} />
     </main>
   );
 }
@@ -2243,12 +2276,7 @@ function HomeView({
       : status.extraTimeStatus === "pending_overtime"
         ? "HR/Admin must approve this time before payroll."
         : "Recorded for review. It will not be paid unless HR/Admin approves it.";
-  const overtimeStatus =
-    extraSeconds <= 0
-      ? "No overtime"
-      : status.extraTimeStatus === "pending_overtime"
-        ? "Pending approval"
-        : "Recorded only";
+  const overtimeStatus = overtimeStatusLabel(extraSeconds, status.extraTimeStatus);
   const paidShiftLabel =
     status.requestPolicy?.shift_start && status.requestPolicy.shift_end
       ? `${formatScheduledTime(status.requestPolicy.shift_start)}–${formatScheduledTime(status.requestPolicy.shift_end)}`
@@ -2289,7 +2317,7 @@ function HomeView({
   return (
     <section className="app-page">
       <div className="flex min-w-0 flex-col gap-3.5">
-        <h1 className="text-[20px] font-bold tracking-[-0.015em] text-ink">
+        <h1 className="text-[24px] font-extrabold tracking-[-0.02em] text-ink">
           Welcome back, {status.employeeName.split(" ")[0] || "there"}
         </h1>
         <QuickBar
@@ -2376,107 +2404,6 @@ function HomeView({
               timerStyle={timerStyle}
               onTimerStyle={onTimerStyleChange}
             />
-            <StatTiles
-              tiles={[
-                {
-                  key: "session",
-                  icon: "ri-timer-line",
-                  label: "Current session",
-                  value: formatDuration(status.activeSeconds),
-                },
-                {
-                  key: "week",
-                  icon: "ri-calendar-2-line",
-                  label: "This week",
-                  value: formatDuration(
-                    status.timeSummary?.week.tracked_active_seconds ?? 0,
-                  ),
-                },
-                {
-                  key: "normal",
-                  icon: "ri-briefcase-4-line",
-                  label: "Normal",
-                  value: formatDuration(normalSeconds),
-                  bar: targetProgress,
-                  note: `${targetProgress}% of daily target`,
-                },
-                {
-                  key: "activity",
-                  icon: "ri-line-chart-line",
-                  label: "Activity",
-                  value: `${status.activityPercent}%`,
-                  tone: "ok",
-                },
-                {
-                  key: "idle",
-                  icon: "ri-hourglass-2-line",
-                  label: "Idle",
-                  value: formatDuration(todayIdleSeconds),
-                  note:
-                    requestableIdleMinuteTotal > 0
-                      ? `${requestableIdleMinuteTotal} min requestable`
-                      : "No requestable time",
-                  tone: requestableIdleMinuteTotal > 0 ? "warn" : undefined,
-                },
-                {
-                  key: "overtime",
-                  icon: "ri-moon-clear-line",
-                  label: "Overtime",
-                  value: formatDuration(extraSeconds),
-                  note: overtimeStatus,
-                  tone: "accent",
-                },
-              ]}
-            />
-            <WorkdayStrip
-              cells={[
-                {
-                  label: "Started at",
-                  value: status.todayTimeline?.first_started_at
-                    ? formatTimelineStart(status.todayTimeline)
-                    : workdayTiming.startedAt
-                      ? formatClock(workdayTiming.startedAt, workdayTimezone)
-                      : "Not started",
-                },
-                {
-                  label: "Last activity",
-                  value: status.todayTimeline?.last_activity_at
-                    ? formatClock(
-                        status.todayTimeline.last_activity_at,
-                        status.todayTimeline.timezone,
-                      )
-                    : workdayTiming.localSyncPending
-                      ? "Sync pending"
-                      : "—",
-                },
-                {
-                  label: workdayTiming.isRunning ? "Session" : "Signed out",
-                  value: status.todayTimeline?.is_running
-                    ? "Still running - no sign-out yet"
-                    : workdayTiming.localSyncPending
-                      ? "Running locally - syncing"
-                      : status.todayTimeline?.last_ended_at
-                        ? formatClock(
-                            status.todayTimeline.last_ended_at,
-                            status.todayTimeline.timezone,
-                          )
-                        : "—",
-                },
-              ]}
-            />
-            <BreakdownCard
-              summary={`${formatDuration(countedTodaySeconds)} / ${formatDuration(status.dailyTargetSeconds)} - ${targetProgress}%`}
-              segments={timeBreakdown.segments.map((segment) => ({
-                key: segment.label,
-                label: segment.label,
-                value: formatDuration(segment.seconds),
-                className: segment.className,
-                widthPercent:
-                  segment.seconds > 0
-                    ? (segment.seconds / timeBreakdown.total) * 100
-                    : 0,
-              }))}
-            />
           </div>
           <div className="flex min-w-0 flex-col gap-3.5">
             <ShotCard
@@ -2501,6 +2428,21 @@ function HomeView({
               errors={[screenshotError, dashboardError].filter(
                 (error): error is string => Boolean(error),
               )}
+              footer={
+                status.screenshotMonitoringEnabled
+                  ? {
+                      interval: status.screenshotIntervalMinutes
+                        ? `${status.screenshotIntervalMinutes}m`
+                        : null,
+                      captureLabel: status.screenshotCaptureActive
+                        ? status.connectionStatus === "online"
+                          ? "Capturing"
+                          : "Queued offline"
+                        : "Paused",
+                      captureOk: status.screenshotCaptureActive,
+                    }
+                  : null
+              }
             />
             {status.todayTimeline && (
               <Timeline
@@ -2508,20 +2450,129 @@ function HomeView({
                 locallyEndedIdleAt={status.locallyEndedIdleAt}
                 idleRequestOptions={idleRequestOptions}
                 onRequestIdleTime={onRequestManualTime}
-              />
-            )}
-            {status.recentTasks.length > 0 && (
-              <RecentTasksCard
-                tasks={status.recentTasks.map((task) => ({
-                  id: task.id,
-                  name: task.name,
-                  project: task.projectName,
-                  tracked: formatDuration(task.trackedSeconds),
-                }))}
-                onPick={onTaskChange}
+                loggedLabel={`${Math.floor(trackedTodaySeconds / 3600)}h logged`}
               />
             )}
           </div>
+        </div>
+        <StatTiles
+          row
+          tiles={[
+            {
+              key: "session",
+              icon: "ri-timer-line",
+              label: "Current session",
+              value: formatDuration(status.activeSeconds),
+              note: timerTone === "running" ? "Active right now" : statusText,
+              tone: timerTone === "running" ? "accent" : undefined,
+            },
+            {
+              key: "week",
+              icon: "ri-calendar-2-line",
+              label: "This week",
+              value: formatDuration(
+                status.timeSummary?.week.tracked_active_seconds ?? 0,
+              ),
+              note: "Tracked this week",
+            },
+            {
+              key: "normal",
+              icon: "ri-briefcase-4-line",
+              label: "Normal",
+              value: formatDuration(normalSeconds),
+              bar: targetProgress,
+              note: `${targetProgress}% of daily target`,
+            },
+            {
+              key: "activity",
+              icon: "ri-line-chart-line",
+              label: "Activity",
+              value: `${status.activityPercent}%`,
+              note: "Keyboard and mouse today",
+              tone: "ok",
+            },
+            {
+              key: "idle",
+              icon: "ri-hourglass-2-line",
+              label: "Idle",
+              value: formatDuration(todayIdleSeconds),
+              note:
+                requestableIdleMinuteTotal > 0
+                  ? `${requestableIdleMinuteTotal} min requestable`
+                  : "No requestable time",
+              tone: requestableIdleMinuteTotal > 0 ? "warn" : undefined,
+            },
+            {
+              key: "overtime",
+              icon: "ri-moon-clear-line",
+              label: "Overtime",
+              value: formatDuration(extraSeconds),
+              note: overtimeStatus,
+              tone: "accent",
+            },
+          ]}
+        />
+        <WorkdayStrip
+          cells={[
+            {
+              label: "Started at",
+              value: status.todayTimeline?.first_started_at
+                ? formatTimelineStart(status.todayTimeline)
+                : workdayTiming.startedAt
+                  ? formatClock(workdayTiming.startedAt, workdayTimezone)
+                  : "Not started",
+            },
+            {
+              label: "Last activity",
+              value: status.todayTimeline?.last_activity_at
+                ? formatClock(
+                    status.todayTimeline.last_activity_at,
+                    status.todayTimeline.timezone,
+                  )
+                : workdayTiming.localSyncPending
+                  ? "Sync pending"
+                  : "—",
+            },
+            {
+              label: workdayTiming.isRunning ? "Session" : "Signed out",
+              value: status.todayTimeline?.is_running
+                ? "Still running - no sign-out yet"
+                : workdayTiming.localSyncPending
+                  ? "Running locally - syncing"
+                  : status.todayTimeline?.last_ended_at
+                    ? formatClock(
+                        status.todayTimeline.last_ended_at,
+                        status.todayTimeline.timezone,
+                      )
+                    : "—",
+            },
+          ]}
+        />
+        <div className="tp-bottom">
+          <BreakdownCard
+            summary={`${formatDuration(countedTodaySeconds)} / ${formatDuration(status.dailyTargetSeconds)} - ${targetProgress}%`}
+            segments={timeBreakdown.segments.map((segment) => ({
+              key: segment.label,
+              label: segment.label,
+              value: formatDuration(segment.seconds),
+              className: segment.className,
+              widthPercent:
+                segment.seconds > 0
+                  ? (segment.seconds / timeBreakdown.total) * 100
+                  : 0,
+            }))}
+          />
+          {status.recentTasks.length > 0 && (
+            <RecentTasksCard
+              tasks={status.recentTasks.map((task) => ({
+                id: task.id,
+                name: task.name,
+                project: task.projectName,
+                tracked: formatDuration(task.trackedSeconds),
+              }))}
+              onPick={onTaskChange}
+            />
+          )}
         </div>
       </div>
     </section>
@@ -2533,11 +2584,13 @@ function Timeline({
   locallyEndedIdleAt,
   idleRequestOptions,
   onRequestIdleTime,
+  loggedLabel,
 }: {
   timeline: WorkdayTimeline;
   locallyEndedIdleAt: string | null;
   idleRequestOptions: IdleRequestOption[];
   onRequestIdleTime: (option: IdleRequestOption) => void;
+  loggedLabel: string;
 }) {
   const requestableMinutes = totalRequestableIdleMinutes(idleRequestOptions);
   const rows: TimelineRow[] =
@@ -2598,6 +2651,7 @@ function Timeline({
   return (
     <TimelineCard
       rows={rows}
+      loggedLabel={loggedLabel}
       needsSummary={`${requestableMinutes} min requestable`}
       needs={idleRequestOptions.map((option) => ({
         key: option.key,
@@ -2805,7 +2859,15 @@ function TasksView({
                   />
                   <span>
                     <strong dir="auto">{task.name}</strong>
-                    <small>{task.teamName}</small>
+                    <small className="pg-task-meta">
+                      {task.priority && (
+                        <b className={`pg-priority ${task.priority}`}>
+                          {task.priority.charAt(0).toUpperCase() + task.priority.slice(1)}
+                        </b>
+                      )}
+                      {task.deadline && <span className="pg-due">Due {task.deadline}</span>}
+                      <span>{task.teamName}</span>
+                    </small>
                   </span>
                 </span>
                 <span className="pg-task-cell">{task.projectName}</span>
@@ -2828,6 +2890,7 @@ function TasksView({
             </p>
           )}
         </div>
+        <p className="pg-hint">Pick a task above to file the running timer under it</p>
       </section>
 
       {selectedTask && (
@@ -4113,78 +4176,237 @@ function MeetingView({
   );
 }
 
-function InsightsView({ status }: { status: AgentStatus }) {
+function overtimeStatusLabel(
+  extraSeconds: number,
+  extraTimeStatus: AgentStatus["extraTimeStatus"],
+) {
+  return extraSeconds <= 0
+    ? "No overtime"
+    : extraTimeStatus === "pending_overtime"
+      ? "Pending approval"
+      : "Recorded only";
+}
+
+function InsightsView({
+  status,
+  countedTodaySeconds,
+  extraSeconds,
+}: {
+  status: AgentStatus;
+  countedTodaySeconds: number;
+  extraSeconds: number;
+}) {
+  const timezone =
+    status.todayTimeline?.timezone ??
+    status.requestPolicy?.timezone ??
+    Intl.DateTimeFormat().resolvedOptions().timeZone ??
+    "UTC";
+  const now = new Date();
+  const todayLabel = new Intl.DateTimeFormat("en-US", {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    timeZone: timezone,
+  }).format(now);
+  const monthLabel = new Intl.DateTimeFormat("en-US", {
+    month: "long",
+    year: "numeric",
+    timeZone: timezone,
+  }).format(now);
+  const summary = status.timeSummary;
   const periods = [
-    { key: "today", title: "Today", summary: status.timeSummary?.today ?? null },
-    { key: "week", title: "This week", summary: status.timeSummary?.week ?? null },
+    { key: "today", title: "Today", range: todayLabel, data: summary?.today ?? null },
+    { key: "week", title: "This week", range: null, data: summary?.week ?? null },
+    { key: "month", title: "This month", range: monthLabel, data: summary?.month ?? null },
   ];
+  const week = summary?.week ?? null;
+  const weekRows = week
+    ? [
+        { label: "Worked", seconds: week.tracked_active_seconds, tone: "worked" },
+        { label: "Manual approved", seconds: week.manual_approved_seconds, tone: "approved" },
+        { label: "Manual pending", seconds: week.manual_pending_seconds, tone: "pending" },
+        { label: "Idle", seconds: week.idle_seconds, tone: "idle" },
+      ]
+    : [];
+  const largestWeekRow = Math.max(1, ...weekRows.map((row) => row.seconds));
+  const workRows = (status.todayTimeline?.intervals ?? [])
+    .filter((interval) => interval.type === "worked")
+    .slice(-6)
+    .reverse();
+  const policy = status.requestPolicy;
+  const breaksToday = policy?.approved_leave_today ? [] : todaysBreaks(policy?.break_rules);
+  const signedIn = status.todayTimeline?.first_started_at
+    ? formatTimelineStart(status.todayTimeline)
+    : status.sessionStartedAt
+      ? formatClock(status.sessionStartedAt, timezone)
+      : "Not started";
+
   return (
     <section className="app-page pg-page">
       <header className="pg-head">
         <div>
           <h1>Insights</h1>
-          <p>How your tracked time adds up today and this week.</p>
+          <p>Your shift, and how tracked time adds up across today, this week and the month.</p>
         </div>
       </header>
-      {!status.timeSummary ? (
+
+      <section className="pg-kpis" aria-label="Attendance today">
+        <div className="tp-card pg-kpi">
+          <span className="pg-stat-label">Paid shift</span>
+          <strong>
+            {policy?.shift_start && policy.shift_end
+              ? `${formatScheduledTime(policy.shift_start)} – ${formatScheduledTime(policy.shift_end)}`
+              : "Not configured"}
+          </strong>
+          <small>
+            {policy?.approved_leave_today
+              ? "Approved leave today"
+              : `${breaksToday.length} break${breaksToday.length === 1 ? "" : "s"} scheduled today`}
+          </small>
+        </div>
+        <div className="tp-card pg-kpi">
+          <span className="pg-stat-label">Signed in</span>
+          <strong className="is-accent">{signedIn}</strong>
+          <small>
+            {status.breakBank?.paid_late_allowance_seconds
+              ? `Paid late allowance ${formatDuration(status.breakBank.paid_late_allowance_seconds)}`
+              : "First activity today"}
+          </small>
+        </div>
+        <div className="tp-card pg-kpi">
+          <span className="pg-stat-label">Counted today</span>
+          <strong className="app-num">{formatDuration(countedTodaySeconds)}</strong>
+          <small>of {formatDuration(status.dailyTargetSeconds)} target</small>
+        </div>
+        <div className="tp-card pg-kpi">
+          <span className="pg-stat-label">Overtime</span>
+          <strong className="app-num">{formatDuration(extraSeconds)}</strong>
+          <small>{overtimeStatusLabel(extraSeconds, status.extraTimeStatus)}</small>
+        </div>
+      </section>
+
+      {!summary ? (
         <section className="tp-card pg-card">
           <p className="pg-empty">Your time summary has not loaded yet.</p>
         </section>
       ) : (
-        <div className="pg-insights">
-          {periods.map(({ key, title, summary }) => {
-            if (!summary) return null;
-            const rows = [
-              { label: "Worked", seconds: summary.tracked_active_seconds, tone: "worked" },
-              { label: "Manual approved", seconds: summary.manual_approved_seconds, tone: "approved" },
-              { label: "Manual pending", seconds: summary.manual_pending_seconds, tone: "pending" },
-              { label: "Idle", seconds: summary.idle_seconds, tone: "idle" },
-            ];
-            const largest = Math.max(1, ...rows.map((row) => row.seconds));
-            return (
-              <section key={key} className="tp-card pg-card" aria-label={title}>
-                <div className="pg-card-head">
-                  <div>
-                    <span className="pg-stat-label">{title}</span>
-                    <strong className="pg-insight-total app-num">
-                      {formatDuration(summary.tracked_active_seconds)}
-                    </strong>
-                    <p className="pg-muted">Tracked work</p>
+        <div className="pg-periods">
+          {periods.map(({ key, title, range, data }) =>
+            data ? (
+              <section key={key} className="tp-card pg-period" aria-label={title}>
+                <div className="pg-row-between">
+                  <span className="pg-stat-label">{title}</span>
+                  {range ? <span className="pg-period-range">{range}</span> : null}
+                </div>
+                <strong className="pg-insight-total app-num">
+                  {formatDuration(data.tracked_active_seconds)}
+                </strong>
+                <p className="pg-muted">
+                  Manual approved {formatDuration(data.manual_approved_seconds)} · idle{" "}
+                  {formatDuration(data.idle_seconds)}
+                </p>
+              </section>
+            ) : null,
+          )}
+        </div>
+      )}
+
+      <div className="pg-insights">
+        {week ? (
+          <section className="tp-card pg-card" aria-label="Where this week went">
+            <div className="pg-card-head">
+              <h2>Where this week went</h2>
+            </div>
+            <div className="pg-bars">
+              {weekRows.map((row) => (
+                <div key={row.label} className="pg-bar-row">
+                  <div className="pg-row-between">
+                    <span>{row.label}</span>
+                    <b className="app-num">{formatDuration(row.seconds)}</b>
                   </div>
-                  <span className="tp-card-icon">
+                  <span className="tp-breakdown-bar">
                     <i
-                      className={key === "today" ? "ri-sun-line" : "ri-calendar-2-line"}
-                      aria-hidden="true"
+                      className={`segment-${row.tone}`}
+                      style={{ width: `${(row.seconds / largestWeekRow) * 100}%` }}
                     />
                   </span>
                 </div>
-                <div className="pg-bars">
-                  {rows.map((row) => (
-                    <div key={row.label} className="pg-bar-row">
-                      <div className="pg-row-between">
-                        <span>{row.label}</span>
-                        <b className="app-num">{formatDuration(row.seconds)}</b>
-                      </div>
-                      <span className="tp-breakdown-bar">
-                        <i
-                          className={`segment-${row.tone}`}
-                          style={{ width: `${(row.seconds / largest) * 100}%` }}
-                        />
-                      </span>
-                    </div>
-                  ))}
+              ))}
+            </div>
+            <div className="pg-pills">
+              <span>
+                <i className="ri-camera-line" aria-hidden="true" /> {week.screenshot_count} captures
+              </span>
+              {summary?.month ? (
+                <span>
+                  <i className="ri-calendar-line" aria-hidden="true" /> Month{" "}
+                  {formatDuration(summary.month.tracked_active_seconds)}
+                </span>
+              ) : null}
+            </div>
+          </section>
+        ) : null}
+
+        <section className="tp-card pg-card" aria-label="Today's activity">
+          <div className="pg-card-head">
+            <h2>Today&apos;s activity</h2>
+          </div>
+          {workRows.length ? (
+            <div className="pg-activity">
+              {workRows.map((interval) => (
+                <div key={`${interval.session_id}-${interval.started_at}`} className="pg-activity-item">
+                  <div className="pg-row-between">
+                    <span className="app-num">
+                      {formatClock(interval.started_at, timezone)} –{" "}
+                      {interval.is_current ? "now" : formatClock(interval.ended_at, timezone)}
+                    </span>
+                    <em className={`pg-status ${interval.is_current ? "inprogress" : "approved"}`}>
+                      {interval.is_current ? "Ongoing" : "Worked"}
+                    </em>
+                  </div>
+                  <strong dir="auto">
+                    {interval.task_name ?? interval.project_name ?? "No task selected"}
+                  </strong>
+                  <small className="app-num">{formatDuration(interval.duration_seconds)}</small>
                 </div>
-                <div className="pg-chips pg-chips-static">
-                  <span>
-                    <i className="ri-camera-line" aria-hidden="true" />{" "}
-                    {summary.screenshot_count} screenshots
-                  </span>
-                </div>
-              </section>
-            );
-          })}
+              ))}
+            </div>
+          ) : (
+            <p className="pg-empty">No worked time recorded yet today.</p>
+          )}
+          <p className="pg-note">
+            Every tracked minute is filed under the task selected in the tracker. Switching tasks never stops the clock.
+          </p>
+        </section>
+      </div>
+
+      <section className="tp-card pg-card" aria-label="Today's schedule">
+        <div className="pg-card-head">
+          <h2>How time is counted</h2>
         </div>
-      )}
+        <ul className="pg-rules">
+          <li>Worked time and approved manual time are counted. Idle, pending and rejected minutes never enter the total.</li>
+          <li>Resting during a paid scheduled break is paid time.</li>
+          {status.breakBank?.policy_active ? (
+            <li>Working through a scheduled break saves those minutes; they cover later idle today automatically.</li>
+          ) : null}
+          <li>Time outside your paid shift is recorded as extra time and needs HR/Admin approval before payroll.</li>
+        </ul>
+        {breaksToday.length ? (
+          <div className="pg-pills">
+            {breaksToday.map((item) => (
+              <span key={`${item.name}-${item.start}`}>
+                <i className="ri-cup-line" aria-hidden="true" /> {item.name}
+                {item.prayer ? ` · ${item.prayer}` : ""} {formatScheduledTime(item.start)}–
+                {formatScheduledTime(item.end)}
+              </span>
+            ))}
+            <span className="is-ok">
+              <i className="ri-shield-check-line" aria-hidden="true" /> {formatDuration(status.dailyTargetSeconds)} target
+            </span>
+          </div>
+        ) : null}
+      </section>
     </section>
   );
 }
@@ -4193,11 +4415,50 @@ function SettingsView({
   status,
   onLogout,
   isLoggingOut,
+  theme,
+  onThemeChange,
+  skin,
+  onSkinChange,
+  onNotify,
 }: {
   status: AgentStatus;
   onLogout: () => void;
   isLoggingOut: boolean;
+  theme: "light" | "dark";
+  onThemeChange: (theme: "light" | "dark") => void;
+  skin: Skin;
+  onSkinChange: (skin: Skin) => void;
+  onNotify: (message: string, tone?: "success" | "warning" | "error") => void;
 }) {
+  // View-only: whether the System details rows are shown.
+  const [showSystemDetails, setShowSystemDetails] = useState(true);
+  const sections = [
+    { id: "settings-appearance", label: "Appearance" },
+    { id: "settings-system", label: "System details" },
+    { id: "settings-account", label: "Signed-in account" },
+    { id: "settings-device", label: "Device account" },
+  ];
+
+  async function copy(label: string, value: string | null | undefined) {
+    if (!value) return;
+    try {
+      await navigator.clipboard.writeText(value);
+      onNotify(`${label} copied`);
+    } catch {
+      onNotify(`Could not copy the ${label.toLowerCase()}`, "error");
+    }
+  }
+
+  const accountRows: Array<{ label: string; value: string | null; copy?: boolean; mono?: boolean }> = [
+    { label: "Employee", value: status.employeeName || null },
+    { label: "Work email", value: status.employeeEmail, copy: true },
+    { label: "Device", value: status.deviceName || null },
+    { label: "Device ID", value: status.deviceId, copy: true, mono: true },
+    { label: "MAC address", value: status.macAddress, copy: true, mono: true },
+    { label: "Local IP", value: status.localIpAddress, copy: true, mono: true },
+    { label: "Platform", value: status.platformLabel ?? null },
+  ];
+
   return (
     <section className="app-page pg-page">
       <header className="pg-head">
@@ -4206,110 +4467,201 @@ function SettingsView({
           <p>Device information and account controls.</p>
         </div>
       </header>
-      <details className="tp-card pg-card pg-details-panel" open>
-        <summary>System details</summary>
-        <dl className="pg-dl">
-          <div>
-            <dt>Current session</dt>
-            <dd>{formatTimestamp(status.sessionStartedAt)}</dd>
-          </div>
-          <div>
-            <dt>Connection</dt>
-            <dd>{status.connectionStatus}</dd>
-          </div>
-          <div>
-            <dt>Last screenshot</dt>
-            <dd>{formatTimestamp(status.lastScreenshotAt)}</dd>
-          </div>
-          <div>
-            <dt>Last sync</dt>
-            <dd>{formatTimestamp(status.lastSuccessfulSyncAt)}</dd>
-          </div>
-          <div>
-            <dt>Agent version</dt>
-            <dd>{status.agentVersion}</dd>
-          </div>
-          {status.diagnostics && (
-            <>
-              <div>
-                <dt>Build</dt>
-                <dd>
-                  {status.diagnostics.buildIdentifier} ·{" "}
-                  {status.diagnostics.environment}
-                </dd>
-              </div>
-              <div>
-                <dt>Process ID</dt>
-                <dd>{status.diagnostics.processId}</dd>
-              </div>
-              <div>
-                <dt>API base URL</dt>
-                <dd className="pg-mono">{status.diagnostics.apiBaseUrl}</dd>
-              </div>
-              <div>
-                <dt>Data directory</dt>
-                <dd className="pg-mono">
-                  {status.diagnostics.userDataPath}
-                </dd>
-              </div>
-            </>
-          )}
-        </dl>
-      </details>
-      <section className="tp-card pg-card">
-        <div className="pg-card-head">
-          <div>
-            <h2>Signed-in account</h2>
+      <div className="pg-settings">
+        <aside className="pg-settings-nav">
+          <span className="pg-stat-label">On this page</span>
+          {sections.map((section) => (
+            <button
+              key={section.id}
+              type="button"
+              className="pg-settings-link"
+              onClick={() =>
+                document.getElementById(section.id)?.scrollIntoView({ behavior: "smooth", block: "start" })
+              }
+            >
+              {section.label}
+            </button>
+          ))}
+          <div className="tp-card pg-enrolled-card">
+            <span className={`pg-status ${status.enrolled ? "online" : "offline"}`}>
+              {status.enrolled ? "Enrolled device" : "Not enrolled"}
+            </span>
             <p className="pg-muted">
-              This employee account is linked to this Windows device.
+              {status.deviceName || "This computer"} is linked to an employee account and syncs while the shift runs.
             </p>
           </div>
-          <span
-            className={`pg-status ${status.enrolled ? "online" : "offline"}`}
-          >
-            {status.enrolled ? "Enrolled" : "Not enrolled"}
-          </span>
+        </aside>
+
+        <div className="pg-settings-main">
+          <section id="settings-appearance" className="tp-card pg-card" aria-label="Appearance">
+            <div className="pg-card-head">
+              <div>
+                <h2>Appearance</h2>
+                <p className="pg-muted">
+                  Pick one of the three styles, then its light or dark face. Saved on this computer.
+                </p>
+              </div>
+            </div>
+            <div className="pg-segment" role="group" aria-label="Light or dark">
+              {(["light", "dark"] as const).map((mode) => (
+                <button
+                  key={mode}
+                  type="button"
+                  aria-pressed={theme === mode}
+                  className={theme === mode ? "active" : ""}
+                  onClick={() => onThemeChange(mode)}
+                >
+                  <i className={mode === "light" ? "ri-sun-line" : "ri-moon-line"} aria-hidden="true" />
+                  {mode === "light" ? "Light" : "Dark"}
+                </button>
+              ))}
+            </div>
+            <div className="pg-skins">
+              {SKINS.map((item) => {
+                const selected = item.key === skin;
+                const swatch = theme === "dark" ? item.swatchDark : item.swatch;
+                return (
+                  <button
+                    key={item.key}
+                    type="button"
+                    aria-pressed={selected}
+                    className={`pg-skin${selected ? " is-selected" : ""}`}
+                    onClick={() => onSkinChange(item.key)}
+                  >
+                    <span className="pg-skin-swatch" aria-hidden="true">
+                      {swatch.map((color) => (
+                        <span key={color} style={{ background: color }} />
+                      ))}
+                    </span>
+                    <span className="pg-row-between">
+                      <strong>{item.label}</strong>
+                      {selected ? <i className="ri-check-line" aria-hidden="true" /> : null}
+                    </span>
+                    <small>
+                      <i className="ri-palette-line" aria-hidden="true" /> {item.blurb}
+                    </small>
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+
+          <section id="settings-system" className="tp-card pg-card" aria-label="System details">
+            <div className="pg-card-head">
+              <h2>System details</h2>
+              <button
+                type="button"
+                className="pg-btn pg-btn-xs"
+                aria-expanded={showSystemDetails}
+                onClick={() => setShowSystemDetails((value) => !value)}
+              >
+                {showSystemDetails ? "Hide" : "Show"}
+                <i className={showSystemDetails ? "ri-arrow-up-s-line" : "ri-arrow-down-s-line"} aria-hidden="true" />
+              </button>
+            </div>
+            {showSystemDetails && (
+              <dl className="pg-dl">
+                <div>
+                  <dt>Current session</dt>
+                  <dd>{formatTimestamp(status.sessionStartedAt)}</dd>
+                </div>
+                <div>
+                  <dt>Connection</dt>
+                  <dd>
+                    <span className={`pg-dot ${status.connectionStatus === "online" ? "is-ok" : "is-bad"}`} />
+                    {status.connectionStatus}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Last screenshot</dt>
+                  <dd>{formatTimestamp(status.lastScreenshotAt)}</dd>
+                </div>
+                <div>
+                  <dt>Last sync</dt>
+                  <dd>{formatTimestamp(status.lastSuccessfulSyncAt)}</dd>
+                </div>
+                <div>
+                  <dt>Agent version</dt>
+                  <dd>{status.agentVersion}</dd>
+                </div>
+                {status.diagnostics && (
+                  <>
+                    <div>
+                      <dt>Build</dt>
+                      <dd>
+                        {status.diagnostics.buildIdentifier} · {status.diagnostics.environment}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Process ID</dt>
+                      <dd>{status.diagnostics.processId}</dd>
+                    </div>
+                    <div>
+                      <dt>API base URL</dt>
+                      <dd className="pg-mono">{status.diagnostics.apiBaseUrl}</dd>
+                    </div>
+                    <div>
+                      <dt>Data directory</dt>
+                      <dd className="pg-mono">{status.diagnostics.userDataPath}</dd>
+                    </div>
+                  </>
+                )}
+              </dl>
+            )}
+          </section>
+
+          <section id="settings-account" className="tp-card pg-card" aria-label="Signed-in account">
+            <div className="pg-card-head">
+              <div>
+                <h2>Signed-in account</h2>
+                <p className="pg-muted">This employee account is linked to this Windows device.</p>
+              </div>
+              <span className={`pg-status ${status.enrolled ? "online" : "offline"}`}>
+                {status.enrolled ? "Enrolled" : "Not enrolled"}
+              </span>
+            </div>
+            <dl className="pg-dl">
+              {accountRows.map((row) => (
+                <div key={row.label}>
+                  <dt>{row.label}</dt>
+                  <dd className={row.mono ? "pg-mono" : undefined}>
+                    {row.value || "—"}
+                    {row.copy && row.value ? (
+                      <button
+                        type="button"
+                        className="pg-copy"
+                        aria-label={`Copy ${row.label.toLowerCase()}`}
+                        title={`Copy ${row.label.toLowerCase()}`}
+                        onClick={() => void copy(row.label, row.value)}
+                      >
+                        <i className="ri-file-copy-line" aria-hidden="true" />
+                      </button>
+                    ) : null}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          </section>
+
+          <section id="settings-device" className="tp-card pg-card" aria-label="Device account">
+            <div className="pg-card-head">
+              <h2>Device account</h2>
+            </div>
+            <div className="pg-signout-row">
+              <div>
+                <p className="pg-muted">Sign out only when this computer should stop tracking this employee.</p>
+                <small className="pg-hint">
+                  <i className="ri-shield-check-line" aria-hidden="true" /> Time already tracked stays on record after sign-out
+                </small>
+              </div>
+              <button className="pg-btn pg-btn-solid-danger" onClick={onLogout} disabled={isLoggingOut}>
+                <i className="ri-logout-box-r-line" aria-hidden="true" />
+                {isLoggingOut ? "Signing out..." : "Sign out from this device"}
+              </button>
+            </div>
+          </section>
         </div>
-        <dl className="pg-dl">
-          <div>
-            <dt>Employee</dt>
-            <dd>{status.employeeName || "—"}</dd>
-          </div>
-          <div>
-            <dt>Work email</dt>
-            <dd>{status.employeeEmail || "—"}</dd>
-          </div>
-          <div>
-            <dt>Device</dt>
-            <dd>{status.deviceName || "—"}</dd>
-          </div>
-          <div>
-            <dt>Device ID</dt>
-            <dd className="pg-mono">{status.deviceId || "—"}</dd>
-          </div>
-          <div>
-            <dt>MAC address</dt>
-            <dd className="pg-mono">{status.macAddress || "—"}</dd>
-          </div>
-          <div>
-            <dt>Local IP</dt>
-            <dd className="pg-mono">{status.localIpAddress || "—"}</dd>
-          </div>
-        </dl>
-      </section>
-      <section className="tp-card pg-card">
-        <h2>Device account</h2>
-        <p className="pg-muted">
-          Sign out only when this computer should stop tracking this employee.
-        </p>
-        <button
-          className="pg-btn pg-btn-danger"
-          onClick={onLogout}
-          disabled={isLoggingOut}
-        >
-          {isLoggingOut ? "Signing out..." : "Sign out from this device"}
-        </button>
-      </section>
+      </div>
     </section>
   );
 }

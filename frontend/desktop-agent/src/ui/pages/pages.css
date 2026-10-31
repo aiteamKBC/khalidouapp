@@ -1060,3 +1060,413 @@ small.pg-muted {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
+
+/* ---------- design-review additions: tasks ---------- */
+.pg-task-meta {
+  display: flex !important;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 9px;
+}
+
+.pg-priority {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--k-faint);
+}
+
+.pg-priority::before {
+  content: "";
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+.pg-priority.medium {
+  color: var(--k-amber);
+}
+
+.pg-priority.high {
+  color: var(--k-plum-2);
+}
+
+.pg-priority.urgent {
+  color: var(--k-rose);
+}
+
+.pg-due {
+  font-size: 9.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--k-muted);
+}
+
+.pg-hint {
+  margin: 0;
+  padding: 2px 4px 0;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--k-faint);
+}
+
+/* ---------- design-review additions: insights + attendance ---------- */
+.pg-kpis {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.pg-kpi {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 5px;
+  padding: 13px 14px;
+}
+
+.pg-kpi strong {
+  overflow: hidden;
+  font-size: 16px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--k-ink);
+}
+
+.pg-kpi strong.is-accent {
+  color: var(--k-plum-2);
+}
+
+.pg-kpi small {
+  font-size: 10.5px;
+  color: var(--k-muted);
+}
+
+.pg-periods {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.pg-period {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 13px 14px 14px;
+}
+
+.pg-period-range {
+  font-size: 9.5px;
+  color: var(--k-faint);
+}
+
+.pg-period .pg-insight-total {
+  font-size: 22px;
+}
+
+.pg-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-top: 10px;
+  border-top: 1px solid var(--k-line-2);
+}
+
+.pg-pills > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border: 1px solid var(--k-line);
+  border-radius: 9px;
+  background: var(--k-card);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--k-ink-2);
+}
+
+.pg-pills > span.is-ok {
+  border-color: color-mix(in srgb, var(--k-green) 30%, transparent);
+  background: var(--k-green-2);
+  color: var(--k-green);
+}
+
+.pg-activity {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pg-activity-item {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px 12px;
+  border: 1px solid var(--k-line);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--k-plum-2) 7%, var(--k-card));
+  font-size: 11px;
+  color: var(--k-muted);
+}
+
+.pg-activity-item strong {
+  font-size: 12.5px;
+  color: var(--k-ink);
+}
+
+.pg-note {
+  margin: 0;
+  padding: 9px 11px;
+  border: 1px dashed var(--k-line);
+  border-radius: 10px;
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--k-muted);
+}
+
+.pg-rules {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.pg-rules li {
+  position: relative;
+  padding-left: 14px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--k-ink-2);
+}
+
+.pg-rules li::before {
+  content: "";
+  position: absolute;
+  top: 7px;
+  left: 2px;
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  background: var(--k-plum-2);
+}
+
+/* ---------- design-review additions: settings ---------- */
+.pg-settings {
+  display: grid;
+  grid-template-columns: 200px minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.pg-settings-nav {
+  position: sticky;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.pg-settings-nav > .pg-stat-label {
+  padding: 0 8px 6px;
+}
+
+.k-app.app-shell .pg-settings-link {
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: left;
+  color: var(--k-ink-2);
+  cursor: pointer;
+}
+
+.k-app.app-shell .pg-settings-link:hover {
+  background: var(--k-card);
+  color: var(--k-ink);
+}
+
+.pg-enrolled-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 12px;
+}
+
+.pg-settings-main {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.pg-segment {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--k-line);
+  border-radius: 12px;
+  background: var(--k-bg-2);
+}
+
+.k-app.app-shell .pg-segment > button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 32px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--k-muted);
+  cursor: pointer;
+}
+
+.k-app.app-shell .pg-segment > button.active {
+  background: var(--k-card);
+  color: var(--k-plum);
+}
+
+.pg-skins {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.k-app.app-shell .pg-skin {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--k-line);
+  border-radius: 12px;
+  background: var(--k-card);
+  font: inherit;
+  text-align: left;
+  color: var(--k-ink);
+  cursor: pointer;
+}
+
+.k-app.app-shell .pg-skin.is-selected {
+  border-color: var(--k-pink);
+  background: var(--k-pink-2);
+}
+
+.pg-skin-swatch {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  height: 34px;
+  overflow: hidden;
+  border-radius: 8px;
+}
+
+.pg-skin strong {
+  font-size: 12.5px;
+}
+
+.pg-skin small {
+  font-size: 10.5px;
+  color: var(--k-muted);
+}
+
+.pg-dl dd {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  text-align: right;
+}
+
+.pg-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--k-faint);
+}
+
+.pg-dot.is-ok {
+  background: var(--k-green);
+}
+
+.pg-dot.is-bad {
+  background: var(--k-rose);
+}
+
+.k-app.app-shell .pg-copy {
+  display: inline-flex;
+  width: 24px;
+  height: 24px;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--k-line);
+  border-radius: 7px;
+  background: var(--k-card);
+  color: var(--k-muted);
+  cursor: pointer;
+}
+
+.k-app.app-shell .pg-copy:hover {
+  border-color: var(--k-plum-2);
+  color: var(--k-plum);
+}
+
+.pg-signout-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.pg-signout-row .pg-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 6px;
+}
+
+.k-app.app-shell .pg-btn-solid-danger {
+  border-color: transparent;
+  border-radius: 999px;
+  background: var(--k-rose);
+  color: #ffffff;
+}
+
+.k-app.app-shell .pg-btn-solid-danger:hover:not(:disabled) {
+  border-color: transparent;
+  background: var(--k-rose);
+  color: #ffffff;
+  filter: brightness(1.06);
+}
+
+.app-shell.app-dark .pg-btn-solid-danger {
+  color: #1a0a10 !important;
+}
+
+@media (max-width: 1100px) {
+  .pg-settings {
+    grid-template-columns: 170px minmax(0, 1fr);
+  }
+}
+
+/* App.css's global input rule pads checkboxes like text fields */
+.k-app.app-shell[data-theme] .pg-page .pg-check-item input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  flex: none;
+}

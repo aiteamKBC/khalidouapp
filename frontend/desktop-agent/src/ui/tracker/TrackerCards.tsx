@@ -273,9 +273,9 @@ export type Tile = {
   bar?: number;
 };
 
-export function StatTiles({ tiles }: { tiles: Tile[] }) {
+export function StatTiles({ tiles, row = false }: { tiles: Tile[]; row?: boolean }) {
   return (
-    <div className="tp-tiles">
+    <div className={`tp-tiles${row ? " is-row" : ""}`}>
       {tiles.map((tile) => (
         <div key={tile.key} className="tp-stat" data-tone={tile.tone}>
           <div className="flex items-start justify-between gap-2">
@@ -369,17 +369,38 @@ export type NeedsRow = {
   onClick: () => void;
 };
 
+/* his badge per row; break work is never called overtime */
+const TIMELINE_BADGES: Record<string, string> = {
+  worked: "Shift",
+  extra: "Overtime",
+  break_work: "Break work",
+  break: "Rest",
+  saved_break: "Saved",
+  idle: "Idle",
+  locked: "Locked",
+  sleeping: "Sleep",
+  untracked: "Gap",
+  manual: "Manual",
+  leave: "Leave",
+};
+
 export function TimelineCard({
   rows,
   needs,
   needsSummary,
+  loggedLabel,
 }: {
   rows: TimelineRow[];
   needs: NeedsRow[];
   needsSummary: string;
+  loggedLabel: string;
 }) {
   return (
-    <Card title="Today's timeline" icon="ri-file-list-3-line">
+    <Card
+      title="Today's timeline"
+      icon="ri-file-list-3-line"
+      action={<span className="tp-logged">{loggedLabel}</span>}
+    >
       {needs.length ? (
         <section className="tp-needs" aria-label="Idle periods needing explanation">
           <header>
@@ -414,8 +435,10 @@ export function TimelineCard({
               ) : null}
             </div>
             <span className="flex flex-none flex-col items-end gap-1">
+              <span className={`tp-tl-chip${row.isCurrent ? " is-live" : ""}`} data-type={row.displayType}>
+                {row.isCurrent ? "Ongoing" : (TIMELINE_BADGES[row.displayType] ?? row.label)}
+              </span>
               <span className="app-num text-[11px] font-semibold text-ink-2">{row.duration}</span>
-              {row.isCurrent ? <span className="tp-tl-chip is-live">Now</span> : null}
             </span>
           </li>
         ))}
@@ -434,8 +457,10 @@ export function ShotCard({
   viewAllDisabled,
   empty,
   errors,
+  footer,
 }: {
   shot: { src: string; alt: string; time: string; syncLabel: string; synced: boolean } | null;
+  footer: { interval: string | null; captureLabel: string; captureOk: boolean } | null;
   showLoadButton: boolean;
   loading: boolean;
   onLoad: () => void;
@@ -485,6 +510,20 @@ export function ShotCard({
           </p>
         ))}
       </div>
+      {footer ? (
+        <div className="tp-card-foot">
+          <span className="flex min-w-0 items-center gap-1.5 truncate">
+            <i className="ri-timer-2-line text-[11px]" aria-hidden="true" />
+            <span className="truncate">
+              {footer.interval ? `Automated snapshot frequency · ${footer.interval}` : "Automated snapshots"}
+            </span>
+          </span>
+          <span className={`flex flex-none items-center gap-1.5 font-semibold ${footer.captureOk ? "text-ok" : "text-warn"}`}>
+            <span className={`h-1.5 w-1.5 rounded-full ${footer.captureOk ? "bg-ok" : "bg-warn"}`} aria-hidden="true" />
+            {footer.captureLabel}
+          </span>
+        </div>
+      ) : null}
     </Card>
   );
 }

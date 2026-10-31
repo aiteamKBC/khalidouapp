@@ -24,7 +24,8 @@
   grid-column: 1 / -1;
   min-height: 0;
   overflow-y: auto;
-  padding: 14px 16px 18px;
+  /* his centered column: full width at our 980-1240 px, margins beyond */
+  padding: 14px max(16px, calc((100% - 1240px) / 2)) 18px;
   font-family: "Inter Variable", "Inter", "IBM Plex Sans Arabic", system-ui, sans-serif;
   color: var(--k-ink);
 }
@@ -611,27 +612,27 @@
   color: var(--k-ink-2);
 }
 
-.app-page .segment-worked {
+.k-app.app-shell[data-theme] .app-page .segment-worked {
   background: var(--k-plum-2);
 }
 
-.app-page .segment-overtime {
+.k-app.app-shell[data-theme] .app-page .segment-overtime {
   background: var(--k-pink);
 }
 
-.app-page .segment-idle {
+.k-app.app-shell[data-theme] .app-page .segment-idle {
   background: var(--k-amber);
 }
 
-.app-page .segment-approved {
+.k-app.app-shell[data-theme] .app-page .segment-approved {
   background: var(--k-green);
 }
 
-.app-page .segment-pending {
+.k-app.app-shell[data-theme] .app-page .segment-pending {
   background: color-mix(in srgb, var(--k-green) 40%, var(--k-line));
 }
 
-.app-page .segment-rejected {
+.k-app.app-shell[data-theme] .app-page .segment-rejected {
   background: var(--k-rose);
 }
 
@@ -867,4 +868,91 @@
 
 .tp-recent:hover {
   background: var(--k-hover);
+}
+
+/* ---------- design-review additions ---------- */
+/* six tiles in one row under the two columns, as in the Readdy tracker */
+.tp-tiles.is-row {
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+}
+
+.tp-logged {
+  padding: 3px 9px;
+  border: 1px solid color-mix(in srgb, var(--k-pink) 30%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--k-pink) 12%, var(--k-card));
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--k-plum) 88%, var(--k-ink));
+}
+
+.tp-tl-chip {
+  color: var(--k-ink-2);
+  background: color-mix(in srgb, var(--k-plum-2) 8%, var(--k-card));
+}
+
+.tp-tl-chip[data-type="extra"] {
+  border-color: color-mix(in srgb, var(--k-pink) 34%, transparent);
+  background: color-mix(in srgb, var(--k-pink) 9%, var(--k-card));
+  color: var(--k-plum);
+}
+
+.tp-tl-chip:is([data-type="break"], [data-type="saved_break"]) {
+  border-color: color-mix(in srgb, var(--k-teal) 34%, transparent);
+  background: var(--k-teal-2);
+  color: var(--k-teal);
+}
+
+.tp-tl-chip[data-type="idle"] {
+  border-color: color-mix(in srgb, var(--k-amber) 30%, transparent);
+  background: var(--k-amber-2);
+  color: var(--k-amber);
+}
+
+.tp-tl-chip.is-live {
+  border-color: color-mix(in srgb, var(--k-green) 30%, transparent);
+  background: var(--k-green-2);
+  color: var(--k-green);
+}
+
+.tp-card-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: auto;
+  padding: 10px 16px 12px;
+  border-top: 1px solid var(--k-line-2);
+  font-size: 10px;
+  color: var(--k-muted);
+}
+
+/* the timeline scrolls inside its card so a long day keeps the right column
+   level with the timer card */
+.tp-timeline {
+  max-height: 248px;
+  overflow-y: auto;
+}
+
+.tp-bottom {
+  display: grid;
+  grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.tp-bottom > :only-child {
+  grid-column: 1 / -1;
+}
+
+/* the timer card fills the height of the right column, as in his tracker */
+.tp-layout {
+  align-items: stretch;
+}
+
+.tp-layout > div:first-child > .tp-hero {
+  flex: 1;
+  justify-content: space-between;
 }

@@ -126,6 +126,8 @@ export type AgentTask = {
   active_seconds: number;
   idle_seconds: number;
   tracked_seconds: number;
+  priority?: "low" | "medium" | "high" | "urgent" | null;
+  deadline?: string | null;
 };
 
 export type AgentRecentScreenshot = {
