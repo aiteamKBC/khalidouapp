@@ -66,7 +66,8 @@
   border-color: color-mix(in srgb, var(--k-amber) 40%, transparent);
 }
 
-.app-shell :focus-visible {
+/* zero specificity, so elements that hide their outline keep it hidden */
+:where(.app-shell) :focus-visible {
   outline-color: var(--k-pink);
 }
 
@@ -223,6 +224,15 @@
 
 [data-tone="overtime"] > .app-tone-dot {
   background: var(--k-pink);
+  animation: appLiveHalo 2.8s ease-out infinite;
+}
+
+/* his "ACTIVE SHIFT" label: small tracked capitals beside the live dot */
+.app-pill-label {
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
 }
 
 @keyframes appLiveHalo {

@@ -16,7 +16,8 @@
 }
 
 .pg-head h1 {
-  font-size: 24px;
+  font-size: 36px;
+  line-height: 1.1;
   font-weight: 800;
   letter-spacing: -0.02em;
   color: var(--k-ink);
@@ -1005,7 +1006,7 @@ small.pg-muted {
   height: 7px;
 }
 
-/* ---------- sign-in ---------- */
+/* ---------- sign-in: his photo under a dark plum scrim, a glass frame ---------- */
 .k-app.app-shell[data-theme] > .pg-signin {
   grid-row: 3;
   grid-column: 1 / -1;
@@ -1013,38 +1014,90 @@ small.pg-muted {
   place-items: center;
   padding: 24px;
   background:
-    linear-gradient(180deg, color-mix(in srgb, var(--k-bg) 35%, transparent), var(--k-bg) 92%),
+    linear-gradient(180deg, rgba(23, 17, 40, 0.62), rgba(23, 17, 40, 0.84)),
     url("../assets/login-bg.jpg") center / cover no-repeat;
+}
+
+.pg-signin-wrap {
+  display: flex;
+  width: min(430px, 100%);
+  flex-direction: column;
+  align-items: stretch;
+  gap: 18px;
+}
+
+.pg-signin-brand {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: #ffffff;
+}
+
+.pg-signin-logo {
+  width: 40px;
+  height: 46px;
+  flex: none;
+  border-radius: 10px;
+  background: #ffffff url("../assets/khaliduo-logo.png") center / 34px no-repeat;
+}
+
+.pg-signin-brand b {
+  display: block;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  line-height: 1;
+}
+
+.pg-signin-brand small {
+  display: block;
+  margin-top: 4px;
+  font-size: 8.5px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.pg-signin-frame {
+  padding: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(6px);
 }
 
 .pg-signin-card {
   box-sizing: border-box;
   display: flex;
-  width: min(420px, 100%);
   flex-direction: column;
   gap: 14px;
+  overflow: hidden;
   padding: 26px 26px 24px;
+  border-radius: 18px;
   box-shadow: 0 30px 60px -36px rgba(10, 6, 30, 0.55);
 }
 
-/* brand mark above the heading (decorative, so it stays out of the markup) */
+/* pink accent along the top edge */
 .pg-signin-card::before {
   content: "";
-  width: 46px;
-  height: 46px;
-  border: 1px solid var(--k-line);
-  border-radius: 999px;
-  background: #ffffff url("../assets/khaliduo-logo.png") center / 38px no-repeat;
+  position: absolute;
+  inset: 0 0 auto;
+  height: 3px;
+  background: linear-gradient(90deg, var(--k-plum-2), var(--k-pink));
 }
 
 .pg-signin-card h2 {
-  font-size: 21px;
-  font-weight: 800;
+  font-size: 23px;
+  font-weight: 700;
   letter-spacing: -0.02em;
-  color: var(--k-ink);
+  color: var(--k-plum);
 }
 
 .pg-signin-card > p {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
   margin: -6px 0 0;
   font-size: 12px;
   color: var(--k-muted);
@@ -1053,6 +1106,74 @@ small.pg-muted {
 .pg-signin-card .pg-btn {
   width: 100%;
   height: 42px;
+}
+
+.pg-signin-foot {
+  margin: 0;
+  font-size: 9.5px;
+  letter-spacing: 0.2em;
+  text-align: center;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.35);
+}
+
+.pg-input-icon {
+  position: relative;
+  display: block;
+}
+
+.pg-input-icon > i {
+  position: absolute;
+  top: 50%;
+  left: 12px;
+  font-size: 14px;
+  color: var(--k-faint);
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+.k-app.app-shell[data-theme] .pg-signin .pg-input-icon > input {
+  width: 100%;
+  padding-left: 34px;
+}
+
+.k-app.app-shell[data-theme] .pg-signin .pg-input-icon.has-toggle > input {
+  padding-right: 40px;
+}
+
+.k-app.app-shell .pg-input-toggle {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  display: flex;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  font-size: 14px;
+  color: var(--k-muted);
+  cursor: pointer;
+  transform: translateY(-50%);
+}
+
+.k-app.app-shell .pg-input-toggle:hover {
+  background: var(--k-bg-2);
+  color: var(--k-plum);
+}
+
+.pg-spin {
+  display: inline-block;
+  animation: pg-spin 0.8s linear infinite;
+}
+
+@keyframes pg-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 @media (max-width: 1100px) {
@@ -1469,4 +1590,242 @@ small.pg-muted {
   margin: 0;
   padding: 0;
   flex: none;
+}
+
+/* ---------- design-review round 2 ---------- */
+/* table status: his soft title-case chip with a dot */
+.pg-status.is-soft {
+  padding: 3px 10px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.pg-task-title {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.pg-task-title > strong {
+  min-width: 0;
+}
+
+.pg-tracking {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, var(--k-cta-grad-1), var(--k-cta-grad-2));
+  font-size: 9px;
+  font-style: normal;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #ffffff;
+}
+
+.pg-tracking::before {
+  content: "";
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  background: #ffffff;
+  animation: appLiveHalo 2.8s ease-out infinite;
+}
+
+/* insights: totals against target, daily load, week attendance */
+.pg-period-head {
+  align-items: baseline;
+}
+
+.pg-target-tag {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  padding: 3px 9px;
+  border: 1px solid color-mix(in srgb, var(--k-pink) 30%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--k-pink) 10%, var(--k-card));
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  color: color-mix(in srgb, var(--k-plum) 88%, var(--k-ink));
+}
+
+.pg-progress {
+  display: block;
+  height: 6px;
+  margin: 4px 0 2px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--k-pink) 14%, var(--k-card));
+}
+
+.pg-progress > span {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--k-bar-1) 0%, var(--k-bar-2) 62%, var(--k-bar-3) 100%);
+}
+
+/* his bars run plum to pink; other tones keep their hue with a soft sheen */
+.k-app.app-shell[data-theme] .pg-bars .tp-breakdown-bar > i {
+  border-radius: 999px;
+  background-image: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.32));
+}
+
+.k-app.app-shell[data-theme] .pg-bars .tp-breakdown-bar > i.segment-worked {
+  background-image: linear-gradient(90deg, var(--k-bar-1) 0%, var(--k-bar-2) 62%, var(--k-bar-3) 100%);
+}
+
+.pg-load {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 8px;
+  height: 170px;
+  padding-top: 4px;
+}
+
+.pg-load-day {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.pg-load-value {
+  height: 14px;
+  font-size: 9.5px;
+  font-weight: 600;
+  color: var(--k-muted);
+}
+
+.pg-load-bar {
+  position: relative;
+  display: flex;
+  width: 100%;
+  max-width: 34px;
+  flex: 1;
+  align-items: flex-end;
+  overflow: hidden;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--k-plum-2) 8%, var(--k-card));
+}
+
+.pg-load-bar > span {
+  display: block;
+  width: 100%;
+  border-radius: 9px;
+  background: linear-gradient(180deg, var(--k-bar-3) 0%, var(--k-bar-1) 100%);
+  opacity: 0.55;
+}
+
+.pg-load-day.is-today .pg-load-bar > span {
+  opacity: 1;
+}
+
+/* dashed line at the daily target */
+.pg-load-bar > i {
+  position: absolute;
+  inset-inline: 0;
+  border-top: 1px dashed color-mix(in srgb, var(--k-ink) 30%, transparent);
+}
+
+.pg-load-label {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--k-muted);
+}
+
+.pg-load-day.is-today .pg-load-label {
+  color: var(--k-plum-2);
+}
+
+.pg-load-day.is-off .pg-load-bar {
+  background: repeating-linear-gradient(
+    135deg,
+    transparent 0 5px,
+    color-mix(in srgb, var(--k-line) 70%, transparent) 5px 6px
+  );
+}
+
+.pg-week-scroll {
+  overflow-x: auto;
+}
+
+.pg-week-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11.5px;
+}
+
+.pg-week-table th {
+  padding: 8px 10px;
+  background: var(--k-bg-2);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-align: left;
+  text-transform: uppercase;
+  white-space: nowrap;
+  color: var(--k-muted);
+}
+
+.pg-week-table th:first-child {
+  border-radius: 9px 0 0 9px;
+}
+
+.pg-week-table th:last-child {
+  border-radius: 0 9px 9px 0;
+}
+
+.pg-week-table td {
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--k-line-2);
+  white-space: nowrap;
+  color: var(--k-ink-2);
+}
+
+.pg-week-table tr:last-child td {
+  border-bottom: 0;
+}
+
+.pg-week-table tr.is-today td {
+  background: color-mix(in srgb, var(--k-pink) 7%, var(--k-card));
+}
+
+.pg-week-table td strong {
+  color: var(--k-ink);
+}
+
+/* settings: current section, header dividers, hidden-details summary */
+.k-app.app-shell .pg-settings-link.is-active {
+  background: var(--k-card);
+  box-shadow: inset 3px 0 0 var(--k-pink);
+  color: var(--k-ink);
+}
+
+.pg-settings-main .pg-card-head {
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--k-line-2);
+}
+
+.pg-hidden-summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px dashed var(--k-line);
+  border-radius: 10px;
+  font-size: 11px;
+  color: var(--k-muted);
 }

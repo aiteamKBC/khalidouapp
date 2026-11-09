@@ -219,6 +219,17 @@ html.dark .sf-sheen,
   bottom: 0;
 }
 
+/* the flipping leaves are half-height windows too: the falling top leaf
+   shows the digit's top half, the rising bottom leaf its bottom half
+   (missing in the original design, so mid-flip showed two whole digits) */
+.sf-leaf-top > .sf-glyph {
+  top: 0;
+}
+
+.sf-leaf-bot > .sf-glyph {
+  bottom: 0;
+}
+
 /* the hinge: hairline plus two notches */
 .sf-seam {
   position: absolute;

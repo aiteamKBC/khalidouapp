@@ -25,6 +25,7 @@ from app.core.exceptions import ApiError
 from app.core.security import create_employee_handoff_token
 from app.database.session import get_db
 from app.models import (
+    DailyAttendance,
     Employee,
     LeaveRequest,
     PauseSession,
@@ -466,6 +467,16 @@ def agent_period_summary(context: DeviceAuthContext, db: Session) -> dict:
         timeline=timeline,
         timezone_name=device_timezone,
     )
+    # Same rows and order as the week summary always used.
+    week_end = week_start + timedelta(days=6)
+    week_rows = timesheet_rows(
+        db,
+        context.device.company_id,
+        week_start,
+        week_end,
+        context.device.employee_id,
+        device_id=context.device.id,
+    )
     return {
         "employee": {
             "id": str(employee.id),
@@ -503,8 +514,92 @@ def agent_period_summary(context: DeviceAuthContext, db: Session) -> dict:
                 attendance_sources.get("paid_late_allowance_seconds", 0)
             ),
         },
-        "week": summarize(week_start, week_start + timedelta(days=6)),
+        "week": period_summary(
+            week_rows,
+            manual_request_status_seconds(db, employee, week_start, week_end),
+        ),
         "month": summarize(month_start, month_end),
+        # Read-only figures for the desktop Insights screen: this week's days
+        # from the same timesheet rows the week total uses, plus late seconds
+        # from the stored attendance (today from the live calculation above).
+        "attendance_week": _attendance_week(
+            db,
+            employee=employee,
+            profile=profile,
+            device=context.device,
+            week_rows=week_rows,
+            today=today,
+            today_attendance=attendance_row,
+            week_start=week_start,
+            week_end=week_end,
+            month_start=month_start,
+            month_end=month_end,
+        ),
+    }
+
+
+def _attendance_week(
+    db: Session,
+    *,
+    employee: Employee,
+    profile,
+    device,
+    week_rows: list[dict],
+    today: date,
+    today_attendance: DailyAttendance,
+    week_start: date,
+    week_end: date,
+    month_start: date,
+    month_end: date,
+) -> dict:
+    stored = {
+        row.work_date: row
+        for row in db.scalars(
+            select(DailyAttendance).where(
+                DailyAttendance.employee_id == employee.id,
+                DailyAttendance.work_date >= week_start,
+                DailyAttendance.work_date < today,
+            )
+        ).all()
+    }
+    stored[today] = today_attendance
+    rows_by_date = {row["date"]: row for row in week_rows}
+    days = []
+    for offset in range(7):
+        day = week_start + timedelta(days=offset)
+        row = rows_by_date.get(day.isoformat()) or {}
+        attendance = stored.get(day)
+        days.append(
+            {
+                "date": day.isoformat(),
+                "start_time": row.get("start_time"),
+                "end_time": row.get("end_time"),
+                "session_count": int(row.get("session_count", 0)),
+                "active_seconds": int(row.get("active_seconds", 0)),
+                "idle_seconds": int(row.get("idle_seconds", 0)),
+                "payable_seconds": int(row.get("payable_seconds", 0)),
+                "leave_status": row.get("leave_status"),
+                "status": attendance.status if attendance is not None else None,
+                "raw_late_seconds": int(attendance.raw_late_seconds or 0)
+                if attendance is not None
+                else 0,
+                "deductible_late_seconds": int(attendance.deductible_late_seconds or 0)
+                if attendance is not None
+                else 0,
+                "sign_out_at": attendance.actual_sign_out_at.isoformat()
+                if attendance is not None and attendance.actual_sign_out_at
+                else None,
+            }
+        )
+    return {
+        "week_start": week_start.isoformat(),
+        "week_end": week_end.isoformat(),
+        "month_start": month_start.isoformat(),
+        "month_end": month_end.isoformat(),
+        "late_grace_minutes": int(profile.late_grace_minutes or 0),
+        "working_days": list(profile.working_days) if profile.working_days is not None else None,
+        "enrolled_at": device.registered_at.isoformat() if device.registered_at else None,
+        "days": days,
     }
 
 

@@ -12,6 +12,7 @@ import type {
   AgentProject,
   AgentStatus,
   AgentTask,
+  AttendanceDay,
   IdleAlert,
   MeetingSummary,
   RecentScreenshot,
@@ -23,7 +24,7 @@ import { ToastStack } from "./ui/shell/ToastStack";
 import { useToasts } from "./ui/shell/toastQueue";
 import { TopBar, type ShellTone } from "./ui/shell/TopBar";
 import { SKINS, useSkin, type Skin } from "./ui/theme/skin";
-import { useTimerStyle, type TimerStyle } from "./ui/tracker/timerStyle";
+import { TIMER_STYLES, useTimerStyle, type TimerStyle } from "./ui/tracker/timerStyle";
 import {
   BreakdownCard,
   HeroCard,
@@ -152,6 +153,13 @@ function formatSavedMinutes(totalSeconds: number) {
   const minutes = Math.floor(Math.max(0, totalSeconds) / 60);
   if (minutes < 60) return `${minutes}m`;
   return `${Math.floor(minutes / 60)}h ${String(minutes % 60).padStart(2, "0")}m`;
+}
+
+/** "1h 29m" / "45m", for compact tracked-time cells. */
+function formatHoursMinutes(totalSeconds: number) {
+  const minutes = Math.max(0, Math.floor(totalSeconds / 60));
+  const hours = Math.floor(minutes / 60);
+  return hours > 0 ? `${hours}h ${minutes % 60}m` : `${minutes}m`;
 }
 
 function formatDuration(totalSeconds: number) {
@@ -550,6 +558,30 @@ function App() {
   const { skin, setSkin } = useSkin(theme);
   const [timerStyle, setTimerStyle] = useTimerStyle();
   const { toasts, push: pushToast, dismiss: dismissToast } = useToasts();
+  // Appearance changes confirm themselves with a toast, as in his app.
+  const changeTimerStyle = useCallback(
+    (style: TimerStyle) => {
+      setTimerStyle(style);
+      const face = TIMER_STYLES.find((item) => item.key === style);
+      if (face) pushToast(`Timer style · ${face.label}`);
+    },
+    [setTimerStyle, pushToast],
+  );
+  const changeSkin = useCallback(
+    (next: Skin) => {
+      setSkin(next);
+      const item = SKINS.find((entry) => entry.key === next);
+      if (item) pushToast(`Theme · ${item.label}`);
+    },
+    [setSkin, pushToast],
+  );
+  const changeTheme = useCallback(
+    (mode: "light" | "dark") => {
+      setTheme(mode);
+      pushToast(mode === "dark" ? "Dark mode on" : "Light mode on");
+    },
+    [pushToast],
+  );
   const shownIdleAlertId = useRef<string | null>(null);
   const screenshotsLoadedForEnrollment = useRef(false);
   const lastLoadedScreenshotAt = useRef<string | null>(null);
@@ -1125,6 +1157,12 @@ function App() {
         return;
       }
       if (result.status) setStatus(result.status);
+      const picked = result.status?.selectedTask;
+      pushToast(
+        taskId === "none" || !picked
+          ? "No task selected · time is still tracked"
+          : `Tracking · ${picked.name}`,
+      );
     } catch (error) {
       setTaskError(
         ipcErrorMessage(error, "The action could not be completed. Please try again."),
@@ -1738,8 +1776,8 @@ function App() {
         onUpdate={() => void handleUpdateButton()}
         skin={skin}
         mode={theme}
-        onSkin={setSkin}
-        onMode={setTheme}
+        onSkin={changeSkin}
+        onMode={changeTheme}
         employeeName={status.employeeName}
         employeeAvatarUrl={status.employeeAvatarUrl}
         employeeInitials={initials(status.employeeName)}
@@ -1816,7 +1854,7 @@ function App() {
               timerShowsIdle={timerShowsIdle}
               onBreak={onScheduledBreak || onSavedBreak}
               timerStyle={timerStyle}
-              onTimerStyleChange={setTimerStyle}
+              onTimerStyleChange={changeTimerStyle}
               selectedProject={selectedProject}
               projectFilterId={projectFilterId}
               visibleTasks={visibleTasks}
@@ -1957,9 +1995,9 @@ function App() {
               onLogout={() => void handleLogout()}
               isLoggingOut={isLoggingOut}
               theme={theme}
-              onThemeChange={setTheme}
+              onThemeChange={changeTheme}
               skin={skin}
-              onSkinChange={setSkin}
+              onSkinChange={changeSkin}
               onNotify={pushToast}
             />
           )}
@@ -2038,46 +2076,96 @@ function EnrollmentView({
   onPasswordChange: (value: string) => void;
   onCredentialEnrollment: (event: FormEvent<HTMLFormElement>) => void;
 }) {
+  // View-only: password visibility and the shake replayed on each new error.
+  const [showPassword, setShowPassword] = useState(false);
+  const formRef = useRef<HTMLFormElement>(null);
+  useEffect(() => {
+    const form = formRef.current;
+    if (!form || !enrollmentError) return;
+    form.classList.remove("k-shake");
+    void form.offsetWidth;
+    form.classList.add("k-shake");
+  }, [enrollmentError]);
+
   return (
     <section className="app-page pg-signin">
-      <div className="tp-card pg-signin-card">
-        <h2>Sign in to set up this computer</h2>
-        <p>Your device will be linked to your employee account.</p>
-        <form className="pg-form" onSubmit={onCredentialEnrollment}>
-          <label>
-            Work email
-            <input
-              type="email"
-              value={employeeEmail}
-              onChange={(event) => onEmailChange(event.target.value)}
-              autoComplete="email"
-              placeholder="name@company.com"
-              disabled={isSubmitting}
-              required
-            />
-          </label>
-          <label>
-            Password
-            <input
-              type="password"
-              value={employeePassword}
-              onChange={(event) => onPasswordChange(event.target.value)}
-              autoComplete="current-password"
-              placeholder="Employee password"
-              disabled={isSubmitting}
-              minLength={8}
-              required
-            />
-          </label>
-          <button
-            type="submit"
-            className="pg-btn pg-btn-primary"
-            disabled={isSubmitting || !isDesktopRuntime}
-          >
-            {isSubmitting ? "Signing in..." : "Sign in and link device"}
-          </button>
-        </form>
-        {enrollmentError && <p className="k-error">{enrollmentError}</p>}
+      <div className="pg-signin-wrap">
+        <div className="pg-signin-brand">
+          <span className="pg-signin-logo" aria-hidden="true" />
+          <span>
+            <b>KHALIDUO</b>
+            <small>Time tracking suite</small>
+          </span>
+        </div>
+        <div className="pg-signin-frame">
+          <div className="tp-card pg-signin-card">
+            <h2>Sign in to set up this computer</h2>
+            <p>
+              <i className="ri-time-line" aria-hidden="true" /> Your device will be linked to your employee account.
+            </p>
+            <form ref={formRef} className="pg-form" onSubmit={onCredentialEnrollment}>
+              <label>
+                Work email
+                <span className="pg-input-icon">
+                  <i className="ri-mail-line" aria-hidden="true" />
+                  <input
+                    type="email"
+                    value={employeeEmail}
+                    onChange={(event) => onEmailChange(event.target.value)}
+                    autoComplete="email"
+                    placeholder="name@company.com"
+                    disabled={isSubmitting}
+                    required
+                  />
+                </span>
+              </label>
+              <label>
+                Password
+                <span className="pg-input-icon has-toggle">
+                  <i className="ri-lock-line" aria-hidden="true" />
+                  <input
+                    type={showPassword ? "text" : "password"}
+                    value={employeePassword}
+                    onChange={(event) => onPasswordChange(event.target.value)}
+                    autoComplete="current-password"
+                    placeholder="Employee password"
+                    disabled={isSubmitting}
+                    minLength={8}
+                    required
+                  />
+                  <button
+                    type="button"
+                    className="pg-input-toggle"
+                    onClick={() => setShowPassword((value) => !value)}
+                    aria-label={showPassword ? "Hide password" : "Show password"}
+                    aria-pressed={showPassword}
+                  >
+                    <i className={showPassword ? "ri-eye-off-line" : "ri-eye-line"} aria-hidden="true" />
+                  </button>
+                </span>
+              </label>
+              <button
+                type="submit"
+                className="pg-btn pg-btn-primary"
+                disabled={isSubmitting || !isDesktopRuntime}
+              >
+                {isSubmitting ? (
+                  <>
+                    <i className="ri-loader-4-line pg-spin" aria-hidden="true" /> Signing in...
+                  </>
+                ) : (
+                  "Sign in and link device"
+                )}
+              </button>
+            </form>
+            {enrollmentError && (
+              <p className="k-error" role="alert">
+                <i className="ri-error-warning-line" aria-hidden="true" /> {enrollmentError}
+              </p>
+            )}
+          </div>
+        </div>
+        <p className="pg-signin-foot">Secured workspace · employee sign-in</p>
       </div>
     </section>
   );
@@ -2317,9 +2405,10 @@ function HomeView({
   return (
     <section className="app-page">
       <div className="flex min-w-0 flex-col gap-3.5">
-        <h1 className="text-[24px] font-extrabold tracking-[-0.02em] text-ink">
-          Welcome back, {status.employeeName.split(" ")[0] || "there"}
-        </h1>
+        <h1 className="sr-only">Tracker</h1>
+        {/* the selectors, timer card and right column fill the window; the
+            tiles and breakdown sit below the fold, as in his tracker */}
+        <div className="tp-fold">
         <QuickBar
           projects={status.projects}
           projectId={projectFilterId}
@@ -2371,6 +2460,7 @@ function HomeView({
               clock={formatDuration(displayedTimerSeconds)}
               targetProgress={targetProgress}
               goalLabel={`${formatDuration(countedTodaySeconds)} of ${formatDuration(status.dailyTargetSeconds)}`}
+              remainingLabel={`${formatDuration(countedTodaySeconds)} logged · ${formatDuration(Math.max(0, status.dailyTargetSeconds - countedTodaySeconds))} remaining`}
               live={timerTone === "running"}
               timerAriaLabel={
                 timerShowsIdle
@@ -2405,7 +2495,29 @@ function HomeView({
               onTimerStyle={onTimerStyleChange}
             />
           </div>
-          <div className="flex min-w-0 flex-col gap-3.5">
+          <div className="tp-side">
+            {status.todayTimeline && (
+              <Timeline
+                timeline={status.todayTimeline}
+                locallyEndedIdleAt={status.locallyEndedIdleAt}
+                idleRequestOptions={idleRequestOptions}
+                onRequestIdleTime={onRequestManualTime}
+                loggedLabel={`${Math.floor(trackedTodaySeconds / 3600)}h logged`}
+                syncFooter={
+                  status.connectionStatus === "online"
+                    ? {
+                        label: status.lastSuccessfulSyncAt
+                          ? `Synced with the server · last sync ${formatTimestamp(status.lastSuccessfulSyncAt)}`
+                          : "Connected to the server",
+                        ok: true,
+                      }
+                    : {
+                        label: "Offline · activity is saved and syncs when the connection returns",
+                        ok: false,
+                      }
+                }
+              />
+            )}
             <ShotCard
               shot={
                 recentScreenshots?.[0]
@@ -2444,16 +2556,8 @@ function HomeView({
                   : null
               }
             />
-            {status.todayTimeline && (
-              <Timeline
-                timeline={status.todayTimeline}
-                locallyEndedIdleAt={status.locallyEndedIdleAt}
-                idleRequestOptions={idleRequestOptions}
-                onRequestIdleTime={onRequestManualTime}
-                loggedLabel={`${Math.floor(trackedTodaySeconds / 3600)}h logged`}
-              />
-            )}
           </div>
+        </div>
         </div>
         <StatTiles
           row
@@ -2585,12 +2689,14 @@ function Timeline({
   idleRequestOptions,
   onRequestIdleTime,
   loggedLabel,
+  syncFooter,
 }: {
   timeline: WorkdayTimeline;
   locallyEndedIdleAt: string | null;
   idleRequestOptions: IdleRequestOption[];
   onRequestIdleTime: (option: IdleRequestOption) => void;
   loggedLabel: string;
+  syncFooter: { label: string; ok: boolean };
 }) {
   const requestableMinutes = totalRequestableIdleMinutes(idleRequestOptions);
   const rows: TimelineRow[] =
@@ -2652,6 +2758,7 @@ function Timeline({
     <TimelineCard
       rows={rows}
       loggedLabel={loggedLabel}
+      footer={syncFooter}
       needsSummary={`${requestableMinutes} min requestable`}
       needs={idleRequestOptions.map((option) => ({
         key: option.key,
@@ -2858,7 +2965,10 @@ function TasksView({
                     aria-hidden="true"
                   />
                   <span>
-                    <strong dir="auto">{task.name}</strong>
+                    <span className="pg-task-title">
+                      <strong dir="auto">{task.name}</strong>
+                      {selected ? <em className="pg-tracking">Tracking</em> : null}
+                    </span>
                     <small className="pg-task-meta">
                       {task.priority && (
                         <b className={`pg-priority ${task.priority}`}>
@@ -2872,12 +2982,12 @@ function TasksView({
                 </span>
                 <span className="pg-task-cell">{task.projectName}</span>
                 <span>
-                  <em className={`pg-status ${task.stage}`}>
+                  <em className={`pg-status is-soft ${task.stage}`}>
                     {taskStageLabel(task.stage)}
                   </em>
                 </span>
-                <span className="pg-task-cell app-num">
-                  {formatDuration(task.activeSeconds)}
+                <span className="pg-task-cell app-num" title={formatDuration(task.activeSeconds)}>
+                  {formatHoursMinutes(task.activeSeconds)}
                 </span>
               </button>
             );
@@ -4187,6 +4297,53 @@ function overtimeStatusLabel(
       : "Recorded only";
 }
 
+/** "Nov 3" for an ISO date (YYYY-MM-DD), read as a calendar day. */
+function formatShortDate(value: string) {
+  return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" }).format(
+    new Date(`${value}T12:00:00`),
+  );
+}
+
+function formatWeekday(value: string) {
+  return new Intl.DateTimeFormat("en-US", { weekday: "short" }).format(
+    new Date(`${value}T12:00:00`),
+  );
+}
+
+/** "40h" / "7h 30m" for targets. */
+function formatTargetHours(totalSeconds: number) {
+  const minutes = Math.round(totalSeconds / 60);
+  const hours = Math.floor(minutes / 60);
+  return minutes % 60 ? `${hours}h ${minutes % 60}m` : `${hours}h`;
+}
+
+function WeekBars({
+  rows,
+  largest,
+}: {
+  rows: Array<{ label: string; seconds: number; tone: string }>;
+  largest: number;
+}) {
+  return (
+    <div className="pg-bars">
+      {rows.map((row) => (
+        <div key={row.label} className="pg-bar-row">
+          <div className="pg-row-between">
+            <span>{row.label}</span>
+            <b className="app-num">{formatDuration(row.seconds)}</b>
+          </div>
+          <span className="tp-breakdown-bar">
+            <i
+              className={`segment-${row.tone}`}
+              style={{ width: `${(row.seconds / largest) * 100}%` }}
+            />
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function InsightsView({
   status,
   countedTodaySeconds,
@@ -4202,6 +4359,7 @@ function InsightsView({
     Intl.DateTimeFormat().resolvedOptions().timeZone ??
     "UTC";
   const now = new Date();
+  const todayKey = localDateAt(now.toISOString(), timezone);
   const todayLabel = new Intl.DateTimeFormat("en-US", {
     weekday: "short",
     day: "numeric",
@@ -4214,10 +4372,40 @@ function InsightsView({
     timeZone: timezone,
   }).format(now);
   const summary = status.timeSummary;
+  const attendance = status.attendanceWeek ?? null;
+  const policy = status.requestPolicy;
+  const workingDays = attendance?.working_days ?? policy?.working_days ?? null;
+  // Week and month targets: the daily target on each scheduled working day.
+  const periodTarget = (start: string | undefined, end: string | undefined) =>
+    start && end && workingDays
+      ? status.dailyTargetSeconds * countWorkingDays(start, end, workingDays)
+      : null;
   const periods = [
-    { key: "today", title: "Today", range: todayLabel, data: summary?.today ?? null },
-    { key: "week", title: "This week", range: null, data: summary?.week ?? null },
-    { key: "month", title: "This month", range: monthLabel, data: summary?.month ?? null },
+    {
+      key: "today",
+      title: "Today",
+      range: todayLabel,
+      data: summary?.today ?? null,
+      target: status.dailyTargetSeconds,
+    },
+    {
+      key: "week",
+      title: "This week",
+      range: attendance
+        ? `${formatShortDate(attendance.week_start)} – ${formatShortDate(attendance.week_end)}`
+        : null,
+      data: summary?.week ?? null,
+      target: periodTarget(attendance?.week_start, attendance?.week_end),
+    },
+    {
+      key: "month",
+      title: "This month",
+      range: attendance
+        ? `${formatShortDate(attendance.month_start)} – ${formatShortDate(attendance.month_end)}`
+        : monthLabel,
+      data: summary?.month ?? null,
+      target: periodTarget(attendance?.month_start, attendance?.month_end),
+    },
   ];
   const week = summary?.week ?? null;
   const weekRows = week
@@ -4233,13 +4421,38 @@ function InsightsView({
     .filter((interval) => interval.type === "worked")
     .slice(-6)
     .reverse();
-  const policy = status.requestPolicy;
   const breaksToday = policy?.approved_leave_today ? [] : todaysBreaks(policy?.break_rules);
   const signedIn = status.todayTimeline?.first_started_at
     ? formatTimelineStart(status.todayTimeline)
     : status.sessionStartedAt
       ? formatClock(status.sessionStartedAt, timezone)
       : "Not started";
+  const days = attendance?.days ?? [];
+  const today = days.find((day) => day.date === todayKey) ?? null;
+  const graceMinutes = attendance?.late_grace_minutes ?? null;
+  const todaySessions =
+    today?.session_count ??
+    new Set((status.todayTimeline?.intervals ?? []).map((interval) => interval.session_id)).size;
+  const weekSessions = days.reduce((total, day) => total + day.session_count, 0);
+  const loadMax = Math.max(status.dailyTargetSeconds, ...days.map((day) => day.active_seconds), 1);
+  const lateLabel = (day: AttendanceDay) =>
+    day.deductible_late_seconds > 0
+      ? `${Math.round(day.deductible_late_seconds / 60)} min after grace`
+      : day.raw_late_seconds > 0
+        ? "Within grace"
+        : day.start_time
+          ? "On time"
+          : "—";
+  const isWorkingDay = (date: string) =>
+    workingDays ? workingDays.includes(weekdayIndex(date)) : true;
+  const signedInNote =
+    today && today.start_time
+      ? lateLabel(today) === "On time" && graceMinutes
+        ? `On time · ${graceMinutes} min grace`
+        : lateLabel(today)
+      : status.breakBank?.paid_late_allowance_seconds
+        ? `Paid late allowance ${formatDuration(status.breakBank.paid_late_allowance_seconds)}`
+        : "First activity today";
 
   return (
     <section className="app-page pg-page">
@@ -4267,11 +4480,7 @@ function InsightsView({
         <div className="tp-card pg-kpi">
           <span className="pg-stat-label">Signed in</span>
           <strong className="is-accent">{signedIn}</strong>
-          <small>
-            {status.breakBank?.paid_late_allowance_seconds
-              ? `Paid late allowance ${formatDuration(status.breakBank.paid_late_allowance_seconds)}`
-              : "First activity today"}
-          </small>
+          <small>{signedInNote}</small>
         </div>
         <div className="tp-card pg-kpi">
           <span className="pg-stat-label">Counted today</span>
@@ -4291,48 +4500,93 @@ function InsightsView({
         </section>
       ) : (
         <div className="pg-periods">
-          {periods.map(({ key, title, range, data }) =>
-            data ? (
+          {periods.map(({ key, title, range, data, target }) => {
+            if (!data) return null;
+            const counted = data.tracked_active_seconds + data.manual_approved_seconds;
+            const percent = target ? Math.min(100, Math.round((counted / target) * 100)) : null;
+            return (
               <section key={key} className="tp-card pg-period" aria-label={title}>
                 <div className="pg-row-between">
                   <span className="pg-stat-label">{title}</span>
                   {range ? <span className="pg-period-range">{range}</span> : null}
                 </div>
-                <strong className="pg-insight-total app-num">
-                  {formatDuration(data.tracked_active_seconds)}
-                </strong>
+                <div className="pg-row-between pg-period-head">
+                  <strong className="pg-insight-total app-num">{formatDuration(counted)}</strong>
+                  {target ? (
+                    <span className="pg-target-tag">vs {formatTargetHours(target)} target</span>
+                  ) : null}
+                </div>
+                {percent !== null ? (
+                  <span className="pg-progress" role="img" aria-label={`${percent}% of target`}>
+                    <span style={{ width: `${Math.max(2, percent)}%` }} />
+                  </span>
+                ) : null}
                 <p className="pg-muted">
-                  Manual approved {formatDuration(data.manual_approved_seconds)} · idle{" "}
+                  Worked {formatDuration(data.tracked_active_seconds)} · manual approved{" "}
+                  {formatDuration(data.manual_approved_seconds)} · idle{" "}
                   {formatDuration(data.idle_seconds)}
                 </p>
               </section>
-            ) : null,
-          )}
+            );
+          })}
         </div>
       )}
 
       <div className="pg-insights">
+        {days.length ? (
+          <section className="tp-card pg-card" aria-label="Daily load">
+            <div className="pg-card-head">
+              <div>
+                <h2>Daily load</h2>
+                <p className="pg-muted">
+                  Worked time each day against the {formatTargetHours(status.dailyTargetSeconds)} target
+                </p>
+              </div>
+              <span className="pg-target-tag">
+                {weekSessions} session{weekSessions === 1 ? "" : "s"}
+              </span>
+            </div>
+            <div className="pg-load" role="list">
+              {days.map((day) => (
+                <div
+                  key={day.date}
+                  role="listitem"
+                  className={`pg-load-day${day.date === todayKey ? " is-today" : ""}${
+                    isWorkingDay(day.date) ? "" : " is-off"
+                  }`}
+                  title={`${formatWeekday(day.date)} ${formatShortDate(day.date)}: ${formatDuration(day.active_seconds)} worked`}
+                >
+                  <span className="pg-load-value app-num">
+                    {day.active_seconds ? formatHoursMinutes(day.active_seconds) : ""}
+                  </span>
+                  <span className="pg-load-bar">
+                    <span
+                      style={{
+                        height: `${
+                          day.active_seconds
+                            ? Math.max(4, Math.round((day.active_seconds / loadMax) * 100))
+                            : 0
+                        }%`,
+                      }}
+                    />
+                    <i
+                      style={{ bottom: `${Math.round((status.dailyTargetSeconds / loadMax) * 100)}%` }}
+                      aria-hidden="true"
+                    />
+                  </span>
+                  <span className="pg-load-label">{formatWeekday(day.date)}</span>
+                </div>
+              ))}
+            </div>
+          </section>
+        ) : null}
+
         {week ? (
           <section className="tp-card pg-card" aria-label="Where this week went">
             <div className="pg-card-head">
               <h2>Where this week went</h2>
             </div>
-            <div className="pg-bars">
-              {weekRows.map((row) => (
-                <div key={row.label} className="pg-bar-row">
-                  <div className="pg-row-between">
-                    <span>{row.label}</span>
-                    <b className="app-num">{formatDuration(row.seconds)}</b>
-                  </div>
-                  <span className="tp-breakdown-bar">
-                    <i
-                      className={`segment-${row.tone}`}
-                      style={{ width: `${(row.seconds / largestWeekRow) * 100}%` }}
-                    />
-                  </span>
-                </div>
-              ))}
-            </div>
+            <WeekBars rows={weekRows} largest={largestWeekRow} />
             <div className="pg-pills">
               <span>
                 <i className="ri-camera-line" aria-hidden="true" /> {week.screenshot_count} captures
@@ -4346,10 +4600,98 @@ function InsightsView({
             </div>
           </section>
         ) : null}
+      </div>
 
+      {days.length ? (
+        <section className="tp-card pg-card" aria-label="This week's attendance">
+          <div className="pg-card-head">
+            <div>
+              <h2>This week&apos;s attendance</h2>
+              <p className="pg-muted">
+                {graceMinutes
+                  ? `Starting within ${graceMinutes} minutes of the shift start is not counted late.`
+                  : "Late time is counted from the shift start."}
+              </p>
+            </div>
+          </div>
+          <div className="pg-week-scroll">
+            <table className="pg-week-table">
+              <thead>
+                <tr>
+                  <th>Day</th>
+                  <th>Signed in</th>
+                  <th>Signed out</th>
+                  <th>Worked</th>
+                  <th>Payable</th>
+                  <th>Late</th>
+                  <th>Sessions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {days
+                  .filter((day) => day.date <= todayKey)
+                  .map((day) => {
+                    const late = lateLabel(day);
+                    return (
+                      <tr key={day.date} className={day.date === todayKey ? "is-today" : undefined}>
+                        <td>
+                          <strong>{formatWeekday(day.date)}</strong>{" "}
+                          <span className="pg-muted">{formatShortDate(day.date)}</span>
+                        </td>
+                        <td className="app-num">
+                          {day.start_time ? formatClock(day.start_time, timezone) : "—"}
+                        </td>
+                        <td className="app-num">
+                          {day.date === todayKey && status.todayTimeline?.is_running
+                            ? "Still working"
+                            : day.sign_out_at
+                              ? formatClock(day.sign_out_at, timezone)
+                              : day.end_time
+                                ? formatClock(day.end_time, timezone)
+                                : "—"}
+                        </td>
+                        <td className="app-num">{formatHoursMinutes(day.active_seconds)}</td>
+                        <td className="app-num">{formatHoursMinutes(day.payable_seconds)}</td>
+                        <td>
+                          {day.leave_status ? (
+                            <em className="pg-status is-soft approved">Leave</em>
+                          ) : !isWorkingDay(day.date) && !day.start_time ? (
+                            <em className="pg-status is-soft backlog">Day off</em>
+                          ) : !day.start_time && day.date < todayKey ? (
+                            <em className="pg-status is-soft rejected">No activity</em>
+                          ) : (
+                            <em
+                              className={`pg-status is-soft ${
+                                day.deductible_late_seconds > 0
+                                  ? "pending"
+                                  : late === "—"
+                                    ? "backlog"
+                                    : "approved"
+                              }`}
+                            >
+                              {late}
+                            </em>
+                          )}
+                        </td>
+                        <td className="app-num">{day.session_count}</td>
+                      </tr>
+                    );
+                  })}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      ) : null}
+
+      <div className="pg-insights">
         <section className="tp-card pg-card" aria-label="Today's activity">
           <div className="pg-card-head">
             <h2>Today&apos;s activity</h2>
+            {todaySessions ? (
+              <span className="pg-target-tag">
+                {todaySessions} session{todaySessions === 1 ? "" : "s"}
+              </span>
+            ) : null}
           </div>
           {workRows.length ? (
             <div className="pg-activity">
@@ -4378,38 +4720,49 @@ function InsightsView({
             Every tracked minute is filed under the task selected in the tracker. Switching tasks never stops the clock.
           </p>
         </section>
-      </div>
 
-      <section className="tp-card pg-card" aria-label="Today's schedule">
-        <div className="pg-card-head">
-          <h2>How time is counted</h2>
-        </div>
-        <ul className="pg-rules">
-          <li>Worked time and approved manual time are counted. Idle, pending and rejected minutes never enter the total.</li>
-          <li>Resting during a paid scheduled break is paid time.</li>
-          {status.breakBank?.policy_active ? (
-            <li>Working through a scheduled break saves those minutes; they cover later idle today automatically.</li>
-          ) : null}
-          <li>Time outside your paid shift is recorded as extra time and needs HR/Admin approval before payroll.</li>
-        </ul>
-        {breaksToday.length ? (
-          <div className="pg-pills">
-            {breaksToday.map((item) => (
-              <span key={`${item.name}-${item.start}`}>
-                <i className="ri-cup-line" aria-hidden="true" /> {item.name}
-                {item.prayer ? ` · ${item.prayer}` : ""} {formatScheduledTime(item.start)}–
-                {formatScheduledTime(item.end)}
-              </span>
-            ))}
-            <span className="is-ok">
-              <i className="ri-shield-check-line" aria-hidden="true" /> {formatDuration(status.dailyTargetSeconds)} target
-            </span>
+        <section className="tp-card pg-card" aria-label="Today's schedule">
+          <div className="pg-card-head">
+            <h2>How time is counted</h2>
           </div>
-        ) : null}
-      </section>
+          <ul className="pg-rules">
+            <li>Worked time and approved manual time are counted. Idle, pending and rejected minutes never enter the total.</li>
+            <li>Resting during a paid scheduled break is paid time.</li>
+            {status.breakBank?.policy_active ? (
+              <li>Working through a scheduled break saves those minutes; they cover later idle today automatically.</li>
+            ) : null}
+            {graceMinutes ? (
+              <li>Starting within {graceMinutes} minutes of your shift start is not counted late.</li>
+            ) : null}
+            <li>Time outside your paid shift is recorded as extra time and needs HR/Admin approval before payroll.</li>
+          </ul>
+          {breaksToday.length ? (
+            <div className="pg-pills">
+              {breaksToday.map((item) => (
+                <span key={`${item.name}-${item.start}`}>
+                  <i className="ri-cup-line" aria-hidden="true" /> {item.name}
+                  {item.prayer ? ` · ${item.prayer}` : ""} {formatScheduledTime(item.start)}–
+                  {formatScheduledTime(item.end)}
+                </span>
+              ))}
+              <span className="is-ok">
+                <i className="ri-shield-check-line" aria-hidden="true" />{" "}
+                {formatDuration(status.dailyTargetSeconds)} target
+              </span>
+            </div>
+          ) : null}
+        </section>
+      </div>
     </section>
   );
 }
+
+const SETTINGS_SECTIONS = [
+  { id: "settings-appearance", label: "Appearance" },
+  { id: "settings-system", label: "System details" },
+  { id: "settings-account", label: "Signed-in account" },
+  { id: "settings-device", label: "Device account" },
+];
 
 function SettingsView({
   status,
@@ -4432,12 +4785,33 @@ function SettingsView({
 }) {
   // View-only: whether the System details rows are shown.
   const [showSystemDetails, setShowSystemDetails] = useState(true);
-  const sections = [
-    { id: "settings-appearance", label: "Appearance" },
-    { id: "settings-system", label: "System details" },
-    { id: "settings-account", label: "Signed-in account" },
-    { id: "settings-device", label: "Device account" },
-  ];
+  // View-only: the section in view, highlighted in "On this page".
+  const [activeSection, setActiveSection] = useState(SETTINGS_SECTIONS[0].id);
+  useEffect(() => {
+    const root = document.querySelector<HTMLElement>(".app-page");
+    const targets = SETTINGS_SECTIONS
+      .map((section) => document.getElementById(section.id))
+      .filter((element): element is HTMLElement => Boolean(element));
+    if (!root || !targets.length || typeof IntersectionObserver === "undefined") return;
+    const visible = new Map<string, boolean>();
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) visible.set(entry.target.id, entry.isIntersecting);
+        const first = targets.find((element) => visible.get(element.id));
+        if (first) setActiveSection(first.id);
+      },
+      { root, rootMargin: "0px 0px -55% 0px" },
+    );
+    targets.forEach((element) => observer.observe(element));
+    return () => observer.disconnect();
+    // The section list is fixed for this view, so observe once.
+  }, []);
+  const systemDetailCount = 5 + (status.diagnostics ? 4 : 0);
+  const enrolledSince = status.attendanceWeek?.enrolled_at
+    ? new Intl.DateTimeFormat("en-US", { day: "numeric", month: "short", year: "numeric" }).format(
+        new Date(status.attendanceWeek.enrolled_at),
+      )
+    : null;
 
   async function copy(label: string, value: string | null | undefined) {
     if (!value) return;
@@ -4470,14 +4844,16 @@ function SettingsView({
       <div className="pg-settings">
         <aside className="pg-settings-nav">
           <span className="pg-stat-label">On this page</span>
-          {sections.map((section) => (
+          {SETTINGS_SECTIONS.map((section) => (
             <button
               key={section.id}
               type="button"
-              className="pg-settings-link"
-              onClick={() =>
-                document.getElementById(section.id)?.scrollIntoView({ behavior: "smooth", block: "start" })
-              }
+              className={`pg-settings-link${activeSection === section.id ? " is-active" : ""}`}
+              aria-current={activeSection === section.id ? "true" : undefined}
+              onClick={() => {
+                setActiveSection(section.id);
+                document.getElementById(section.id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+              }}
             >
               {section.label}
             </button>
@@ -4489,6 +4865,11 @@ function SettingsView({
             <p className="pg-muted">
               {status.deviceName || "This computer"} is linked to an employee account and syncs while the shift runs.
             </p>
+            {enrolledSince ? (
+              <small className="pg-hint">
+                <i className="ri-calendar-check-line" aria-hidden="true" /> Enrolled since {enrolledSince}
+              </small>
+            ) : null}
           </div>
         </aside>
 
@@ -4559,6 +4940,12 @@ function SettingsView({
                 <i className={showSystemDetails ? "ri-arrow-up-s-line" : "ri-arrow-down-s-line"} aria-hidden="true" />
               </button>
             </div>
+            {!showSystemDetails ? (
+              <p className="pg-hidden-summary">
+                <i className="ri-eye-off-line" aria-hidden="true" /> {systemDetailCount} details hidden · last sync{" "}
+                {formatTimestamp(status.lastSuccessfulSyncAt)}
+              </p>
+            ) : null}
             {showSystemDetails && (
               <dl className="pg-dl">
                 <div>

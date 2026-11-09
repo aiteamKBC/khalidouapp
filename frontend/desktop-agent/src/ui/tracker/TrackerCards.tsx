@@ -141,6 +141,7 @@ export function HeroCard({
   clock,
   targetProgress,
   goalLabel,
+  remainingLabel,
   live,
   timerAriaLabel,
   projectTaskLabel,
@@ -166,6 +167,8 @@ export function HeroCard({
   /** Worked share of the daily target in percent (App's targetProgress). */
   targetProgress: number;
   goalLabel: string;
+  /** "03:15:00 logged · 04:45:00 remaining", from App's counted time. */
+  remainingLabel: string;
   live: boolean;
   timerAriaLabel: string;
   projectTaskLabel: string;
@@ -220,7 +223,7 @@ export function HeroCard({
 
       <p className="tp-eyebrow m-0">{eyebrow}</p>
 
-      <div className="w-full max-w-[430px]" aria-label={timerAriaLabel}>
+      <div className="tp-hero-timer w-full max-w-[430px]" aria-label={timerAriaLabel}>
         <SwipeTimer
           style={timerStyle}
           onChange={onTimerStyle}
@@ -230,10 +233,15 @@ export function HeroCard({
         />
       </div>
 
-      <div className="flex flex-wrap items-baseline justify-center gap-x-2">
-        <span className="text-[9.5px] font-semibold uppercase tracking-[0.14em] text-muted">Daily goal</span>
-        <span className="app-num text-[12px] font-bold leading-none text-ink">{targetProgress}%</span>
-        <span className="app-num text-[10px] text-faint">{goalLabel}</span>
+      <div className="flex flex-col items-center gap-1">
+        <div className="flex flex-wrap items-baseline justify-center gap-x-2">
+          <span className="text-[9.5px] font-semibold uppercase tracking-[0.14em] text-muted">Daily goal</span>
+          <span className="app-num text-[12px] font-bold leading-none text-ink">{targetProgress}%</span>
+          <span className="app-num text-[10px] text-faint" title={goalLabel}>
+            {goalLabel}
+          </span>
+        </div>
+        <span className="app-num text-[10.5px] text-muted">{remainingLabel}</span>
       </div>
 
       {overtimeHelp ? <p className="m-0 max-w-[420px] text-[10.5px] text-muted">{overtimeHelp}</p> : null}
@@ -389,16 +397,19 @@ export function TimelineCard({
   needs,
   needsSummary,
   loggedLabel,
+  footer,
 }: {
   rows: TimelineRow[];
   needs: NeedsRow[];
   needsSummary: string;
   loggedLabel: string;
+  footer: { label: string; ok: boolean };
 }) {
   return (
     <Card
       title="Today's timeline"
       icon="ri-file-list-3-line"
+      className="tp-timeline-card"
       action={<span className="tp-logged">{loggedLabel}</span>}
     >
       {needs.length ? (
@@ -443,6 +454,13 @@ export function TimelineCard({
           </li>
         ))}
       </ul>
+      <div className="tp-card-foot">
+        <span className="truncate">{footer.label}</span>
+        <i
+          className={`tp-foot-badge ${footer.ok ? "ri-shield-check-line is-ok" : "ri-cloud-off-line"}`}
+          aria-hidden="true"
+        />
+      </div>
     </Card>
   );
 }
@@ -494,7 +512,15 @@ export function ShotCard({
         ) : null}
         {shot ? (
           <figure className="tp-shot">
-            <img src={shot.src} alt={shot.alt} />
+            <button
+              type="button"
+              className="tp-shot-open"
+              onClick={onViewAll}
+              disabled={viewAllDisabled}
+              title="Open your screenshots in the web dashboard"
+            >
+              <img src={shot.src} alt={shot.alt} />
+            </button>
             <figcaption>
               <span className="app-num">
                 <i className="ri-time-line text-[10px]" aria-hidden="true" /> {shot.time}

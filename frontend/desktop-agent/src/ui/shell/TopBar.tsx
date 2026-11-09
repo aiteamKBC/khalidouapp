@@ -116,9 +116,9 @@ export function TopBar(props: Props) {
         ) : null}
 
         <div className="ml-auto flex min-w-0 items-center gap-2">
-          <span className="app-pill min-w-[150px] max-w-[260px]" data-tone={tone} title={statusText} role="status">
+          <span className="app-pill min-w-[178px] max-w-[260px]" data-tone={tone} title={statusText} role="status">
             <span className="app-tone-dot" aria-hidden="true" />
-            <span className="truncate">{statusText}</span>
+            <span className="app-pill-label truncate">{statusText}</span>
             {enrolled ? <span className="app-num flex-none font-semibold text-ink">{timerLabel}</span> : null}
           </span>
 

@@ -77,6 +77,8 @@ export type AgentStatus = {
   activeMeeting: ActiveMeeting | null;
   meetings: MeetingSummary[];
   breakBank: BreakBank | null;
+  /** This week's attendance days; null until loaded or on older servers. */
+  attendanceWeek?: AttendanceWeek | null;
   diagnostics?: RuntimeDiagnostics | null;
   /** e.g. "Windows 11 Pro · 64-bit"; absent outside the desktop runtime. */
   platformLabel?: string;
@@ -89,6 +91,32 @@ export type RuntimeDiagnostics = {
   processId: number;
   userDataPath: string;
   apiBaseUrl: string;
+};
+
+export type AttendanceDay = {
+  date: string;
+  start_time: string | null;
+  end_time: string | null;
+  session_count: number;
+  active_seconds: number;
+  idle_seconds: number;
+  payable_seconds: number;
+  leave_status: string | null;
+  status: string | null;
+  raw_late_seconds: number;
+  deductible_late_seconds: number;
+  sign_out_at: string | null;
+};
+
+export type AttendanceWeek = {
+  week_start: string;
+  week_end: string;
+  month_start: string;
+  month_end: string;
+  late_grace_minutes: number;
+  working_days: number[] | null;
+  enrolled_at: string | null;
+  days: AttendanceDay[];
 };
 
 export type BreakBank = {

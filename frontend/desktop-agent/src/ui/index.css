@@ -15,6 +15,7 @@
 @import "./tracker/tracker.css";
 @import "./tracker/splitflap.css";
 @import "./pages/pages.css";
+@import "./shell/motion.css";
 
 @tailwind components;
 @tailwind utilities;

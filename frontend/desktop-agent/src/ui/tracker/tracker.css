@@ -929,11 +929,95 @@
   color: var(--k-muted);
 }
 
-/* the timeline scrolls inside its card so a long day keeps the right column
-   level with the timer card */
-.tp-timeline {
-  max-height: 248px;
+/* ---------- the fold: selectors + timer card + right column fill the window ---------- */
+/* the page is a size container, so 100cqh is the visible page height */
+.k-app.app-shell[data-theme] > .app-page {
+  container-type: size;
+}
+
+.tp-fold {
+  display: flex;
+  min-height: calc(100cqh - 32px);
+  flex-direction: column;
+  gap: 14px;
+}
+
+.tp-fold > .tp-layout {
+  flex: 1 1 auto;
+}
+
+/* the right column takes the timer card's height and never sets it: its
+   timeline scrolls inside the card instead of stretching the row */
+.tp-side {
+  display: flex;
+  min-width: 0;
+  min-height: 430px;
+  flex-direction: column;
+  gap: 14px;
+  contain: size;
+}
+
+.tp-side > .tp-timeline-card {
+  min-height: 0;
+  flex: 1 1 0;
+}
+
+.tp-side > :not(.tp-timeline-card) {
+  flex: none;
+}
+
+.tp-timeline-card > .tp-timeline {
+  min-height: 0;
+  flex: 1 1 0;
   overflow-y: auto;
+}
+
+.tp-foot-badge {
+  display: inline-flex;
+  height: 22px;
+  width: 22px;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--k-line);
+  border-radius: 999px;
+  font-size: 12px;
+  color: var(--k-muted);
+}
+
+.tp-foot-badge.is-ok {
+  border-color: color-mix(in srgb, var(--k-green) 40%, transparent);
+  color: var(--k-green);
+}
+
+/* screenshot opens the web gallery; a slow zoom on hover, as in his card */
+.tp-shot-open {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: zoom-in;
+}
+
+.tp-shot-open img {
+  transition: transform 0.7s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.tp-shot-open:hover:not(:disabled) img {
+  transform: scale(1.04);
+}
+
+.tp-shot figcaption {
+  pointer-events: none;
+}
+
+/* the clock area takes the spare height so the card is calm, not spread */
+.tp-hero-timer {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  justify-content: center;
 }
 
 .tp-bottom {
@@ -954,5 +1038,16 @@
 
 .tp-layout > div:first-child > .tp-hero {
   flex: 1;
-  justify-content: space-between;
+}
+
+/* keyboard focus on the swipeable timer: a soft rounded ring, not a box */
+.tp-hero [role="group"]:focus-visible {
+  border-radius: 16px;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--k-pink) 40%, transparent);
+}
+
+/* a short window gives the timeline the room, not the screenshot */
+.tp-side .tp-shot img,
+.tp-side .tp-shot-placeholder {
+  height: clamp(84px, 20cqh, 170px);
 }

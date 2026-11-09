@@ -277,6 +277,32 @@ export type AgentBreakBank = {
   paid_late_allowance_seconds: number;
 };
 
+export type AgentAttendanceDay = {
+  date: string;
+  start_time: string | null;
+  end_time: string | null;
+  session_count: number;
+  active_seconds: number;
+  idle_seconds: number;
+  payable_seconds: number;
+  leave_status: string | null;
+  status: string | null;
+  raw_late_seconds: number;
+  deductible_late_seconds: number;
+  sign_out_at: string | null;
+};
+
+export type AgentAttendanceWeek = {
+  week_start: string;
+  week_end: string;
+  month_start: string;
+  month_end: string;
+  late_grace_minutes: number;
+  working_days: number[] | null;
+  enrolled_at: string | null;
+  days: AgentAttendanceDay[];
+};
+
 export type AgentSummary = {
   employee: { id: string; name: string; avatar_url: string | null };
   daily_target_seconds: number;
@@ -288,6 +314,8 @@ export type AgentSummary = {
   break_bank?: AgentBreakBank;
   week: AgentPeriodSummary;
   month: AgentPeriodSummary;
+  /** Missing on servers older than 1.1.109. */
+  attendance_week?: AgentAttendanceWeek;
 };
 
 export function getApiBaseUrl() {

@@ -293,6 +293,7 @@ type AgentRuntimeStatus = {
   todayTimeline: AgentSummary["today_timeline"] | null;
   idleRequestPeriods: NonNullable<AgentSummary["idle_request_periods"]>;
   breakBank: NonNullable<AgentSummary["break_bank"]> | null;
+  attendanceWeek: NonNullable<AgentSummary["attendance_week"]> | null;
   lastIdleAlert: IdleLossAlert | null;
   locallyEndedIdleAt: string | null;
   updateStatus:
@@ -596,6 +597,7 @@ const runtimeStatus: AgentRuntimeStatus = {
   todayTimeline: null,
   idleRequestPeriods: [],
   breakBank: null,
+  attendanceWeek: null,
   lastIdleAlert: null,
   locallyEndedIdleAt: null,
   updateStatus: "idle",
@@ -836,6 +838,7 @@ function clearedPersonalRuntimeStatus(): Partial<AgentRuntimeStatus> {
     todayTimeline: null,
     idleRequestPeriods: [],
     breakBank: null,
+    attendanceWeek: null,
     lastIdleAlert: null,
     locallyEndedIdleAt: null,
     activityPercent: 0,
@@ -1793,6 +1796,7 @@ function resetDailyRuntimeCounters(nextCounterDate: string, now = new Date()) {
   runtimeStatus.todayTimeline = null;
   runtimeStatus.idleRequestPeriods = [];
   runtimeStatus.breakBank = null;
+  runtimeStatus.attendanceWeek = null;
   runtimeStatus.locallyEndedIdleAt = null;
   clearIdleReturnVerification();
   lastHandledIdleReturnInputAt = now.getTime();
@@ -2409,6 +2413,7 @@ async function refreshWorkedTodayTotalOnce() {
     runtimeStatus.todayTimeline = summary.today_timeline;
     runtimeStatus.idleRequestPeriods = summary.idle_request_periods ?? [];
     runtimeStatus.breakBank = summary.break_bank ?? null;
+    runtimeStatus.attendanceWeek = summary.attendance_week ?? null;
     if (
       !summary.today_timeline.intervals.some(
         (interval) => interval.type === "idle" && interval.is_current,
@@ -5685,9 +5690,12 @@ async function syncNow() {
 }
 
 async function createMainWindow() {
+  // Opens at 1280x820, where the tracker's timer card and timeline fill the
+  // window exactly; smaller screens get their whole work area instead.
+  const workArea = screen.getPrimaryDisplay().workAreaSize;
   mainWindow = new BrowserWindow({
-    width: 1100,
-    height: 720,
+    width: Math.max(980, Math.min(1280, workArea.width - 32)),
+    height: Math.max(640, Math.min(820, workArea.height - 32)),
     minWidth: 980,
     minHeight: 640,
     show: false,
