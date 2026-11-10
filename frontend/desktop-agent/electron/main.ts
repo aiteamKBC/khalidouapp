@@ -4399,7 +4399,7 @@ function screenshotCaptureBlockReason(): string | null {
   // company policy and intentionally keeps capturing there, so this checks the
   // narrow unpaid-pause flag rather than the generic paused state.
   if (unpaidPauseActive) return "tracking_paused";
-  if (!onAcPower) return "battery_power";
+  // Battery power no longer pauses capture; the power source is only reported.
   // Physical lock/sleep is tracked independently of the work-intent status. A
   // deliberately stopped session keeps trackingStatus at "paused" across a
   // lock/unlock cycle, so eligibility must consult the physical flags — which
@@ -6760,12 +6760,11 @@ function wireSystemEvents() {
   onAcPower = !powerMonitor.isOnBatteryPower();
   powerMonitor.on("on-ac", () => {
     onAcPower = true;
-    log.info("AC power detected; screenshot capture is eligible");
+    log.info("AC power detected");
   });
   powerMonitor.on("on-battery", () => {
     onAcPower = false;
-    invalidateInFlightScreenshotCaptures();
-    log.info("Battery power detected; screenshot capture is paused");
+    log.info("Battery power detected; screenshot capture continues");
   });
   powerMonitor.on("lock-screen", () => {
     // Physical lock state is always recorded, independent of work intent (D5).

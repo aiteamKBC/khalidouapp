@@ -57,7 +57,6 @@ export function screenshotCaptureBlockReasonForState(options: {
   // an independent company policy and deliberately continues in those states,
   // so this signal is intentionally narrower than a generic "trackingPaused".
   manualPauseActive: boolean;
-  onAcPower: boolean;
   trackingStatus: RuntimeTrackingStatus;
   systemIdleSeconds: number;
   idleThresholdMinutes?: number;
@@ -66,7 +65,6 @@ export function screenshotCaptureBlockReasonForState(options: {
   if (!options.screenshotsEnabled) return "capture_disabled";
   if (!options.hasActiveSession) return "no_active_session";
   if (options.manualPauseActive) return "tracking_paused";
-  if (!options.onAcPower) return "battery_power";
   if (options.trackingStatus === "locked") return "screen_locked";
   if (options.trackingStatus === "sleeping") return "system_sleeping";
   if (

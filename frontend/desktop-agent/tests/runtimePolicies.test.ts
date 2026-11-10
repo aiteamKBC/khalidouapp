@@ -12,7 +12,6 @@ const activeScreenshotState = {
   screenshotsEnabled: true,
   hasActiveSession: true,
   manualPauseActive: false,
-  onAcPower: true,
   trackingStatus: "active" as const,
   systemIdleSeconds: 0,
 };

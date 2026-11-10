@@ -12,6 +12,7 @@ import {
 
 type Ctx = Record<string, unknown> & {
   captureAndUploadScreenshot: () => Promise<void>;
+  screenshotCaptureBlockReason: () => string | null;
   runtimeStatus: Record<string, unknown>;
 };
 
@@ -140,6 +141,13 @@ test("a pause→resume cycle during acquisition still cancels via the generation
 
 test("an eligible capture with no interruption uploads normally", async () => {
   const { c, counts } = screenshotContext();
+  await c.captureAndUploadScreenshot();
+  assert.deepEqual(counts(), { captures: 1, uploads: 1 });
+});
+
+test("a laptop on battery power still captures and uploads", async () => {
+  const { c, counts } = screenshotContext({ onAcPower: false });
+  assert.equal(c.screenshotCaptureBlockReason(), null);
   await c.captureAndUploadScreenshot();
   assert.deepEqual(counts(), { captures: 1, uploads: 1 });
 });
