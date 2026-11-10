@@ -2042,9 +2042,7 @@ function App() {
                     ? "Screenshots are captured locally and queued until the API connection returns"
                     : status.screenshotCaptureActive
                       ? "Workplace screenshots are active and syncing"
-                      : status.powerSource === "battery"
-                        ? "Screenshots pause while this device is on battery"
-                        : "Screenshot monitoring is temporarily paused",
+                      : "Screenshot monitoring is temporarily paused",
               }
             : null
         }
