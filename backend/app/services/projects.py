@@ -22,7 +22,7 @@ from app.models import (
     WorkSession,
 )
 from app.services.activity_timeline import build_workday_timeline, scope_timeline_to_schedule
-from app.services.schedules import effective_schedule
+from app.services.schedules import apply_flexible_cutoff, effective_schedule
 from app.services.task_workflow import TRACKABLE_STAGES
 from app.services.work_profiles import get_or_create_work_profile
 
@@ -313,6 +313,7 @@ def employee_task_time_totals(
             target_date=work_date,
             now=now,
         )
+        schedule = apply_flexible_cutoff(schedule, raw_timeline["intervals"], now=now)
         timeline = scope_timeline_to_schedule(
             raw_timeline,
             shift_start=schedule["start_at"],

@@ -100,6 +100,9 @@ export type WorkProfile = {
   lateGraceMinutes?: number | null;
   noShowThresholdMinutes?: number | null;
   scheduleType?: "fixed" | "flexible" | null;
+  /** Flexible staff: allowed window ("HH:MM"); both null means any hour counts. */
+  flexibleWindowStart?: string | null;
+  flexibleWindowEnd?: string | null;
   weeklyEarlyLeaveMinutes?: number | null;
   deductionPolicy?: {
     mode: "review" | "per_minute" | "brackets";
@@ -127,6 +130,9 @@ export type WorkProfileInput = {
   lateGraceMinutes?: number;
   noShowThresholdMinutes?: number;
   scheduleType?: WorkProfile["scheduleType"];
+  /** null clears the window bound; undefined leaves it unchanged. */
+  flexibleWindowStart?: string | null;
+  flexibleWindowEnd?: string | null;
   weeklyEarlyLeaveMinutes?: number;
   deductionPolicy?: WorkProfile["deductionPolicy"];
   overtimeEnabled?: boolean;
@@ -151,6 +157,8 @@ type BackendWorkProfile = {
   late_grace_minutes?: number | null;
   no_show_threshold_minutes?: number | null;
   schedule_type?: WorkProfile["scheduleType"];
+  flexible_window_start?: string | null;
+  flexible_window_end?: string | null;
   weekly_early_leave_minutes?: number | null;
   deduction_policy?: WorkProfile["deductionPolicy"];
   overtime_enabled: boolean;
@@ -278,6 +286,8 @@ function mapWorkProfile(row: BackendWorkProfile): WorkProfile {
     lateGraceMinutes: row.late_grace_minutes,
     noShowThresholdMinutes: row.no_show_threshold_minutes,
     scheduleType: row.schedule_type,
+    flexibleWindowStart: row.flexible_window_start ?? null,
+    flexibleWindowEnd: row.flexible_window_end ?? null,
     weeklyEarlyLeaveMinutes: row.weekly_early_leave_minutes,
     deductionPolicy: row.deduction_policy,
     overtimeEnabled: row.overtime_enabled,
@@ -472,6 +482,8 @@ export async function updateWorkProfile(
         late_grace_minutes: input.lateGraceMinutes,
         no_show_threshold_minutes: input.noShowThresholdMinutes,
         schedule_type: input.scheduleType,
+        flexible_window_start: input.flexibleWindowStart,
+        flexible_window_end: input.flexibleWindowEnd,
         weekly_early_leave_minutes: input.weeklyEarlyLeaveMinutes,
         deduction_policy: input.deductionPolicy,
         overtime_enabled: input.overtimeEnabled,

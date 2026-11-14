@@ -21,6 +21,8 @@ from app.services.prayer_times import is_prayer_anchored, resolve_break_rules
 STANDARD_MONTH_DAYS = 30
 DEFAULT_WORKING_DAYS = [0, 1, 2, 3, 5, 6]
 DEFAULT_WEEKLY_OFF_DAYS = [4]
+# Clock end of an "any hour" flexible window, for clients that need HH:MM.
+FLEXIBLE_DAY_END = time(23, 59)
 
 REQUIRED_PROFILE_FIELDS = (
     "shift_start",
@@ -194,6 +196,30 @@ def resolve_day_policy(
         )
         .order_by(TimeAdjustmentRequest.created_at.desc())
     )
+    break_rules = resolve_break_rules(
+        break_override.break_rules
+        if break_override and break_override.break_rules is not None
+        else profile.break_rules or [],
+        work_date,
+        _zone(employee),
+    )
+    # A day shift exception gives a flexible employee fixed hours for that day.
+    flexible = is_flexible(profile) and shift_override is None
+    if flexible:
+        # The allowed window stands in for the shift; breaks have no fixed
+        # windows and are paid from a bank instead.
+        return {
+            "shift_start": profile.flexible_window_start or time.min,
+            "shift_end": profile.flexible_window_end or FLEXIBLE_DAY_END,
+            "break_rules": [],
+            "flexible": True,
+            "required_daily_minutes": max(1, int(profile.required_daily_minutes or 480)),
+            "break_bank_minutes": sum(
+                int(rule.get("minutes") or 0) for rule in break_rules if rule.get("paid")
+            ),
+            "approved_leave": bool(approved_leave),
+            "approved_early_leave_from": None,
+        }
     return {
         "shift_start": (
             shift_override.shift_start
@@ -205,18 +231,19 @@ def resolve_day_policy(
             if shift_override and shift_override.shift_end
             else profile.shift_end
         ),
-        "break_rules": resolve_break_rules(
-            break_override.break_rules
-            if break_override and break_override.break_rules is not None
-            else profile.break_rules or [],
-            work_date,
-            _zone(employee),
-        ),
+        "break_rules": break_rules,
+        "flexible": False,
+        "required_daily_minutes": max(1, int(profile.required_daily_minutes or 480)),
+        "break_bank_minutes": 0,
         "approved_leave": bool(approved_leave),
         "approved_early_leave_from": (
             approved_early_leave.source_start_at if approved_early_leave else None
         ),
     }
+
+
+def is_flexible(profile: EmployeeWorkProfile) -> bool:
+    return profile.schedule_type == "flexible"
 
 
 def _missing_fields(profile: EmployeeWorkProfile) -> list[str]:
@@ -307,6 +334,25 @@ def validate_work_profile(profile: EmployeeWorkProfile) -> None:
         raise ApiError(
             "INVALID_SHIFT", "Shift end must be later than shift start on the same day.", 400
         )
+    window_start = profile.flexible_window_start
+    window_end = profile.flexible_window_end
+    if window_start and window_end and window_end <= window_start:
+        raise ApiError(
+            "INVALID_FLEXIBLE_WINDOW",
+            "The allowed window must end later than it starts on the same day.",
+            400,
+        )
+    if is_flexible(profile):
+        window_minutes = (
+            (window_end.hour * 60 + window_end.minute if window_end else 24 * 60)
+            - (window_start.hour * 60 + window_start.minute if window_start else 0)
+        )
+        if int(profile.required_daily_minutes or 480) > window_minutes:
+            raise ApiError(
+                "INVALID_FLEXIBLE_WINDOW",
+                "The allowed window is shorter than the required daily hours.",
+                400,
+            )
     validate_break_rules(
         profile.break_rules,
         shift_start=profile.shift_start,
@@ -341,7 +387,7 @@ def schedule_minutes(profile: EmployeeWorkProfile) -> dict[str, int]:
 def refresh_profile_completed_at(profile: EmployeeWorkProfile) -> None:
     validate_work_profile(profile)
     minutes = schedule_minutes(profile)
-    if minutes["payable"]:
+    if minutes["payable"] and not is_flexible(profile):
         profile.required_daily_minutes = minutes["payable"]
     if profile_completeness(profile)["complete"]:
         profile.profile_completed_at = profile.profile_completed_at or datetime.now(UTC)
@@ -364,6 +410,12 @@ def serialize_work_profile(profile: EmployeeWorkProfile) -> dict:
         "late_grace_minutes": profile.late_grace_minutes,
         "no_show_threshold_minutes": profile.no_show_threshold_minutes,
         "schedule_type": profile.schedule_type,
+        "flexible_window_start": profile.flexible_window_start.isoformat(timespec="minutes")
+        if profile.flexible_window_start
+        else None,
+        "flexible_window_end": profile.flexible_window_end.isoformat(timespec="minutes")
+        if profile.flexible_window_end
+        else None,
         "weekly_early_leave_minutes": profile.weekly_early_leave_minutes,
         "deduction_policy": profile.deduction_policy,
         "overtime_enabled": profile.overtime_enabled,
@@ -439,7 +491,7 @@ def payroll_preview(
     idle_seconds = sum(accountable_idle_seconds(row) for row in attendance_rows)
     required_daily = profile.required_daily_minutes or 480
     break_minutes = schedule_minutes(profile)
-    if break_minutes["payable"]:
+    if break_minutes["payable"] and not is_flexible(profile):
         required_daily = break_minutes["payable"]
     working_days = profile.working_days or DEFAULT_WORKING_DAYS
     days = (end_date - start_date).days + 1

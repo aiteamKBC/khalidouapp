@@ -132,6 +132,7 @@ from app.services.time_adjustments import (
     create_employee_time_adjustment_request,
     serialize_time_adjustment_request,
 )
+from app.services.schedules import apply_flexible_cutoff, effective_schedule
 from app.services.work_profiles import (
     DEFAULT_WORKING_DAYS,
     get_or_create_work_profile,
@@ -219,6 +220,18 @@ def _eligible_idle_seconds(
     zone = _employee_zone(employee, timezone_name)
     shift_start = datetime.combine(work_date, policy["shift_start"], tzinfo=zone).astimezone(UTC)
     shift_end = datetime.combine(work_date, policy["shift_end"], tzinfo=zone).astimezone(UTC)
+    break_bank_seconds = 0
+    if policy["flexible"]:
+        # Only idle before the daily target is met is owed, and the break bank
+        # pays the first of it, exactly as attendance counts it.
+        flexible_day = apply_flexible_cutoff(
+            effective_schedule(db, employee, profile, work_date, timezone_name=zone.key),
+            timeline.get("intervals", []),
+        )
+        if not flexible_day["start_at"] or not flexible_day["end_at"]:
+            return 0
+        shift_start, shift_end = flexible_day["start_at"], flexible_day["end_at"]
+        break_bank_seconds = int(flexible_day.get("break_bank_seconds") or 0)
     if shift_end <= shift_start:
         return 0
 
@@ -266,7 +279,7 @@ def _eligible_idle_seconds(
         eligible_end = min(interval_end, shift_end)
         if eligible_end > eligible_start:
             total += _seconds_after_exclusions(eligible_start, eligible_end, exclusions)
-    return total
+    return max(0, total - break_bank_seconds)
 
 
 @router.post("/enroll-authenticated")
@@ -339,6 +352,12 @@ def config(
                 else None,
                 "working_days": profile.working_days or DEFAULT_WORKING_DAYS,
                 "break_rules": day_policy["break_rules"],
+                # Flexible staff owe required_daily_minutes anywhere between
+                # shift_start and shift_end (their allowed window), and take
+                # break_bank_minutes of paid rest whenever they like.
+                "schedule_type": "flexible" if day_policy["flexible"] else "fixed",
+                "required_daily_minutes": day_policy["required_daily_minutes"],
+                "break_bank_minutes": day_policy["break_bank_minutes"],
                 "approved_leave_today": day_policy["approved_leave"],
                 "approved_early_leave_from": (
                     _as_utc(day_policy["approved_early_leave_from"])
@@ -449,7 +468,7 @@ def agent_period_summary(context: DeviceAuthContext, db: Session) -> dict:
     shift_start = today_policy["shift_start"]
     shift_end = today_policy["shift_end"]
     target_seconds = int(profile.required_daily_minutes or 480) * 60
-    if shift_start and shift_end and shift_end > shift_start:
+    if not today_policy["flexible"] and shift_start and shift_end and shift_end > shift_start:
         target_seconds = (
             shift_end.hour * 3600
             + shift_end.minute * 60
@@ -503,6 +522,27 @@ def agent_period_summary(context: DeviceAuthContext, db: Session) -> dict:
                 attendance_sources.get("paid_late_allowance_seconds", 0)
             ),
         },
+        # Flexible staff: progress toward the daily target and the break bank
+        # they can spend at any time. None for fixed shifts.
+        "flexible_day": {
+            "required_seconds": target_seconds,
+            "normal_seconds": int(attendance_row.normal_worked_seconds or 0),
+            "paid_break_seconds": int(attendance_row.paid_break_seconds or 0),
+            "payable_seconds": int(attendance_row.total_payable_seconds or 0)
+            - int(attendance_row.approved_overtime_seconds or 0),
+            "extra_seconds": int(attendance_row.recorded_overtime_seconds or 0),
+            "break_bank_seconds": int(attendance_sources.get("break_bank_seconds", 0)),
+            "break_bank_remaining_seconds": max(
+                0,
+                int(attendance_sources.get("break_bank_seconds", 0))
+                - int(attendance_row.paid_break_seconds or 0),
+            ),
+            "target_reached_at": attendance_sources.get("flexible_target_reached_at"),
+            "window_start": today_policy["shift_start"].isoformat(timespec="minutes"),
+            "window_end": today_policy["shift_end"].isoformat(timespec="minutes"),
+        }
+        if today_policy["flexible"]
+        else None,
         "week": summarize(week_start, week_start + timedelta(days=6)),
         "month": summarize(month_start, month_end),
     }

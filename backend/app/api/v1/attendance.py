@@ -137,9 +137,11 @@ def _empty_attendance_item(
     scheduled_start_at = schedule["start_at"]
     scheduled_end_at = schedule["end_at"]
     expected_seconds = (
-        int((scheduled_end_at - scheduled_start_at).total_seconds())
-        if scheduled_start_at and scheduled_end_at
-        else 0
+        0
+        if not (scheduled_start_at and scheduled_end_at)
+        else int(schedule["required_seconds"])
+        if schedule.get("flexible")
+        else int((scheduled_end_at - scheduled_start_at).total_seconds())
     )
     if leave is not None:
         status = "approved_leave"

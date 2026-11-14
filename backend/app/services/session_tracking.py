@@ -32,7 +32,7 @@ from app.services.activity_timeline import (
 )
 from app.services.agent_versions import is_agent_version_supported, update_required_minimum
 from app.services.projects import get_employee_task_context, list_employee_tasks
-from app.services.schedules import effective_schedule, overlap_seconds
+from app.services.schedules import apply_flexible_cutoff, effective_schedule, overlap_seconds
 from app.services.task_workflow import TRACKABLE_STAGES
 from app.services.work_profiles import get_or_create_work_profile
 
@@ -375,8 +375,6 @@ def sync_session_time_buckets(
         work_date,
         timezone_name=zone.key,
     )
-    shift_start = schedule["start_at"]
-    shift_end = schedule["end_at"]
     timeline = build_workday_timeline(
         db,
         company_id=session.company_id,
@@ -386,6 +384,10 @@ def sync_session_time_buckets(
         now=calculated_at,
         device_id=session.device_id,
     )
+    # A flexible day's normal time ends when its daily target is met.
+    schedule = apply_flexible_cutoff(schedule, timeline["intervals"], now=calculated_at)
+    shift_start = schedule["start_at"]
+    shift_end = schedule["end_at"]
     buckets: dict[UUID, dict[str, int]] = {}
     for interval in timeline["intervals"]:
         if interval["type"] != "worked":

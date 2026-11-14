@@ -6,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import Employee, PauseSession, TimeAdjustmentRequest
+from app.services.schedules import apply_flexible_cutoff, effective_schedule
 from app.services.work_profiles import (
     DEFAULT_WORKING_DAYS,
     get_or_create_work_profile,
@@ -123,6 +124,15 @@ def build_idle_request_periods(
     zone = _employee_zone(employee, timezone_name)
     shift_start = datetime.combine(work_date, policy["shift_start"], tzinfo=zone).astimezone(UTC)
     shift_end = datetime.combine(work_date, policy["shift_end"], tzinfo=zone).astimezone(UTC)
+    if policy["flexible"]:
+        # Idle after the daily target is met is not owed, so it needs no reason.
+        flexible_day = apply_flexible_cutoff(
+            effective_schedule(db, employee, profile, work_date, timezone_name=zone.key),
+            timeline.get("intervals", []),
+        )
+        if not flexible_day["start_at"] or not flexible_day["end_at"]:
+            return []
+        shift_start, shift_end = flexible_day["start_at"], flexible_day["end_at"]
     if shift_end <= shift_start:
         return []
 

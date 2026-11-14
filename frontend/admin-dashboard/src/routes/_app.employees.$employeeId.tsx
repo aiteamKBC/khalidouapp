@@ -1323,8 +1323,12 @@ function ScheduleEditor({
   canManage: boolean;
   onSaved: () => void;
 }) {
+  const [scheduleType, setScheduleType] = useState<"fixed" | "flexible">("fixed");
   const [shiftStart, setShiftStart] = useState("");
   const [shiftEnd, setShiftEnd] = useState("");
+  const [windowStart, setWindowStart] = useState("");
+  const [windowEnd, setWindowEnd] = useState("");
+  const [dailyHours, setDailyHours] = useState(8);
   const [workingDays, setWorkingDays] = useState<number[]>([]);
   const [lateGrace, setLateGrace] = useState(15);
   const [earlyLeave, setEarlyLeave] = useState(120);
@@ -1332,8 +1336,12 @@ function ScheduleEditor({
 
   useEffect(() => {
     if (!profile) return;
+    setScheduleType(profile.scheduleType === "flexible" ? "flexible" : "fixed");
     setShiftStart(profile.shiftStart ?? "");
     setShiftEnd(profile.shiftEnd ?? "");
+    setWindowStart(profile.flexibleWindowStart?.slice(0, 5) ?? "");
+    setWindowEnd(profile.flexibleWindowEnd?.slice(0, 5) ?? "");
+    setDailyHours((profile.requiredDailyMinutes ?? 480) / 60);
     setWorkingDays(profile.workingDays ?? []);
     setLateGrace(profile.lateGraceMinutes ?? 15);
     setEarlyLeave(profile.weeklyEarlyLeaveMinutes ?? 120);
@@ -1350,11 +1358,18 @@ function ScheduleEditor({
   const save = useMutation({
     mutationFn: () =>
       updateWorkProfile(employeeId, {
+        scheduleType,
         shiftStart,
         shiftEnd,
         workingDays,
         weeklyOffDays: [0, 1, 2, 3, 4, 5, 6].filter((day) => !workingDays.includes(day)),
-        requiredDailyMinutes: minutesBetween(shiftStart, shiftEnd),
+        ...(flexible
+          ? {
+              requiredDailyMinutes: Math.round(dailyHours * 60),
+              flexibleWindowStart: windowStart || null,
+              flexibleWindowEnd: windowEnd || null,
+            }
+          : { requiredDailyMinutes: minutesBetween(shiftStart, shiftEnd) }),
         lateGraceMinutes: lateGrace,
         weeklyEarlyLeaveMinutes: earlyLeave,
         breakRules: breaks.map((item) => ({
@@ -1370,6 +1385,11 @@ function ScheduleEditor({
     onError: (error) => toast.error(error instanceof Error ? error.message : "Could not save"),
   });
 
+  const flexible = scheduleType === "flexible";
+  const bankMinutes = breaks
+    .filter((item) => item.paid)
+    .reduce((total, item) => total + minutesBetween(item.start_time, item.end_time), 0);
+
   if (!profile) {
     return <div className="h-72 animate-pulse rounded-xl bg-muted" />;
   }
@@ -1383,38 +1403,96 @@ function ScheduleEditor({
             Work schedule
           </CardTitle>
           <p className="text-sm text-muted-foreground">
-            These hours define regular time, lateness, early leave, and when overtime starts.
+            {flexible
+              ? "The daily hours can be worked at any time inside the allowed window. Time after the daily hours is extra time, and there is no lateness or early leave."
+              : "These hours define regular time, lateness, early leave, and when overtime starts."}
           </p>
         </CardHeader>
         <CardContent className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          <FieldInput
-            label="Shift starts"
-            type="time"
-            value={shiftStart}
-            disabled={!canManage}
-            onChange={setShiftStart}
-          />
-          <FieldInput
-            label="Shift ends"
-            type="time"
-            value={shiftEnd}
-            disabled={!canManage}
-            onChange={setShiftEnd}
-          />
-          <FieldInput
-            label="Late grace (minutes)"
-            type="number"
-            value={lateGrace}
-            disabled={!canManage}
-            onChange={(value) => setLateGrace(Number(value))}
-          />
-          <FieldInput
-            label="Weekly early-leave allowance"
-            type="number"
-            value={earlyLeave}
-            disabled={!canManage}
-            onChange={(value) => setEarlyLeave(Number(value))}
-          />
+          <div className="md:col-span-2 xl:col-span-4">
+            <Label>Schedule type</Label>
+            <div className="mt-2 inline-flex gap-2" role="radiogroup" aria-label="Schedule type">
+              {(
+                [
+                  ["fixed", "Fixed shift"],
+                  ["flexible", "Flexible hours"],
+                ] as const
+              ).map(([value, label]) => (
+                <Button
+                  key={value}
+                  type="button"
+                  role="radio"
+                  aria-checked={scheduleType === value}
+                  variant={scheduleType === value ? "default" : "outline"}
+                  disabled={!canManage}
+                  onClick={() => setScheduleType(value)}
+                >
+                  {label}
+                </Button>
+              ))}
+            </div>
+          </div>
+          {flexible ? (
+            <>
+              <FieldInput
+                label="Daily hours"
+                type="number"
+                value={dailyHours}
+                disabled={!canManage}
+                onChange={(value) => setDailyHours(Number(value))}
+              />
+              <FieldInput
+                label="Allowed from (optional)"
+                type="time"
+                value={windowStart}
+                disabled={!canManage}
+                onChange={setWindowStart}
+              />
+              <FieldInput
+                label="Allowed until (optional)"
+                type="time"
+                value={windowEnd}
+                disabled={!canManage}
+                onChange={setWindowEnd}
+              />
+              <p className="self-end pb-2 text-sm text-muted-foreground">
+                {windowStart || windowEnd
+                  ? `Work between ${windowStart || "00:00"} and ${windowEnd || "24:00"} counts toward the daily hours.`
+                  : "Leave both empty so any hour of the day counts."}
+              </p>
+            </>
+          ) : (
+            <>
+              <FieldInput
+                label="Shift starts"
+                type="time"
+                value={shiftStart}
+                disabled={!canManage}
+                onChange={setShiftStart}
+              />
+              <FieldInput
+                label="Shift ends"
+                type="time"
+                value={shiftEnd}
+                disabled={!canManage}
+                onChange={setShiftEnd}
+              />
+              <FieldInput
+                label="Late grace (minutes)"
+                type="number"
+                value={lateGrace}
+                disabled={!canManage}
+                onChange={(value) => setLateGrace(Number(value))}
+              />
+              <FieldInput
+                label="Weekly early-leave allowance"
+                type="number"
+                value={earlyLeave}
+                disabled={!canManage}
+                onChange={(value) => setEarlyLeave(Number(value))}
+              />
+            </>
+          )}
           <div className="md:col-span-2 xl:col-span-4">
             <Label>Working days</Label>
             <div className="mt-2 flex flex-wrap gap-2">
@@ -1447,7 +1525,9 @@ function ScheduleEditor({
           <div>
             <CardTitle>Paid and unpaid breaks</CardTitle>
             <p className="mt-1 text-sm text-muted-foreground">
-              Breaks must remain inside the scheduled shift and are used by attendance and payroll.
+              {flexible
+                ? `With flexible hours, paid breaks become a break bank of ${bankMinutes} minutes the employee can take at any time (Pause first, then idle).`
+                : "Breaks must remain inside the scheduled shift and are used by attendance and payroll."}
             </p>
           </div>
           {canManage && (

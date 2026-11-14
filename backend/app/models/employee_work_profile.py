@@ -37,6 +37,10 @@ class EmployeeWorkProfile(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     late_grace_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     no_show_threshold_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     schedule_type: Mapped[str] = mapped_column(String(20), nullable=False, default="fixed")
+    # Flexible staff work required_daily_minutes at any time inside this window;
+    # both empty means any hour of the day counts.
+    flexible_window_start: Mapped[time | None] = mapped_column(Time(), nullable=True)
+    flexible_window_end: Mapped[time | None] = mapped_column(Time(), nullable=True)
     weekly_early_leave_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=120)
     deduction_policy: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     overtime_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)

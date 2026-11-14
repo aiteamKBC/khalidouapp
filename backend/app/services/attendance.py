@@ -36,6 +36,7 @@ from app.services.financial_policy import (
     financial_policy_active,
 )
 from app.services.schedules import (
+    apply_flexible_cutoff,
     effective_schedule,
     effective_schedules_for_employees,
     overlap_seconds,
@@ -582,6 +583,8 @@ def calculate_daily_attendance(
     else:
         policy_periods = company_financial_policy_periods(db, employee.company_id)
     policy_active = financial_policy_active(policy_periods, work_date)
+    schedule = apply_flexible_cutoff(schedule, timeline["intervals"], now=now)
+    flexible = bool(schedule.get("flexible"))
     start_at = schedule["start_at"]
     end_at = schedule["end_at"]
     timeline = scope_timeline_to_schedule(
@@ -855,6 +858,15 @@ def calculate_daily_attendance(
                 paid_break += rested_break_seconds
             else:
                 unpaid_break += rested_break_seconds
+    if flexible and not leave:
+        # Flexible days have no break windows: their paid break minutes are a
+        # bank that pays rest taken at any time, Pause first and then idle.
+        break_bank = int(schedule.get("break_bank_seconds") or 0)
+        pause_cover = min(manual_pause_idle, break_bank)
+        idle_cover = min(max(0, eligible_idle - manual_pause_idle), break_bank - pause_cover)
+        paid_break = pause_cover + idle_cover
+        manual_pause_idle -= pause_cover
+        eligible_idle -= paid_break
     # Device-on/idle is not proof that the employee attended. Attendance starts
     # only from worked evidence (or an explicit approved/manual correction).
     attended = bool(
@@ -867,7 +879,7 @@ def calculate_daily_attendance(
 
     raw_late = (
         max(0, int((first_at - start_at).total_seconds()))
-        if first_at and start_at and not leave
+        if first_at and start_at and not leave and not flexible
         else 0
     )
     deductible_late = max(0, raw_late - int(profile.late_grace_minutes or 0) * 60)
@@ -879,7 +891,7 @@ def calculate_daily_attendance(
     # already have raw_late == 0, so no allowance is credited there.
     paid_late_allowance = min(raw_late, LATE_ALLOWANCE_CAP_SECONDS) if policy_active else 0
     effective_expected_end = end_at
-    if approved_early_leave and approved_early_leave.source_start_at:
+    if approved_early_leave and approved_early_leave.source_start_at and not flexible:
         effective_expected_end = (
             min(end_at, _utc(approved_early_leave.source_start_at)) if end_at else None
         )
@@ -915,6 +927,7 @@ def calculate_daily_attendance(
         and calculation_now >= effective_expected_end
         and not timeline["is_running"]
         and not leave
+        and not flexible
         else 0
     )
     raw_eligible_idle = eligible_idle
@@ -1041,7 +1054,10 @@ def calculate_daily_attendance(
         remaining_deduction -= take
         unapproved_overtime = max(0, recorded_overtime - approved_overtime)
 
-    expected_seconds = int((end_at - start_at).total_seconds()) if start_at and end_at else 0
+    if flexible:
+        expected_seconds = int(schedule["required_seconds"]) if start_at and end_at else 0
+    else:
+        expected_seconds = int((end_at - start_at).total_seconds()) if start_at and end_at else 0
     # Manual credits fill only the remaining in-shift deficit after every
     # evidence-backed or policy-backed classification. This keeps a generic
     # untimestamped correction from also paying seconds already covered by work,
@@ -1187,6 +1203,13 @@ def calculate_daily_attendance(
             "approved_early_leave_seconds": approved_early_leave_seconds,
             "approved_manual_requested_seconds": approved_manual_requested,
             "schedule_override_id": schedule["override_id"],
+            "schedule_type": "flexible" if flexible else "fixed",
+            "flexible_target_reached_at": (
+                schedule["target_reached_at"].isoformat()
+                if flexible and schedule.get("target_reached_at")
+                else None
+            ),
+            "break_bank_seconds": int(schedule.get("break_bank_seconds") or 0),
             "profile_history_applied": bool(schedule.get("profile_history_applied", False)),
             "attendance_correction_id": str(correction.id) if correction else None,
             "attendance_adjustment_seconds": attendance_adjustment_seconds,
@@ -1406,6 +1429,10 @@ def current_idle_contexts(
                     EmployeeWorkProfile.working_days,
                     EmployeeWorkProfile.weekly_off_days,
                     EmployeeWorkProfile.break_rules,
+                    EmployeeWorkProfile.schedule_type,
+                    EmployeeWorkProfile.flexible_window_start,
+                    EmployeeWorkProfile.flexible_window_end,
+                    EmployeeWorkProfile.required_daily_minutes,
                 )
             )
             .where(EmployeeWorkProfile.employee_id.in_(employee_ids))

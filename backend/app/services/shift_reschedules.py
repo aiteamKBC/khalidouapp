@@ -72,6 +72,9 @@ def base_day_schedule(db: Session, employee: Employee, work_date: date) -> dict:
     schedule = effective_schedule(db, employee, profile, work_date)
     start_at = schedule["start_at"]
     end_at = schedule["end_at"]
+    if schedule.get("flexible"):
+        return {"scheduled_day": schedule["scheduled_day"], "flexible": True,
+                "shift_start": None, "shift_end": None, "shift_seconds": 0, "break_rules": []}
     if not schedule["scheduled_day"] or not start_at or not end_at:
         return {"scheduled_day": False, "shift_start": None, "shift_end": None,
                 "shift_seconds": 0, "break_rules": []}
@@ -108,6 +111,7 @@ def serialize_base_day(work_date: date, base: dict) -> dict:
         "shift_end": _hhmm(base["shift_end"]),
         "shift_minutes": base["shift_seconds"] // 60,
         "break_rules": base["break_rules"],
+        "flexible": bool(base.get("flexible")),
     }
 
 
@@ -210,6 +214,12 @@ def _validate_range(
             422,
         )
     base = base_day_schedule(db, employee, work_date)
+    if base.get("flexible"):
+        raise ApiError(
+            "SHIFT_RESCHEDULE_FLEXIBLE",
+            "This employee has a flexible schedule, so there is no shift to reschedule.",
+            422,
+        )
     if not base["scheduled_day"]:
         raise ApiError(
             "SHIFT_RESCHEDULE_NOT_WORKING_DAY",

@@ -17,6 +17,10 @@ _PROFILE_SCHEDULE_FIELDS = (
     "working_days",
     "weekly_off_days",
     "break_rules",
+    "schedule_type",
+    "flexible_window_start",
+    "flexible_window_end",
+    "required_daily_minutes",
 )
 
 
@@ -320,6 +324,14 @@ def _schedule_from_override(
         if override.override_type in {"breaks", "both"} and override.break_rules is not None:
             break_rules = list(override.break_rules)
 
+    # A day shift exception gives a flexible employee fixed hours for that day.
+    flexible = schedule_values.get("schedule_type") == "flexible" and not (
+        override is not None and override.override_type in {"shift", "both"}
+    )
+    if flexible:
+        shift_start = _clock(schedule_values.get("flexible_window_start")) or time.min
+        shift_end = _clock(schedule_values.get("flexible_window_end")) or time.min
+
     weekday = work_date.weekday()
     working_days = set(
         schedule_values["working_days"]
@@ -350,6 +362,18 @@ def _schedule_from_override(
     )
     if start_at and end_at and end_at <= start_at:
         end_at += timedelta(days=1)
+    if flexible:
+        return _flexible_schedule(
+            employee,
+            work_date,
+            override,
+            schedule_values,
+            break_rules,
+            scheduled_day=scheduled_day,
+            start_at=start_at,
+            end_at=end_at,
+            zone=zone,
+        )
 
     breaks = []
     for rule in resolve_break_rules(break_rules, work_date, zone):
@@ -380,6 +404,15 @@ def _schedule_from_override(
         "start_at": start_at,
         "end_at": end_at,
         "breaks": breaks,
+        "flexible": False,
+        **_schedule_source(override, schedule_values, zone),
+    }
+
+
+def _schedule_source(
+    override: WorkScheduleOverride | None, schedule_values: dict, zone: ZoneInfo
+) -> dict:
+    return {
         "timezone": zone.key,
         "profile_history_applied": bool(schedule_values.get("_history_applied", False)),
         "override_id": str(override.id) if override else None,
@@ -394,6 +427,107 @@ def _schedule_from_override(
             else "employee_profile"
         ),
     }
+
+
+def _flexible_schedule(
+    employee: Employee,
+    work_date: date,
+    override: WorkScheduleOverride | None,
+    schedule_values: dict,
+    break_rules: list[dict],
+    *,
+    scheduled_day: bool,
+    start_at: datetime | None,
+    end_at: datetime | None,
+    zone: ZoneInfo,
+) -> dict:
+    """A flexible day has no fixed shift: the employee owes required_daily_minutes
+    anywhere inside the allowed window. start_at/end_at hold the whole window
+    until apply_flexible_cutoff() moves end_at to the moment the target is met.
+    Paid break minutes become a bank of rest the employee can take at any time.
+    """
+    break_bank = 0
+    for rule in resolve_break_rules(break_rules, work_date, zone):
+        if not rule.get("paid"):
+            continue
+        start_clock = _clock(rule.get("start_time"))
+        end_clock = _clock(rule.get("end_time"))
+        if start_clock and end_clock:
+            minutes = (
+                end_clock.hour * 60 + end_clock.minute - start_clock.hour * 60 - start_clock.minute
+            ) % (24 * 60)
+        else:
+            minutes = int(rule.get("minutes") or 0)
+        break_bank += max(0, minutes) * 60
+    required = max(60, int(schedule_values.get("required_daily_minutes") or 480)) * 60
+    return {
+        "scheduled_day": scheduled_day,
+        "start_at": start_at,
+        "end_at": end_at,
+        "breaks": [],
+        "flexible": True,
+        "required_seconds": required,
+        "break_bank_seconds": min(break_bank, required),
+        "window_start_at": start_at,
+        "window_end_at": end_at,
+        "target_reached_at": None,
+        **_schedule_source(override, schedule_values, zone),
+    }
+
+
+def apply_flexible_cutoff(
+    schedule: dict,
+    intervals: list[dict],
+    *,
+    now: datetime | None = None,
+) -> dict:
+    """End a flexible day's normal time once its target is met.
+
+    Work inside the window counts toward the target, and so does rest (idle or
+    Pause) until the break bank is used up. The moment the total reaches
+    required_seconds becomes end_at, so later work is extra time and later idle
+    is no longer owed. Fixed schedules are returned unchanged.
+    """
+    window_start = schedule.get("start_at")
+    window_end = schedule.get("end_at")
+    if not schedule.get("flexible") or not window_start or not window_end:
+        return schedule
+    current = now or datetime.now(UTC)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=UTC)
+    segments = []
+    for item in intervals:
+        if item.get("type") not in {"worked", "idle"}:
+            continue
+        started = _as_utc(item.get("started_at"))
+        ended = _as_utc(item.get("ended_at")) or current
+        if started is None:
+            continue
+        started = max(started, window_start)
+        ended = min(ended, window_end)
+        if ended > started:
+            segments.append((started, ended, item["type"]))
+    segments.sort(key=lambda segment: segment[0])
+    owed = int(schedule["required_seconds"])
+    bank_left = int(schedule.get("break_bank_seconds") or 0)
+    credited = 0
+    for started, ended, kind in segments:
+        length = int((ended - started).total_seconds())
+        countable = length if kind == "worked" else min(length, bank_left)
+        if credited + countable >= owed:
+            reached_at = started + timedelta(seconds=owed - credited)
+            return {**schedule, "end_at": reached_at, "target_reached_at": reached_at}
+        credited += countable
+        if kind == "idle":
+            bank_left -= countable
+    return schedule
+
+
+def _as_utc(value: str | datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    parsed = value if isinstance(value, datetime) else datetime.fromisoformat(str(value))
+    return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed.astimezone(UTC)
 
 
 def effective_schedules_for_range(

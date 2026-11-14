@@ -16,6 +16,7 @@ from app.services.session_tracking import get_current_session
 from app.services.work_profiles import (
     DEFAULT_WORKING_DAYS,
     get_or_create_work_profile,
+    is_flexible,
     resolve_day_policy,
 )
 
@@ -100,6 +101,12 @@ def create_employee_time_adjustment_request(
 
     if request_type == EARLY_LEAVE_REQUEST:
         profile = get_or_create_work_profile(db, employee)
+        if is_flexible(profile):
+            raise ApiError(
+                "EARLY_LEAVE_NOT_FLEXIBLE",
+                "You have a flexible schedule, so there is no early leave to request.",
+                422,
+            )
         weekly_allowance_seconds = max(0, int(profile.weekly_early_leave_minutes or 0)) * 60
         week_start = requested_date - timedelta(days=requested_date.weekday())
         week_end = week_start + timedelta(days=6)

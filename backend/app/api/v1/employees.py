@@ -1032,6 +1032,11 @@ def update_employee_work_profile(
     employee = get_employee_or_404(db, current_admin, employee_id)
     profile = get_or_create_work_profile(db, employee)
     audit_changes = payload.model_dump(exclude_unset=True, mode="json")
+    if profile.schedule_type == "flexible" and "schedule_type" not in audit_changes:
+        # Shift and break forms derive required_daily_minutes from the shift
+        # length; a flexible employee's daily hours change only together with
+        # their schedule type, from the schedule editor.
+        audit_changes.pop("required_daily_minutes", None)
     audit_before = {
         key: (
             getattr(profile, key).isoformat()
@@ -1044,7 +1049,7 @@ def update_employee_work_profile(
         for key in audit_changes
     }
     changes = dict(audit_changes)
-    for time_field in ("shift_start", "shift_end"):
+    for time_field in ("shift_start", "shift_end", "flexible_window_start", "flexible_window_end"):
         if time_field in changes:
             changes[time_field] = getattr(payload, time_field)
     for key, value in changes.items():

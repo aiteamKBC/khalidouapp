@@ -415,6 +415,12 @@ def calculate_employee_metrics(
                 scheduled_leave_days += 1
             override = _daily_override(overrides, employee.id, cursor, team_ids)
             shift_start, shift_end, rules = _day_schedule(profile, override)
+            if profile.schedule_type == "flexible" and not (
+                override and override.override_type in {"shift", "both"}
+            ):
+                # Flexible days owe required_daily_minutes and have no fixed
+                # start or end to be late against or leave early from.
+                shift_start = shift_end = None
             if shift_start and shift_end and shift_end > shift_start:
                 shift_seconds = (
                     shift_end.hour * 3600
