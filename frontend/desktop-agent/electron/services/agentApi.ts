@@ -161,6 +161,12 @@ export type RequestPolicy = {
   }>;
   approved_leave_today?: boolean;
   approved_early_leave_from?: string | null;
+  // Flexible staff owe required_daily_minutes anywhere between shift_start and
+  // shift_end (their allowed window) and take break_bank_minutes of paid rest
+  // whenever they like. Older servers omit these fields (fixed shift).
+  schedule_type?: "fixed" | "flexible";
+  required_daily_minutes?: number;
+  break_bank_minutes?: number;
   weekly_early_leave_minutes: number;
   weekly_early_leave_used_minutes: number;
   weekly_early_leave_remaining_minutes: number;
@@ -275,6 +281,19 @@ export type AgentBreakBank = {
   paid_late_allowance_seconds: number;
 };
 
+export type AgentFlexibleDay = {
+  required_seconds: number;
+  normal_seconds: number;
+  paid_break_seconds: number;
+  payable_seconds: number;
+  extra_seconds: number;
+  break_bank_seconds: number;
+  break_bank_remaining_seconds: number;
+  target_reached_at: string | null;
+  window_start: string;
+  window_end: string;
+};
+
 export type AgentSummary = {
   employee: { id: string; name: string; avatar_url: string | null };
   daily_target_seconds: number;
@@ -284,6 +303,7 @@ export type AgentSummary = {
   today_timeline: AgentWorkdayTimeline;
   idle_request_periods?: AgentIdleRequestPeriod[];
   break_bank?: AgentBreakBank;
+  flexible_day?: AgentFlexibleDay | null;
   week: AgentPeriodSummary;
   month: AgentPeriodSummary;
 };

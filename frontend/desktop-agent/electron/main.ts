@@ -292,6 +292,7 @@ type AgentRuntimeStatus = {
   todayTimeline: AgentSummary["today_timeline"] | null;
   idleRequestPeriods: NonNullable<AgentSummary["idle_request_periods"]>;
   breakBank: NonNullable<AgentSummary["break_bank"]> | null;
+  flexibleDay: AgentSummary["flexible_day"] | null;
   lastIdleAlert: IdleLossAlert | null;
   locallyEndedIdleAt: string | null;
   updateStatus:
@@ -593,6 +594,7 @@ const runtimeStatus: AgentRuntimeStatus = {
   todayTimeline: null,
   idleRequestPeriods: [],
   breakBank: null,
+  flexibleDay: null,
   lastIdleAlert: null,
   locallyEndedIdleAt: null,
   updateStatus: "idle",
@@ -828,6 +830,7 @@ function clearedPersonalRuntimeStatus(): Partial<AgentRuntimeStatus> {
     todayTimeline: null,
     idleRequestPeriods: [],
     breakBank: null,
+    flexibleDay: null,
     lastIdleAlert: null,
     locallyEndedIdleAt: null,
     activityPercent: 0,
@@ -1785,6 +1788,7 @@ function resetDailyRuntimeCounters(nextCounterDate: string, now = new Date()) {
   runtimeStatus.todayTimeline = null;
   runtimeStatus.idleRequestPeriods = [];
   runtimeStatus.breakBank = null;
+  runtimeStatus.flexibleDay = null;
   runtimeStatus.locallyEndedIdleAt = null;
   clearIdleReturnVerification();
   lastHandledIdleReturnInputAt = now.getTime();
@@ -2180,10 +2184,22 @@ function todaysBreakWindows(nowMs = Date.now()): BreakWindow[] {
   return windows;
 }
 
+// A flexible employee's normal time ends once today's work plus the break-bank
+// rest already paid reaches their daily hours; after that, work is extra time
+// and idle is no longer owed. The server makes the same cut authoritatively.
+function flexibleTargetReached() {
+  const policy = runtimeStatus.requestPolicy;
+  if (policy?.schedule_type !== "flexible") return false;
+  const requiredSeconds = (policy.required_daily_minutes ?? 480) * 60;
+  const paidRestSeconds = runtimeStatus.flexibleDay?.paid_break_seconds ?? 0;
+  return runtimeStatus.normalSeconds + paidRestSeconds >= requiredSeconds;
+}
+
 function scheduledIdleIsCountable(at: Date) {
   const policy = runtimeStatus.requestPolicy;
   if (!policy) return true;
   if (policy.approved_leave_today) return false;
+  if (flexibleTargetReached()) return false;
   if (
     runtimeStatus.paidPauseEndsAt &&
     new Date(runtimeStatus.paidPauseEndsAt).getTime() > at.getTime()
@@ -2273,7 +2289,8 @@ function activeTimeBucket(at: Date): "normal" | "extra" {
   );
   return minuteOfDay >= shiftStart &&
     minuteOfDay < shiftEnd &&
-    (approvedEarlyLeave === null || minuteOfDay < approvedEarlyLeave)
+    (approvedEarlyLeave === null || minuteOfDay < approvedEarlyLeave) &&
+    !flexibleTargetReached()
     ? "normal"
     : "extra";
 }
@@ -2401,6 +2418,7 @@ async function refreshWorkedTodayTotalOnce() {
     runtimeStatus.todayTimeline = summary.today_timeline;
     runtimeStatus.idleRequestPeriods = summary.idle_request_periods ?? [];
     runtimeStatus.breakBank = summary.break_bank ?? null;
+    runtimeStatus.flexibleDay = summary.flexible_day ?? null;
     if (
       !summary.today_timeline.intervals.some(
         (interval) => interval.type === "idle" && interval.is_current,

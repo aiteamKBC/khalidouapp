@@ -35,6 +35,7 @@ from app.services.financial_policy import (
     financial_policy_status,
     set_financial_policy_enabled,
 )
+from app.services.idle_request_periods import build_idle_request_periods
 from app.services.time_adjustments import create_employee_time_adjustment_request
 
 WORK_DATE = date(2026, 9, 10)
@@ -549,3 +550,49 @@ def test_payroll_materializes_a_meeting_day_it_would_otherwise_skip(ctx):
     assert attendance is not None
     assert attendance.total_payable_seconds == 3600
     assert attendance.calculation_sources["approved_meeting_seconds"] == 3600
+
+
+def test_idle_left_after_a_saved_break_cover_can_be_explained(ctx):
+    db, company, employee, device = ctx
+    _activate_policy(db, company)
+    # Save 20m at lunch; the 16:00-16:40 idle is paid for its first 20m, so the
+    # desktop offers only 16:20-16:40 for an explanation.
+    session = _session_with_events(
+        db, employee, device, start=_dt(9), end=_dt(17),
+        idle_windows=[
+            (_dt(12, 20), _dt(12, 30)),
+            (_dt(15), _dt(15, 15)),
+            (_dt(16), _dt(16, 40)),
+        ],
+    )
+    _row, timeline = calculate_daily_attendance(
+        db,
+        employee=employee,
+        work_date=WORK_DATE,
+        now=datetime(2026, 9, 11, tzinfo=UTC),
+        persist=False,
+        device_id=device.id,
+    )
+    offered = build_idle_request_periods(
+        db,
+        employee=employee,
+        company_id=company.id,
+        work_date=WORK_DATE,
+        timeline=timeline,
+        timezone_name="UTC",
+    )
+    assert [(p["started_at"], p["ended_at"]) for p in offered] == [
+        (_dt(16, 20).isoformat(), _dt(16, 40).isoformat())
+    ]
+    request = create_employee_time_adjustment_request(
+        db,
+        device=device,
+        requested_date=WORK_DATE,
+        requested_minutes=20,
+        reason="Fixing a production bug with the team",
+        request_type="idle_time",
+        work_session_id=session.id,
+        source_start_at=_dt(16, 20),
+        source_end_at=_dt(16, 40),
+    )
+    assert request.requested_seconds == 20 * 60

@@ -77,6 +77,8 @@ export type AgentStatus = {
   activeMeeting: ActiveMeeting | null;
   meetings: MeetingSummary[];
   breakBank: BreakBank | null;
+  /** Flexible staff only: progress toward the daily hours and the break bank. */
+  flexibleDay?: FlexibleDay | null;
   diagnostics?: RuntimeDiagnostics | null;
 };
 
@@ -86,6 +88,19 @@ export type RuntimeDiagnostics = {
   processId: number;
   userDataPath: string;
   apiBaseUrl: string;
+};
+
+export type FlexibleDay = {
+  required_seconds: number;
+  normal_seconds: number;
+  paid_break_seconds: number;
+  payable_seconds: number;
+  extra_seconds: number;
+  break_bank_seconds: number;
+  break_bank_remaining_seconds: number;
+  target_reached_at: string | null;
+  window_start: string;
+  window_end: string;
 };
 
 export type BreakBank = {
@@ -246,6 +261,11 @@ export type RequestPolicy = {
   }>;
   approved_leave_today?: boolean;
   approved_early_leave_from?: string | null;
+  // Flexible staff owe required_daily_minutes anywhere between shift_start and
+  // shift_end (their allowed window); older servers omit these (fixed shift).
+  schedule_type?: "fixed" | "flexible";
+  required_daily_minutes?: number;
+  break_bank_minutes?: number;
   weekly_early_leave_minutes: number;
   weekly_early_leave_used_minutes: number;
   weekly_early_leave_remaining_minutes: number;

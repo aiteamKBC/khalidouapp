@@ -446,6 +446,32 @@ function currentScheduleBucket(
     : "extra";
 }
 
+// Flexible staff work their daily hours at any time inside an allowed window;
+// the server sends that window as shift_start/shift_end ("00:00"-"23:59" when
+// any hour counts) and no break windows.
+function isFlexibleSchedule(policy: AgentStatus["requestPolicy"]) {
+  return policy?.schedule_type === "flexible";
+}
+
+// Mirrors the main process: normal time ends once today's work plus the break
+// bank already paid reaches the daily hours.
+function flexibleTargetMet(status: AgentStatus) {
+  if (!isFlexibleSchedule(status.requestPolicy)) return false;
+  const requiredSeconds = (status.requestPolicy?.required_daily_minutes ?? 480) * 60;
+  const paidRestSeconds = status.flexibleDay?.paid_break_seconds ?? 0;
+  return status.normalSeconds + paidRestSeconds >= requiredSeconds;
+}
+
+function flexibleScheduleLabel(policy: AgentStatus["requestPolicy"]) {
+  const hours = formatSavedMinutes((policy?.required_daily_minutes ?? 480) * 60);
+  const anyTime =
+    (policy?.shift_start ?? "00:00").startsWith("00:00") &&
+    (policy?.shift_end ?? "23:59").startsWith("23:59");
+  return anyTime
+    ? `${hours} a day · any time`
+    : `${hours} a day · ${formatScheduledTime(policy?.shift_start)}–${formatScheduledTime(policy?.shift_end)}`;
+}
+
 function countWorkingDays(start: string, end: string, workingDays: number[]) {
   if (!start || !end || end < start) return 0;
   let count = 0;
@@ -813,7 +839,10 @@ function App() {
     );
   const isRunning =
     isTracking && ["active", "starting"].includes(status.trackingStatus);
-  const isExtraTime = currentScheduleBucket(status.requestPolicy) === "extra";
+  const isFlexible = isFlexibleSchedule(status.requestPolicy);
+  const flexibleDone = flexibleTargetMet(status);
+  const isExtraTime =
+    currentScheduleBucket(status.requestPolicy) === "extra" || flexibleDone;
   const isIdleState = ["idle", "locked", "sleeping"].includes(
     status.trackingStatus,
   );
@@ -842,7 +871,11 @@ function App() {
     : onSavedBreak && savedBreakEndsAtMs !== null
     ? `Saved break · ${Math.max(0, Math.ceil((savedBreakEndsAtMs - Date.now()) / 60_000))} min left`
     : isNotWorkingOutsideShift
-    ? "Off shift"
+    ? isFlexible
+      ? flexibleDone
+        ? "Daily hours done"
+        : "Outside allowed hours"
+      : "Off shift"
     : isPaused && status.trackingMovedToDevice
       ? `Tracking on ${status.trackingMovedToDevice}`
     : isPaused
@@ -851,8 +884,12 @@ function App() {
         ? isExtraTime
           ? "Extra time"
           : isIdleState
-            ? "Shift idle"
-            : "Paid shift"
+            ? isFlexible
+              ? "Idle"
+              : "Shift idle"
+            : isFlexible
+              ? "Daily hours"
+              : "Paid shift"
         : "No timer running";
   const runningBreakEndsAtMs = status.scheduledBreak
     ? Date.parse(status.scheduledBreak.endsAt)
@@ -2057,7 +2094,9 @@ function App() {
               onSubmitIdleTimeRequest={handleIdleTimeRequest}
               onSubmitEarlyLeaveRequest={handleEarlyLeaveRequest}
             >
-              <ShiftRescheduleCard enrolled={status.enrolled} />
+              {!isFlexibleSchedule(status.requestPolicy) && (
+                <ShiftRescheduleCard enrolled={status.enrolled} />
+              )}
             </RequestCentreView>
           )}
           {activeView === "meeting" && (
@@ -2353,8 +2392,15 @@ function HomeView({
       : status.extraTimeStatus === "pending_overtime"
         ? "Pending approval"
         : "Recorded only";
-  const paidShiftLabel =
-    status.requestPolicy?.shift_start && status.requestPolicy.shift_end
+  const isFlexible = isFlexibleSchedule(status.requestPolicy);
+  const flexibleDone = flexibleTargetMet(status);
+  const flexibleBank =
+    isFlexible && (status.flexibleDay?.break_bank_seconds ?? 0) > 0
+      ? status.flexibleDay
+      : null;
+  const paidShiftLabel = isFlexible
+    ? flexibleScheduleLabel(status.requestPolicy)
+    : status.requestPolicy?.shift_start && status.requestPolicy.shift_end
       ? `${formatScheduledTime(status.requestPolicy.shift_start)}–${formatScheduledTime(status.requestPolicy.shift_end)}`
       : "Schedule not configured";
   const hasRunningSession = [
@@ -2396,14 +2442,22 @@ function HomeView({
       : isExtraTime &&
         (isPaused ||
           ["idle", "locked", "sleeping"].includes(status.trackingStatus))
-      ? "Off shift"
+      ? isFlexible
+        ? flexibleDone
+          ? "Daily hours done"
+          : "Outside allowed hours"
+        : "Off shift"
       : isPaused
         ? "Paused"
         : isExtraTime
           ? "Extra time active"
           : ["idle", "locked", "sleeping"].includes(status.trackingStatus)
-            ? "Paid shift idle"
-            : "Paid shift active";
+            ? isFlexible
+              ? "Idle"
+              : "Paid shift idle"
+            : isFlexible
+              ? "Daily hours active"
+              : "Paid shift active";
   const arcDegrees = Math.round((targetProgress / 100) * 300);
   return (
     <section className="k-home">
@@ -2463,10 +2517,10 @@ function HomeView({
             <KIcon name="briefcase" />
           </span>
           <div className="k-shift-context">
-            <span>Paid shift</span>
+            <span>{isFlexible ? "Flexible hours" : "Paid shift"}</span>
             <strong>{paidShiftLabel}</strong>
           </div>
-          {(breaksToday.length > 0 || savedBreak) && (
+          {(breaksToday.length > 0 || savedBreak || flexibleBank) && (
             <ul className="k-break-times" aria-label="Today's breaks">
               {breaksToday.map((item) => {
                 const state =
@@ -2505,6 +2559,17 @@ function HomeView({
                 >
                   <span>Saved break</span>
                   <strong>{formatSavedMinutes(savedBreak.remaining_seconds)}</strong>
+                </li>
+              )}
+              {flexibleBank && (
+                <li
+                  data-state="saved"
+                  title={`Paid rest you can take at any time today: ${formatSavedMinutes(flexibleBank.break_bank_seconds)}. Pause uses it first, then idle.`}
+                >
+                  <span>Break bank</span>
+                  <strong>
+                    {formatSavedMinutes(flexibleBank.break_bank_remaining_seconds)} left
+                  </strong>
                 </li>
               )}
             </ul>
@@ -3383,8 +3448,10 @@ function RequestCentreView(props: RequestCentreProps) {
   const expectedLeaveBalance = Math.max(0, leaveBalance - selectedLeaveDays);
   const weeklyRemaining = policy?.weekly_early_leave_remaining_minutes ?? 0;
   const weeklyAllowance = policy?.weekly_early_leave_minutes ?? 120;
-  const scheduledShift =
-    policy?.shift_start && policy.shift_end
+  const isFlexible = isFlexibleSchedule(policy);
+  const scheduledShift = isFlexible
+    ? `Flexible · ${flexibleScheduleLabel(policy)}`
+    : policy?.shift_start && policy.shift_end
       ? `${formatScheduledTime(policy.shift_start)} - ${formatScheduledTime(policy.shift_end)}`
       : "Not configured";
   const earlyLeaveIsWorkday = workingDays.includes(
@@ -3470,12 +3537,14 @@ function RequestCentreView(props: RequestCentreProps) {
           <span>Today&apos;s scheduled shift</span>
           <strong>{scheduledShift}</strong>
         </div>
-        <div>
-          <span>Weekly early-leave balance</span>
-          <strong>
-            {weeklyRemaining} of {weeklyAllowance} min remaining
-          </strong>
-        </div>
+        {!isFlexible && (
+          <div>
+            <span>Weekly early-leave balance</span>
+            <strong>
+              {weeklyRemaining} of {weeklyAllowance} min remaining
+            </strong>
+          </div>
+        )}
         <div>
           <span>Annual-leave balance</span>
           <strong>{leaveBalance} working days</strong>
@@ -3635,6 +3704,7 @@ function RequestCentreView(props: RequestCentreProps) {
           )}
         </article>
 
+        {!isFlexible && (
         <article
           className={`k-request-option ${expandedRequest === "early" ? "is-open" : ""}`}
         >
@@ -3776,6 +3846,7 @@ function RequestCentreView(props: RequestCentreProps) {
             </div>
           )}
         </article>
+        )}
 
         <article
           className={`k-request-option ${expandedRequest === "leave" ? "is-open" : ""}`}

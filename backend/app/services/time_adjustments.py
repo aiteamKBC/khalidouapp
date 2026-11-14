@@ -7,7 +7,6 @@ from sqlalchemy.orm import Session
 
 from app.core.exceptions import ApiError
 from app.models import Device, Employee, TimeAdjustmentRequest
-from app.services.activity_timeline import build_workday_timeline
 from app.services.idle_request_periods import (
     build_idle_request_periods,
     idle_request_period_matches,
@@ -186,12 +185,17 @@ def create_employee_time_adjustment_request(
                 "INVALID_IDLE_PERIOD", "Idle end time must be after the start time.", 422
             )
 
-        timeline = build_workday_timeline(
+        # Match against the same attendance timeline the desktop's list comes
+        # from: saved break time splits idle rows there, so the raw timeline
+        # would not contain the uncovered remainder the employee was offered.
+        from app.services.attendance import calculate_daily_attendance
+
+        _attendance, timeline = calculate_daily_attendance(
             db,
-            company_id=device.company_id,
-            employee_id=device.employee_id,
+            employee=employee,
+            work_date=requested_date,
+            persist=False,
             timezone_name=timezone_name,
-            target_date=requested_date,
             device_id=device.id,
         )
         if timeline.get("approved_leave"):
