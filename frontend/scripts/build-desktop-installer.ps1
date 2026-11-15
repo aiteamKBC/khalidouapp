@@ -49,11 +49,26 @@ try {
     if ($LASTEXITCODE -ne 0) {
         throw "Khaliduo input-integrity probe build failed."
     }
-    @(
+    $runtimeEntries = @(
         "VITE_API_BASE_URL=$($env:VITE_API_BASE_URL)"
         "KHALIDUO_EMPLOYEE_PORTAL_URL=$($env:KHALIDUO_EMPLOYEE_PORTAL_URL)"
         "UPDATE_CHECK_INTERVAL_MINUTES=$updateCheckIntervalMinutes"
-    ) | Set-Content -LiteralPath $runtimeEnvironmentFile -Encoding ascii
+    )
+    # Optional developer diagnostics panel. Off unless a passcode is supplied at
+    # build time; the panel is read-only + audit-logged (see DiagnosticsPanel).
+    if ($env:KHALIDUO_DIAG_PASSCODE) {
+        if ($env:KHALIDUO_DIAG_PASSCODE -match '[\r\n]') {
+            throw "KHALIDUO_DIAG_PASSCODE must not contain line breaks."
+        }
+        $runtimeEntries += "KHALIDUO_DIAG_PASSCODE=$($env:KHALIDUO_DIAG_PASSCODE)"
+        if ($env:KHALIDUO_DIAG_TRIGGER) {
+            $runtimeEntries += "KHALIDUO_DIAG_TRIGGER=$($env:KHALIDUO_DIAG_TRIGGER)"
+        }
+        Write-Host "Developer diagnostics panel: ENABLED (passcode set at build time)"
+    } else {
+        Write-Host "Developer diagnostics panel: disabled (no KHALIDUO_DIAG_PASSCODE)"
+    }
+    $runtimeEntries | Set-Content -LiteralPath $runtimeEnvironmentFile -Encoding ascii
     & npm.cmd run build
     if ($LASTEXITCODE -ne 0) {
         throw "Khaliduo build failed."

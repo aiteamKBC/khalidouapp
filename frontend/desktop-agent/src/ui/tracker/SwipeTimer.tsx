@@ -20,7 +20,8 @@ const rubber = (dx: number) => {
   return sign * MAX_PULL * Math.tanh(Math.abs(dx) / MAX_PULL);
 };
 
-/** The Readdy swipe carousel: drag, flick or arrow keys change the face. */
+/** The Readdy swipe carousel: drag, flick, arrow keys or the arrow buttons
+ *  change the face; every route goes through goTo, so it wraps the same way. */
 export function SwipeTimer({ style, onChange, ...face }: Props) {
   const index = Math.max(0, TIMER_STYLES.findIndex((item) => item.key === style));
   const [drag, setDrag] = useState(0);
@@ -139,6 +140,15 @@ export function SwipeTimer({ style, onChange, ...face }: Props) {
       </div>
 
       <div className="mt-1 flex items-center gap-1.5">
+        <button
+          type="button"
+          onClick={() => goTo(index - 1)}
+          aria-label={`Previous timer style: ${TIMER_STYLES[(index - 1 + TIMER_STYLES.length) % TIMER_STYLES.length].label}`}
+          title="Previous timer style"
+          className="app-plain-btn tp-face-nav mr-1"
+        >
+          <i className="ri-arrow-left-s-line" aria-hidden="true" />
+        </button>
         {TIMER_STYLES.map((item, dot) => {
           const active = dot === index;
           return (
@@ -155,6 +165,15 @@ export function SwipeTimer({ style, onChange, ...face }: Props) {
             />
           );
         })}
+        <button
+          type="button"
+          onClick={() => goTo(index + 1)}
+          aria-label={`Next timer style: ${TIMER_STYLES[(index + 1) % TIMER_STYLES.length].label}`}
+          title="Next timer style"
+          className="app-plain-btn tp-face-nav ml-1"
+        >
+          <i className="ri-arrow-right-s-line" aria-hidden="true" />
+        </button>
       </div>
     </div>
   );

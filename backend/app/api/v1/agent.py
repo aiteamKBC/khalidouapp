@@ -25,6 +25,7 @@ from app.core.exceptions import ApiError
 from app.core.security import create_employee_handoff_token
 from app.database.session import get_db
 from app.models import (
+    AuditLog,
     DailyAttendance,
     Employee,
     LeaveRequest,
@@ -51,6 +52,7 @@ from app.schemas.agent import (
     AuthenticatedEnrollmentRequest,
     RefreshDeviceTokenRequest,
 )
+from app.services.audit import request_ip
 from app.services.meetings import (
     auto_end_due_meetings,
     end_meeting,
@@ -1139,6 +1141,46 @@ def event(
     return success_response(
         data=record_agent_event(db, device=context.device, session_id=session_id, payload=payload)
     )
+
+
+@router.post("/diagnostics/open")
+def diagnostics_open(
+    context: Annotated[DeviceAuthContext, Depends(get_current_device)],
+    db: Annotated[Session, Depends(get_db)],
+    request: Request,
+    payload: Annotated[dict, Body(default_factory=dict)],
+):
+    """Record that the on-device diagnostics panel was opened.
+
+    This is a transparent support tool, not a hidden channel: every open is
+    written to the company audit log against the originating device, so the
+    team can see which machine a support session ran on and when. The device
+    bearer token authenticates it; no admin user is attributed (the audit view
+    shows such rows as "System").
+    """
+    device = context.device
+    # Only keep a small, non-sensitive summary of connectivity — never contents.
+    network = payload.get("network")
+    unsynced = payload.get("unsynced")
+    details = {
+        "app_version": str(payload.get("app_version", ""))[:40],
+        "network": network if isinstance(network, dict) else None,
+        "unsynced": unsynced if isinstance(unsynced, dict) else None,
+    }
+    db.add(
+        AuditLog(
+            company_id=device.company_id,
+            admin_user_id=None,
+            action="diagnostics_mode_opened",
+            entity_type="device",
+            entity_id=device.id,
+            entity_name=device.device_name,
+            ip_address=request_ip(request),
+            details=details,
+        )
+    )
+    db.commit()
+    return success_response(data={"recorded": True})
 
 
 @router.post("/sessions/{session_id}/task")

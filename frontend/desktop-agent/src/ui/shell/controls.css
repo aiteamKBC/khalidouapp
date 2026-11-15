@@ -1,0 +1,167 @@
+/* ============================================================
+   Shared form controls: native select menus and date fields.
+
+   Native popups follow color-scheme, so the calendar and menus match the
+   light or dark theme. Where Chromium supports a stylable select
+   (appearance: base-select), the option list takes the same look as the
+   timer style menu; the element stays a real <select>, so value,
+   onChange, keyboard and screen-reader behaviour are unchanged. Older
+   engines keep the native list.
+   ============================================================ */
+
+.k-app.app-shell {
+  color-scheme: light;
+}
+
+.k-app.app-shell[data-theme="dark"] {
+  color-scheme: dark;
+}
+
+/* ---------- select menus ---------- */
+@supports (appearance: base-select) {
+  .k-app.app-shell select,
+  .k-app.app-shell select::picker(select) {
+    appearance: base-select;
+  }
+
+  /* Closed control: one centred line, chevron at the right edge. */
+  .k-app.app-shell select {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    overflow: hidden;
+    white-space: nowrap;
+  }
+
+  .k-app.app-shell select option {
+    white-space: normal;
+  }
+
+  /* same chevron as the native arrow, from the bundled icon font */
+  .k-app.app-shell select::picker-icon {
+    content: "\ea4e";
+    flex: none;
+    font-family: "remixicon";
+    font-size: 16px;
+    line-height: 1;
+    color: var(--k-muted);
+    transition: rotate 0.16s ease;
+  }
+
+  .k-app.app-shell select:open::picker-icon {
+    rotate: 180deg;
+  }
+
+  /* Tracker pills are narrow. The stylable select cannot end its label
+     in "…", so a long name fades out under the chevron instead; the
+     chevron is drawn by the pill and lets clicks through to the select. */
+  .k-app.app-shell .tp-select {
+    padding-right: 22px;
+    mask-image: linear-gradient(90deg, #000 calc(100% - 36px), transparent calc(100% - 22px));
+  }
+
+  .k-app.app-shell .tp-select::picker-icon {
+    display: none;
+  }
+
+  .tp-pill:has(> .tp-select) {
+    position: relative;
+  }
+
+  .tp-pill:has(> .tp-select)::after {
+    content: "\ea4e";
+    position: absolute;
+    top: 50%;
+    right: 12px;
+    translate: 0 -50%;
+    font-family: "remixicon";
+    font-size: 16px;
+    line-height: 1;
+    color: var(--k-muted);
+    pointer-events: none;
+    transition: rotate 0.16s ease;
+  }
+
+  .tp-pill:has(> .tp-select:open)::after {
+    rotate: 180deg;
+  }
+
+  .tp-pill:has(> .tp-select:disabled)::after {
+    opacity: 0.58;
+  }
+
+  .k-app.app-shell select::picker(select) {
+    box-sizing: border-box;
+    min-width: max(anchor-size(width), 180px);
+    max-height: min(320px, 60vh);
+    margin-block: 6px;
+    padding: 6px;
+    border: 1px solid var(--k-line);
+    border-radius: 11px;
+    background: var(--k-card);
+    color: var(--k-ink);
+    box-shadow: 0 18px 40px -26px rgba(10, 6, 30, 0.45);
+    font-family: inherit;
+  }
+
+  .k-app.app-shell[data-theme] select option {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 32px;
+    padding: 6px 8px;
+    border-radius: 7px;
+    background: transparent;
+    color: var(--k-ink-2);
+    font-size: 12.5px;
+    font-weight: 500;
+    letter-spacing: 0;
+    text-transform: none;
+    cursor: pointer;
+  }
+
+  .k-app.app-shell[data-theme] select option:is(:hover, :focus-visible) {
+    background: var(--k-bg-2);
+    color: var(--k-plum);
+    outline: none;
+  }
+
+  .k-app.app-shell[data-theme] select option:checked {
+    background: var(--k-pink-2);
+    color: var(--k-pink);
+    font-weight: 600;
+  }
+
+  .k-app.app-shell[data-theme] select option:disabled {
+    color: var(--k-faint);
+    cursor: not-allowed;
+  }
+
+  /* the tick sits on the right, as in the timer style menu */
+  .k-app.app-shell select option::checkmark {
+    order: 1;
+    margin-left: auto;
+    color: var(--k-pink);
+  }
+}
+
+/* ---------- date and time fields ---------- */
+.k-app.app-shell input:is([type="date"], [type="time"], [type="datetime-local"], [type="month"]) {
+  accent-color: var(--k-pink);
+}
+
+.k-app.app-shell input:is([type="date"], [type="time"], [type="datetime-local"], [type="month"])::-webkit-calendar-picker-indicator {
+  padding: 3px;
+  border-radius: 6px;
+  opacity: 0.7;
+  cursor: pointer;
+  transition:
+    opacity 0.16s ease,
+    background-color 0.16s ease;
+}
+
+.k-app.app-shell input:is([type="date"], [type="time"], [type="datetime-local"], [type="month"])::-webkit-calendar-picker-indicator:hover {
+  background-color: var(--k-bg-2);
+  opacity: 1;
+}

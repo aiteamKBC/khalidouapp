@@ -95,6 +95,13 @@ contextBridge.exposeInMainWorld("khaliduo", {
     ipcRenderer.send("agent:set-idle-alert-attention", active),
   setUpdateAttention: (active: boolean) =>
     ipcRenderer.send("agent:set-update-attention", active),
+  // Developer diagnostics panel (support tool, audit-logged on open).
+  diagnosticsConfig: () => ipcRenderer.invoke("diag:config"),
+  diagnosticsUnlock: (passcode: string) =>
+    ipcRenderer.invoke("diag:unlock", passcode),
+  diagnosticsSnapshot: () => ipcRenderer.invoke("diag:snapshot"),
+  diagnosticsResync: () => ipcRenderer.invoke("diag:resync"),
+  diagnosticsExportLogs: () => ipcRenderer.invoke("diag:export-logs"),
   minimizeWindow: () => ipcRenderer.invoke("window:minimize"),
   toggleMaximizeWindow: () => ipcRenderer.invoke("window:toggle-maximize"),
   closeWindow: () => ipcRenderer.invoke("window:close"),

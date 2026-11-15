@@ -743,6 +743,29 @@ export function listTerminalPendingScreenshots(): Array<{
   );
 }
 
+export function countUnsyncedWork(): {
+  pendingEvents: number;
+  pendingScreenshots: number;
+  openSessions: number;
+} {
+  // Read-only snapshot of work still waiting to reach the server, for the
+  // diagnostics panel. 'pending'/'failed' are the undelivered states; terminal
+  // rows ('uploaded'/'dead') are excluded.
+  if (!database) {
+    return { pendingEvents: 0, pendingScreenshots: 0, openSessions: 0 };
+  }
+  const n = (sql: string) => rows<{ n: number }>(sql)[0]?.n ?? 0;
+  return {
+    pendingEvents: n(
+      `select count(*) as n from pending_events where status in ('pending', 'failed')`,
+    ),
+    pendingScreenshots: n(
+      `select count(*) as n from pending_screenshots where status in ('pending', 'failed')`,
+    ),
+    openSessions: n(`select count(*) as n from local_sessions where ended_at is null`),
+  };
+}
+
 export function purgeTerminalPendingEvents() {
   // Remove pending_events left in a terminal state ('uploaded' rows written by
   // older builds, 'dead' rows for permanently-rejected items). These are never

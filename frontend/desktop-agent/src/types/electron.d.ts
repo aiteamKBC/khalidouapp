@@ -409,6 +409,34 @@ export type RecentScreenshot = {
   dataUrl: string;
 };
 
+export type DiagnosticsSnapshot = {
+  capturedAt: string;
+  appVersion: string;
+  environment: string;
+  platform: string;
+  apiBaseUrl: string;
+  employeeName: string;
+  deviceName: string;
+  enrolled: boolean;
+  connectionStatus: "online" | "offline";
+  lastSuccessfulSyncAt: string | null;
+  network: {
+    requests: number;
+    failures: number;
+    retries: number;
+    recoveredByRetry: number;
+    lastSuccessAt: string | null;
+    lastFailureAt: string | null;
+    lastErrorCode: string | null;
+  };
+  unsynced: {
+    pendingEvents: number;
+    pendingScreenshots: number;
+    openSessions: number;
+  };
+  logFile: string;
+};
+
 declare global {
   interface Window {
     khaliduo?: {
@@ -566,6 +594,16 @@ declare global {
       }>;
       setIdleAlertAttention: (active: boolean) => void;
       setUpdateAttention: (active: boolean) => void;
+      diagnosticsConfig: () => Promise<{ enabled: boolean; trigger: string }>;
+      diagnosticsUnlock: (
+        passcode: string,
+      ) => Promise<{ ok: boolean; snapshot?: DiagnosticsSnapshot }>;
+      diagnosticsSnapshot: () => Promise<DiagnosticsSnapshot | null>;
+      diagnosticsResync: () => Promise<{
+        success: boolean;
+        snapshot?: DiagnosticsSnapshot;
+      }>;
+      diagnosticsExportLogs: () => Promise<{ saved: boolean; path?: string }>;
       minimizeWindow: () => Promise<void>;
       toggleMaximizeWindow: () => Promise<void>;
       closeWindow: () => Promise<void>;

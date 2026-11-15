@@ -407,6 +407,48 @@
   font-weight: 400;
 }
 
+/* The pre-reskin dark theme in App.css paints every input/select on hover and
+   focus (.k-app[data-theme="dark"] input:hover → #1c181e, plus a focus glow).
+   Those rules outrank the reset above, which drew a dark box inside the pill.
+   The pill owns the border and focus state, so the field stays transparent. */
+.k-app.app-shell .tp-select:is(:hover, :focus, :focus-visible),
+.k-app.app-shell .tp-note-input:is(:hover, :focus, :focus-visible) {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  outline: none;
+}
+
+.tp-pill:has(:focus-visible) {
+  border-color: color-mix(in srgb, var(--k-pink) 55%, var(--k-line));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--k-pink) 14%, transparent);
+}
+
+/* previous / next face buttons beside the carousel dots */
+.tp-face-nav {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--k-line);
+  border-radius: 999px;
+  background: var(--k-card);
+  color: var(--k-muted);
+  font-size: 17px;
+  line-height: 1;
+  transition:
+    border-color 0.16s ease,
+    color 0.16s ease,
+    background-color 0.16s ease;
+}
+
+.tp-face-nav:hover {
+  border-color: var(--k-plum-2);
+  background: var(--k-bg-2);
+  color: var(--k-plum);
+}
+
 /* ---------- actions ---------- */
 .tp-cta,
 .tp-action {

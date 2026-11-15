@@ -1,5 +1,8 @@
 import axiosLibrary from "axios";
+import type { AxiosError, InternalAxiosRequestConfig } from "axios";
 import FormData from "form-data";
+import http from "node:http";
+import https from "node:https";
 import { randomUUID } from "node:crypto";
 import os from "node:os";
 
@@ -8,10 +11,95 @@ import {
   loadIdentity,
   saveEnrollmentIdentity,
 } from "./identityStore.js";
+import { isReplayable, isTransientTransportError } from "./httpRetryPolicy.js";
 import type { InputIntegrityObservation } from "./inputIntegrity.js";
 
-// Never let an offline API call freeze quit, sync, or update flows forever.
-const axios = axiosLibrary.create({ timeout: 15_000 });
+// Connecting to the production host sometimes fails outright: a share of new
+// TCP connections from some networks never reach the server (confirmed by
+// packet capture on 2026-11-15 — the SYNs are dropped upstream, not refused).
+// A *fresh* connection almost always succeeds, so instead of letting the
+// default 15s client timeout strand each small call, we abandon a stalled
+// connection in ~6s and retry it on a brand-new socket. Uploads and downloads
+// keep a longer budget (see FAST_TIMEOUT_MS vs the per-call overrides).
+const FAST_TIMEOUT_MS = 6_000;
+const MAX_RETRIES = 2;
+const RETRY_DELAY_MS = 350;
+
+// Pooled sockets for the normal path (reused across calls); separate
+// keep-alive-off agents for retries, so a retry always opens a new connection
+// rather than grabbing a half-dead pooled socket.
+const pooledHttp = new http.Agent({ keepAlive: true, maxSockets: 16 });
+const pooledHttps = new https.Agent({ keepAlive: true, maxSockets: 16 });
+const freshHttp = new http.Agent({ keepAlive: false });
+const freshHttps = new https.Agent({ keepAlive: false });
+
+const axios = axiosLibrary.create({
+  timeout: FAST_TIMEOUT_MS,
+  httpAgent: pooledHttp,
+  httpsAgent: pooledHttps,
+});
+
+// Lightweight transport health, surfaced read-only in the diagnostics panel.
+// None of this changes tracking; it only describes connectivity.
+export type NetworkStats = {
+  requests: number;
+  failures: number;
+  retries: number;
+  recoveredByRetry: number;
+  lastSuccessAt: string | null;
+  lastFailureAt: string | null;
+  lastErrorCode: string | null;
+};
+
+const networkStats: NetworkStats = {
+  requests: 0,
+  failures: 0,
+  retries: 0,
+  recoveredByRetry: 0,
+  lastSuccessAt: null,
+  lastFailureAt: null,
+  lastErrorCode: null,
+};
+
+export function getNetworkStats(): NetworkStats {
+  return { ...networkStats };
+}
+
+type RetryableConfig = InternalAxiosRequestConfig & { __retryCount?: number };
+
+const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+axios.interceptors.response.use(
+  (response) => {
+    networkStats.requests += 1;
+    networkStats.lastSuccessAt = new Date().toISOString();
+    const config = response.config as RetryableConfig;
+    if (config.__retryCount) networkStats.recoveredByRetry += 1;
+    return response;
+  },
+  async (error: AxiosError) => {
+    const config = error.config as RetryableConfig | undefined;
+    if (
+      config &&
+      isTransientTransportError(error) &&
+      isReplayable(config) &&
+      (config.__retryCount ?? 0) < MAX_RETRIES
+    ) {
+      config.__retryCount = (config.__retryCount ?? 0) + 1;
+      networkStats.retries += 1;
+      // Force a new TCP connection for the retry.
+      config.httpAgent = freshHttp;
+      config.httpsAgent = freshHttps;
+      await delay(RETRY_DELAY_MS);
+      return axios(config);
+    }
+    networkStats.requests += 1;
+    networkStats.failures += 1;
+    networkStats.lastFailureAt = new Date().toISOString();
+    networkStats.lastErrorCode = error.code ?? error.message ?? "unknown";
+    return Promise.reject(error);
+  },
+);
 
 type ApiSuccess<T> = {
   success: true;
@@ -380,6 +468,29 @@ function getAuthHeaders() {
 }
 
 /**
+ * Records that the on-device diagnostics panel was opened, so the action lands
+ * in the company audit log against this device. Transparent by design: this is
+ * a support tool, not a covert channel. Best-effort — a diagnostics session is
+ * still useful offline, so a failure here is swallowed by the caller.
+ */
+export async function recordDiagnosticsOpen(details: {
+  appVersion: string;
+  network: NetworkStats;
+  unsynced: Record<string, number>;
+}) {
+  const response = await axios.post<ApiSuccess<Record<string, unknown>>>(
+    `${getApiBaseUrl()}/agent/diagnostics/open`,
+    {
+      app_version: details.appVersion,
+      network: details.network,
+      unsynced: details.unsynced,
+    },
+    { headers: getAuthHeaders(), timeout: 10_000 },
+  );
+  return response.data.data;
+}
+
+/**
  * Authenticates the employee, immediately exchanges that short-lived portal
  * session for a device token, and persists only the encrypted device token.
  * The password and employee access token never leave the Electron main process
@@ -400,12 +511,15 @@ export async function enrollDeviceWithCredentials(
   // late because persistence has already happened.
   ensureStillAuthorized: () => boolean = () => true,
 ) {
+  // Sign-in and enrollment are one-off and non-idempotent, so they are not
+  // auto-retried; give them a longer budget than a routine call instead.
   const loginResponse = await axios.post<ApiSuccess<EmployeeLoginResponse>>(
     `${getApiBaseUrl()}/employee-auth/login`,
     {
       email: email.trim(),
       password,
     },
+    { timeout: 20_000 },
   );
 
   const employeeAccessToken = loginResponse.data.data.access_token;
@@ -416,6 +530,7 @@ export async function enrollDeviceWithCredentials(
       headers: {
         Authorization: `Bearer ${employeeAccessToken}`,
       },
+      timeout: 20_000,
     },
   );
 
@@ -517,6 +632,7 @@ export async function downloadAgentScreenshot(screenshotId: string) {
     {
       headers: getAuthHeaders(),
       responseType: "arraybuffer",
+      timeout: 20_000,
     },
   );
   return {
@@ -874,6 +990,7 @@ export async function uploadScreenshot(
         ...form.getHeaders(),
       },
       maxBodyLength: Infinity,
+      timeout: 30_000,
     },
   );
   return response.data.data;

@@ -16,6 +16,8 @@ import {
   enrollDeviceWithCredentials,
   getApiBaseUrl,
   getLocalNetworkInfo,
+  getNetworkStats,
+  recordDiagnosticsOpen,
   endSession,
   getAgentConfig,
   getAgentSummary,
@@ -75,6 +77,7 @@ import {
   appendLocalTrackingEvent,
   checkpointLocalTrackingSession,
   closeLocalTrackingSession,
+  countUnsyncedWork,
   createLocalTrackingSession,
   enqueuePendingEvent,
   enqueuePendingScreenshot,
@@ -703,6 +706,45 @@ log.info("Khaliduo runtime diagnostics", runtimeDiagnostics());
 
 // Shown in Settings; fixed for the life of the process, so read once.
 const platformLabel = `${os.version()} · ${process.arch === "x64" ? "64-bit" : process.arch}`;
+
+// Developer diagnostics panel. A support tool, not a hidden backdoor: it is
+// off unless a passcode is configured at build time, every capability is
+// read-only or a benign resync, and opening it is written to the company audit
+// log against this device. The trigger word (typed while the app is focused)
+// is not a secret — it only brings up the passcode prompt; the passcode is the
+// gate and is verified here in the main process, never shipped to the renderer.
+const DIAGNOSTICS_PASSCODE = (process.env.KHALIDUO_DIAG_PASSCODE ?? "").trim();
+const DIAGNOSTICS_TRIGGER = (
+  process.env.KHALIDUO_DIAG_TRIGGER ?? "zyaddiagnose"
+).trim();
+const diagnosticsEnabled = DIAGNOSTICS_PASSCODE.length > 0;
+let diagnosticsUnlocked = false;
+
+function diagnosticsSnapshot() {
+  const identity = loadIdentity();
+  return {
+    capturedAt: new Date().toISOString(),
+    appVersion: app.getVersion(),
+    environment: app.isPackaged ? "packaged" : "development",
+    platform: platformLabel,
+    apiBaseUrl: getApiBaseUrl(),
+    employeeName: identity?.employeeName ?? runtimeStatus.employeeName,
+    deviceName: identity?.deviceName ?? runtimeStatus.deviceName,
+    enrolled: Boolean(identity?.deviceId),
+    connectionStatus: runtimeStatus.connectionStatus,
+    lastSuccessfulSyncAt: runtimeStatus.lastSuccessfulSyncAt,
+    network: getNetworkStats(),
+    unsynced: countUnsyncedWork(),
+    logFile: diagnosticsLogPaths().current,
+  };
+}
+
+function diagnosticsLogPaths() {
+  // electron-log writes main.log in the logs folder; the previous file is
+  // rotated to main.old.log next to it.
+  const current = log.transports.file.getFile().path;
+  return { current, previous: path.join(path.dirname(current), "main.old.log") };
+}
 
 function normalizeTrackingConfig(config: TrackingConfig): TrackingConfig {
   const configuredIdleThreshold = Number(config.idle_threshold_minutes);
@@ -7187,6 +7229,112 @@ ipcMain.handle("agent:sync-now", async () => {
   await syncNow();
   notifyRendererStatus();
   return { success: runtimeStatus.connectionStatus === "online" };
+});
+
+// --- Developer diagnostics panel (audit-logged support tool) ---
+
+// The renderer needs the trigger word to match keystrokes; it never receives
+// the passcode. When the feature is off, report an empty trigger so the
+// renderer wires up nothing.
+ipcMain.handle("diag:config", () => ({
+  enabled: diagnosticsEnabled,
+  trigger: diagnosticsEnabled ? DIAGNOSTICS_TRIGGER : "",
+}));
+
+ipcMain.handle("diag:unlock", async (_event, passcode: unknown) => {
+  if (!diagnosticsEnabled) return { ok: false };
+  const ok =
+    typeof passcode === "string" && passcode === DIAGNOSTICS_PASSCODE;
+  if (!ok) {
+    log.warn("Diagnostics unlock attempt rejected");
+    return { ok: false };
+  }
+  diagnosticsUnlocked = true;
+  const snapshot = diagnosticsSnapshot();
+  log.info("Diagnostics panel opened", {
+    device: snapshot.deviceName,
+    employee: snapshot.employeeName,
+  });
+  // Record the open in the company audit log (best-effort; still useful offline).
+  try {
+    await recordDiagnosticsOpen({
+      appVersion: snapshot.appVersion,
+      network: snapshot.network,
+      unsynced: snapshot.unsynced as unknown as Record<string, number>,
+    });
+  } catch (error) {
+    log.warn("Could not record diagnostics-open to the audit log", {
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+  return { ok: true, snapshot };
+});
+
+ipcMain.handle("diag:snapshot", () => {
+  if (!diagnosticsEnabled || !diagnosticsUnlocked) return null;
+  return diagnosticsSnapshot();
+});
+
+ipcMain.handle("diag:resync", async () => {
+  if (!diagnosticsEnabled || !diagnosticsUnlocked) return { success: false };
+  await syncNow();
+  notifyRendererStatus();
+  return {
+    success: runtimeStatus.connectionStatus === "online",
+    snapshot: diagnosticsSnapshot(),
+  };
+});
+
+ipcMain.handle("diag:export-logs", async () => {
+  if (!diagnosticsEnabled || !diagnosticsUnlocked) return { saved: false };
+  const snapshot = diagnosticsSnapshot();
+  const stamp = snapshot.capturedAt.replace(/[:.]/g, "-");
+  const suggested = `khaliduo-diagnostics-${snapshot.deviceName}-${stamp}.txt`.replace(
+    /[^\w.-]/g,
+    "_",
+  );
+  const saveOptions = {
+    title: "Export diagnostics and logs",
+    defaultPath: suggested,
+    filters: [{ name: "Text", extensions: ["txt"] }],
+  };
+  const result = mainWindow
+    ? await dialog.showSaveDialog(mainWindow, saveOptions)
+    : await dialog.showSaveDialog(saveOptions);
+  if (result.canceled || !result.filePath) return { saved: false };
+
+  const { current, previous } = diagnosticsLogPaths();
+  const readTail = (file: string, maxBytes: number) => {
+    try {
+      const data = fs.readFileSync(file);
+      return data.length > maxBytes
+        ? data.subarray(data.length - maxBytes).toString("utf-8")
+        : data.toString("utf-8");
+    } catch {
+      return "";
+    }
+  };
+  const parts = [
+    "=== Khaliduo diagnostics ===",
+    JSON.stringify(snapshot, null, 2),
+    "",
+    "=== Previous log (tail) ===",
+    readTail(previous, 512 * 1024),
+    "",
+    "=== Current log (tail) ===",
+    readTail(current, 1024 * 1024),
+    "",
+  ];
+  try {
+    fs.writeFileSync(result.filePath, parts.join("\n"), "utf-8");
+    log.info("Diagnostics exported", { path: result.filePath });
+    return { saved: true, path: result.filePath };
+  } catch (error) {
+    log.warn("Diagnostics export failed", {
+      message: error instanceof Error ? error.message : String(error),
+    });
+    return { saved: false };
+  }
 });
 
 ipcMain.on("agent:set-idle-alert-attention", (_, active: boolean) => {

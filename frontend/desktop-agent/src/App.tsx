@@ -19,6 +19,7 @@ import type {
   WorkdayTimeline,
 } from "./types/electron";
 import { Backdrop } from "./ui/shell/Backdrop";
+import { DiagnosticsPanel } from "./ui/shell/DiagnosticsPanel";
 import { StatusBar } from "./ui/shell/StatusBar";
 import { ToastStack } from "./ui/shell/ToastStack";
 import { useToasts } from "./ui/shell/toastQueue";
@@ -2090,6 +2091,7 @@ function App() {
         agentVersion={status.agentVersion}
       />
       <ToastStack toasts={toasts} onDismiss={dismissToast} />
+      <DiagnosticsPanel />
     </main>
   );
 }
