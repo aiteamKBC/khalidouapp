@@ -79,7 +79,12 @@ export type AgentStatus = {
   breakBank: BreakBank | null;
   /** Flexible staff only: progress toward the daily hours and the break bank. */
   flexibleDay?: FlexibleDay | null;
+  /** This week's attendance days; null until loaded or on older servers. */
+  attendanceWeek?: AttendanceWeek | null;
   diagnostics?: RuntimeDiagnostics | null;
+  /** e.g. "Windows 11 Pro · 64-bit"; absent outside the desktop runtime. */
+  platformLabel?: string;
+  screenshotIntervalMinutes?: number;
 };
 
 export type RuntimeDiagnostics = {
@@ -101,6 +106,32 @@ export type FlexibleDay = {
   target_reached_at: string | null;
   window_start: string;
   window_end: string;
+};
+
+export type AttendanceDay = {
+  date: string;
+  start_time: string | null;
+  end_time: string | null;
+  session_count: number;
+  active_seconds: number;
+  idle_seconds: number;
+  payable_seconds: number;
+  leave_status: string | null;
+  status: string | null;
+  raw_late_seconds: number;
+  deductible_late_seconds: number;
+  sign_out_at: string | null;
+};
+
+export type AttendanceWeek = {
+  week_start: string;
+  week_end: string;
+  month_start: string;
+  month_end: string;
+  late_grace_minutes: number;
+  working_days: number[] | null;
+  enrolled_at: string | null;
+  days: AttendanceDay[];
 };
 
 export type BreakBank = {
@@ -243,6 +274,8 @@ export type AgentTask = {
   activeSeconds: number;
   idleSeconds: number;
   trackedSeconds: number;
+  priority?: "low" | "medium" | "high" | "urgent" | null;
+  deadline?: string | null;
 };
 
 export type RequestPolicy = {

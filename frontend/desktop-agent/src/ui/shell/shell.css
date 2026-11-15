@@ -1,0 +1,511 @@
+/* ============================================================
+   Reskin shell: top bar + status bar (phase 2)
+
+   Ported from the Readdy design's app-topbar / app-nav-pill / app-pill /
+   app-statusbar rules. Every colour reads the tokens in theme/, so the
+   skins and light/dark re-colour the shell.
+   ============================================================ */
+
+/* Tailwind's base reset is off, so buttons styled with utilities start
+   from this neutral button. Utilities load after it and win. */
+.app-plain-btn {
+  appearance: none;
+  margin: 0;
+  padding: 0;
+  border: 0 solid transparent;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+/* The shell rows: top bar, update banner (empty row when hidden), page,
+   status bar. Beats the old .k-app[data-theme] grid (specificity 0,3,0). */
+.k-app.app-shell[data-theme] {
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+}
+
+.k-app.app-shell[data-theme] > .k-home,
+.k-app.app-shell[data-theme] > .k-page,
+.k-app.app-shell[data-theme] > .k-enrollment,
+.k-app.app-shell[data-theme] > .k-sidebar {
+  grid-row: 3;
+}
+
+.k-app.app-shell[data-theme] > .k-update {
+  grid-row: 2;
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 10px 16px 0;
+  padding: 9px 12px;
+  border: 1px solid color-mix(in srgb, var(--k-amber) 34%, var(--k-line));
+  border-radius: 12px;
+  background: var(--k-amber-2);
+  color: var(--k-amber);
+  font-family: "Inter Variable", "Inter", "IBM Plex Sans Arabic", system-ui, sans-serif;
+  font-size: 12px;
+  box-shadow: none;
+}
+
+.k-app.app-shell[data-theme] > .k-update strong {
+  flex: none;
+  color: var(--k-ink);
+}
+
+.k-app.app-shell[data-theme] > .k-update span {
+  min-width: 0;
+  flex: 1;
+}
+
+.k-app.app-shell[data-theme] > .k-update button {
+  flex: none;
+  margin-left: auto;
+  border-radius: 999px;
+  border-color: color-mix(in srgb, var(--k-amber) 40%, transparent);
+}
+
+/* zero specificity, so elements that hide their outline keep it hidden */
+:where(.app-shell) :focus-visible {
+  outline-color: var(--k-pink);
+}
+
+/* frameless window: the bar drags the window, its controls do not */
+.app-topbar {
+  grid-column: 1 / -1;
+  grid-row: 1;
+  position: relative;
+  z-index: 40;
+  -webkit-app-region: drag;
+  background: color-mix(in srgb, var(--k-bg) 92%, #ffffff);
+  border-bottom: 1px solid var(--k-line);
+  font-family: "Inter Variable", "Inter", "IBM Plex Sans Arabic", system-ui, sans-serif;
+  color: var(--k-ink);
+}
+
+.app-shell.app-dark .app-topbar {
+  background: color-mix(in srgb, var(--k-surface-topbar) 92%, transparent);
+}
+
+.app-no-drag,
+.app-topbar button {
+  -webkit-app-region: no-drag;
+}
+
+.app-logo-plate {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  border: 1px solid var(--k-line);
+  border-radius: 999px;
+  background: #ffffff;
+  padding: 2px;
+}
+
+.app-nav-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 13px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: transparent;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.005em;
+  white-space: nowrap;
+  color: var(--k-ink-2);
+  cursor: pointer;
+  transition: color 0.18s ease, background 0.18s ease, border-color 0.18s ease;
+}
+
+.app-nav-pill:hover {
+  color: var(--k-ink);
+  background: color-mix(in srgb, var(--k-plum-2) 9%, transparent);
+}
+
+.app-nav-pill.is-active,
+.app-nav-pill.is-active:hover {
+  color: var(--k-card);
+  border-color: transparent;
+  background: var(--k-ink);
+  font-weight: 700;
+}
+
+.app-shell.app-dark .app-nav-pill.is-active,
+.app-shell.app-dark .app-nav-pill.is-active:hover {
+  color: var(--k-bg);
+}
+
+.app-nav-btn {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border-radius: 999px;
+  border: 1px solid var(--k-line);
+  background: var(--k-card);
+  color: var(--k-ink-2);
+  font: inherit;
+  cursor: pointer;
+  transition: color 0.16s ease, background 0.16s ease, border-color 0.16s ease;
+}
+
+.app-nav-btn:hover {
+  border-color: var(--k-plum-2);
+  color: var(--k-plum);
+}
+
+.app-nav-active,
+.app-nav-active:hover {
+  color: #ffffff;
+  background: var(--k-solid);
+  border-color: var(--k-solid);
+}
+
+/* status pill: tone follows the app's existing timerTone */
+.app-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  height: 30px;
+  box-sizing: border-box;
+  border-radius: 8px;
+  border: 1px solid var(--k-line);
+  background: var(--k-card);
+  padding: 0 10px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  color: var(--k-ink-2);
+}
+
+.app-pill[data-tone="running"] {
+  border-color: color-mix(in srgb, var(--k-green) 30%, var(--k-line));
+  background: color-mix(in srgb, var(--k-green) 12%, var(--k-card));
+}
+
+.app-pill[data-tone="paused"] {
+  border-color: color-mix(in srgb, var(--k-amber) 34%, var(--k-line));
+  background: color-mix(in srgb, var(--k-amber) 12%, var(--k-card));
+}
+
+.app-pill[data-tone="overtime"] {
+  border-color: color-mix(in srgb, var(--k-pink) 34%, var(--k-line));
+  background: color-mix(in srgb, var(--k-pink) 12%, var(--k-card));
+}
+
+.app-tone-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--k-faint);
+}
+
+[data-tone="running"] > .app-tone-dot {
+  background: var(--k-green);
+  animation: appLiveHalo 2.8s ease-out infinite;
+}
+
+[data-tone="paused"] > .app-tone-dot {
+  background: var(--k-amber);
+}
+
+[data-tone="overtime"] > .app-tone-dot {
+  background: var(--k-pink);
+  animation: appLiveHalo 2.8s ease-out infinite;
+}
+
+/* his "ACTIVE SHIFT" label: small tracked capitals beside the live dot */
+.app-pill-label {
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+}
+
+@keyframes appLiveHalo {
+  0% {
+    box-shadow: 0 0 0 0 var(--k-glow);
+  }
+  70% {
+    box-shadow: 0 0 0 6px transparent;
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
+.app-num {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.015em;
+}
+
+.app-update-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--k-amber) 40%, var(--k-line));
+  background: var(--k-amber-2);
+  color: var(--k-amber);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.app-window-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--k-muted);
+  font: inherit;
+  cursor: pointer;
+}
+
+.app-window-btn:hover {
+  background: color-mix(in srgb, var(--k-plum-2) 10%, transparent);
+  color: var(--k-ink);
+}
+
+.app-window-btn.is-close:hover {
+  background: #e81123;
+  color: #ffffff;
+}
+
+/* labels collapse to icons when the window is narrow */
+@media (max-width: 1079px) {
+  .app-nav-label {
+    display: none;
+  }
+
+  .app-nav-pill {
+    padding: 0 10px;
+  }
+}
+
+@media (max-width: 1239px) {
+  .app-hide-below-wide {
+    display: none !important;
+  }
+
+  /* six labelled pills plus a long status (e.g. "Tracking on <device>")
+     only fit the default 1100 px window with tighter pills */
+  .app-nav-pill {
+    gap: 5px;
+    padding: 0 9px;
+  }
+
+  /* the update banner carries the text; the pill keeps just the icon */
+  .app-update-btn {
+    width: 34px;
+    padding: 0;
+    justify-content: center;
+  }
+}
+
+/* ---------- status bar ---------- */
+.app-statusbar {
+  grid-column: 1 / -1;
+  grid-row: 4;
+  position: relative;
+  z-index: 30;
+  border-top: 1px solid var(--k-line-2);
+  background: color-mix(in srgb, var(--k-surface-status) 94%, transparent);
+  font-family: "Inter Variable", "Inter", "IBM Plex Sans Arabic", system-ui, sans-serif;
+  color: var(--k-muted);
+}
+
+.app-status-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  cursor: pointer;
+}
+
+.app-status-btn:hover {
+  background: color-mix(in srgb, var(--k-plum-2) 9%, transparent);
+}
+
+/* ---------- canvas: colour wash, dot grid, brand marks (Readdy design) ---------- */
+.k-app.app-shell[data-theme] {
+  position: relative;
+  isolation: isolate;
+  background:
+    radial-gradient(980px 560px at 58% -18%, var(--k-wash-1), transparent 66%),
+    radial-gradient(760px 460px at 0% 2%, var(--k-wash-2), transparent 68%),
+    radial-gradient(940px 620px at 104% 108%, var(--k-wash-3), transparent 70%),
+    var(--k-bg);
+  color: var(--k-ink);
+}
+
+/* App.css drew its own grid lines and glows on these pseudo-elements */
+.k-app.app-shell[data-theme]::before,
+.k-app.app-shell[data-theme]::after {
+  display: none;
+}
+
+.app-shell .app-grid {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-image: radial-gradient(var(--k-grid-dot) 1px, transparent 1px);
+  background-size: 28px 28px;
+  -webkit-mask-image: radial-gradient(720px 520px at 12% 74%, #000 0%, transparent 72%);
+  mask-image: radial-gradient(720px 520px at 12% 74%, #000 0%, transparent 72%);
+  opacity: 0.3;
+}
+
+.app-shell .k-wm {
+  position: fixed;
+  z-index: -1;
+  pointer-events: none;
+  aspect-ratio: 1 / 1;
+  user-select: none;
+}
+
+.app-shell .k-wm-art {
+  opacity: 0.06;
+  mix-blend-mode: multiply;
+}
+
+.app-shell .k-wm-art img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+/* on dark faces the plum-to-pink ink muddies: a faint white silhouette */
+.app-shell.app-dark .k-wm-art {
+  opacity: 0.055;
+  mix-blend-mode: normal;
+  filter: brightness(0) invert(1);
+}
+
+.app-shell .k-wm-horse {
+  top: 1%;
+  right: -5%;
+  width: min(840px, 70vw);
+  transform: rotate(-4deg);
+}
+
+.app-shell .k-wm-bird {
+  bottom: 1%;
+  left: -4%;
+  width: min(800px, 66vw);
+  transform: rotate(-4deg);
+}
+
+/* ---------- toasts ---------- */
+.app-toast-stack {
+  position: fixed;
+  bottom: 44px;
+  left: 50%;
+  z-index: 80;
+  display: flex;
+  width: min(92vw, 26rem);
+  flex-direction: column-reverse;
+  gap: 8px;
+  transform: translateX(-50%);
+  pointer-events: none;
+  font-family: "Inter Variable", "Inter", "IBM Plex Sans Arabic", system-ui, sans-serif;
+}
+
+.app-toast {
+  --toast-tone: var(--k-green);
+  --toast-tone-2: var(--k-green-2);
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 9px 11px;
+  border: 1px solid color-mix(in srgb, var(--toast-tone) 45%, var(--k-line));
+  border-radius: 10px;
+  background: var(--k-card);
+  box-shadow: 0 18px 40px -26px rgba(10, 6, 30, 0.45);
+  pointer-events: auto;
+  animation: appToastIn 0.22s ease-out both;
+}
+
+.app-toast[data-tone="warning"] {
+  --toast-tone: var(--k-amber);
+  --toast-tone-2: var(--k-amber-2);
+}
+
+.app-toast[data-tone="error"] {
+  --toast-tone: var(--k-rose);
+  --toast-tone-2: var(--k-rose-2);
+}
+
+.app-toast-icon {
+  display: flex;
+  width: 20px;
+  height: 20px;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  margin-top: 1px;
+  border-radius: 999px;
+  background: var(--toast-tone-2);
+  color: var(--toast-tone);
+  font-size: 12px;
+}
+
+.app-toast-label {
+  display: block;
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--toast-tone);
+}
+
+.app-toast-text {
+  display: block;
+  margin-top: 1px;
+  font-size: 11.5px;
+  font-weight: 500;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  color: var(--k-ink);
+}
+
+@keyframes appToastIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}

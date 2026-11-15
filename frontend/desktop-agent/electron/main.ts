@@ -7,6 +7,7 @@ import axios from "axios";
 import { execFile, fork, spawn, type ChildProcess } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
@@ -293,6 +294,7 @@ type AgentRuntimeStatus = {
   idleRequestPeriods: NonNullable<AgentSummary["idle_request_periods"]>;
   breakBank: NonNullable<AgentSummary["break_bank"]> | null;
   flexibleDay: AgentSummary["flexible_day"] | null;
+  attendanceWeek: NonNullable<AgentSummary["attendance_week"]> | null;
   lastIdleAlert: IdleLossAlert | null;
   locallyEndedIdleAt: string | null;
   updateStatus:
@@ -365,6 +367,8 @@ type RuntimeTask = {
   canUpdateStage: boolean;
   reviewNote: string | null;
   completionNote: string | null;
+  priority: "low" | "medium" | "high" | "urgent" | null;
+  deadline: string | null;
   checklist: Array<{
     id: string;
     title: string;
@@ -595,6 +599,7 @@ const runtimeStatus: AgentRuntimeStatus = {
   idleRequestPeriods: [],
   breakBank: null,
   flexibleDay: null,
+  attendanceWeek: null,
   lastIdleAlert: null,
   locallyEndedIdleAt: null,
   updateStatus: "idle",
@@ -696,6 +701,9 @@ function runtimeDiagnostics() {
 
 log.info("Khaliduo runtime diagnostics", runtimeDiagnostics());
 
+// Shown in Settings; fixed for the life of the process, so read once.
+const platformLabel = `${os.version()} · ${process.arch === "x64" ? "64-bit" : process.arch}`;
+
 function normalizeTrackingConfig(config: TrackingConfig): TrackingConfig {
   const configuredIdleThreshold = Number(config.idle_threshold_minutes);
   return {
@@ -728,6 +736,8 @@ function mapTask(task: ApiAgentTask): RuntimeTask {
     canUpdateStage: task.can_update_stage,
     reviewNote: task.review_note ?? null,
     completionNote: task.completion_note ?? null,
+    priority: task.priority ?? null,
+    deadline: task.deadline ?? null,
     checklist: (task.checklist ?? []).map((item) => ({
       id: item.id,
       title: item.title,
@@ -831,6 +841,7 @@ function clearedPersonalRuntimeStatus(): Partial<AgentRuntimeStatus> {
     idleRequestPeriods: [],
     breakBank: null,
     flexibleDay: null,
+    attendanceWeek: null,
     lastIdleAlert: null,
     locallyEndedIdleAt: null,
     activityPercent: 0,
@@ -1789,6 +1800,7 @@ function resetDailyRuntimeCounters(nextCounterDate: string, now = new Date()) {
   runtimeStatus.idleRequestPeriods = [];
   runtimeStatus.breakBank = null;
   runtimeStatus.flexibleDay = null;
+  runtimeStatus.attendanceWeek = null;
   runtimeStatus.locallyEndedIdleAt = null;
   clearIdleReturnVerification();
   lastHandledIdleReturnInputAt = now.getTime();
@@ -2419,6 +2431,7 @@ async function refreshWorkedTodayTotalOnce() {
     runtimeStatus.idleRequestPeriods = summary.idle_request_periods ?? [];
     runtimeStatus.breakBank = summary.break_bank ?? null;
     runtimeStatus.flexibleDay = summary.flexible_day ?? null;
+    runtimeStatus.attendanceWeek = summary.attendance_week ?? null;
     if (
       !summary.today_timeline.intervals.some(
         (interval) => interval.type === "idle" && interval.is_current,
@@ -5695,9 +5708,12 @@ async function syncNow() {
 }
 
 async function createMainWindow() {
+  // Opens at 1280x820, where the tracker's timer card and timeline fill the
+  // window exactly; smaller screens get their whole work area instead.
+  const workArea = screen.getPrimaryDisplay().workAreaSize;
   mainWindow = new BrowserWindow({
-    width: 1100,
-    height: 720,
+    width: Math.max(980, Math.min(1280, workArea.width - 32)),
+    height: Math.max(640, Math.min(820, workArea.height - 32)),
     minWidth: 980,
     minHeight: 640,
     show: false,
@@ -5947,6 +5963,8 @@ function runtimeStatusPayload() {
     powerSource: onAcPower ? "ac" : "battery",
     privacyNotice,
     diagnostics: runtimeDiagnostics(),
+    platformLabel,
+    screenshotIntervalMinutes: trackingConfig.screenshot_interval_minutes,
   };
 }
 

@@ -4,7 +4,6 @@ import {
   useMemo,
   useRef,
   useState,
-  type CSSProperties,
   type FormEvent,
   type ReactNode,
 } from "react";
@@ -13,11 +12,31 @@ import type {
   AgentProject,
   AgentStatus,
   AgentTask,
+  AttendanceDay,
   IdleAlert,
   MeetingSummary,
   RecentScreenshot,
   WorkdayTimeline,
 } from "./types/electron";
+import { Backdrop } from "./ui/shell/Backdrop";
+import { StatusBar } from "./ui/shell/StatusBar";
+import { ToastStack } from "./ui/shell/ToastStack";
+import { useToasts } from "./ui/shell/toastQueue";
+import { TopBar, type ShellTone } from "./ui/shell/TopBar";
+import { SKINS, useSkin, type Skin } from "./ui/theme/skin";
+import { TIMER_STYLES, useTimerStyle, type TimerStyle } from "./ui/tracker/timerStyle";
+import {
+  BreakdownCard,
+  HeroCard,
+  QuickBar,
+  RecentTasksCard,
+  ShotCard,
+  StatTiles,
+  TimelineCard,
+  WorkdayStrip,
+  type HeroMode,
+  type TimelineRow,
+} from "./ui/tracker/TrackerCards";
 import {
   TIMELINE_LABELS,
   timelineIntervalsForDisplay,
@@ -134,6 +153,13 @@ function formatSavedMinutes(totalSeconds: number) {
   const minutes = Math.floor(Math.max(0, totalSeconds) / 60);
   if (minutes < 60) return `${minutes}m`;
   return `${Math.floor(minutes / 60)}h ${String(minutes % 60).padStart(2, "0")}m`;
+}
+
+/** "1h 29m" / "45m", for compact tracked-time cells. */
+function formatHoursMinutes(totalSeconds: number) {
+  const minutes = Math.max(0, Math.floor(totalSeconds / 60));
+  const hours = Math.floor(minutes / 60);
+  return hours > 0 ? `${hours}h ${minutes % 60}m` : `${minutes}m`;
 }
 
 function formatDuration(totalSeconds: number) {
@@ -503,7 +529,7 @@ function App() {
   const [enrollmentError, setEnrollmentError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [activeView, setActiveView] = useState<
-    "home" | "tasks" | "requests" | "meeting" | "settings"
+    "home" | "tasks" | "requests" | "meeting" | "insights" | "settings"
   >("home");
   const [projectFilterId, setProjectFilterId] = useState("");
   const [sessionNote, setSessionNote] = useState("");
@@ -555,6 +581,33 @@ function App() {
   const [isLoadingScreenshots, setIsLoadingScreenshots] = useState(false);
   const [screenshotError, setScreenshotError] = useState<string | null>(null);
   const [theme, setTheme] = useState<"light" | "dark">(initialTheme);
+  const { skin, setSkin } = useSkin(theme);
+  const [timerStyle, setTimerStyle] = useTimerStyle();
+  const { toasts, push: pushToast, dismiss: dismissToast } = useToasts();
+  // Appearance changes confirm themselves with a toast, as in his app.
+  const changeTimerStyle = useCallback(
+    (style: TimerStyle) => {
+      setTimerStyle(style);
+      const face = TIMER_STYLES.find((item) => item.key === style);
+      if (face) pushToast(`Timer style · ${face.label}`);
+    },
+    [setTimerStyle, pushToast],
+  );
+  const changeSkin = useCallback(
+    (next: Skin) => {
+      setSkin(next);
+      const item = SKINS.find((entry) => entry.key === next);
+      if (item) pushToast(`Theme · ${item.label}`);
+    },
+    [setSkin, pushToast],
+  );
+  const changeTheme = useCallback(
+    (mode: "light" | "dark") => {
+      setTheme(mode);
+      pushToast(mode === "dark" ? "Dark mode on" : "Light mode on");
+    },
+    [pushToast],
+  );
   const shownIdleAlertId = useRef<string | null>(null);
   const screenshotsLoadedForEnrollment = useRef(false);
   const lastLoadedScreenshotAt = useRef<string | null>(null);
@@ -637,12 +690,21 @@ function App() {
     window.localStorage.setItem(THEME_STORAGE_KEY, theme);
   }, [theme]);
 
-  const statusLabel = useMemo(
-    () =>
-      status.trackingStatus.charAt(0).toUpperCase() +
-      status.trackingStatus.slice(1),
-    [status.trackingStatus],
-  );
+  // Toasts echo the messages the app already sets; the inline messages stay.
+  useEffect(() => {
+    if (trackingControlMessage) pushToast(trackingControlMessage, "success");
+  }, [trackingControlMessage, pushToast]);
+  useEffect(() => {
+    if (timeRequestSuccess) pushToast(timeRequestSuccess, "success");
+  }, [timeRequestSuccess, pushToast]);
+  useEffect(() => {
+    if (leaveRequestSuccess) pushToast(leaveRequestSuccess, "success");
+  }, [leaveRequestSuccess, pushToast]);
+  useEffect(() => {
+    for (const error of [taskError, timeRequestError, leaveRequestError, dashboardError, screenshotError]) {
+      if (error) pushToast(error, "error");
+    }
+  }, [taskError, timeRequestError, leaveRequestError, dashboardError, screenshotError, pushToast]);
 
   const taskTeams = useMemo(
     () =>
@@ -894,12 +956,15 @@ function App() {
   const runningBreakEndsAtMs = status.scheduledBreak
     ? Date.parse(status.scheduledBreak.endsAt)
     : null;
+  // The main timer shows the idle counter only for automatic idle outside
+  // any break; the tracker card's idle face follows the same flag.
+  const timerShowsIdle =
+    status.trackingStatus === "idle" &&
+    !isPaused &&
+    !onScheduledBreak &&
+    !onSavedBreak;
   const displayedTimerSeconds = mainTimerSeconds({
-    isAutomaticIdle:
-      status.trackingStatus === "idle" &&
-      !isPaused &&
-      !onScheduledBreak &&
-      !onSavedBreak,
+    isAutomaticIdle: timerShowsIdle,
     isExtraTime,
     currentIdleSeconds: status.currentIdleSeconds,
     extraSeconds,
@@ -1129,6 +1194,12 @@ function App() {
         return;
       }
       if (result.status) setStatus(result.status);
+      const picked = result.status?.selectedTask;
+      pushToast(
+        taskId === "none" || !picked
+          ? "No task selected · time is still tracked"
+          : `Tracking · ${picked.name}`,
+      );
     } catch (error) {
       setTaskError(
         ipcErrorMessage(error, "The action could not be completed. Please try again."),
@@ -1710,213 +1781,50 @@ function App() {
     status.updateStatus === "installing";
 
   return (
-    <main className="k-app" data-tone={timerTone} data-theme={theme}>
-      <header className="k-titlebar">
-        <div className="k-brand">
-          <img src="./khaliduo-icon.png" alt="Khaliduo" />
-          <strong>Kent Consultancy</strong>
-        </div>
-        <span className="k-chip">
-          {statusText}{" "}
-          {status.enrolled ? formatDuration(displayedTimerSeconds) : ""}
-        </span>
-        <span className="k-spacer" />
-        <div className="k-header-actions">
-        {status.enrolled && (
-          <nav className="k-header-nav" aria-label="Primary navigation">
-            <button
-              type="button"
-              className={activeView === "home" ? "active" : ""}
-              onClick={() => setActiveView("home")}
-              title="Timer"
-              aria-label="Timer"
-            >
-              <KIcon name="timer" />
-            </button>
-            <button
-              type="button"
-              className={activeView === "tasks" ? "active" : ""}
-              onClick={() => setActiveView("tasks")}
-              title="Tasks"
-              aria-label="Tasks"
-            >
-              <KIcon name="tasks" />
-            </button>
-            <button
-              type="button"
-              className={activeView === "requests" ? "active" : ""}
-              onClick={() => setActiveView("requests")}
-              title="Requests"
-              aria-label="Requests"
-            >
-              <KIcon name="calendar" />
-            </button>
-            <button
-              type="button"
-              className={activeView === "meeting" ? "active" : ""}
-              onClick={() => setActiveView("meeting")}
-              title="Meeting"
-              aria-label="Meeting"
-            >
-              <KIcon name="meeting" />
-            </button>
-            <button
-              type="button"
-              className={activeView === "settings" ? "active" : ""}
-              onClick={() => setActiveView("settings")}
-              title="Settings"
-              aria-label="Settings"
-            >
-              <KIcon name="settings" />
-            </button>
-            <button
-              type="button"
-              onClick={() => void handleOpenDashboard()}
-              title="Dashboard"
-              aria-label="Dashboard"
-            >
-              <KIcon name="dashboard" />
-            </button>
-          </nav>
-        )}
-        {status.screenshotMonitoringEnabled && (
-          <span
-            className={`k-capture-indicator ${
-              status.screenshotCaptureActive
-                ? status.connectionStatus === "online"
-                  ? "is-active"
-                  : "is-queued"
-                : "is-paused"
-            }`}
-            title={
-              status.screenshotCaptureActive &&
-              status.connectionStatus === "offline"
-                ? "Screenshots are captured locally and queued until the API connection returns"
-                : status.screenshotCaptureActive
-                  ? "Workplace screenshots are active and syncing"
-                  : "Screenshot monitoring is temporarily paused"
-            }
-          >
-            <span aria-hidden="true">●</span>
-            {status.screenshotCaptureActive
-              ? status.connectionStatus === "online"
-                ? "Screenshots active"
-                : "Screenshots queued"
-              : "Screenshots paused"}
-          </span>
-        )}
-        <button
-          type="button"
-          className={`k-sync k-sync-${status.connectionStatus}`}
-          onClick={() => void refreshStatusAfterEnrollment()}
-          title={
-            status.connectionStatus === "online"
-              ? "API connection is healthy"
-              : "API sync is offline; click to retry. Local tracking and queued screenshots are preserved."
-          }
-        >
-          {status.connectionStatus === "online"
-            ? "Synced"
-            : isTracking
-              ? "Offline - tracking locally"
-              : "Offline"}
-        </button>
-        {status.enrolled && (
-          <button
-            type="button"
-            className="k-title-button"
-            onClick={() => void handleOpenDashboard()}
-            disabled={isOpeningDashboard}
-          >
-            Dashboard
-          </button>
-        )}
-        <button
-          type="button"
-          className="k-theme-button"
-          onClick={() => void handleUpdateButton()}
-          disabled={updateButtonDisabled}
-          aria-label={updateButtonLabel}
-          title={
-            status.updateStatus === "ready"
-              ? "Install the downloaded Khaliduo update now"
-              : "Check for Khaliduo updates now"
-          }
-        >
-          <KIcon name="update" />
-          <span className="k-control-label">{updateButtonLabel}</span>
-        </button>
-        <button
-          type="button"
-          className="k-theme-button"
-          onClick={() =>
-            setTheme((current) => (current === "dark" ? "light" : "dark"))
-          }
-          aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
-          title={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
-        >
-          <KIcon name={theme === "dark" ? "sun" : "moon"} />
-          <span className="k-control-label">
-            {theme === "dark" ? "Light" : "Dark"}
-          </span>
-        </button>
-        </div>
-        {status.enrolled && (
-          <div className="k-header-user" aria-label="Current employee">
-            <span className="k-header-avatar">
-              {status.employeeAvatarUrl ? (
-                <img src={status.employeeAvatarUrl} alt="" />
-              ) : (
-                initials(status.employeeName)
-              )}
-            </span>
-            <span>
-              <strong>{status.employeeName}</strong>
-              <small
-                className={
-                  status.connectionStatus === "online" || isTracking
-                    ? "k-ok"
-                    : "k-danger"
-                }
-              >
-                {status.connectionStatus === "online" || isTracking
-                  ? "Active"
-                  : "Offline"}
-              </small>
-            </span>
-          </div>
-        )}
-        <div className="k-window-controls" aria-label="Window controls">
-          <button
-            type="button"
-            aria-label="Minimize"
-            onClick={() => void window.khaliduo?.minimizeWindow()}
-          >
-            −
-          </button>
-          <button
-            type="button"
-            aria-label="Maximize or restore"
-            onClick={() => void window.khaliduo?.toggleMaximizeWindow()}
-          >
-            □
-          </button>
-          <button
-            type="button"
-            aria-label="Close"
-            className="k-window-close"
-            onClick={() => void window.khaliduo?.closeWindow()}
-          >
-            ×
-          </button>
-        </div>
-        {status.enrolled && (
-          <h1 className="k-welcome-title">
-            Welcome back {status.employeeName.split(" ")[0] || "there"}
-          </h1>
-        )}
-        <span className="k-header-stripes" aria-hidden="true" />
-      </header>
+    <main
+      className={`k-app app-shell${theme === "dark" ? " app-dark" : ""}`}
+      data-tone={timerTone}
+      data-theme={theme}
+    >
+      <Backdrop />
+      <TopBar
+        enrolled={status.enrolled}
+        activeView={activeView}
+        onViewChange={setActiveView}
+        onOpenDashboard={() => void handleOpenDashboard()}
+        isOpeningDashboard={isOpeningDashboard}
+        statusText={statusText}
+        timerLabel={formatDuration(displayedTimerSeconds)}
+        tone={timerTone}
+        updateLabel={updateButtonLabel}
+        updateTitle={
+          status.updateStatus === "ready"
+            ? "Install the downloaded Khaliduo update now"
+            : "Check for Khaliduo updates now"
+        }
+        updateDisabled={updateButtonDisabled}
+        updateHighlighted={[
+          "available",
+          "downloading",
+          "ready",
+          "installing",
+          "error",
+        ].includes(status.updateStatus)}
+        onUpdate={() => void handleUpdateButton()}
+        skin={skin}
+        mode={theme}
+        onSkin={changeSkin}
+        onMode={changeTheme}
+        employeeName={status.employeeName}
+        employeeAvatarUrl={status.employeeAvatarUrl}
+        employeeInitials={initials(status.employeeName)}
+        presenceLabel={
+          status.connectionStatus === "online" || isTracking
+            ? "Active"
+            : "Offline"
+        }
+        presenceOk={status.connectionStatus === "online" || isTracking}
+      />
 
       {(status.updateRequired ||
         ["available", "downloading", "ready", "installing"].includes(
@@ -1978,7 +1886,12 @@ function App() {
           {activeView === "home" && (
             <HomeView
               status={status}
-              statusLabel={statusLabel}
+              statusText={statusText}
+              timerTone={timerTone}
+              timerShowsIdle={timerShowsIdle}
+              onBreak={onScheduledBreak || onSavedBreak}
+              timerStyle={timerStyle}
+              onTimerStyleChange={changeTimerStyle}
               selectedProject={selectedProject}
               projectFilterId={projectFilterId}
               visibleTasks={visibleTasks}
@@ -2108,33 +2021,75 @@ function App() {
               }}
             />
           )}
+          {activeView === "insights" && (
+            <InsightsView
+              status={status}
+              countedTodaySeconds={countedTodaySeconds}
+              extraSeconds={extraSeconds}
+            />
+          )}
           {activeView === "settings" && (
             <SettingsView
               status={status}
               onLogout={() => void handleLogout()}
               isLoggingOut={isLoggingOut}
+              theme={theme}
+              onThemeChange={changeTheme}
+              skin={skin}
+              onSkinChange={changeSkin}
+              onNotify={pushToast}
             />
           )}
         </>
       )}
 
-      <footer className="k-statusbar">
-        <span>
-          {isPaused ? "Timer paused" : isRunning ? "Timer running" : "Idle"}
-        </span>
-        <span
-          className={status.connectionStatus === "online" ? "k-ok" : "k-danger"}
-        >
-          {status.connectionStatus === "online"
+      <StatusBar
+        tone={timerTone}
+        timerStateLabel={
+          isPaused ? "Timer paused" : isRunning ? "Timer running" : "Idle"
+        }
+        syncOk={status.connectionStatus === "online"}
+        syncLabel={
+          status.connectionStatus === "online"
             ? "Synced"
             : isTracking
               ? "Sync pending - time saved locally"
-              : "Offline"}
-        </span>
-        <span>Worked today {formatDuration(trackedTodaySeconds)}</span>
-        <span>Activity {status.activityPercent}%</span>
-        <span>v{status.agentVersion}</span>
-      </footer>
+              : "Offline"
+        }
+        syncTitle={
+          status.connectionStatus === "online"
+            ? "API connection is healthy"
+            : "API sync is offline; click to retry. Local tracking and queued screenshots are preserved."
+        }
+        onSync={() => void refreshStatusAfterEnrollment()}
+        capture={
+          status.screenshotMonitoringEnabled
+            ? {
+                state: status.screenshotCaptureActive
+                  ? status.connectionStatus === "online"
+                    ? "active"
+                    : "queued"
+                  : "paused",
+                label: status.screenshotCaptureActive
+                  ? status.connectionStatus === "online"
+                    ? "Screenshots active"
+                    : "Screenshots queued"
+                  : "Screenshots paused",
+                title:
+                  status.screenshotCaptureActive &&
+                  status.connectionStatus === "offline"
+                    ? "Screenshots are captured locally and queued until the API connection returns"
+                    : status.screenshotCaptureActive
+                      ? "Workplace screenshots are active and syncing"
+                      : "Screenshot monitoring is temporarily paused",
+              }
+            : null
+        }
+        workedTodayLabel={formatDuration(trackedTodaySeconds)}
+        activityPercent={status.activityPercent}
+        agentVersion={status.agentVersion}
+      />
+      <ToastStack toasts={toasts} onDismiss={dismissToast} />
     </main>
   );
 }
@@ -2158,46 +2113,96 @@ function EnrollmentView({
   onPasswordChange: (value: string) => void;
   onCredentialEnrollment: (event: FormEvent<HTMLFormElement>) => void;
 }) {
+  // View-only: password visibility and the shake replayed on each new error.
+  const [showPassword, setShowPassword] = useState(false);
+  const formRef = useRef<HTMLFormElement>(null);
+  useEffect(() => {
+    const form = formRef.current;
+    if (!form || !enrollmentError) return;
+    form.classList.remove("k-shake");
+    void form.offsetWidth;
+    form.classList.add("k-shake");
+  }, [enrollmentError]);
+
   return (
-    <section className="k-enrollment">
-      <div className="k-panel k-enroll-card">
-        <h2>Sign in to set up this computer</h2>
-        <p>Your device will be linked to your employee account.</p>
-        <form className="k-form" onSubmit={onCredentialEnrollment}>
-          <label>
-            Work email
-            <input
-              type="email"
-              value={employeeEmail}
-              onChange={(event) => onEmailChange(event.target.value)}
-              autoComplete="email"
-              placeholder="name@company.com"
-              disabled={isSubmitting}
-              required
-            />
-          </label>
-          <label>
-            Password
-            <input
-              type="password"
-              value={employeePassword}
-              onChange={(event) => onPasswordChange(event.target.value)}
-              autoComplete="current-password"
-              placeholder="Employee password"
-              disabled={isSubmitting}
-              minLength={8}
-              required
-            />
-          </label>
-          <button
-            type="submit"
-            className="k-primary k-enroll-submit"
-            disabled={isSubmitting || !isDesktopRuntime}
-          >
-            {isSubmitting ? "Signing in..." : "Sign in and link device"}
-          </button>
-        </form>
-        {enrollmentError && <p className="k-error">{enrollmentError}</p>}
+    <section className="app-page pg-signin">
+      <div className="pg-signin-wrap">
+        <div className="pg-signin-brand">
+          <span className="pg-signin-logo" aria-hidden="true" />
+          <span>
+            <b>KHALIDUO</b>
+            <small>Time tracking suite</small>
+          </span>
+        </div>
+        <div className="pg-signin-frame">
+          <div className="tp-card pg-signin-card">
+            <h2>Sign in to set up this computer</h2>
+            <p>
+              <i className="ri-time-line" aria-hidden="true" /> Your device will be linked to your employee account.
+            </p>
+            <form ref={formRef} className="pg-form" onSubmit={onCredentialEnrollment}>
+              <label>
+                Work email
+                <span className="pg-input-icon">
+                  <i className="ri-mail-line" aria-hidden="true" />
+                  <input
+                    type="email"
+                    value={employeeEmail}
+                    onChange={(event) => onEmailChange(event.target.value)}
+                    autoComplete="email"
+                    placeholder="name@company.com"
+                    disabled={isSubmitting}
+                    required
+                  />
+                </span>
+              </label>
+              <label>
+                Password
+                <span className="pg-input-icon has-toggle">
+                  <i className="ri-lock-line" aria-hidden="true" />
+                  <input
+                    type={showPassword ? "text" : "password"}
+                    value={employeePassword}
+                    onChange={(event) => onPasswordChange(event.target.value)}
+                    autoComplete="current-password"
+                    placeholder="Employee password"
+                    disabled={isSubmitting}
+                    minLength={8}
+                    required
+                  />
+                  <button
+                    type="button"
+                    className="pg-input-toggle"
+                    onClick={() => setShowPassword((value) => !value)}
+                    aria-label={showPassword ? "Hide password" : "Show password"}
+                    aria-pressed={showPassword}
+                  >
+                    <i className={showPassword ? "ri-eye-off-line" : "ri-eye-line"} aria-hidden="true" />
+                  </button>
+                </span>
+              </label>
+              <button
+                type="submit"
+                className="pg-btn pg-btn-primary"
+                disabled={isSubmitting || !isDesktopRuntime}
+              >
+                {isSubmitting ? (
+                  <>
+                    <i className="ri-loader-4-line pg-spin" aria-hidden="true" /> Signing in...
+                  </>
+                ) : (
+                  "Sign in and link device"
+                )}
+              </button>
+            </form>
+            {enrollmentError && (
+              <p className="k-error" role="alert">
+                <i className="ri-error-warning-line" aria-hidden="true" /> {enrollmentError}
+              </p>
+            )}
+          </div>
+        </div>
+        <p className="pg-signin-foot">Secured workspace · employee sign-in</p>
       </div>
     </section>
   );
@@ -2210,10 +2215,10 @@ function Sidebar({
   onOpenDashboard,
   isTracking,
 }: {
-  activeView: "home" | "tasks" | "requests" | "meeting" | "settings";
+  activeView: "home" | "tasks" | "requests" | "meeting" | "insights" | "settings";
   status: AgentStatus;
   onViewChange: (
-    view: "home" | "tasks" | "requests" | "meeting" | "settings",
+    view: "home" | "tasks" | "requests" | "meeting" | "insights" | "settings",
   ) => void;
   onOpenDashboard: () => void;
   isTracking: boolean;
@@ -2295,7 +2300,12 @@ function Sidebar({
 
 function HomeView({
   status,
-  statusLabel,
+  statusText,
+  timerTone,
+  timerShowsIdle,
+  onBreak,
+  timerStyle,
+  onTimerStyleChange,
   selectedProject,
   projectFilterId,
   visibleTasks,
@@ -2325,7 +2335,12 @@ function HomeView({
   onRequestManualTime,
 }: {
   status: AgentStatus;
-  statusLabel: string;
+  statusText: string;
+  timerTone: ShellTone;
+  timerShowsIdle: boolean;
+  onBreak: boolean;
+  timerStyle: TimerStyle;
+  onTimerStyleChange: (style: TimerStyle) => void;
   selectedProject: AgentProject | null;
   projectFilterId: string;
   visibleTasks: AgentTask[];
@@ -2386,14 +2401,8 @@ function HomeView({
       : status.extraTimeStatus === "pending_overtime"
         ? "HR/Admin must approve this time before payroll."
         : "Recorded for review. It will not be paid unless HR/Admin approves it.";
-  const overtimeStatus =
-    extraSeconds <= 0
-      ? "No overtime"
-      : status.extraTimeStatus === "pending_overtime"
-        ? "Pending approval"
-        : "Recorded only";
+  const overtimeStatus = overtimeStatusLabel(extraSeconds, status.extraTimeStatus);
   const isFlexible = isFlexibleSchedule(status.requestPolicy);
-  const flexibleDone = flexibleTargetMet(status);
   const flexibleBank =
     isFlexible && (status.flexibleDay?.break_bank_seconds ?? 0) > 0
       ? status.flexibleDay
@@ -2429,276 +2438,260 @@ function HomeView({
     breaksToday,
     localMinutesAt(new Date().toISOString(), workdayTimezone),
   );
-  const isAutomaticIdle =
-    status.trackingStatus === "idle" &&
-    !status.trackingPaused &&
-    !status.scheduledBreak;
-  const heroStatusLabel = !hasRunningSession
-    ? statusLabel
-    : status.scheduledBreak &&
-        !isPaused &&
-        ["idle", "locked", "sleeping"].includes(status.trackingStatus)
-      ? `On break · ${status.scheduledBreak.name}`
-      : isExtraTime &&
-        (isPaused ||
-          ["idle", "locked", "sleeping"].includes(status.trackingStatus))
-      ? isFlexible
-        ? flexibleDone
-          ? "Daily hours done"
-          : "Outside allowed hours"
-        : "Off shift"
-      : isPaused
-        ? "Paused"
-        : isExtraTime
-          ? "Extra time active"
-          : ["idle", "locked", "sleeping"].includes(status.trackingStatus)
-            ? isFlexible
-              ? "Idle"
-              : "Paid shift idle"
-            : isFlexible
-              ? "Daily hours active"
-              : "Paid shift active";
-  const arcDegrees = Math.round((targetProgress / 100) * 300);
+  // Card face from App's existing flags: a break wins, then the idle counter,
+  // otherwise the same tone the top bar uses.
+  const heroMode: HeroMode = onBreak
+    ? "break"
+    : timerShowsIdle
+      ? "idle"
+      : timerTone;
   return (
-    <section className="k-home">
-      <div className="k-center">
-        <div className="k-selectors">
-          <label>
-            Project
-            <select
-              value={projectFilterId}
-              onChange={(event) => onProjectChange(event.target.value)}
-            >
-              <option value="">All projects</option>
-              {status.projects.map((project) => (
-                <option key={project.id} value={project.id}>
-                  {project.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Task
-            <select
-              value={status.selectedTask?.id ?? "none"}
-              disabled={isSubmittingTask}
-              onChange={(event) => onTaskChange(event.target.value)}
-            >
-              <option value="none">Choose a task</option>
-              {visibleTasks.map((task) => (
-                <option key={task.id} value={task.id}>
-                  {task.name}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-        <input
-          className="k-note"
-          value={sessionNote}
-          onChange={(event) => onSessionNoteChange(event.target.value)}
-          placeholder="Add a note for this session (optional)..."
+    <section className="app-page">
+      <div className="flex min-w-0 flex-col gap-3.5">
+        <h1 className="sr-only">Tracker</h1>
+        {/* the selectors, timer card and right column fill the window; the
+            tiles and breakdown sit below the fold, as in his tracker */}
+        <div className="tp-fold">
+        <QuickBar
+          projects={status.projects}
+          projectId={projectFilterId}
+          onProjectChange={onProjectChange}
+          tasks={visibleTasks}
+          taskId={status.selectedTask?.id ?? "none"}
+          taskDisabled={isSubmittingTask}
+          onTaskChange={onTaskChange}
+          note={sessionNote}
+          onNoteChange={onSessionNoteChange}
         />
-
-        <div
-          className="k-hero"
-          style={
-            {
-              "--progress": targetProgress,
-              "--arc-degrees": `${arcDegrees}deg`,
-            } as CSSProperties
-          }
-        >
-          <span
-            className="k-hero-wireframe k-hero-wireframe-right"
-            aria-hidden="true"
-          />
-          <span className="k-hero-icon">
-            <KIcon name="briefcase" />
-          </span>
-          <div className="k-shift-context">
-            <span>{isFlexible ? "Flexible hours" : "Paid shift"}</span>
-            <strong>{paidShiftLabel}</strong>
-          </div>
-          {(breaksToday.length > 0 || savedBreak || flexibleBank) && (
-            <ul className="k-break-times" aria-label="Today's breaks">
-              {breaksToday.map((item) => {
-                const state =
+        <div className="tp-layout">
+          <div className="flex min-w-0 flex-col gap-3.5">
+            <HeroCard
+              mode={heroMode}
+              statusText={statusText}
+              shiftLabel={paidShiftLabel}
+              breaks={breaksToday.map((item) => ({
+                key: `${item.name}-${item.start}`,
+                label: `${item.name}${item.prayer ? ` · ${item.prayer}` : ""}`,
+                range: `${formatScheduledTime(item.start)}–${formatScheduledTime(item.end)}`,
+                title: item.prayer
+                  ? `Starts at today's ${item.prayer} adhan`
+                  : undefined,
+                state:
                   breakNow.current === item
                     ? "now"
                     : breakNow.next === item
                       ? "next"
-                      : null;
-                return (
-                  <li
-                    key={`${item.name}-${item.start}`}
-                    data-state={state ?? undefined}
-                    title={
-                      item.prayer
-                        ? `Starts at today's ${item.prayer} adhan`
-                        : undefined
+                      : null,
+              }))}
+              savedBreak={
+                savedBreak
+                  ? {
+                      remaining: formatSavedMinutes(savedBreak.remaining_seconds),
+                      title: `Saved today ${formatSavedMinutes(savedBreak.earned_seconds)} · used on idle ${formatSavedMinutes(savedBreak.used_seconds ?? savedBreak.approved_seconds)}`,
                     }
-                  >
-                    <span>
-                      {item.name}
-                      {item.prayer ? ` · ${item.prayer}` : ""}
-                    </span>
-                    <strong>
-                      {formatScheduledTime(item.start)}–
-                      {formatScheduledTime(item.end)}
-                    </strong>
-                    {state === "now" && <em>Now</em>}
-                    {state === "next" && <em>Next</em>}
-                  </li>
-                );
-              })}
-              {savedBreak && (
-                <li
-                  data-state="saved"
-                  title={`Saved today ${formatSavedMinutes(savedBreak.earned_seconds)} · used on idle ${formatSavedMinutes(savedBreak.used_seconds ?? savedBreak.approved_seconds)}`}
-                >
-                  <span>Saved break</span>
-                  <strong>{formatSavedMinutes(savedBreak.remaining_seconds)}</strong>
-                </li>
-              )}
-              {flexibleBank && (
-                <li
-                  data-state="saved"
-                  title={`Paid rest you can take at any time today: ${formatSavedMinutes(flexibleBank.break_bank_seconds)}. Pause uses it first, then idle.`}
-                >
-                  <span>Break bank</span>
-                  <strong>
-                    {formatSavedMinutes(flexibleBank.break_bank_remaining_seconds)} left
-                  </strong>
-                </li>
-              )}
-            </ul>
-          )}
-          <span className="k-hero-pill">{heroStatusLabel}</span>
-          {overtimeLabel && (
-            <span className="k-overtime-pill">{overtimeLabel}</span>
-          )}
-          <div
-            className="k-ring"
-            aria-label={
-              isAutomaticIdle
-                ? `Idle for ${formatDuration(displayedTimerSeconds)} after the idle threshold`
-                : isExtraTime
-                  ? `Recorded overtime ${formatDuration(displayedTimerSeconds)}`
-                  : `Worked today ${formatDuration(trackedTodaySeconds)}; ${formatDuration(countedTodaySeconds)} counts toward the ${formatDuration(status.dailyTargetSeconds)} target`
-            }
-          >
-            <span className="k-gauge-mark mark-0">0h</span>
-            <span className="k-gauge-mark mark-2">2h</span>
-            <span className="k-gauge-mark mark-4">4h</span>
-            <span className="k-gauge-mark mark-6">6h</span>
-            <span className="k-gauge-mark mark-8">8h</span>
-            <div className="k-gauge-readout">
-              <strong>{formatDuration(displayedTimerSeconds)}</strong>
-              <small>
-                {isAutomaticIdle
+                  : null
+              }
+              breakBank={
+                flexibleBank
+                  ? {
+                      remaining: `${formatSavedMinutes(flexibleBank.break_bank_remaining_seconds)} left`,
+                      title: `Paid rest you can take at any time today: ${formatSavedMinutes(flexibleBank.break_bank_seconds)}. Pause uses it first, then idle.`,
+                    }
+                  : null
+              }
+              shiftTitle={isFlexible ? "Today's flexible hours" : "Today's paid shift"}
+              overtimeLabel={overtimeLabel}
+              overtimeHelp={overtimeHelp}
+              eyebrow={
+                timerShowsIdle
                   ? "Idle time (outside breaks)"
                   : isExtraTime
                     ? "Overtime recorded today"
-                    : `Worked today · ${targetProgress}% of ${formatDuration(status.dailyTargetSeconds)} target`}
-              </small>
-            </div>
+                    : "Worked today"
+              }
+              clock={formatDuration(displayedTimerSeconds)}
+              targetProgress={targetProgress}
+              goalLabel={`${formatDuration(countedTodaySeconds)} of ${formatDuration(status.dailyTargetSeconds)}`}
+              remainingLabel={`${formatDuration(countedTodaySeconds)} logged · ${formatDuration(Math.max(0, status.dailyTargetSeconds - countedTodaySeconds))} remaining`}
+              live={timerTone === "running"}
+              timerAriaLabel={
+                timerShowsIdle
+                  ? `Idle for ${formatDuration(displayedTimerSeconds)} after the idle threshold`
+                  : isExtraTime
+                    ? `Recorded overtime ${formatDuration(displayedTimerSeconds)}`
+                    : `Worked today ${formatDuration(trackedTodaySeconds)}; ${formatDuration(countedTodaySeconds)} counts toward the ${formatDuration(status.dailyTargetSeconds)} target`
+              }
+              projectTaskLabel={`${
+                selectedProject?.name ??
+                status.selectedTask?.projectName ??
+                "No project"
+              } - ${status.selectedTask?.name ?? "No task selected"}`}
+              toggleLabel={
+                isChangingTracking
+                  ? "Please wait..."
+                  : shouldResume
+                    ? "Resume"
+                    : "Pause"
+              }
+              toggleResumes={shouldResume}
+              toggleDisabled={isChangingTracking}
+              onToggle={onTrackingToggle}
+              explainLabel={
+                requestableIdleMinuteTotal > 0
+                  ? `Explain idle · ${requestableIdleMinuteTotal} min`
+                  : "Explain idle"
+              }
+              explainDisabled={!idleRequestOptions.length}
+              onExplain={() => onRequestManualTime(idleRequestOptions[0])}
+              timerStyle={timerStyle}
+              onTimerStyle={onTimerStyleChange}
+            />
           </div>
-          {overtimeHelp && <p className="k-overtime-note">{overtimeHelp}</p>}
-          <p>
-            {selectedProject?.name ??
-              status.selectedTask?.projectName ??
-              "No project"}{" "}
-            - {status.selectedTask?.name ?? "No task selected"}
-          </p>
-          <div className="k-actions">
-            <button
-              type="button"
-              className={shouldResume ? "k-primary" : "k-warning"}
-              onClick={onTrackingToggle}
-              disabled={isChangingTracking}
-            >
-              {isChangingTracking
-                ? "Please wait..."
-                : shouldResume
-                  ? "Resume"
-                  : "Pause"}
-            </button>
-          </div>
-          <div className="k-hero-meta">
-            <div>
-              <KIcon name="tasks" />
-              <span>Activity</span>
-              <strong>{status.activityPercent}%</strong>
-            </div>
-            <div>
-              <KIcon name="timer" />
-              <span>Current session</span>
-              <strong>{formatDuration(status.activeSeconds)}</strong>
-            </div>
-            <div>
-              <KIcon name="worked" />
-              <span>Normal</span>
-              <strong>{formatDuration(normalSeconds)}</strong>
-            </div>
-            <div>
-              <KIcon name="dashboard" />
-              <span>Overtime</span>
-              <strong>{formatDuration(extraSeconds)}</strong>
-              <small className="k-meta-note">{overtimeStatus}</small>
-            </div>
-            <div>
-              <KIcon name="idle" />
-              <span>Idle</span>
-              <strong>{formatDuration(todayIdleSeconds)}</strong>
-              <small className="k-meta-note">
-                {requestableIdleMinuteTotal > 0
-                  ? `${requestableIdleMinuteTotal} min requestable`
-                  : "No requestable time"}
-              </small>
-              <button
-                type="button"
-                className="k-meta-action"
-                onClick={() => onRequestManualTime(idleRequestOptions[0])}
-                disabled={!idleRequestOptions.length}
-              >
-                Explain idle
-              </button>
-            </div>
+          <div className="tp-side">
+            {status.todayTimeline && (
+              <Timeline
+                timeline={status.todayTimeline}
+                locallyEndedIdleAt={status.locallyEndedIdleAt}
+                idleRequestOptions={idleRequestOptions}
+                onRequestIdleTime={onRequestManualTime}
+                loggedLabel={`${Math.floor(trackedTodaySeconds / 3600)}h logged`}
+                syncFooter={
+                  status.connectionStatus === "online"
+                    ? {
+                        label: status.lastSuccessfulSyncAt
+                          ? `Synced with the server · last sync ${formatTimestamp(status.lastSuccessfulSyncAt)}`
+                          : "Connected to the server",
+                        ok: true,
+                      }
+                    : {
+                        label: "Offline · activity is saved and syncs when the connection returns",
+                        ok: false,
+                      }
+                }
+              />
+            )}
+            <ShotCard
+              shot={
+                recentScreenshots?.[0]
+                  ? {
+                      src: recentScreenshots[0].dataUrl,
+                      alt:
+                        recentScreenshots[0].displayName ?? "Latest screenshot",
+                      time: formatTimestamp(recentScreenshots[0].capturedAt),
+                      syncLabel: screenshotSyncLabel(status.connectionStatus),
+                      synced: status.connectionStatus === "online",
+                    }
+                  : null
+              }
+              showLoadButton={!recentScreenshots}
+              loading={isLoadingScreenshots}
+              onLoad={onLoadScreenshots}
+              onViewAll={onOpenScreenshots}
+              viewAllDisabled={isOpeningDashboard}
+              empty={recentScreenshots?.length === 0}
+              errors={[screenshotError, dashboardError].filter(
+                (error): error is string => Boolean(error),
+              )}
+              footer={
+                status.screenshotMonitoringEnabled
+                  ? {
+                      interval: status.screenshotIntervalMinutes
+                        ? `${status.screenshotIntervalMinutes}m`
+                        : null,
+                      captureLabel: status.screenshotCaptureActive
+                        ? status.connectionStatus === "online"
+                          ? "Capturing"
+                          : "Queued offline"
+                        : "Paused",
+                      captureOk: status.screenshotCaptureActive,
+                    }
+                  : null
+              }
+            />
           </div>
         </div>
-
-        <section
-          className="k-workday-time-strip"
-          aria-label="Today's workday timing"
-        >
-          <div>
-            <span>Started at</span>
-            <strong>
-              {status.todayTimeline?.first_started_at
+        </div>
+        <StatTiles
+          row
+          tiles={[
+            {
+              key: "session",
+              icon: "ri-timer-line",
+              label: "Current session",
+              value: formatDuration(status.activeSeconds),
+              note: timerTone === "running" ? "Active right now" : statusText,
+              tone: timerTone === "running" ? "accent" : undefined,
+            },
+            {
+              key: "week",
+              icon: "ri-calendar-2-line",
+              label: "This week",
+              value: formatDuration(
+                status.timeSummary?.week.tracked_active_seconds ?? 0,
+              ),
+              note: "Tracked this week",
+            },
+            {
+              key: "normal",
+              icon: "ri-briefcase-4-line",
+              label: "Normal",
+              value: formatDuration(normalSeconds),
+              bar: targetProgress,
+              note: `${targetProgress}% of daily target`,
+            },
+            {
+              key: "activity",
+              icon: "ri-line-chart-line",
+              label: "Activity",
+              value: `${status.activityPercent}%`,
+              note: "Keyboard and mouse today",
+              tone: "ok",
+            },
+            {
+              key: "idle",
+              icon: "ri-hourglass-2-line",
+              label: "Idle",
+              value: formatDuration(todayIdleSeconds),
+              note:
+                requestableIdleMinuteTotal > 0
+                  ? `${requestableIdleMinuteTotal} min requestable`
+                  : "No requestable time",
+              tone: requestableIdleMinuteTotal > 0 ? "warn" : undefined,
+            },
+            {
+              key: "overtime",
+              icon: "ri-moon-clear-line",
+              label: "Overtime",
+              value: formatDuration(extraSeconds),
+              note: overtimeStatus,
+              tone: "accent",
+            },
+          ]}
+        />
+        <WorkdayStrip
+          cells={[
+            {
+              label: "Started at",
+              value: status.todayTimeline?.first_started_at
                 ? formatTimelineStart(status.todayTimeline)
                 : workdayTiming.startedAt
                   ? formatClock(workdayTiming.startedAt, workdayTimezone)
-                  : "Not started"}
-            </strong>
-          </div>
-          <div>
-            <span>Last activity</span>
-            <strong>
-              {status.todayTimeline?.last_activity_at
+                  : "Not started",
+            },
+            {
+              label: "Last activity",
+              value: status.todayTimeline?.last_activity_at
                 ? formatClock(
                     status.todayTimeline.last_activity_at,
                     status.todayTimeline.timezone,
                   )
                 : workdayTiming.localSyncPending
                   ? "Sync pending"
-                  : "—"}
-            </strong>
-          </div>
-          <div>
-            <span>{workdayTiming.isRunning ? "Session" : "Signed out"}</span>
-            <strong>
-              {status.todayTimeline?.is_running
+                  : "—",
+            },
+            {
+              label: workdayTiming.isRunning ? "Session" : "Signed out",
+              value: status.todayTimeline?.is_running
                 ? "Still running - no sign-out yet"
                 : workdayTiming.localSyncPending
                   ? "Running locally - syncing"
@@ -2707,156 +2700,38 @@ function HomeView({
                         status.todayTimeline.last_ended_at,
                         status.todayTimeline.timezone,
                       )
-                    : "—"}
-            </strong>
-          </div>
-        </section>
-
-        <div className="k-stat-grid">
-          <Stat label="Today" value={formatDuration(trackedTodaySeconds)} />
-          <Stat
-            label="This week"
-            value={formatDuration(
-              status.timeSummary?.week.tracked_active_seconds ?? 0,
-            )}
+                    : "—",
+            },
+          ]}
+        />
+        <div className="tp-bottom">
+          <BreakdownCard
+            summary={`${formatDuration(countedTodaySeconds)} / ${formatDuration(status.dailyTargetSeconds)} - ${targetProgress}%`}
+            segments={timeBreakdown.segments.map((segment) => ({
+              key: segment.label,
+              label: segment.label,
+              value: formatDuration(segment.seconds),
+              className: segment.className,
+              widthPercent:
+                segment.seconds > 0
+                  ? (segment.seconds / timeBreakdown.total) * 100
+                  : 0,
+            }))}
           />
-          <Stat label="Session" value={formatDuration(status.activeSeconds)} />
-          <Stat
-            label="Activity"
-            value={`${status.activityPercent}%`}
-            tone="good"
-          />
-          <Stat
-            label="Idle"
-            value={formatDuration(todayIdleSeconds)}
-            tone="warn"
-          />
+          {status.recentTasks.length > 0 && (
+            <RecentTasksCard
+              tasks={status.recentTasks.map((task) => ({
+                id: task.id,
+                name: task.name,
+                project: task.projectName,
+                tracked: formatDuration(task.trackedSeconds),
+              }))}
+              onPick={onTaskChange}
+            />
+          )}
         </div>
-
-        <section className="k-breakdown">
-          <div className="k-row">
-            <strong>Daily target</strong>
-            <span>
-              {formatDuration(countedTodaySeconds)} /{" "}
-              {formatDuration(status.dailyTargetSeconds)} - {targetProgress}%
-            </span>
-          </div>
-          <div className="k-breakdown-bar">
-            {timeBreakdown.segments.map((segment) =>
-              segment.seconds > 0 ? (
-                <i
-                  key={segment.label}
-                  className={`segment-${segment.className}`}
-                  style={{
-                    width: `${(segment.seconds / timeBreakdown.total) * 100}%`,
-                  }}
-                  title={`${segment.label}: ${formatDuration(segment.seconds)}`}
-                />
-              ) : null,
-            )}
-          </div>
-          <div className="k-legend">
-            {timeBreakdown.segments.map((segment) => (
-              <span key={segment.label}>
-                <i className={`segment-${segment.className}`} /> {segment.label}{" "}
-                {formatDuration(segment.seconds)}
-              </span>
-            ))}
-          </div>
-        </section>
       </div>
-
-      <aside className="k-right">
-        <section className="k-side-section">
-          <div className="k-row">
-            <strong>Latest screenshot</strong>
-            <button
-              type="button"
-              onClick={onOpenScreenshots}
-              disabled={isOpeningDashboard}
-            >
-              View all
-            </button>
-          </div>
-          {!recentScreenshots && (
-            <button
-              type="button"
-              className="k-shot-placeholder"
-              onClick={onLoadScreenshots}
-              disabled={isLoadingScreenshots}
-            >
-              {isLoadingScreenshots ? "Loading..." : "Show latest capture"}
-            </button>
-          )}
-          {recentScreenshots?.[0] && (
-            <figure className="k-shot">
-              <img
-                src={recentScreenshots[0].dataUrl}
-                alt={recentScreenshots[0].displayName ?? "Latest screenshot"}
-              />
-              <figcaption>
-                <span>{formatTimestamp(recentScreenshots[0].capturedAt)}</span>
-                <b
-                  className={
-                    status.connectionStatus === "online" ? "k-ok" : "k-muted"
-                  }
-                >
-                  {screenshotSyncLabel(status.connectionStatus)}
-                </b>
-              </figcaption>
-            </figure>
-          )}
-          {recentScreenshots?.length === 0 && (
-            <p className="k-muted">No screenshots have been uploaded yet.</p>
-          )}
-          {screenshotError && <p className="k-error">{screenshotError}</p>}
-          {dashboardError && <p className="k-error">{dashboardError}</p>}
-        </section>
-        {status.todayTimeline && (
-          <Timeline
-            timeline={status.todayTimeline}
-            locallyEndedIdleAt={status.locallyEndedIdleAt}
-            idleRequestOptions={idleRequestOptions}
-            onRequestIdleTime={onRequestManualTime}
-          />
-        )}
-        {status.recentTasks.length > 0 && (
-          <section className="k-side-section">
-            <strong>Recent tasks</strong>
-            <div className="k-task-list">
-              {status.recentTasks.map((task) => (
-                <button
-                  key={task.id}
-                  type="button"
-                  onClick={() => onTaskChange(task.id)}
-                >
-                  <span>{task.name}</span>
-                  <small>{task.projectName}</small>
-                  <b>{formatDuration(task.trackedSeconds)}</b>
-                </button>
-              ))}
-            </div>
-          </section>
-        )}
-      </aside>
     </section>
-  );
-}
-
-function Stat({
-  label,
-  value,
-  tone,
-}: {
-  label: string;
-  value: string;
-  tone?: "good" | "warn";
-}) {
-  return (
-    <div className={tone ? `k-stat k-${tone}` : "k-stat"}>
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </div>
   );
 }
 
@@ -2865,122 +2740,86 @@ function Timeline({
   locallyEndedIdleAt,
   idleRequestOptions,
   onRequestIdleTime,
+  loggedLabel,
+  syncFooter,
 }: {
   timeline: WorkdayTimeline;
   locallyEndedIdleAt: string | null;
   idleRequestOptions: IdleRequestOption[];
   onRequestIdleTime: (option: IdleRequestOption) => void;
+  loggedLabel: string;
+  syncFooter: { label: string; ok: boolean };
 }) {
   const requestableMinutes = totalRequestableIdleMinutes(idleRequestOptions);
+  const rows: TimelineRow[] =
+    timeline.intervals.length === 0 && timeline.approved_leave
+      ? [
+          {
+            key: "leave",
+            displayType: "leave",
+            label: "Leave",
+            detail: "Approved",
+            range: "Today",
+            duration: "",
+            isCurrent: false,
+          },
+        ]
+      : [];
+  timelineIntervalsForDisplay(timeline.intervals).forEach((interval, index) => {
+    const presentation = timelineIntervalPresentation(
+      interval,
+      locallyEndedIdleAt,
+    );
+    const displayType = timelineDisplayType(
+      interval.type,
+      Boolean(timeline.approved_leave),
+      interval.work_category,
+      interval.saved_break_cover,
+    );
+    const displaysWork =
+      displayType === "worked" ||
+      displayType === "extra" ||
+      displayType === "break_work";
+    rows.push({
+      key: `${interval.session_id}-${interval.started_at}-${index}`,
+      displayType,
+      label: TIMELINE_LABELS[displayType],
+      detail:
+        displaysWork && (interval.task_name || interval.project_name)
+          ? (interval.task_name ?? interval.project_name)
+          : null,
+      range: `${formatClock(interval.started_at, timeline.timezone)} - ${
+        presentation.isCurrent
+          ? "Until now"
+          : formatClock(presentation.endedAt, timeline.timezone)
+      }`,
+      duration: formatDuration(
+        presentation.isCurrent
+          ? Math.max(
+              0,
+              Math.floor(
+                (Date.now() - new Date(interval.started_at).getTime()) / 1000,
+              ),
+            )
+          : presentation.durationSeconds,
+      ),
+      isCurrent: presentation.isCurrent,
+    });
+  });
   return (
-    <section className="k-side-section">
-      {idleRequestOptions.length ? (
-        <section
-          className="k-idle-needs"
-          aria-label="Idle periods needing explanation"
-        >
-          <header>
-            <strong>Needs explanation</strong>
-            <span>{requestableMinutes} min requestable</span>
-          </header>
-          <div className="k-idle-needs-list">
-            {idleRequestOptions.map((option) => (
-              <button
-                key={option.key}
-                type="button"
-                className="k-idle-needs-item"
-                onClick={() => onRequestIdleTime(option)}
-              >
-                <i className="k-timeline-icon">
-                  <KIcon name="idle" />
-                </i>
-                <span>
-                  {formatClock(option.startedAt, timeline.timezone)} -{" "}
-                  {formatClock(option.endedAt, timeline.timezone)}
-                </span>
-                <small>
-                  {formatDuration(option.durationSeconds)} idle period
-                </small>
-                <b>Explain up to {requestableIdleMinutes(option)} min</b>
-              </button>
-            ))}
-          </div>
-        </section>
-      ) : null}
-      <strong>Today's timeline</strong>
-      <div className="k-timeline">
-        {timeline.intervals.length === 0 && timeline.approved_leave ? (
-          <div className="k-line-leave">
-            <i className="k-timeline-icon">
-              <KIcon name="idle" />
-            </i>
-            <span>Today</span>
-            <b>Leave</b>
-            <small>Approved</small>
-          </div>
-        ) : null}
-        {timelineIntervalsForDisplay(timeline.intervals).map((interval, index) => {
-          const presentation = timelineIntervalPresentation(
-            interval,
-            locallyEndedIdleAt,
-          );
-          const displayType = timelineDisplayType(
-            interval.type,
-            Boolean(timeline.approved_leave),
-            interval.work_category,
-            interval.saved_break_cover,
-          );
-          const displaysWork =
-            displayType === "worked" ||
-            displayType === "extra" ||
-            displayType === "break_work";
-          return (
-            <div
-              key={`${interval.session_id}-${interval.started_at}-${index}`}
-              className={`k-line-${displayType}`}
-            >
-              <i className="k-timeline-icon">
-                <KIcon name={interval.type} />
-              </i>
-              <span>
-                {formatClock(interval.started_at, timeline.timezone)} -{" "}
-                {presentation.isCurrent
-                  ? "Until now"
-                  : formatClock(presentation.endedAt, timeline.timezone)}
-              </span>
-              <b
-                title={
-                  displaysWork
-                    ? (interval.task_name ??
-                      interval.project_name ??
-                      TIMELINE_LABELS[displayType])
-                    : TIMELINE_LABELS[displayType]
-                }
-              >
-                {TIMELINE_LABELS[displayType]}
-                {displaysWork && (interval.task_name || interval.project_name)
-                  ? ` · ${interval.task_name ?? interval.project_name}`
-                  : ""}
-              </b>
-              <small>
-                {formatDuration(
-                  presentation.isCurrent
-                    ? Math.max(
-                        0,
-                        Math.floor(
-                          (Date.now() -
-                            new Date(interval.started_at).getTime()) /
-                            1000,
-                        ),
-                      )
-                    : presentation.durationSeconds,
-                )}
-              </small>
-            </div>
-          );
-        })}
-      </div>
-    </section>
+    <TimelineCard
+      rows={rows}
+      loggedLabel={loggedLabel}
+      footer={syncFooter}
+      needsSummary={`${requestableMinutes} min requestable`}
+      needs={idleRequestOptions.map((option) => ({
+        key: option.key,
+        range: `${formatClock(option.startedAt, timeline.timezone)} - ${formatClock(option.endedAt, timeline.timezone)}`,
+        detail: `${formatDuration(option.durationSeconds)} idle period`,
+        action: `Explain up to ${requestableIdleMinutes(option)} min`,
+        onClick: () => onRequestIdleTime(option),
+      }))}
+    />
   );
 }
 
@@ -3089,12 +2928,311 @@ function TasksView({
     if (deleted) setSelectedChecklistItemIds([]);
   }
 
+  // View-only filtering of the same trackable task list; picking a row calls
+  // the existing onTaskChange.
+  const [taskQuery, setTaskQuery] = useState("");
+  const [taskStageFilter, setTaskStageFilter] = useState<string>("all");
+  const stageFilters = [
+    "all",
+    ...["backlog", "assigned", "in_progress"].filter((stage) =>
+      trackableTasks.some((task) => task.stage === stage),
+    ),
+  ];
+  const query = taskQuery.trim().toLowerCase();
+  const visibleTaskRows = trackableTasks.filter(
+    (task) =>
+      (taskStageFilter === "all" || task.stage === taskStageFilter) &&
+      (!query ||
+        [task.name, task.projectName, task.teamName]
+          .join(" ")
+          .toLowerCase()
+          .includes(query)),
+  );
+
   return (
-    <section className="k-page">
-      <div className="k-panel">
-        <h2>Create task request</h2>
-        <div className="k-form-grid">
-          <label className="wide">
+    <section className="app-page pg-page">
+      <header className="pg-head pg-head-row">
+        <div>
+          <h1>My tasks</h1>
+          <p>Choose what the tracker files your time under.</p>
+        </div>
+        <button
+          type="button"
+          className={`pg-btn${status.trackingPaused ? " pg-btn-primary" : ""}`}
+          onClick={onTrackingToggle}
+        >
+          {status.trackingPaused ? "Resume" : "Pause"}
+        </button>
+      </header>
+      {trackingControlMessage && (
+        <p className="k-success">{trackingControlMessage}</p>
+      )}
+      {taskError && <p className="k-error">{taskError}</p>}
+
+      <section className="tp-card pg-card" aria-label="Your tasks">
+        <div className="pg-toolbar">
+          <label className="pg-search">
+            <i className="ri-search-line" aria-hidden="true" />
+            <input
+              value={taskQuery}
+              onChange={(event) => setTaskQuery(event.target.value)}
+              placeholder="Search tasks, projects or teams"
+              aria-label="Search tasks"
+            />
+          </label>
+          <div className="pg-chips" aria-label="Filter tasks">
+            {stageFilters.map((stage) => (
+              <button
+                key={stage}
+                type="button"
+                className={taskStageFilter === stage ? "active" : ""}
+                onClick={() => setTaskStageFilter(stage)}
+              >
+                {stage === "all" ? "All" : taskStageLabel(stage)}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="pg-task-table">
+          <div className="pg-task-row pg-task-row-head" aria-hidden="true">
+            <span>Task</span>
+            <span>Project</span>
+            <span>Stage</span>
+            <span>Tracked</span>
+          </div>
+          {visibleTaskRows.map((task) => {
+            const selected = status.selectedTask?.id === task.id;
+            return (
+              <button
+                key={task.id}
+                type="button"
+                className={`pg-task-row${selected ? " is-selected" : ""}`}
+                aria-pressed={selected}
+                disabled={isSubmittingTask}
+                onClick={() => onTaskChange(task.id)}
+              >
+                <span className="pg-task-name">
+                  <i
+                    className={selected ? "ri-checkbox-circle-fill" : "ri-checkbox-blank-circle-line"}
+                    aria-hidden="true"
+                  />
+                  <span>
+                    <span className="pg-task-title">
+                      <strong dir="auto">{task.name}</strong>
+                      {selected ? <em className="pg-tracking">Tracking</em> : null}
+                    </span>
+                    <small className="pg-task-meta">
+                      {task.priority && (
+                        <b className={`pg-priority ${task.priority}`}>
+                          {task.priority.charAt(0).toUpperCase() + task.priority.slice(1)}
+                        </b>
+                      )}
+                      {task.deadline && <span className="pg-due">Due {task.deadline}</span>}
+                      <span>{task.teamName}</span>
+                    </small>
+                  </span>
+                </span>
+                <span className="pg-task-cell">{task.projectName}</span>
+                <span>
+                  <em className={`pg-status is-soft ${task.stage}`}>
+                    {taskStageLabel(task.stage)}
+                  </em>
+                </span>
+                <span className="pg-task-cell app-num" title={formatDuration(task.activeSeconds)}>
+                  {formatHoursMinutes(task.activeSeconds)}
+                </span>
+              </button>
+            );
+          })}
+          {visibleTaskRows.length === 0 && (
+            <p className="pg-empty">
+              {trackableTasks.length
+                ? "No tasks match this filter."
+                : "No tasks are assigned to you yet."}
+            </p>
+          )}
+        </div>
+        <p className="pg-hint">Pick a task above to file the running timer under it</p>
+      </section>
+
+      {selectedTask && (
+        <section className="tp-card pg-card pg-task-panel">
+          <div className="pg-card-head">
+            <div>
+              <h2 dir="auto">{selectedTask.name}</h2>
+              <p className="pg-muted">
+                {selectedTask.teamName} / {selectedTask.projectName}
+                {selectedTask.description
+                  ? ` · ${selectedTask.description}`
+                  : ""}
+              </p>
+            </div>
+            <span className={`pg-status ${selectedTask.stage}`}>
+              {selectedTask.stage.replaceAll("_", " ")}
+            </span>
+          </div>
+
+          <div className="pg-grid">
+            <label>
+              Stage
+              <select
+                value={status.selectedTask?.stage ?? "assigned"}
+                disabled={
+                  !status.selectedTask ||
+                  isSubmittingTask ||
+                  !status.selectedTask.canUpdateStage
+                }
+                onChange={(event) =>
+                  onTaskStage(
+                    event.target.value as
+                      "assigned" | "in_progress" | "ready_for_review" | "blocked",
+                  )
+                }
+              >
+                {status.selectedTask?.stage === "backlog" && (
+                  <option value="backlog">Backlog</option>
+                )}
+                <option value="assigned">Assigned</option>
+                <option value="in_progress">In progress</option>
+                <option value="ready_for_review">Submit as finished</option>
+                <option value="blocked">Report blocked</option>
+              </select>
+            </label>
+            <div className="pg-field-action">
+              <button
+                type="button"
+                className="pg-link"
+                disabled={isSubmittingTask}
+                onClick={() => onTaskChange("none")}
+              >
+                Stop filing time under this task
+              </button>
+            </div>
+          </div>
+
+          <div className="pg-checklist">
+            <div className="pg-row-between">
+              <strong>Checklist</strong>
+              <small>
+                {completedChecklistCount}/{checklist.length || 0} complete
+              </small>
+            </div>
+            {checklist.length > 0 ? (
+              <div className="pg-checklist-items">
+                {checklist.map((item) => {
+                  const selected = selectedChecklistItemIds.includes(item.id);
+                  return (
+                    <div
+                      key={item.id}
+                      className={`pg-check-item${item.completed ? " done" : ""}${selected ? " selected" : ""}`}
+                    >
+                      <label>
+                        <input
+                          type="checkbox"
+                          checked={item.completed}
+                          disabled={!canEditSelectedTask || isSubmittingTask}
+                          onChange={(event) =>
+                            onChecklistToggle(item.id, event.target.checked)
+                          }
+                        />
+                        <span dir="auto">{item.title}</span>
+                      </label>
+                      {canEditSelectedTask && (
+                        <button
+                          type="button"
+                          className="pg-btn pg-btn-xs"
+                          aria-pressed={selected}
+                          disabled={isSubmittingTask}
+                          onClick={() => toggleChecklistSelection(item.id)}
+                        >
+                          {selected ? "Selected" : "Select"}
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+                {canEditSelectedTask && selectedChecklistItemIds.length > 0 && (
+                  <div className="pg-row-between pg-danger-row">
+                    <span>{selectedChecklistItemIds.length} selected</span>
+                    <button
+                      type="button"
+                      className="pg-btn pg-btn-sm pg-btn-danger"
+                      disabled={isSubmittingTask}
+                      onClick={() => void deleteSelectedChecklistItems()}
+                    >
+                      {isSubmittingTask
+                        ? "Deleting..."
+                        : `Delete selected (${selectedChecklistItemIds.length})`}
+                    </button>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <p className="pg-muted">
+                No checklist yet. Add the steps you need to finish.
+              </p>
+            )}
+            {canEditSelectedTask && (
+              <div className="pg-inline-add">
+                <input
+                  value={newChecklistTitle}
+                  maxLength={500}
+                  placeholder="Add a checklist step..."
+                  disabled={isSubmittingTask}
+                  onChange={(event) => onChecklistTitleChange(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      onAddChecklistItem();
+                    }
+                  }}
+                />
+                <button
+                  type="button"
+                  className="pg-btn"
+                  disabled={!newChecklistTitle.trim() || isSubmittingTask}
+                  onClick={onAddChecklistItem}
+                >
+                  Add
+                </button>
+              </div>
+            )}
+          </div>
+
+          <label className="pg-field-block">
+            What did you do?
+            <textarea
+              value={taskCompletionNote}
+              maxLength={1000}
+              rows={3}
+              placeholder="Write what you completed, links, blockers, or delivery notes..."
+              disabled={!canEditSelectedTask || isSubmittingTask}
+              onChange={(event) => onTaskCompletionNoteChange(event.target.value)}
+            />
+          </label>
+          <div className="pg-form-foot">
+            <span>Submitting moves the task to review.</span>
+            <button
+              type="button"
+              className="pg-btn pg-btn-primary"
+              disabled={!canEditSelectedTask || isSubmittingTask}
+              onClick={() => onTaskStage("ready_for_review", taskCompletionNote)}
+            >
+              {isSubmittingTask ? "Submitting..." : "Complete / submit work"}
+            </button>
+          </div>
+        </section>
+      )}
+
+      <section className="tp-card pg-card" aria-label="Create task request">
+        <div className="pg-card-head">
+          <div>
+            <h2>Create task request</h2>
+            <p className="pg-muted">Ask for a new task to be added to your list.</p>
+          </div>
+        </div>
+        <div className="pg-grid">
+          <label className="pg-wide">
             Task name
             <input
               value={newTaskName}
@@ -3104,16 +3242,14 @@ function TasksView({
               onChange={(event) => onNewTaskNameChange(event.target.value)}
             />
           </label>
-          <label className="wide">
+          <label className="pg-wide">
             Description
             <input
               value={newTaskDescription}
               maxLength={1000}
               placeholder="Expected outcome or useful context"
               disabled={isSubmittingTask}
-              onChange={(event) =>
-                onNewTaskDescriptionChange(event.target.value)
-              }
+              onChange={(event) => onNewTaskDescriptionChange(event.target.value)}
             />
           </label>
           <label>
@@ -3168,218 +3304,26 @@ function TasksView({
             />
           </label>
         </div>
-        <button
-          className="k-primary"
-          disabled={!newTaskName.trim() || isSubmittingTask}
-          onClick={onCreateTask}
-        >
-          {isSubmittingTask ? "Submitting..." : "Submit request"}
-        </button>
-      </div>
-
-      <div className="k-panel">
-        <h2>Current task</h2>
-        <div className="k-form-grid">
-          <label>
-            Task
-            <select
-              value={status.selectedTask?.id ?? "none"}
-              disabled={isSubmittingTask}
-              onChange={(event) => onTaskChange(event.target.value)}
-            >
-              <option value="none">Choose a task</option>
-              {trackableTasks.map((task) => (
-                <option key={task.id} value={task.id}>
-                  {task.teamName} / {task.projectName} / {task.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Stage
-            <select
-              value={status.selectedTask?.stage ?? "assigned"}
-              disabled={
-                !status.selectedTask ||
-                isSubmittingTask ||
-                !status.selectedTask.canUpdateStage
-              }
-              onChange={(event) =>
-                onTaskStage(
-                  event.target.value as
-                    "assigned" | "in_progress" | "ready_for_review" | "blocked",
-                )
-              }
-            >
-              {status.selectedTask?.stage === "backlog" && (
-                <option value="backlog">Backlog</option>
-              )}
-              <option value="assigned">Assigned</option>
-              <option value="in_progress">In progress</option>
-              <option value="ready_for_review">Submit as finished</option>
-              <option value="blocked">Report blocked</option>
-            </select>
-          </label>
+        <div className="pg-form-foot">
+          <span />
+          <button
+            type="button"
+            className="pg-btn pg-btn-primary"
+            disabled={!newTaskName.trim() || isSubmittingTask}
+            onClick={onCreateTask}
+          >
+            {isSubmittingTask ? "Submitting..." : "Submit request"}
+          </button>
         </div>
-        {selectedTask && (
-          <div className="k-task-work-card">
-            <div className="k-task-work-header">
-              <div>
-                <h3>{selectedTask.name}</h3>
-                <p>
-                  {selectedTask.teamName} / {selectedTask.projectName}
-                  {selectedTask.description
-                    ? ` · ${selectedTask.description}`
-                    : ""}
-                </p>
-              </div>
-              <span className="k-task-stage-pill">
-                {selectedTask.stage.replaceAll("_", " ")}
-              </span>
-            </div>
-
-            <div className="k-checklist-box">
-              <div className="k-section-row">
-                <strong>Checklist</strong>
-                <small>
-                  {completedChecklistCount}/{checklist.length || 0} complete
-                </small>
-              </div>
-              {checklist.length > 0 ? (
-                <div className="k-checklist-items">
-                  {checklist.map((item) => {
-                    const selected = selectedChecklistItemIds.includes(item.id);
-                    return (
-                      <div
-                        key={item.id}
-                        className={`k-checklist-item${item.completed ? " done" : ""}${selected ? " selected" : ""}`}
-                      >
-                        <label>
-                          <input
-                            type="checkbox"
-                            checked={item.completed}
-                            disabled={!canEditSelectedTask || isSubmittingTask}
-                            onChange={(event) =>
-                              onChecklistToggle(item.id, event.target.checked)
-                            }
-                          />
-                          <span>{item.title}</span>
-                        </label>
-                        {canEditSelectedTask && (
-                          <button
-                            type="button"
-                            className="k-checklist-select"
-                            aria-pressed={selected}
-                            disabled={isSubmittingTask}
-                            onClick={() => toggleChecklistSelection(item.id)}
-                          >
-                            {selected ? "Selected" : "Select"}
-                          </button>
-                        )}
-                      </div>
-                    );
-                  })}
-                  {canEditSelectedTask &&
-                    selectedChecklistItemIds.length > 0 && (
-                      <div className="k-checklist-delete-row">
-                        <span>{selectedChecklistItemIds.length} selected</span>
-                        <button
-                          type="button"
-                          disabled={isSubmittingTask}
-                          onClick={() => void deleteSelectedChecklistItems()}
-                        >
-                          {isSubmittingTask
-                            ? "Deleting..."
-                            : `Delete selected (${selectedChecklistItemIds.length})`}
-                        </button>
-                      </div>
-                    )}
-                </div>
-              ) : (
-                <p className="k-muted">
-                  No checklist yet. Add the steps you need to finish.
-                </p>
-              )}
-              {canEditSelectedTask && (
-                <div className="k-checklist-add">
-                  <input
-                    value={newChecklistTitle}
-                    maxLength={500}
-                    placeholder="Add a checklist step..."
-                    disabled={isSubmittingTask}
-                    onChange={(event) =>
-                      onChecklistTitleChange(event.target.value)
-                    }
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter") {
-                        event.preventDefault();
-                        onAddChecklistItem();
-                      }
-                    }}
-                  />
-                  <button
-                    type="button"
-                    disabled={!newChecklistTitle.trim() || isSubmittingTask}
-                    onClick={onAddChecklistItem}
-                  >
-                    Add
-                  </button>
-                </div>
-              )}
-            </div>
-
-            <label className="k-completion-note">
-              What did you do?
-              <textarea
-                value={taskCompletionNote}
-                maxLength={1000}
-                rows={3}
-                placeholder="Write what you completed, links, blockers, or delivery notes..."
-                disabled={!canEditSelectedTask || isSubmittingTask}
-                onChange={(event) =>
-                  onTaskCompletionNoteChange(event.target.value)
-                }
-              />
-            </label>
-            <button
-              className="k-primary"
-              disabled={!canEditSelectedTask || isSubmittingTask}
-              onClick={() =>
-                onTaskStage("ready_for_review", taskCompletionNote)
-              }
-            >
-              {isSubmittingTask ? "Submitting..." : "Complete / submit work"}
-            </button>
-          </div>
-        )}
-        <div className="k-task-list k-task-list-grid">
-          {trackableTasks.map((task) => (
-            <button
-              key={task.id}
-              type="button"
-              className={status.selectedTask?.id === task.id ? "active" : ""}
-              disabled={isSubmittingTask}
-              onClick={() => onTaskChange(task.id)}
-            >
-              <span>{task.name}</span>
-              <small>{task.projectName}</small>
-              <b>{formatDuration(task.activeSeconds)}</b>
-            </button>
-          ))}
-        </div>
-        <button
-          className={status.trackingPaused ? "k-primary" : "k-warning"}
-          onClick={onTrackingToggle}
-        >
-          {status.trackingPaused ? "Resume" : "Pause"}
-        </button>
-        {trackingControlMessage && (
-          <p className="k-success">{trackingControlMessage}</p>
-        )}
-        {taskError && <p className="k-error">{taskError}</p>}
-      </div>
+      </section>
     </section>
   );
+}
+
+function taskStageLabel(stage: string) {
+  if (stage === "in_progress") return "In progress";
+  if (stage === "ready_for_review") return "In review";
+  return stage.charAt(0).toUpperCase() + stage.slice(1).replaceAll("_", " ");
 }
 
 type RequestCentreProps = {
@@ -3522,8 +3466,8 @@ function RequestCentreView(props: RequestCentreProps) {
   }, [expandedRequest, props]);
 
   return (
-    <section className="k-page k-requests-page">
-      <header className="k-page-header">
+    <section className="app-page pg-page">
+      <header className="pg-head">
         <div>
           <h1>Time &amp; Leave Requests</h1>
           <p>
@@ -3532,7 +3476,7 @@ function RequestCentreView(props: RequestCentreProps) {
         </div>
       </header>
 
-      <section className="k-summary-strip" aria-label="Request balances">
+      <section className="tp-card tp-workday" aria-label="Request balances">
         <div>
           <span>Today&apos;s scheduled shift</span>
           <strong>{scheduledShift}</strong>
@@ -3553,33 +3497,33 @@ function RequestCentreView(props: RequestCentreProps) {
 
       {props.leadingContent}
 
-      <section className="k-request-centre">
-        <div className="k-section-heading">
+      <section className="tp-card pg-card">
+        <div className="pg-card-head">
           <h2>Request Centre</h2>
           <span>Choose one request type</span>
         </div>
 
         <article
-          className={`k-request-option ${expandedRequest === "idle" ? "is-open" : ""}`}
+          className={`pg-option ${expandedRequest === "idle" ? "is-open" : ""}`}
         >
-          <div className="k-request-option-row">
-            <span className="k-request-icon">
+          <div className="pg-option-row">
+            <span className="tp-card-icon">
               <KIcon name="idle" />
             </span>
-            <div className="k-request-copy">
+            <div className="pg-option-copy">
               <h3>Explain Idle Time</h3>
               <p>
                 Explain an idle period detected during your scheduled shift.
               </p>
             </div>
-            <strong className="k-request-state">
+            <strong className="pg-option-state">
               {idleRequestOptions.length
                 ? `${idleRequestOptions.length} idle period${idleRequestOptions.length === 1 ? "" : "s"} require explanation`
                 : "No unexplained idle periods during your scheduled working hours."}
             </strong>
             <button
               type="button"
-              className="k-request-action"
+              className="pg-btn pg-btn-sm"
               disabled={!idleRequestOptions.length}
               aria-expanded={expandedRequest === "idle"}
               onClick={() => toggle("idle")}
@@ -3597,13 +3541,13 @@ function RequestCentreView(props: RequestCentreProps) {
               }}
             >
               <form
-                className="k-form k-request-dialog"
+                className="pg-form pg-dialog"
                 role="dialog"
                 aria-modal="true"
                 aria-labelledby="idle-request-title"
                 onSubmit={props.onSubmitIdleTimeRequest}
               >
-                <header className="k-request-dialog-header">
+                <header className="pg-dialog-head">
                   <div>
                     <h2 id="idle-request-title">Explain Idle Time</h2>
                     <p>
@@ -3613,14 +3557,14 @@ function RequestCentreView(props: RequestCentreProps) {
                   </div>
                   <button
                     type="button"
-                    className="k-dialog-close"
+                    className="pg-dialog-close"
                     aria-label="Close request"
                     onClick={() => props.onExpandedRequestChange(null)}
                   >
                     ×
                   </button>
                 </header>
-                <div className="k-request-form-grid">
+                <div className="pg-grid">
                   <label>
                     Idle period
                     <select
@@ -3670,7 +3614,7 @@ function RequestCentreView(props: RequestCentreProps) {
                   />
                   <small>Required · at least 10 characters</small>
                 </label>
-                <div className="k-form-footer">
+                <div className="pg-form-foot">
                   <span>
                     Idle period:{" "}
                     {selectedIdle
@@ -3681,7 +3625,7 @@ function RequestCentreView(props: RequestCentreProps) {
                       : ""}
                   </span>
                   <button
-                    className="k-primary"
+                    className="pg-btn pg-btn-primary"
                     disabled={
                       props.isSubmittingTimeRequest ||
                       !selectedIdle ||
@@ -3706,24 +3650,24 @@ function RequestCentreView(props: RequestCentreProps) {
 
         {!isFlexible && (
         <article
-          className={`k-request-option ${expandedRequest === "early" ? "is-open" : ""}`}
+          className={`pg-option ${expandedRequest === "early" ? "is-open" : ""}`}
         >
-          <div className="k-request-option-row">
-            <span className="k-request-icon">
+          <div className="pg-option-row">
+            <span className="tp-card-icon">
               <KIcon name="timer" />
             </span>
-            <div className="k-request-copy">
+            <div className="pg-option-copy">
               <h3>Early Leave Permission</h3>
               <p>
                 Request permission to leave before your scheduled shift ends.
               </p>
             </div>
-            <strong className="k-request-state">
+            <strong className="pg-option-state">
               {weeklyRemaining} of {weeklyAllowance} weekly minutes remaining
             </strong>
             <button
               type="button"
-              className="k-request-action"
+              className="pg-btn pg-btn-sm"
               disabled={weeklyRemaining < 1 || !policy?.shift_end}
               aria-expanded={expandedRequest === "early"}
               onClick={() => toggle("early")}
@@ -3741,13 +3685,13 @@ function RequestCentreView(props: RequestCentreProps) {
               }}
             >
               <form
-                className="k-form k-request-dialog"
+                className="pg-form pg-dialog"
                 role="dialog"
                 aria-modal="true"
                 aria-labelledby="early-request-title"
                 onSubmit={props.onSubmitEarlyLeaveRequest}
               >
-                <header className="k-request-dialog-header">
+                <header className="pg-dialog-head">
                   <div>
                     <h2 id="early-request-title">Early Leave Permission</h2>
                     <p>
@@ -3757,14 +3701,14 @@ function RequestCentreView(props: RequestCentreProps) {
                   </div>
                   <button
                     type="button"
-                    className="k-dialog-close"
+                    className="pg-dialog-close"
                     aria-label="Close request"
                     onClick={() => props.onExpandedRequestChange(null)}
                   >
                     ×
                   </button>
                 </header>
-                <div className="k-request-form-grid k-request-form-grid-four">
+                <div className="pg-grid pg-grid-4">
                   <label>
                     Selected date
                     <input
@@ -3817,13 +3761,13 @@ function RequestCentreView(props: RequestCentreProps) {
                     required
                   />
                 </label>
-                <div className="k-form-footer">
+                <div className="pg-form-foot">
                   <span>
                     {Math.max(0, weeklyRemaining - earlyLeaveMinutes)} min would
                     remain
                   </span>
                   <button
-                    className="k-primary"
+                    className="pg-btn pg-btn-primary"
                     disabled={
                       props.isSubmittingTimeRequest ||
                       earlyLeaveMinutes < 1 ||
@@ -3849,22 +3793,22 @@ function RequestCentreView(props: RequestCentreProps) {
         )}
 
         <article
-          className={`k-request-option ${expandedRequest === "leave" ? "is-open" : ""}`}
+          className={`pg-option ${expandedRequest === "leave" ? "is-open" : ""}`}
         >
-          <div className="k-request-option-row">
-            <span className="k-request-icon">
+          <div className="pg-option-row">
+            <span className="tp-card-icon">
               <KIcon name="calendar" />
             </span>
-            <div className="k-request-copy">
+            <div className="pg-option-copy">
               <h3>Annual Leave</h3>
               <p>Request one or more complete working days of annual leave.</p>
             </div>
-            <strong className="k-request-state">
+            <strong className="pg-option-state">
               {leaveBalance} working days available
             </strong>
             <button
               type="button"
-              className="k-request-action"
+              className="pg-btn pg-btn-sm"
               disabled={leaveBalance <= 0}
               aria-expanded={expandedRequest === "leave"}
               onClick={() => toggle("leave")}
@@ -3882,27 +3826,27 @@ function RequestCentreView(props: RequestCentreProps) {
               }}
             >
               <form
-                className="k-form k-request-dialog"
+                className="pg-form pg-dialog"
                 role="dialog"
                 aria-modal="true"
                 aria-labelledby="leave-request-title"
                 onSubmit={props.onSubmitLeaveRequest}
               >
-                <header className="k-request-dialog-header">
+                <header className="pg-dialog-head">
                   <div>
                     <h2 id="leave-request-title">Annual Leave</h2>
                     <p>Request one or more complete scheduled working days.</p>
                   </div>
                   <button
                     type="button"
-                    className="k-dialog-close"
+                    className="pg-dialog-close"
                     aria-label="Close request"
                     onClick={() => props.onExpandedRequestChange(null)}
                   >
                     ×
                   </button>
                 </header>
-                <div className="k-request-form-grid k-request-form-grid-four">
+                <div className="pg-grid pg-grid-4">
                   <label>
                     From date
                     <input
@@ -3939,7 +3883,7 @@ function RequestCentreView(props: RequestCentreProps) {
                     <input value={`${expectedLeaveBalance} days`} disabled />
                   </label>
                 </div>
-                <div className="k-request-calculation">
+                <div className="pg-calc">
                   <span>Current balance</span>
                   <strong>{leaveBalance} days</strong>
                   <span>After approval</span>
@@ -3956,10 +3900,10 @@ function RequestCentreView(props: RequestCentreProps) {
                     placeholder="Add any helpful context for HR..."
                   />
                 </label>
-                <div className="k-form-footer">
+                <div className="pg-form-foot">
                   <span>Only scheduled working days are counted.</span>
                   <button
-                    className="k-primary"
+                    className="pg-btn pg-btn-primary"
                     disabled={
                       props.isSubmittingLeaveRequest ||
                       selectedLeaveDays < 1 ||
@@ -3983,13 +3927,13 @@ function RequestCentreView(props: RequestCentreProps) {
         </article>
       </section>
 
-      <section className="k-request-history">
-        <div className="k-section-heading k-history-heading">
+      <section className="tp-card pg-card">
+        <div className="pg-card-head">
           <div>
             <h2>My Requests</h2>
             <span>Track every request from one place</span>
           </div>
-          <div className="k-filter-chips" aria-label="Filter requests">
+          <div className="pg-chips" aria-label="Filter requests">
             {(
               ["all", "pending", "approved", "rejected", "cancelled"] as const
             ).map((filter) => (
@@ -4004,16 +3948,16 @@ function RequestCentreView(props: RequestCentreProps) {
             ))}
           </div>
         </div>
-        <div className="k-request-list">
+        <div className="pg-list">
           {filteredRequests.length ? (
             filteredRequests.map((request) => (
-              <div className="k-request-record" key={request.id}>
-                <div className="k-request-record-row">
+              <div className="pg-record" key={request.id}>
+                <div className="pg-record-row">
                   <strong>{request.type}</strong>
                   <span>{request.period}</span>
                   <span>{request.duration}</span>
                   <span>Submitted {formatTimestamp(request.createdAt)}</span>
-                  <em className={`k-request-status ${request.status}`}>
+                  <em className={`pg-status ${request.status}`}>
                     {request.status}
                   </em>
                   <button
@@ -4030,7 +3974,7 @@ function RequestCentreView(props: RequestCentreProps) {
                   </button>
                 </div>
                 {openRequestId === request.id && (
-                  <div className="k-request-record-details">
+                  <div className="pg-record-details">
                     <span>Reason</span>
                     <p>{request.reason || "No notes provided."}</p>
                     {request.note && (
@@ -4044,7 +3988,7 @@ function RequestCentreView(props: RequestCentreProps) {
               </div>
             ))
           ) : (
-            <div className="k-empty-request-list">
+            <div className="pg-empty">
               No {requestFilter === "all" ? "" : `${requestFilter} `}requests
               yet.
             </div>
@@ -4108,29 +4052,29 @@ function BreakBankCard({ status }: { status: AgentStatus }) {
   const used = bank.used_seconds ?? bank.approved_seconds;
 
   return (
-    <section className="k-panel k-break-bank">
+    <section className="tp-card pg-card k-break-bank">
       <h2>Saved break time</h2>
       <p>
         When you work through a scheduled break, those minutes are saved. Idle
         time later today is covered from them automatically. There is nothing to
         claim. Saved minutes do not carry over to the next day.
       </p>
-      <div className="k-break-bank-stats">
+      <div className="pg-stats">
         <div>
-          <span className="k-break-bank-label">Left today</span>
+          <span className="pg-stat-label">Left today</span>
           <strong>{formatDuration(bank.remaining_seconds)}</strong>
         </div>
         <div>
-          <span className="k-break-bank-label">Saved today</span>
+          <span className="pg-stat-label">Saved today</span>
           <strong>{formatDuration(bank.earned_seconds)}</strong>
         </div>
         <div>
-          <span className="k-break-bank-label">Used on idle</span>
+          <span className="pg-stat-label">Used on idle</span>
           <strong>{formatDuration(used)}</strong>
         </div>
       </div>
       {bank.paid_late_allowance_seconds > 0 && (
-        <p className="k-break-bank-hint">
+        <p className="pg-muted">
           Paid late allowance applied today:{" "}
           {formatDuration(bank.paid_late_allowance_seconds)}.
         </p>
@@ -4234,15 +4178,15 @@ function MeetingView({
     : "";
 
   return (
-    <section className="k-page k-requests-page">
-      <article className="k-panel k-request-card">
-        <header className="k-request-card-header">
-          <span className="k-request-icon">
+    <section className="app-page pg-page">
+      <article className="tp-card pg-card">
+        <header className="pg-card-head">
+          <span className="tp-card-icon">
             <KIcon name="meeting" />
           </span>
           <div>
             <h2>Meeting Mode</h2>
-            <p className="k-muted">
+            <p className="pg-muted">
               Record an offline meeting or call. Screenshot capture continues as
               normal. The time is sent for review once it ends; approved meetings
               are paid, and genuine activity is preserved if it is rejected.
@@ -4251,17 +4195,17 @@ function MeetingView({
         </header>
 
         {active ? (
-          <div className="k-meeting-active">
-            <span className="k-meeting-live-chip">
-              <span className="k-meeting-live-dot" aria-hidden="true" />
+          <div className="pg-meeting-live">
+            <span className="pg-live-chip">
+              <span className="pg-live-dot" aria-hidden="true" />
               {meetingStateLabel(active.syncState, "pending", "active")}
             </span>
-            <p className="k-meeting-elapsed" aria-live="polite">
+            <p className="pg-meeting-clock app-num" aria-live="polite">
               {formatDuration(elapsedSeconds)}
             </p>
-            <p className="k-meeting-active-title">{active.title}</p>
-            <p className="k-muted">{active.reason}</p>
-            <p className="k-meeting-hint">
+            <p className="pg-meeting-title">{active.title}</p>
+            <p className="pg-muted">{active.reason}</p>
+            <p className="pg-muted">
               Becomes “Pending review” once its end is confirmed · ends
               automatically by {expectedEndClock}
             </p>
@@ -4270,7 +4214,7 @@ function MeetingView({
             )}
             <button
               type="button"
-              className="k-primary"
+              className="pg-btn pg-btn-primary"
               onClick={() => void handleEnd()}
               disabled={submitting}
             >
@@ -4278,7 +4222,7 @@ function MeetingView({
             </button>
           </div>
         ) : (
-          <form className="k-form" onSubmit={handleStart}>
+          <form className="pg-form" onSubmit={handleStart}>
             <label>
               Title
               <input
@@ -4317,7 +4261,7 @@ function MeetingView({
                 required
               />
             </label>
-            <button type="submit" className="k-primary" disabled={submitting}>
+            <button type="submit" className="pg-btn pg-btn-primary" disabled={submitting}>
               {submitting ? "Starting…" : "Start meeting"}
             </button>
           </form>
@@ -4326,20 +4270,20 @@ function MeetingView({
         {message && <p className="k-success">{message}</p>}
       </article>
 
-      <article className="k-panel k-request-card">
-        <header className="k-request-card-header">
-          <span className="k-request-icon">
+      <article className="tp-card pg-card">
+        <header className="pg-card-head">
+          <span className="tp-card-icon">
             <KIcon name="calendar" />
           </span>
           <div>
             <h2>Recent meetings</h2>
-            <p className="k-muted">Your latest Meeting Mode periods.</p>
+            <p className="pg-muted">Your latest Meeting Mode periods.</p>
           </div>
         </header>
         {status.meetings.length === 0 ? (
-          <p className="k-meeting-hint">No meetings recorded yet.</p>
+          <p className="pg-muted">No meetings recorded yet.</p>
         ) : (
-          <ul className="k-meeting-list">
+          <ul className="pg-list pg-meeting-list">
             {status.meetings.map((meeting) => {
               const isActive = meeting.lifecycleState === "active";
               const badgeKind = meetingStateKind(
@@ -4369,7 +4313,7 @@ function MeetingView({
                 <li key={meeting.id}>
                   <div>
                     <strong>{meeting.title}</strong>
-                    <span className="k-meeting-hint">
+                    <span className="pg-muted">
                       {" "}
                       · {formatDuration(rowSeconds)}
                     </span>
@@ -4379,7 +4323,7 @@ function MeetingView({
                     {failed && (
                       <button
                         type="button"
-                        className="k-linklike"
+                        className="pg-link"
                         onClick={() => void handleRetry()}
                         disabled={retrying}
                       >
@@ -4387,7 +4331,7 @@ function MeetingView({
                       </button>
                     )}
                   </div>
-                  <span className={`k-meeting-badge k-meeting-${badgeKind}`}>
+                  <span className={`pg-status ${badgeKind}`}>
                     {badgeLabel}
                   </span>
                 </li>
@@ -4400,127 +4344,769 @@ function MeetingView({
   );
 }
 
+function overtimeStatusLabel(
+  extraSeconds: number,
+  extraTimeStatus: AgentStatus["extraTimeStatus"],
+) {
+  return extraSeconds <= 0
+    ? "No overtime"
+    : extraTimeStatus === "pending_overtime"
+      ? "Pending approval"
+      : "Recorded only";
+}
+
+/** "Nov 3" for an ISO date (YYYY-MM-DD), read as a calendar day. */
+function formatShortDate(value: string) {
+  return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" }).format(
+    new Date(`${value}T12:00:00`),
+  );
+}
+
+function formatWeekday(value: string) {
+  return new Intl.DateTimeFormat("en-US", { weekday: "short" }).format(
+    new Date(`${value}T12:00:00`),
+  );
+}
+
+/** "40h" / "7h 30m" for targets. */
+function formatTargetHours(totalSeconds: number) {
+  const minutes = Math.round(totalSeconds / 60);
+  const hours = Math.floor(minutes / 60);
+  return minutes % 60 ? `${hours}h ${minutes % 60}m` : `${hours}h`;
+}
+
+function WeekBars({
+  rows,
+  largest,
+}: {
+  rows: Array<{ label: string; seconds: number; tone: string }>;
+  largest: number;
+}) {
+  return (
+    <div className="pg-bars">
+      {rows.map((row) => (
+        <div key={row.label} className="pg-bar-row">
+          <div className="pg-row-between">
+            <span>{row.label}</span>
+            <b className="app-num">{formatDuration(row.seconds)}</b>
+          </div>
+          <span className="tp-breakdown-bar">
+            <i
+              className={`segment-${row.tone}`}
+              style={{ width: `${(row.seconds / largest) * 100}%` }}
+            />
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function InsightsView({
+  status,
+  countedTodaySeconds,
+  extraSeconds,
+}: {
+  status: AgentStatus;
+  countedTodaySeconds: number;
+  extraSeconds: number;
+}) {
+  const timezone =
+    status.todayTimeline?.timezone ??
+    status.requestPolicy?.timezone ??
+    Intl.DateTimeFormat().resolvedOptions().timeZone ??
+    "UTC";
+  const now = new Date();
+  const todayKey = localDateAt(now.toISOString(), timezone);
+  const todayLabel = new Intl.DateTimeFormat("en-US", {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    timeZone: timezone,
+  }).format(now);
+  const monthLabel = new Intl.DateTimeFormat("en-US", {
+    month: "long",
+    year: "numeric",
+    timeZone: timezone,
+  }).format(now);
+  const summary = status.timeSummary;
+  const attendance = status.attendanceWeek ?? null;
+  const policy = status.requestPolicy;
+  const workingDays = attendance?.working_days ?? policy?.working_days ?? null;
+  // Week and month targets: the daily target on each scheduled working day.
+  const periodTarget = (start: string | undefined, end: string | undefined) =>
+    start && end && workingDays
+      ? status.dailyTargetSeconds * countWorkingDays(start, end, workingDays)
+      : null;
+  const periods = [
+    {
+      key: "today",
+      title: "Today",
+      range: todayLabel,
+      data: summary?.today ?? null,
+      target: status.dailyTargetSeconds,
+    },
+    {
+      key: "week",
+      title: "This week",
+      range: attendance
+        ? `${formatShortDate(attendance.week_start)} – ${formatShortDate(attendance.week_end)}`
+        : null,
+      data: summary?.week ?? null,
+      target: periodTarget(attendance?.week_start, attendance?.week_end),
+    },
+    {
+      key: "month",
+      title: "This month",
+      range: attendance
+        ? `${formatShortDate(attendance.month_start)} – ${formatShortDate(attendance.month_end)}`
+        : monthLabel,
+      data: summary?.month ?? null,
+      target: periodTarget(attendance?.month_start, attendance?.month_end),
+    },
+  ];
+  const week = summary?.week ?? null;
+  const weekRows = week
+    ? [
+        { label: "Worked", seconds: week.tracked_active_seconds, tone: "worked" },
+        { label: "Manual approved", seconds: week.manual_approved_seconds, tone: "approved" },
+        { label: "Manual pending", seconds: week.manual_pending_seconds, tone: "pending" },
+        { label: "Idle", seconds: week.idle_seconds, tone: "idle" },
+      ]
+    : [];
+  const largestWeekRow = Math.max(1, ...weekRows.map((row) => row.seconds));
+  const workRows = (status.todayTimeline?.intervals ?? [])
+    .filter((interval) => interval.type === "worked")
+    .slice(-6)
+    .reverse();
+  const breaksToday = policy?.approved_leave_today ? [] : todaysBreaks(policy?.break_rules);
+  const signedIn = status.todayTimeline?.first_started_at
+    ? formatTimelineStart(status.todayTimeline)
+    : status.sessionStartedAt
+      ? formatClock(status.sessionStartedAt, timezone)
+      : "Not started";
+  const days = attendance?.days ?? [];
+  const today = days.find((day) => day.date === todayKey) ?? null;
+  const graceMinutes = attendance?.late_grace_minutes ?? null;
+  const todaySessions =
+    today?.session_count ??
+    new Set((status.todayTimeline?.intervals ?? []).map((interval) => interval.session_id)).size;
+  const weekSessions = days.reduce((total, day) => total + day.session_count, 0);
+  const loadMax = Math.max(status.dailyTargetSeconds, ...days.map((day) => day.active_seconds), 1);
+  const lateLabel = (day: AttendanceDay) =>
+    day.deductible_late_seconds > 0
+      ? `${Math.round(day.deductible_late_seconds / 60)} min after grace`
+      : day.raw_late_seconds > 0
+        ? "Within grace"
+        : day.start_time
+          ? "On time"
+          : "—";
+  const isWorkingDay = (date: string) =>
+    workingDays ? workingDays.includes(weekdayIndex(date)) : true;
+  const signedInNote =
+    today && today.start_time
+      ? lateLabel(today) === "On time" && graceMinutes
+        ? `On time · ${graceMinutes} min grace`
+        : lateLabel(today)
+      : status.breakBank?.paid_late_allowance_seconds
+        ? `Paid late allowance ${formatDuration(status.breakBank.paid_late_allowance_seconds)}`
+        : "First activity today";
+
+  return (
+    <section className="app-page pg-page">
+      <header className="pg-head">
+        <div>
+          <h1>Insights</h1>
+          <p>Your shift, and how tracked time adds up across today, this week and the month.</p>
+        </div>
+      </header>
+
+      <section className="pg-kpis" aria-label="Attendance today">
+        <div className="tp-card pg-kpi">
+          <span className="pg-stat-label">Paid shift</span>
+          <strong>
+            {policy?.shift_start && policy.shift_end
+              ? `${formatScheduledTime(policy.shift_start)} – ${formatScheduledTime(policy.shift_end)}`
+              : "Not configured"}
+          </strong>
+          <small>
+            {policy?.approved_leave_today
+              ? "Approved leave today"
+              : `${breaksToday.length} break${breaksToday.length === 1 ? "" : "s"} scheduled today`}
+          </small>
+        </div>
+        <div className="tp-card pg-kpi">
+          <span className="pg-stat-label">Signed in</span>
+          <strong className="is-accent">{signedIn}</strong>
+          <small>{signedInNote}</small>
+        </div>
+        <div className="tp-card pg-kpi">
+          <span className="pg-stat-label">Counted today</span>
+          <strong className="app-num">{formatDuration(countedTodaySeconds)}</strong>
+          <small>of {formatDuration(status.dailyTargetSeconds)} target</small>
+        </div>
+        <div className="tp-card pg-kpi">
+          <span className="pg-stat-label">Overtime</span>
+          <strong className="app-num">{formatDuration(extraSeconds)}</strong>
+          <small>{overtimeStatusLabel(extraSeconds, status.extraTimeStatus)}</small>
+        </div>
+      </section>
+
+      {!summary ? (
+        <section className="tp-card pg-card">
+          <p className="pg-empty">Your time summary has not loaded yet.</p>
+        </section>
+      ) : (
+        <div className="pg-periods">
+          {periods.map(({ key, title, range, data, target }) => {
+            if (!data) return null;
+            const counted = data.tracked_active_seconds + data.manual_approved_seconds;
+            const percent = target ? Math.min(100, Math.round((counted / target) * 100)) : null;
+            return (
+              <section key={key} className="tp-card pg-period" aria-label={title}>
+                <div className="pg-row-between">
+                  <span className="pg-stat-label">{title}</span>
+                  {range ? <span className="pg-period-range">{range}</span> : null}
+                </div>
+                <div className="pg-row-between pg-period-head">
+                  <strong className="pg-insight-total app-num">{formatDuration(counted)}</strong>
+                  {target ? (
+                    <span className="pg-target-tag">vs {formatTargetHours(target)} target</span>
+                  ) : null}
+                </div>
+                {percent !== null ? (
+                  <span className="pg-progress" role="img" aria-label={`${percent}% of target`}>
+                    <span style={{ width: `${Math.max(2, percent)}%` }} />
+                  </span>
+                ) : null}
+                <p className="pg-muted">
+                  Worked {formatDuration(data.tracked_active_seconds)} · manual approved{" "}
+                  {formatDuration(data.manual_approved_seconds)} · idle{" "}
+                  {formatDuration(data.idle_seconds)}
+                </p>
+              </section>
+            );
+          })}
+        </div>
+      )}
+
+      <div className="pg-insights">
+        {days.length ? (
+          <section className="tp-card pg-card" aria-label="Daily load">
+            <div className="pg-card-head">
+              <div>
+                <h2>Daily load</h2>
+                <p className="pg-muted">
+                  Worked time each day against the {formatTargetHours(status.dailyTargetSeconds)} target
+                </p>
+              </div>
+              <span className="pg-target-tag">
+                {weekSessions} session{weekSessions === 1 ? "" : "s"}
+              </span>
+            </div>
+            <div className="pg-load" role="list">
+              {days.map((day) => (
+                <div
+                  key={day.date}
+                  role="listitem"
+                  className={`pg-load-day${day.date === todayKey ? " is-today" : ""}${
+                    isWorkingDay(day.date) ? "" : " is-off"
+                  }`}
+                  title={`${formatWeekday(day.date)} ${formatShortDate(day.date)}: ${formatDuration(day.active_seconds)} worked`}
+                >
+                  <span className="pg-load-value app-num">
+                    {day.active_seconds ? formatHoursMinutes(day.active_seconds) : ""}
+                  </span>
+                  <span className="pg-load-bar">
+                    <span
+                      style={{
+                        height: `${
+                          day.active_seconds
+                            ? Math.max(4, Math.round((day.active_seconds / loadMax) * 100))
+                            : 0
+                        }%`,
+                      }}
+                    />
+                    <i
+                      style={{ bottom: `${Math.round((status.dailyTargetSeconds / loadMax) * 100)}%` }}
+                      aria-hidden="true"
+                    />
+                  </span>
+                  <span className="pg-load-label">{formatWeekday(day.date)}</span>
+                </div>
+              ))}
+            </div>
+          </section>
+        ) : null}
+
+        {week ? (
+          <section className="tp-card pg-card" aria-label="Where this week went">
+            <div className="pg-card-head">
+              <h2>Where this week went</h2>
+            </div>
+            <WeekBars rows={weekRows} largest={largestWeekRow} />
+            <div className="pg-pills">
+              <span>
+                <i className="ri-camera-line" aria-hidden="true" /> {week.screenshot_count} captures
+              </span>
+              {summary?.month ? (
+                <span>
+                  <i className="ri-calendar-line" aria-hidden="true" /> Month{" "}
+                  {formatDuration(summary.month.tracked_active_seconds)}
+                </span>
+              ) : null}
+            </div>
+          </section>
+        ) : null}
+      </div>
+
+      {days.length ? (
+        <section className="tp-card pg-card" aria-label="This week's attendance">
+          <div className="pg-card-head">
+            <div>
+              <h2>This week&apos;s attendance</h2>
+              <p className="pg-muted">
+                {graceMinutes
+                  ? `Starting within ${graceMinutes} minutes of the shift start is not counted late.`
+                  : "Late time is counted from the shift start."}
+              </p>
+            </div>
+          </div>
+          <div className="pg-week-scroll">
+            <table className="pg-week-table">
+              <thead>
+                <tr>
+                  <th>Day</th>
+                  <th>Signed in</th>
+                  <th>Signed out</th>
+                  <th>Worked</th>
+                  <th>Payable</th>
+                  <th>Late</th>
+                  <th>Sessions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {days
+                  .filter((day) => day.date <= todayKey)
+                  .map((day) => {
+                    const late = lateLabel(day);
+                    return (
+                      <tr key={day.date} className={day.date === todayKey ? "is-today" : undefined}>
+                        <td>
+                          <strong>{formatWeekday(day.date)}</strong>{" "}
+                          <span className="pg-muted">{formatShortDate(day.date)}</span>
+                        </td>
+                        <td className="app-num">
+                          {day.start_time ? formatClock(day.start_time, timezone) : "—"}
+                        </td>
+                        <td className="app-num">
+                          {day.date === todayKey && status.todayTimeline?.is_running
+                            ? "Still working"
+                            : day.sign_out_at
+                              ? formatClock(day.sign_out_at, timezone)
+                              : day.end_time
+                                ? formatClock(day.end_time, timezone)
+                                : "—"}
+                        </td>
+                        <td className="app-num">{formatHoursMinutes(day.active_seconds)}</td>
+                        <td className="app-num">{formatHoursMinutes(day.payable_seconds)}</td>
+                        <td>
+                          {day.leave_status ? (
+                            <em className="pg-status is-soft approved">Leave</em>
+                          ) : !isWorkingDay(day.date) && !day.start_time ? (
+                            <em className="pg-status is-soft backlog">Day off</em>
+                          ) : !day.start_time && day.date < todayKey ? (
+                            <em className="pg-status is-soft rejected">No activity</em>
+                          ) : (
+                            <em
+                              className={`pg-status is-soft ${
+                                day.deductible_late_seconds > 0
+                                  ? "pending"
+                                  : late === "—"
+                                    ? "backlog"
+                                    : "approved"
+                              }`}
+                            >
+                              {late}
+                            </em>
+                          )}
+                        </td>
+                        <td className="app-num">{day.session_count}</td>
+                      </tr>
+                    );
+                  })}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      ) : null}
+
+      <div className="pg-insights">
+        <section className="tp-card pg-card" aria-label="Today's activity">
+          <div className="pg-card-head">
+            <h2>Today&apos;s activity</h2>
+            {todaySessions ? (
+              <span className="pg-target-tag">
+                {todaySessions} session{todaySessions === 1 ? "" : "s"}
+              </span>
+            ) : null}
+          </div>
+          {workRows.length ? (
+            <div className="pg-activity">
+              {workRows.map((interval) => (
+                <div key={`${interval.session_id}-${interval.started_at}`} className="pg-activity-item">
+                  <div className="pg-row-between">
+                    <span className="app-num">
+                      {formatClock(interval.started_at, timezone)} –{" "}
+                      {interval.is_current ? "now" : formatClock(interval.ended_at, timezone)}
+                    </span>
+                    <em className={`pg-status ${interval.is_current ? "inprogress" : "approved"}`}>
+                      {interval.is_current ? "Ongoing" : "Worked"}
+                    </em>
+                  </div>
+                  <strong dir="auto">
+                    {interval.task_name ?? interval.project_name ?? "No task selected"}
+                  </strong>
+                  <small className="app-num">{formatDuration(interval.duration_seconds)}</small>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="pg-empty">No worked time recorded yet today.</p>
+          )}
+          <p className="pg-note">
+            Every tracked minute is filed under the task selected in the tracker. Switching tasks never stops the clock.
+          </p>
+        </section>
+
+        <section className="tp-card pg-card" aria-label="Today's schedule">
+          <div className="pg-card-head">
+            <h2>How time is counted</h2>
+          </div>
+          <ul className="pg-rules">
+            <li>Worked time and approved manual time are counted. Idle, pending and rejected minutes never enter the total.</li>
+            <li>Resting during a paid scheduled break is paid time.</li>
+            {status.breakBank?.policy_active ? (
+              <li>Working through a scheduled break saves those minutes; they cover later idle today automatically.</li>
+            ) : null}
+            {graceMinutes ? (
+              <li>Starting within {graceMinutes} minutes of your shift start is not counted late.</li>
+            ) : null}
+            <li>Time outside your paid shift is recorded as extra time and needs HR/Admin approval before payroll.</li>
+          </ul>
+          {breaksToday.length ? (
+            <div className="pg-pills">
+              {breaksToday.map((item) => (
+                <span key={`${item.name}-${item.start}`}>
+                  <i className="ri-cup-line" aria-hidden="true" /> {item.name}
+                  {item.prayer ? ` · ${item.prayer}` : ""} {formatScheduledTime(item.start)}–
+                  {formatScheduledTime(item.end)}
+                </span>
+              ))}
+              <span className="is-ok">
+                <i className="ri-shield-check-line" aria-hidden="true" />{" "}
+                {formatDuration(status.dailyTargetSeconds)} target
+              </span>
+            </div>
+          ) : null}
+        </section>
+      </div>
+    </section>
+  );
+}
+
+const SETTINGS_SECTIONS = [
+  { id: "settings-appearance", label: "Appearance" },
+  { id: "settings-system", label: "System details" },
+  { id: "settings-account", label: "Signed-in account" },
+  { id: "settings-device", label: "Device account" },
+];
+
 function SettingsView({
   status,
   onLogout,
   isLoggingOut,
+  theme,
+  onThemeChange,
+  skin,
+  onSkinChange,
+  onNotify,
 }: {
   status: AgentStatus;
   onLogout: () => void;
   isLoggingOut: boolean;
+  theme: "light" | "dark";
+  onThemeChange: (theme: "light" | "dark") => void;
+  skin: Skin;
+  onSkinChange: (skin: Skin) => void;
+  onNotify: (message: string, tone?: "success" | "warning" | "error") => void;
 }) {
+  // View-only: whether the System details rows are shown.
+  const [showSystemDetails, setShowSystemDetails] = useState(true);
+  // View-only: the section in view, highlighted in "On this page".
+  const [activeSection, setActiveSection] = useState(SETTINGS_SECTIONS[0].id);
+  useEffect(() => {
+    const root = document.querySelector<HTMLElement>(".app-page");
+    const targets = SETTINGS_SECTIONS
+      .map((section) => document.getElementById(section.id))
+      .filter((element): element is HTMLElement => Boolean(element));
+    if (!root || !targets.length || typeof IntersectionObserver === "undefined") return;
+    const visible = new Map<string, boolean>();
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) visible.set(entry.target.id, entry.isIntersecting);
+        const first = targets.find((element) => visible.get(element.id));
+        if (first) setActiveSection(first.id);
+      },
+      { root, rootMargin: "0px 0px -55% 0px" },
+    );
+    targets.forEach((element) => observer.observe(element));
+    return () => observer.disconnect();
+    // The section list is fixed for this view, so observe once.
+  }, []);
+  const systemDetailCount = 5 + (status.diagnostics ? 4 : 0);
+  const enrolledSince = status.attendanceWeek?.enrolled_at
+    ? new Intl.DateTimeFormat("en-US", { day: "numeric", month: "short", year: "numeric" }).format(
+        new Date(status.attendanceWeek.enrolled_at),
+      )
+    : null;
+
+  async function copy(label: string, value: string | null | undefined) {
+    if (!value) return;
+    try {
+      await navigator.clipboard.writeText(value);
+      onNotify(`${label} copied`);
+    } catch {
+      onNotify(`Could not copy the ${label.toLowerCase()}`, "error");
+    }
+  }
+
+  const accountRows: Array<{ label: string; value: string | null; copy?: boolean; mono?: boolean }> = [
+    { label: "Employee", value: status.employeeName || null },
+    { label: "Work email", value: status.employeeEmail, copy: true },
+    { label: "Device", value: status.deviceName || null },
+    { label: "Device ID", value: status.deviceId, copy: true, mono: true },
+    { label: "MAC address", value: status.macAddress, copy: true, mono: true },
+    { label: "Local IP", value: status.localIpAddress, copy: true, mono: true },
+    { label: "Platform", value: status.platformLabel ?? null },
+  ];
+
   return (
-    <section className="k-page k-settings-page">
-      <header className="k-page-header">
+    <section className="app-page pg-page">
+      <header className="pg-head">
         <div>
           <h1>Settings</h1>
           <p>Device information and account controls.</p>
         </div>
       </header>
-      <details className="k-panel k-system-panel" open>
-        <summary>System details</summary>
-        <dl className="k-details">
-          <div>
-            <dt>Current session</dt>
-            <dd>{formatTimestamp(status.sessionStartedAt)}</dd>
-          </div>
-          <div>
-            <dt>Connection</dt>
-            <dd>{status.connectionStatus}</dd>
-          </div>
-          <div>
-            <dt>Last screenshot</dt>
-            <dd>{formatTimestamp(status.lastScreenshotAt)}</dd>
-          </div>
-          <div>
-            <dt>Last sync</dt>
-            <dd>{formatTimestamp(status.lastSuccessfulSyncAt)}</dd>
-          </div>
-          <div>
-            <dt>Agent version</dt>
-            <dd>{status.agentVersion}</dd>
-          </div>
-          {status.diagnostics && (
-            <>
-              <div>
-                <dt>Build</dt>
-                <dd>
-                  {status.diagnostics.buildIdentifier} ·{" "}
-                  {status.diagnostics.environment}
-                </dd>
-              </div>
-              <div>
-                <dt>Process ID</dt>
-                <dd>{status.diagnostics.processId}</dd>
-              </div>
-              <div>
-                <dt>API base URL</dt>
-                <dd className="k-details-mono">{status.diagnostics.apiBaseUrl}</dd>
-              </div>
-              <div>
-                <dt>Data directory</dt>
-                <dd className="k-details-mono">
-                  {status.diagnostics.userDataPath}
-                </dd>
-              </div>
-            </>
-          )}
-        </dl>
-      </details>
-      <section className="k-panel k-device-account">
-        <div className="k-device-account-heading">
-          <div>
-            <h2>Signed-in account</h2>
-            <p className="k-muted">
-              This employee account is linked to this Windows device.
+      <div className="pg-settings">
+        <aside className="pg-settings-nav">
+          <span className="pg-stat-label">On this page</span>
+          {SETTINGS_SECTIONS.map((section) => (
+            <button
+              key={section.id}
+              type="button"
+              className={`pg-settings-link${activeSection === section.id ? " is-active" : ""}`}
+              aria-current={activeSection === section.id ? "true" : undefined}
+              onClick={() => {
+                setActiveSection(section.id);
+                document.getElementById(section.id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+              }}
+            >
+              {section.label}
+            </button>
+          ))}
+          <div className="tp-card pg-enrolled-card">
+            <span className={`pg-status ${status.enrolled ? "online" : "offline"}`}>
+              {status.enrolled ? "Enrolled device" : "Not enrolled"}
+            </span>
+            <p className="pg-muted">
+              {status.deviceName || "This computer"} is linked to an employee account and syncs while the shift runs.
             </p>
+            {enrolledSince ? (
+              <small className="pg-hint">
+                <i className="ri-calendar-check-line" aria-hidden="true" /> Enrolled since {enrolledSince}
+              </small>
+            ) : null}
           </div>
-          <span
-            className={`k-connection-badge ${status.enrolled ? "online" : "offline"}`}
-          >
-            {status.enrolled ? "Enrolled" : "Not enrolled"}
-          </span>
+        </aside>
+
+        <div className="pg-settings-main">
+          <section id="settings-appearance" className="tp-card pg-card" aria-label="Appearance">
+            <div className="pg-card-head">
+              <div>
+                <h2>Appearance</h2>
+                <p className="pg-muted">
+                  Pick one of the three styles, then its light or dark face. Saved on this computer.
+                </p>
+              </div>
+            </div>
+            <div className="pg-segment" role="group" aria-label="Light or dark">
+              {(["light", "dark"] as const).map((mode) => (
+                <button
+                  key={mode}
+                  type="button"
+                  aria-pressed={theme === mode}
+                  className={theme === mode ? "active" : ""}
+                  onClick={() => onThemeChange(mode)}
+                >
+                  <i className={mode === "light" ? "ri-sun-line" : "ri-moon-line"} aria-hidden="true" />
+                  {mode === "light" ? "Light" : "Dark"}
+                </button>
+              ))}
+            </div>
+            <div className="pg-skins">
+              {SKINS.map((item) => {
+                const selected = item.key === skin;
+                const swatch = theme === "dark" ? item.swatchDark : item.swatch;
+                return (
+                  <button
+                    key={item.key}
+                    type="button"
+                    aria-pressed={selected}
+                    className={`pg-skin${selected ? " is-selected" : ""}`}
+                    onClick={() => onSkinChange(item.key)}
+                  >
+                    <span className="pg-skin-swatch" aria-hidden="true">
+                      {swatch.map((color) => (
+                        <span key={color} style={{ background: color }} />
+                      ))}
+                    </span>
+                    <span className="pg-row-between">
+                      <strong>{item.label}</strong>
+                      {selected ? <i className="ri-check-line" aria-hidden="true" /> : null}
+                    </span>
+                    <small>
+                      <i className="ri-palette-line" aria-hidden="true" /> {item.blurb}
+                    </small>
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+
+          <section id="settings-system" className="tp-card pg-card" aria-label="System details">
+            <div className="pg-card-head">
+              <h2>System details</h2>
+              <button
+                type="button"
+                className="pg-btn pg-btn-xs"
+                aria-expanded={showSystemDetails}
+                onClick={() => setShowSystemDetails((value) => !value)}
+              >
+                {showSystemDetails ? "Hide" : "Show"}
+                <i className={showSystemDetails ? "ri-arrow-up-s-line" : "ri-arrow-down-s-line"} aria-hidden="true" />
+              </button>
+            </div>
+            {!showSystemDetails ? (
+              <p className="pg-hidden-summary">
+                <i className="ri-eye-off-line" aria-hidden="true" /> {systemDetailCount} details hidden · last sync{" "}
+                {formatTimestamp(status.lastSuccessfulSyncAt)}
+              </p>
+            ) : null}
+            {showSystemDetails && (
+              <dl className="pg-dl">
+                <div>
+                  <dt>Current session</dt>
+                  <dd>{formatTimestamp(status.sessionStartedAt)}</dd>
+                </div>
+                <div>
+                  <dt>Connection</dt>
+                  <dd>
+                    <span className={`pg-dot ${status.connectionStatus === "online" ? "is-ok" : "is-bad"}`} />
+                    {status.connectionStatus}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Last screenshot</dt>
+                  <dd>{formatTimestamp(status.lastScreenshotAt)}</dd>
+                </div>
+                <div>
+                  <dt>Last sync</dt>
+                  <dd>{formatTimestamp(status.lastSuccessfulSyncAt)}</dd>
+                </div>
+                <div>
+                  <dt>Agent version</dt>
+                  <dd>{status.agentVersion}</dd>
+                </div>
+                {status.diagnostics && (
+                  <>
+                    <div>
+                      <dt>Build</dt>
+                      <dd>
+                        {status.diagnostics.buildIdentifier} · {status.diagnostics.environment}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Process ID</dt>
+                      <dd>{status.diagnostics.processId}</dd>
+                    </div>
+                    <div>
+                      <dt>API base URL</dt>
+                      <dd className="pg-mono">{status.diagnostics.apiBaseUrl}</dd>
+                    </div>
+                    <div>
+                      <dt>Data directory</dt>
+                      <dd className="pg-mono">{status.diagnostics.userDataPath}</dd>
+                    </div>
+                  </>
+                )}
+              </dl>
+            )}
+          </section>
+
+          <section id="settings-account" className="tp-card pg-card" aria-label="Signed-in account">
+            <div className="pg-card-head">
+              <div>
+                <h2>Signed-in account</h2>
+                <p className="pg-muted">This employee account is linked to this Windows device.</p>
+              </div>
+              <span className={`pg-status ${status.enrolled ? "online" : "offline"}`}>
+                {status.enrolled ? "Enrolled" : "Not enrolled"}
+              </span>
+            </div>
+            <dl className="pg-dl">
+              {accountRows.map((row) => (
+                <div key={row.label}>
+                  <dt>{row.label}</dt>
+                  <dd className={row.mono ? "pg-mono" : undefined}>
+                    {row.value || "—"}
+                    {row.copy && row.value ? (
+                      <button
+                        type="button"
+                        className="pg-copy"
+                        aria-label={`Copy ${row.label.toLowerCase()}`}
+                        title={`Copy ${row.label.toLowerCase()}`}
+                        onClick={() => void copy(row.label, row.value)}
+                      >
+                        <i className="ri-file-copy-line" aria-hidden="true" />
+                      </button>
+                    ) : null}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          </section>
+
+          <section id="settings-device" className="tp-card pg-card" aria-label="Device account">
+            <div className="pg-card-head">
+              <h2>Device account</h2>
+            </div>
+            <div className="pg-signout-row">
+              <div>
+                <p className="pg-muted">Sign out only when this computer should stop tracking this employee.</p>
+                <small className="pg-hint">
+                  <i className="ri-shield-check-line" aria-hidden="true" /> Time already tracked stays on record after sign-out
+                </small>
+              </div>
+              <button className="pg-btn pg-btn-solid-danger" onClick={onLogout} disabled={isLoggingOut}>
+                <i className="ri-logout-box-r-line" aria-hidden="true" />
+                {isLoggingOut ? "Signing out..." : "Sign out from this device"}
+              </button>
+            </div>
+          </section>
         </div>
-        <dl className="k-details k-identity-details">
-          <div>
-            <dt>Employee</dt>
-            <dd>{status.employeeName || "—"}</dd>
-          </div>
-          <div>
-            <dt>Work email</dt>
-            <dd>{status.employeeEmail || "—"}</dd>
-          </div>
-          <div>
-            <dt>Device</dt>
-            <dd>{status.deviceName || "—"}</dd>
-          </div>
-          <div>
-            <dt>Device ID</dt>
-            <dd className="k-mono">{status.deviceId || "—"}</dd>
-          </div>
-          <div>
-            <dt>MAC address</dt>
-            <dd className="k-mono">{status.macAddress || "—"}</dd>
-          </div>
-          <div>
-            <dt>Local IP</dt>
-            <dd className="k-mono">{status.localIpAddress || "—"}</dd>
-          </div>
-        </dl>
-      </section>
-      <section className="k-panel k-device-account k-device-actions">
-        <h2>Device account</h2>
-        <p className="k-muted">
-          Sign out only when this computer should stop tracking this employee.
-        </p>
-        <button
-          className="k-danger-button"
-          onClick={onLogout}
-          disabled={isLoggingOut}
-        >
-          {isLoggingOut ? "Signing out..." : "Sign out from this device"}
-        </button>
-      </section>
+      </div>
     </section>
   );
 }

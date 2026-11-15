@@ -2871,6 +2871,16 @@ def test_desktop_summary_matches_employee_periods_and_profile(team_client):
         "remaining_seconds",
         "paid_late_allowance_seconds",
     }.issubset(summary["break_bank"])
+    # The week's days for the desktop Insights screen add up to the week total.
+    week = summary["attendance_week"]
+    assert len(week["days"]) == 7
+    assert week["days"][0]["date"] == week["week_start"]
+    assert week["days"][-1]["date"] == week["week_end"]
+    assert sum(day["active_seconds"] for day in week["days"]) == summary["week"][
+        "tracked_active_seconds"
+    ]
+    assert sum(day["session_count"] for day in week["days"]) >= 1
+    assert {"late_grace_minutes", "enrolled_at", "month_start", "month_end"}.issubset(week)
 
 
 def test_daily_timesheet_uses_employee_local_date_for_sessions_and_screenshots(

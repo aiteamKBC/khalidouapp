@@ -225,8 +225,8 @@ test("07 · paid break: resting is paid break, working through it saves minutes 
   await poll("rested break is paid", attendanceToday, (a) => a.paid_break_seconds > 0, { timeoutMs: 60_000, intervalMs: 5_000 });
 
   // Home shows what she saved, next to today's breaks.
-  await nav(window, "Timer");
-  const savedChip = window.locator('.k-break-times li[data-state="saved"]');
+  await nav(window, "Tracker");
+  const savedChip = window.getByRole("list", { name: "Today's breaks" }).locator('li[data-state="saved"]');
   await expect(savedChip).toContainText("Saved break", { timeout: 60_000 });
 
   // After the break, a normal idle period the saved minutes cover by themselves.
@@ -311,7 +311,7 @@ test("08 · meeting mode: idle is silent during the meeting, and the meeting goe
 test("09 · manual pause stops the clock and resumes cleanly", async () => {
   const { window } = desktop;
   const session = await openSession();
-  await nav(window, "Timer");
+  await nav(window, "Tracker");
   await window.getByRole("button", { name: "Pause", exact: true }).click();
   await poll("paused", () => desktop.status(), (s) => s.trackingPaused === true);
   const pausedAt = (await desktop.status()).workedTodaySeconds;
@@ -407,7 +407,7 @@ test("12 · offline: work continues, events queue locally and replay once, in or
       timeoutMs: 60_000,
     });
     // A pause taken while offline must still reach the server later.
-    await nav(window, "Timer");
+    await nav(window, "Tracker");
     await window.getByRole("button", { name: "Pause", exact: true }).click();
     await poll("paused offline", () => desktop.status(), (s) => s.trackingPaused === true);
     await window.waitForTimeout(3_000);

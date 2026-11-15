@@ -176,11 +176,11 @@ export function ShiftRescheduleCard({ enrolled }: { enrolled: boolean }) {
   }
 
   return (
-    <section className="k-panel k-request-card k-shift-reschedule">
-      <header className="k-request-card-header">
+    <section className="tp-card pg-card k-shift-reschedule">
+      <header className="pg-card-head">
         <div>
           <h2>Shift reschedule</h2>
-          <p className="k-muted">
+          <p className="pg-muted">
             Work a different time on one day. The new time must be the same
             length as your normal shift, end before midnight, and be requested
             at least {payload?.policy.notice_days ?? 2} days ahead. HR reviews
@@ -190,8 +190,8 @@ export function ShiftRescheduleCard({ enrolled }: { enrolled: boolean }) {
         </div>
       </header>
       {loadError && <p className="k-error">{loadError}</p>}
-      <form className="k-form" onSubmit={handleSubmit}>
-        <div className="k-form-grid">
+      <form className="pg-form" onSubmit={handleSubmit}>
+        <div className="pg-grid">
           <label>
             Day
             <select
@@ -224,7 +224,7 @@ export function ShiftRescheduleCard({ enrolled }: { enrolled: boolean }) {
           </label>
         </div>
         {day?.scheduled_day && (
-          <p className="k-muted">
+          <p className="pg-muted">
             Normal shift: {day.shift_start}–{day.shift_end} ({hours}h
             {minutes ? ` ${minutes}m` : ""}).{" "}
             {start
@@ -249,7 +249,7 @@ export function ShiftRescheduleCard({ enrolled }: { enrolled: boolean }) {
         </label>
         <button
           type="submit"
-          className="k-primary"
+          className="pg-btn pg-btn-primary"
           disabled={submitting || !day?.scheduled_day || !computedEnd}
         >
           {submitting ? "Sending..." : "Request shift reschedule"}
@@ -258,13 +258,13 @@ export function ShiftRescheduleCard({ enrolled }: { enrolled: boolean }) {
         {success && <p className="k-success">{success}</p>}
       </form>
       {payload?.requests.length ? (
-        <div className="k-mini-list">
+        <div className="pg-list">
           {payload.requests.slice(0, 6).map((request) => (
-            <div key={request.id} className="k-shift-reschedule-row">
+            <div key={request.id} className="pg-record-row">
               <span>
                 {formatDateLabel(request.work_date)}: {request.requested_start}–
                 {request.requested_end}
-                <small className="k-muted">
+                <small className="pg-muted">
                   {" "}
                   (normal {request.original_start}–{request.original_end})
                   {request.source === "admin" ? " · set by HR" : ""}
@@ -278,7 +278,7 @@ export function ShiftRescheduleCard({ enrolled }: { enrolled: boolean }) {
                 {request.status === "pending" && (
                   <button
                     type="button"
-                    className="k-secondary-action"
+                    className="pg-btn pg-btn-sm"
                     onClick={() => void handleCancel(request.id)}
                     disabled={cancellingId === request.id}
                   >

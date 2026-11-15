@@ -32,13 +32,13 @@ test.beforeAll(async () => {
 test.afterAll(() => desktop?.kill());
 
 test("every view renders without NaN / Invalid Date or page errors", async () => {
-  for (const view of ["Timer", "Tasks", "Requests", "Meeting", "Settings"] as const) {
+  for (const view of ["Tracker", "Tasks", "Requests", "Meeting", "Settings"] as const) {
     await nav(desktop.window, view);
     await desktop.window.waitForTimeout(500);
     await expect(desktop.window.locator("body"), view).not.toContainText(/\bNaN\b|Invalid Date/);
   }
   expect(desktop.pageErrors).toEqual([]);
-  await nav(desktop.window, "Timer");
+  await nav(desktop.window, "Tracker");
 });
 
 test("an admin closing the session remotely stops tracking on the desktop", async () => {

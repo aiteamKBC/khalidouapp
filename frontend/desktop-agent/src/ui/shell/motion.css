@@ -1,0 +1,183 @@
+/* ============================================================
+   Motion, after the Readdy design's entrance.css / dock.css:
+   blocks rise in when a view opens (each view mounts on switch, so
+   switching pages replays it), bars grow, timeline and table rows
+   slide in, buttons press. All of it is off for reduced motion.
+   Fill mode is backwards only: a finished animation must leave nothing
+   behind, or the held opacity keeps a stacking context that traps the
+   request dialogs under later cards.
+   ============================================================ */
+
+@keyframes k-rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes k-view-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.995);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes k-row-in {
+  from {
+    opacity: 0;
+    transform: translateX(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes k-bar-grow {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
+@keyframes k-shake {
+  0%,
+  100% {
+    transform: none;
+  }
+  20%,
+  60% {
+    transform: translateX(-6px);
+  }
+  40%,
+  80% {
+    transform: translateX(6px);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  /* the page itself dissolves in on every view switch */
+  .k-app.app-shell[data-theme] > .app-page > * {
+    animation: k-view-in 0.32s cubic-bezier(0.22, 1, 0.36, 1) backwards;
+  }
+
+  /* tracker blocks rise one after another */
+  .tp-fold > *,
+  .tp-layout > *,
+  .tp-side > *,
+  .tp-tiles > *,
+  .tp-workday,
+  .tp-bottom > *,
+  .pg-kpis > *,
+  .pg-periods > *,
+  .pg-insights > *,
+  .pg-settings-main > * {
+    animation: k-rise 0.5s cubic-bezier(0.22, 1, 0.36, 1) backwards;
+  }
+
+  :is(.tp-layout, .tp-side, .tp-tiles, .tp-bottom, .pg-kpis, .pg-periods, .pg-insights, .pg-settings-main)
+    > :nth-child(2) {
+    animation-delay: 0.06s;
+  }
+
+  :is(.tp-tiles, .pg-kpis, .pg-periods, .pg-settings-main) > :nth-child(3) {
+    animation-delay: 0.12s;
+  }
+
+  :is(.tp-tiles, .pg-kpis, .pg-settings-main) > :nth-child(4) {
+    animation-delay: 0.18s;
+  }
+
+  .tp-tiles > :nth-child(5) {
+    animation-delay: 0.24s;
+  }
+
+  .tp-tiles > :nth-child(6) {
+    animation-delay: 0.3s;
+  }
+
+  .tp-workday {
+    animation-delay: 0.2s;
+  }
+
+  .tp-bottom > * {
+    animation-delay: 0.26s;
+  }
+
+  /* rows slide in */
+  .tp-tl-row,
+  .pg-task-table > button.pg-task-row,
+  .pg-activity-item,
+  .pg-week-table tbody tr {
+    animation: k-row-in 0.4s cubic-bezier(0.22, 1, 0.36, 1) backwards;
+  }
+
+  :is(.tp-tl-row, .pg-task-table > button.pg-task-row, .pg-activity-item, .pg-week-table tbody tr):nth-child(2) {
+    animation-delay: 0.04s;
+  }
+
+  :is(.tp-tl-row, .pg-task-table > button.pg-task-row, .pg-activity-item, .pg-week-table tbody tr):nth-child(3) {
+    animation-delay: 0.08s;
+  }
+
+  :is(.tp-tl-row, .pg-task-table > button.pg-task-row, .pg-activity-item, .pg-week-table tbody tr):nth-child(4) {
+    animation-delay: 0.12s;
+  }
+
+  :is(.tp-tl-row, .pg-task-table > button.pg-task-row, .pg-activity-item, .pg-week-table tbody tr):nth-child(n + 5) {
+    animation-delay: 0.16s;
+  }
+
+  /* bars grow from the left */
+  .tp-target-track > span,
+  .tp-breakdown-bar > i,
+  .pg-progress > span,
+  .pg-load-bar > span {
+    transform-origin: left center;
+    animation: k-bar-grow 0.9s cubic-bezier(0.32, 0.72, 0.22, 1) 0.15s backwards;
+  }
+
+  .pg-load-bar > span {
+    transform-origin: center bottom;
+    animation-name: k-load-grow;
+  }
+
+  /* buttons press */
+  .tp-cta,
+  .tp-action,
+  .pg-btn,
+  .app-icon-btn,
+  .tp-needs-item {
+    transition-property: filter, transform, border-color, background, color, box-shadow;
+  }
+
+  .tp-cta:active:not(:disabled),
+  .tp-action:active:not(:disabled),
+  .pg-btn:active:not(:disabled),
+  .tp-needs-item:active {
+    transform: scale(0.97);
+  }
+
+  .k-shake {
+    animation: k-shake 0.42s ease-in-out;
+  }
+}
+
+@keyframes k-load-grow {
+  from {
+    transform: scaleY(0);
+  }
+  to {
+    transform: scaleY(1);
+  }
+}
