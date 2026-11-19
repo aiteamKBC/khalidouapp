@@ -123,6 +123,11 @@
   z-index: 4;
 }
 
+/* Keep the style menu above the timer's later sibling stacking context. */
+.tp-hero > :first-child {
+  z-index: 5;
+}
+
 /* Card faces. The mode comes from App.tsx's existing flags. */
 .tp-hero[data-mode="running"] {
   --tp-mode: var(--k-green);
@@ -373,6 +378,8 @@
 .k-app.app-shell .tp-select,
 .k-app.app-shell .tp-note-input {
   min-width: 0;
+  /* App.css gives all fields a 43px minimum, taller than the 42px pill. */
+  min-height: 0;
   flex: 1 1 auto;
   height: 30px;
   margin: 0;
@@ -429,13 +436,14 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
-  border: 1px solid var(--k-line);
+  width: 44px;
+  height: 44px;
+  flex: none;
+  border: 1px solid color-mix(in srgb, var(--k-plum-2) 35%, var(--k-line));
   border-radius: 999px;
-  background: var(--k-card);
-  color: var(--k-muted);
-  font-size: 17px;
+  background: var(--k-bg-2);
+  color: var(--k-plum);
+  font-size: 20px;
   line-height: 1;
   transition:
     border-color 0.16s ease,
@@ -447,6 +455,11 @@
   border-color: var(--k-plum-2);
   background: var(--k-bg-2);
   color: var(--k-plum);
+}
+
+.tp-face-nav:focus-visible {
+  outline: 2px solid var(--k-pink);
+  outline-offset: 3px;
 }
 
 /* ---------- actions ---------- */
