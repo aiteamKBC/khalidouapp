@@ -88,6 +88,95 @@
   background: color-mix(in srgb, var(--k-surface-topbar) 92%, transparent);
 }
 
+/* Reserve the final column for native window actions. Navigation may scroll,
+   but long names, status text and update labels cannot push those actions out. */
+.app-topbar-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-width: 0;
+  min-height: 60px;
+  padding: 0 8px 0 16px;
+}
+
+.app-topbar-brand {
+  grid-column: 1;
+}
+
+.app-topbar-nav {
+  grid-column: 2;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-app-region: no-drag;
+}
+
+.app-topbar-nav > button {
+  flex: none;
+}
+
+.app-topbar-actions {
+  grid-column: 3;
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.app-window-controls {
+  grid-column: 4;
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+  min-width: max-content;
+  -webkit-app-region: no-drag;
+}
+
+.app-window-controls > button {
+  flex: 0 0 30px;
+}
+
+@media (max-width: 760px) {
+  .app-topbar-row {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: 6px;
+    padding: 8px;
+  }
+
+  .app-topbar-actions {
+    grid-column: 2;
+    grid-row: 1;
+    justify-content: flex-end;
+    gap: 6px;
+  }
+
+  .app-window-controls {
+    grid-column: 3;
+    grid-row: 1;
+  }
+
+  .app-topbar-nav {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+
+  .app-topbar-actions > .app-topbar-status {
+    display: none;
+  }
+}
+
+@media (max-width: 599px) {
+  .app-topbar-actions > .app-topbar-person {
+    display: none;
+  }
+}
+
 .app-no-drag,
 .app-topbar button {
   -webkit-app-region: no-drag;

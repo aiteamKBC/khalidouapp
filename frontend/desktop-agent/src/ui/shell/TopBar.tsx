@@ -72,8 +72,8 @@ export function TopBar(props: Props) {
 
   return (
     <header className="app-topbar">
-      <div className="flex h-[60px] w-full min-w-0 items-center gap-3 pl-4 pr-2">
-        <div className="flex flex-none items-center gap-2.5">
+      <div className="app-topbar-row">
+        <div className="app-topbar-brand flex flex-none items-center gap-2.5">
           <span className="app-logo-plate h-9 w-9 overflow-hidden">
             <img src={logoUrl} alt="Khaliduo" width={32} height={32} className="h-full w-full object-contain" />
           </span>
@@ -86,37 +86,34 @@ export function TopBar(props: Props) {
         </div>
 
         {enrolled ? (
-          <>
-            <span className="app-hide-below-wide h-6 w-px flex-none bg-line" aria-hidden="true" />
-            <nav className="flex flex-none items-center gap-1" aria-label="Primary navigation">
-              {NAV.map((item) => {
-                const active = item.key === activeView;
-                return (
-                  <button
-                    key={item.key}
-                    type="button"
-                    onClick={() => onViewChange(item.key)}
-                    aria-current={active ? "page" : undefined}
-                    aria-label={item.label}
-                    title={item.label}
-                    className={`app-nav-pill${active ? " is-active" : ""}`}
-                  >
-                    <i className={`${active ? item.activeIcon : item.icon} text-[14px]`} aria-hidden="true" />
-                    <span className="app-nav-label">{item.label}</span>
-                    {item.key === "home" && tone !== "stopped" ? (
-                      <span className="flex" data-tone={tone} aria-hidden="true">
-                        <span className="app-tone-dot" />
-                      </span>
-                    ) : null}
-                  </button>
-                );
-              })}
-            </nav>
-          </>
+          <nav className="app-topbar-nav" aria-label="Primary navigation">
+            {NAV.map((item) => {
+              const active = item.key === activeView;
+              return (
+                <button
+                  key={item.key}
+                  type="button"
+                  onClick={() => onViewChange(item.key)}
+                  aria-current={active ? "page" : undefined}
+                  aria-label={item.label}
+                  title={item.label}
+                  className={`app-nav-pill${active ? " is-active" : ""}`}
+                >
+                  <i className={`${active ? item.activeIcon : item.icon} text-[14px]`} aria-hidden="true" />
+                  <span className="app-nav-label">{item.label}</span>
+                  {item.key === "home" && tone !== "stopped" ? (
+                    <span className="flex" data-tone={tone} aria-hidden="true">
+                      <span className="app-tone-dot" />
+                    </span>
+                  ) : null}
+                </button>
+              );
+            })}
+          </nav>
         ) : null}
 
-        <div className="ml-auto flex min-w-0 items-center gap-2">
-          <span className="app-pill min-w-[178px] max-w-[260px]" data-tone={tone} title={statusText} role="status">
+        <div className="app-topbar-actions">
+          <span className="app-topbar-status app-pill min-w-[178px] max-w-[260px]" data-tone={tone} title={statusText} role="status">
             <span className="app-tone-dot" aria-hidden="true" />
             <span className="app-pill-label truncate">{statusText}</span>
             {enrolled ? <span className="app-num flex-none font-semibold text-ink">{timerLabel}</span> : null}
@@ -163,7 +160,7 @@ export function TopBar(props: Props) {
           <ThemePicker skin={skin} mode={mode} onSkin={onSkin} onMode={onMode} />
 
           {enrolled ? (
-            <div className="flex flex-none items-center gap-2 border-0 border-l border-solid border-line pl-2.5">
+            <div className="app-topbar-person flex flex-none items-center gap-2 border-0 border-l border-solid border-line pl-2.5">
               <span
                 className="flex h-9 w-9 flex-none items-center justify-center overflow-hidden rounded-full border border-solid border-plum-2 bg-card text-[11px] font-bold text-ink-2"
                 title={`${employeeName} · ${presenceLabel}`}
@@ -182,33 +179,33 @@ export function TopBar(props: Props) {
               </span>
             </div>
           ) : null}
+        </div>
 
-          <div className="flex flex-none items-center gap-0.5 pl-1" aria-label="Window controls">
-            <button
-              type="button"
-              className="app-window-btn"
-              aria-label="Minimize"
-              onClick={() => void window.khaliduo?.minimizeWindow()}
-            >
-              <i className="ri-subtract-line text-[16px]" aria-hidden="true" />
-            </button>
-            <button
-              type="button"
-              className="app-window-btn"
-              aria-label="Maximize or restore"
-              onClick={() => void window.khaliduo?.toggleMaximizeWindow()}
-            >
-              <i className="ri-checkbox-blank-line text-[13px]" aria-hidden="true" />
-            </button>
-            <button
-              type="button"
-              className="app-window-btn is-close"
-              aria-label="Close"
-              onClick={() => void window.khaliduo?.closeWindow()}
-            >
-              <i className="ri-close-line text-[17px]" aria-hidden="true" />
-            </button>
-          </div>
+        <div className="app-window-controls" role="group" aria-label="Window controls">
+          <button
+            type="button"
+            className="app-window-btn"
+            aria-label="Minimize"
+            onClick={() => void window.khaliduo?.minimizeWindow()}
+          >
+            <i className="ri-subtract-line text-[16px]" aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            className="app-window-btn"
+            aria-label="Maximize or restore"
+            onClick={() => void window.khaliduo?.toggleMaximizeWindow()}
+          >
+            <i className="ri-checkbox-blank-line text-[13px]" aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            className="app-window-btn is-close"
+            aria-label="Close"
+            onClick={() => void window.khaliduo?.closeWindow()}
+          >
+            <i className="ri-close-line text-[17px]" aria-hidden="true" />
+          </button>
         </div>
       </div>
     </header>

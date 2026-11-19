@@ -87,6 +87,9 @@ app.on('window-all-closed',()=>app.quit());`);
       onStatusChanged: callback => { window.pushPreviewStatus = callback; return () => {}; },
       onIdleAlert: () => () => {}, getRecentScreenshots: async () => ({ success: true, screenshots: [] }),
       isWindowExpanded: async () => true, onWindowExpandedChanged: () => () => {},
+      minimizeWindow: async () => { window.qaCalls.push(['window', 'minimize']); },
+      toggleMaximizeWindow: async () => { window.qaCalls.push(['window', 'maximize']); },
+      closeWindow: async () => { window.qaCalls.push(['window', 'close']); },
       setIdleAlertAttention: () => {}, setUpdateAttention: () => {},
       setCurrentTask: async id => {
         window.qaCalls.push(['setCurrentTask', id]);
@@ -263,6 +266,65 @@ app.on('window-all-closed',()=>app.quit());`);
     await page.keyboard.press('Escape');
   }
   console.log('PASS UI-002 (native limits): date entry, clearing, min validation, popup opening and light/dark color-scheme');
+
+  // Frameless windows must always retain their native controls, including at
+  // effective widths produced by display scaling and on the sign-in screen.
+  const assertWindowControls = async label => {
+    const controls = page.locator('[aria-label="Window controls"]');
+    const failures = await controls.getByRole('button').evaluateAll(buttons => buttons.flatMap(button => {
+      const box = button.getBoundingClientRect();
+      const style = getComputedStyle(button);
+      const inside = box.left >= 0 && box.top >= 0 && box.right <= innerWidth && box.bottom <= innerHeight;
+      const clickable = [0.2, 0.5, 0.8].every(fraction => button.contains(document.elementFromPoint(box.left + box.width * fraction, box.top + box.height / 2)));
+      return box.width >= 28 && box.height >= 28 && style.visibility === 'visible' && Number(style.opacity) > 0 && inside && clickable ? [] : [button.getAttribute('aria-label')];
+    }));
+    await expect(controls.getByRole('button')).toHaveCount(3);
+    assert.deepEqual(failures, [], `${label}: all three window controls must fit and receive pointer input`);
+  };
+  const widths = [320, 390, 480, 599, 600, 640, 759, 760, 761, 800, 979, 980, 1079, 1080, 1239, 1240, 1280, 1440, 1920, 2560];
+  for (const fixture of [
+    { ...status, enrolled: false },
+    status,
+    { ...status, employeeName: 'A very long employee name '.repeat(12), deviceName: 'A very long device name '.repeat(12), updateStatus: 'ready', updateRequired: true },
+  ]) {
+    await page.evaluate(next => { window.previewStatus = next; window.pushPreviewStatus(next); }, fixture);
+    await expect(page.getByRole('navigation', { name: 'Primary navigation' })).toHaveCount(fixture.enrolled ? 1 : 0);
+    for (const skin of ['Orbit', 'Ember', 'Forest']) {
+      for (const mode of ['Light', 'Dark']) {
+        await page.setViewportSize({ width: 1440, height: 820 });
+        await page.getByRole('button', { name: /^Change theme/ }).click();
+        await page.getByRole('group', { name: 'Light or dark' }).getByRole('button', { name: mode, exact: true }).click();
+        await page.getByRole('menuitemradio', { name: new RegExp(skin) }).click();
+        await page.keyboard.press('Escape');
+        for (const width of widths) {
+          await page.setViewportSize({ width, height: width < 800 ? 360 : 820 });
+          await assertWindowControls(`${fixture.enrolled ? fixture.updateRequired ? 'update' : 'enrolled' : 'sign-in'}/${skin}/${mode}/${width}`);
+        }
+      }
+    }
+    for (const name of ['Minimize', 'Maximize or restore', 'Close']) {
+      const button = page.getByRole('button', { name, exact: true });
+      await button.focus();
+      await expect(button).toBeFocused();
+      await page.keyboard.press('Enter');
+    }
+  }
+  assert.deepEqual((await page.evaluate(() => window.qaCalls)).filter(call => call[0] === 'window'), Array.from({ length: 3 }, () => [['window', 'minimize'], ['window', 'maximize'], ['window', 'close']]).flat());
+  if (electron) {
+    for (const zoom of [0.8, 1, 1.25, 1.5, 2]) {
+      await electron.evaluate(({ BrowserWindow }, zoom) => BrowserWindow.getAllWindows()[0].webContents.setZoomFactor(zoom), zoom);
+      for (const width of [980, 1280, 1920]) {
+        await page.setViewportSize({ width: Math.floor(width / zoom), height: Math.floor(640 / zoom) });
+        await assertWindowControls(`Electron ${width}px at ${zoom * 100}% zoom`);
+      }
+    }
+    await electron.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.setZoomFactor(1));
+  }
+  await page.evaluate(next => { window.previewStatus = next; window.pushPreviewStatus(next); }, status);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await capture(`${engine}-window-controls-390.png`);
+  console.log(`PASS window controls: ${widths.length} widths, six palettes, sign-in/enrolled/update states, pointer hit tests and keyboard actions`);
+
   // The desktop host enforces 980px minimum width. Record the existing mobile
   // preview limitation without disguising it by changing the shell for this task.
   await page.setViewportSize({ width: 390, height: 844 });
