@@ -9,55 +9,49 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as LoginRouteImport } from './routes/login'
-import { Route as EmployeeRouteImport } from './routes/employee'
-import { Route as DownloadRouteImport } from './routes/download'
-import { Route as AcceptInvitationRouteImport } from './routes/accept-invitation'
-import { Route as AppRouteImport } from './routes/_app'
 import { Route as IndexRouteImport } from './routes/index'
-import { Route as AppIndexRouteImport } from './routes/app.index'
-import { Route as AppTimesheetsRouteImport } from './routes/_app.timesheets'
-import { Route as AppTimeAdjustmentsRouteImport } from './routes/_app.time-adjustments'
-import { Route as AppTeamsRouteImport } from './routes/_app.teams'
-import { Route as AppShiftReschedulesRouteImport } from './routes/_app.shift-reschedules'
-import { Route as AppScreenshotsRouteImport } from './routes/_app.screenshots'
-import { Route as AppReportsRouteImport } from './routes/_app.reports'
-import { Route as AppProjectsRouteImport } from './routes/_app.projects'
-import { Route as AppProfileRouteImport } from './routes/_app.profile'
-import { Route as AppPeopleRouteImport } from './routes/_app.people'
-import { Route as AppPayrollRouteImport } from './routes/_app.payroll'
-import { Route as AppNotificationsRouteImport } from './routes/_app.notifications'
-import { Route as AppMonitoringRouteImport } from './routes/_app.monitoring'
-import { Route as AppMeetingsRouteImport } from './routes/_app.meetings'
-import { Route as AppLiveActivityRouteImport } from './routes/_app.live-activity'
-import { Route as AppHolidayRequestsRouteImport } from './routes/_app.holiday-requests'
-import { Route as AppHistoryRouteImport } from './routes/_app.history'
-import { Route as AppEmployeesRouteImport } from './routes/_app.employees'
-import { Route as AppDevicesRouteImport } from './routes/_app.devices'
-import { Route as AppDashboardRouteImport } from './routes/_app.dashboard'
-import { Route as AppBreaksRouteImport } from './routes/_app.breaks'
-import { Route as AppAuditLogRouteImport } from './routes/_app.audit-log'
-import { Route as AppAttendanceRouteImport } from './routes/_app.attendance'
+import { Route as AppRouteImport } from './routes/_app'
+import { Route as AcceptInvitationRouteImport } from './routes/accept-invitation'
+import { Route as DownloadRouteImport } from './routes/download'
+import { Route as EmployeeRouteImport } from './routes/employee'
+import { Route as LoginRouteImport } from './routes/login'
 import { Route as AppArchivedEmployeesRouteImport } from './routes/_app.archived-employees'
-import { Route as AppTeamsTeamIdRouteImport } from './routes/_app.teams.$teamId'
-import { Route as AppSettingsTrackingRouteImport } from './routes/_app.settings.tracking'
-import { Route as AppProjectsProjectIdRouteImport } from './routes/_app.projects.$projectId'
-import { Route as AppEmployeesEmployeeIdRouteImport } from './routes/_app.employees.$employeeId'
+import { Route as AppAttendanceRouteImport } from './routes/_app.attendance'
+import { Route as AppAuditLogRouteImport } from './routes/_app.audit-log'
+import { Route as AppBreaksRouteImport } from './routes/_app.breaks'
+import { Route as AppDashboardRouteImport } from './routes/_app.dashboard'
+import { Route as AppDevicesRouteImport } from './routes/_app.devices'
+import { Route as AppEmployeesRouteImport } from './routes/_app.employees'
+import { Route as AppHistoryRouteImport } from './routes/_app.history'
+import { Route as AppHolidayRequestsRouteImport } from './routes/_app.holiday-requests'
+import { Route as AppLiveActivityRouteImport } from './routes/_app.live-activity'
+import { Route as AppMeetingsRouteImport } from './routes/_app.meetings'
+import { Route as AppMonitoringRouteImport } from './routes/_app.monitoring'
+import { Route as AppNotificationsRouteImport } from './routes/_app.notifications'
+import { Route as AppPayrollRouteImport } from './routes/_app.payroll'
+import { Route as AppPeopleRouteImport } from './routes/_app.people'
+import { Route as AppProfileRouteImport } from './routes/_app.profile'
+import { Route as AppProjectsRouteImport } from './routes/_app.projects'
+import { Route as AppReportsRouteImport } from './routes/_app.reports'
+import { Route as AppScreenshotsRouteImport } from './routes/_app.screenshots'
+import { Route as AppShiftReschedulesRouteImport } from './routes/_app.shift-reschedules'
+import { Route as AppTeamsRouteImport } from './routes/_app.teams'
+import { Route as AppTimeAdjustmentsRouteImport } from './routes/_app.time-adjustments'
+import { Route as AppTimesheetsRouteImport } from './routes/_app.timesheets'
+import { Route as AppIndexRouteImport } from './routes/app.index'
 import { Route as AppDevicesDeviceIdRouteImport } from './routes/_app.devices.$deviceId'
+import { Route as AppEmployeesEmployeeIdRouteImport } from './routes/_app.employees.$employeeId'
+import { Route as AppProjectsProjectIdRouteImport } from './routes/_app.projects.$projectId'
+import { Route as AppSettingsTrackingRouteImport } from './routes/_app.settings.tracking'
+import { Route as AppTeamsTeamIdRouteImport } from './routes/_app.teams.$teamId'
 
-const LoginRoute = LoginRouteImport.update({
-  id: '/login',
-  path: '/login',
+const IndexRoute = IndexRouteImport.update({
+  id: '/',
+  path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
-const EmployeeRoute = EmployeeRouteImport.update({
-  id: '/employee',
-  path: '/employee',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DownloadRoute = DownloadRouteImport.update({
-  id: '/download',
-  path: '/download',
+const AppRoute = AppRouteImport.update({
+  id: '/_app',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AcceptInvitationRoute = AcceptInvitationRouteImport.update({
@@ -65,123 +59,24 @@ const AcceptInvitationRoute = AcceptInvitationRouteImport.update({
   path: '/accept-invitation',
   getParentRoute: () => rootRouteImport,
 } as any)
-const AppRoute = AppRouteImport.update({
-  id: '/_app',
+const DownloadRoute = DownloadRouteImport.update({
+  id: '/download',
+  path: '/download',
   getParentRoute: () => rootRouteImport,
 } as any)
-const IndexRoute = IndexRouteImport.update({
-  id: '/',
-  path: '/',
+const EmployeeRoute = EmployeeRouteImport.update({
+  id: '/employee',
+  path: '/employee',
   getParentRoute: () => rootRouteImport,
 } as any)
-const AppIndexRoute = AppIndexRouteImport.update({
-  id: '/app/',
-  path: '/app/',
+const LoginRoute = LoginRouteImport.update({
+  id: '/login',
+  path: '/login',
   getParentRoute: () => rootRouteImport,
 } as any)
-const AppTimesheetsRoute = AppTimesheetsRouteImport.update({
-  id: '/timesheets',
-  path: '/timesheets',
-  getParentRoute: () => AppRoute,
-} as any)
-const AppTimeAdjustmentsRoute = AppTimeAdjustmentsRouteImport.update({
-  id: '/time-adjustments',
-  path: '/time-adjustments',
-  getParentRoute: () => AppRoute,
-} as any)
-const AppTeamsRoute = AppTeamsRouteImport.update({
-  id: '/teams',
-  path: '/teams',
-  getParentRoute: () => AppRoute,
-} as any)
-const AppShiftReschedulesRoute = AppShiftReschedulesRouteImport.update({
-  id: '/shift-reschedules',
-  path: '/shift-reschedules',
-  getParentRoute: () => AppRoute,
-} as any)
-const AppScreenshotsRoute = AppScreenshotsRouteImport.update({
-  id: '/screenshots',
-  path: '/screenshots',
-  getParentRoute: () => AppRoute,
-} as any)
-const AppReportsRoute = AppReportsRouteImport.update({
-  id: '/reports',
-  path: '/reports',
-  getParentRoute: () => AppRoute,
-} as any)
-const AppProjectsRoute = AppProjectsRouteImport.update({
-  id: '/projects',
-  path: '/projects',
-  getParentRoute: () => AppRoute,
-} as any)
-const AppProfileRoute = AppProfileRouteImport.update({
-  id: '/profile',
-  path: '/profile',
-  getParentRoute: () => AppRoute,
-} as any)
-const AppPeopleRoute = AppPeopleRouteImport.update({
-  id: '/people',
-  path: '/people',
-  getParentRoute: () => AppRoute,
-} as any)
-const AppPayrollRoute = AppPayrollRouteImport.update({
-  id: '/payroll',
-  path: '/payroll',
-  getParentRoute: () => AppRoute,
-} as any)
-const AppNotificationsRoute = AppNotificationsRouteImport.update({
-  id: '/notifications',
-  path: '/notifications',
-  getParentRoute: () => AppRoute,
-} as any)
-const AppMonitoringRoute = AppMonitoringRouteImport.update({
-  id: '/monitoring',
-  path: '/monitoring',
-  getParentRoute: () => AppRoute,
-} as any)
-const AppMeetingsRoute = AppMeetingsRouteImport.update({
-  id: '/meetings',
-  path: '/meetings',
-  getParentRoute: () => AppRoute,
-} as any)
-const AppLiveActivityRoute = AppLiveActivityRouteImport.update({
-  id: '/live-activity',
-  path: '/live-activity',
-  getParentRoute: () => AppRoute,
-} as any)
-const AppHolidayRequestsRoute = AppHolidayRequestsRouteImport.update({
-  id: '/holiday-requests',
-  path: '/holiday-requests',
-  getParentRoute: () => AppRoute,
-} as any)
-const AppHistoryRoute = AppHistoryRouteImport.update({
-  id: '/history',
-  path: '/history',
-  getParentRoute: () => AppRoute,
-} as any)
-const AppEmployeesRoute = AppEmployeesRouteImport.update({
-  id: '/employees',
-  path: '/employees',
-  getParentRoute: () => AppRoute,
-} as any)
-const AppDevicesRoute = AppDevicesRouteImport.update({
-  id: '/devices',
-  path: '/devices',
-  getParentRoute: () => AppRoute,
-} as any)
-const AppDashboardRoute = AppDashboardRouteImport.update({
-  id: '/dashboard',
-  path: '/dashboard',
-  getParentRoute: () => AppRoute,
-} as any)
-const AppBreaksRoute = AppBreaksRouteImport.update({
-  id: '/breaks',
-  path: '/breaks',
-  getParentRoute: () => AppRoute,
-} as any)
-const AppAuditLogRoute = AppAuditLogRouteImport.update({
-  id: '/audit-log',
-  path: '/audit-log',
+const AppArchivedEmployeesRoute = AppArchivedEmployeesRouteImport.update({
+  id: '/archived-employees',
+  path: '/archived-employees',
   getParentRoute: () => AppRoute,
 } as any)
 const AppAttendanceRoute = AppAttendanceRouteImport.update({
@@ -189,35 +84,140 @@ const AppAttendanceRoute = AppAttendanceRouteImport.update({
   path: '/attendance',
   getParentRoute: () => AppRoute,
 } as any)
-const AppArchivedEmployeesRoute = AppArchivedEmployeesRouteImport.update({
-  id: '/archived-employees',
-  path: '/archived-employees',
+const AppAuditLogRoute = AppAuditLogRouteImport.update({
+  id: '/audit-log',
+  path: '/audit-log',
   getParentRoute: () => AppRoute,
 } as any)
-const AppTeamsTeamIdRoute = AppTeamsTeamIdRouteImport.update({
-  id: '/$teamId',
-  path: '/$teamId',
-  getParentRoute: () => AppTeamsRoute,
-} as any)
-const AppSettingsTrackingRoute = AppSettingsTrackingRouteImport.update({
-  id: '/settings/tracking',
-  path: '/settings/tracking',
+const AppBreaksRoute = AppBreaksRouteImport.update({
+  id: '/breaks',
+  path: '/breaks',
   getParentRoute: () => AppRoute,
 } as any)
-const AppProjectsProjectIdRoute = AppProjectsProjectIdRouteImport.update({
-  id: '/$projectId',
-  path: '/$projectId',
-  getParentRoute: () => AppProjectsRoute,
+const AppDashboardRoute = AppDashboardRouteImport.update({
+  id: '/dashboard',
+  path: '/dashboard',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppDevicesRoute = AppDevicesRouteImport.update({
+  id: '/devices',
+  path: '/devices',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppEmployeesRoute = AppEmployeesRouteImport.update({
+  id: '/employees',
+  path: '/employees',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppHistoryRoute = AppHistoryRouteImport.update({
+  id: '/history',
+  path: '/history',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppHolidayRequestsRoute = AppHolidayRequestsRouteImport.update({
+  id: '/holiday-requests',
+  path: '/holiday-requests',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppLiveActivityRoute = AppLiveActivityRouteImport.update({
+  id: '/live-activity',
+  path: '/live-activity',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppMeetingsRoute = AppMeetingsRouteImport.update({
+  id: '/meetings',
+  path: '/meetings',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppMonitoringRoute = AppMonitoringRouteImport.update({
+  id: '/monitoring',
+  path: '/monitoring',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppNotificationsRoute = AppNotificationsRouteImport.update({
+  id: '/notifications',
+  path: '/notifications',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppPayrollRoute = AppPayrollRouteImport.update({
+  id: '/payroll',
+  path: '/payroll',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppPeopleRoute = AppPeopleRouteImport.update({
+  id: '/people',
+  path: '/people',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppProfileRoute = AppProfileRouteImport.update({
+  id: '/profile',
+  path: '/profile',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppProjectsRoute = AppProjectsRouteImport.update({
+  id: '/projects',
+  path: '/projects',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppReportsRoute = AppReportsRouteImport.update({
+  id: '/reports',
+  path: '/reports',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppScreenshotsRoute = AppScreenshotsRouteImport.update({
+  id: '/screenshots',
+  path: '/screenshots',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppShiftReschedulesRoute = AppShiftReschedulesRouteImport.update({
+  id: '/shift-reschedules',
+  path: '/shift-reschedules',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppTeamsRoute = AppTeamsRouteImport.update({
+  id: '/teams',
+  path: '/teams',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppTimeAdjustmentsRoute = AppTimeAdjustmentsRouteImport.update({
+  id: '/time-adjustments',
+  path: '/time-adjustments',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppTimesheetsRoute = AppTimesheetsRouteImport.update({
+  id: '/timesheets',
+  path: '/timesheets',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppIndexRoute = AppIndexRouteImport.update({
+  id: '/app/',
+  path: '/app/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AppDevicesDeviceIdRoute = AppDevicesDeviceIdRouteImport.update({
+  id: '/$deviceId',
+  path: '/$deviceId',
+  getParentRoute: () => AppDevicesRoute,
 } as any)
 const AppEmployeesEmployeeIdRoute = AppEmployeesEmployeeIdRouteImport.update({
   id: '/$employeeId',
   path: '/$employeeId',
   getParentRoute: () => AppEmployeesRoute,
 } as any)
-const AppDevicesDeviceIdRoute = AppDevicesDeviceIdRouteImport.update({
-  id: '/$deviceId',
-  path: '/$deviceId',
-  getParentRoute: () => AppDevicesRoute,
+const AppProjectsProjectIdRoute = AppProjectsProjectIdRouteImport.update({
+  id: '/$projectId',
+  path: '/$projectId',
+  getParentRoute: () => AppProjectsRoute,
+} as any)
+const AppSettingsTrackingRoute = AppSettingsTrackingRouteImport.update({
+  id: '/settings/tracking',
+  path: '/settings/tracking',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppTeamsTeamIdRoute = AppTeamsTeamIdRouteImport.update({
+  id: '/$teamId',
+  path: '/$teamId',
+  getParentRoute: () => AppTeamsRoute,
 } as any)
 
 export interface FileRoutesByFullPath {
@@ -454,32 +454,11 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/login': {
-      id: '/login'
-      path: '/login'
-      fullPath: '/login'
-      preLoaderRoute: typeof LoginRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/employee': {
-      id: '/employee'
-      path: '/employee'
-      fullPath: '/employee'
-      preLoaderRoute: typeof EmployeeRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/download': {
-      id: '/download'
-      path: '/download'
-      fullPath: '/download'
-      preLoaderRoute: typeof DownloadRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/accept-invitation': {
-      id: '/accept-invitation'
-      path: '/accept-invitation'
-      fullPath: '/accept-invitation'
-      preLoaderRoute: typeof AcceptInvitationRouteImport
+    '/': {
+      id: '/'
+      path: '/'
+      fullPath: '/'
+      preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/_app': {
@@ -489,165 +468,39 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/': {
-      id: '/'
-      path: '/'
-      fullPath: '/'
-      preLoaderRoute: typeof IndexRouteImport
+    '/accept-invitation': {
+      id: '/accept-invitation'
+      path: '/accept-invitation'
+      fullPath: '/accept-invitation'
+      preLoaderRoute: typeof AcceptInvitationRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/app/': {
-      id: '/app/'
-      path: '/app'
-      fullPath: '/app/'
-      preLoaderRoute: typeof AppIndexRouteImport
+    '/download': {
+      id: '/download'
+      path: '/download'
+      fullPath: '/download'
+      preLoaderRoute: typeof DownloadRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/_app/timesheets': {
-      id: '/_app/timesheets'
-      path: '/timesheets'
-      fullPath: '/timesheets'
-      preLoaderRoute: typeof AppTimesheetsRouteImport
-      parentRoute: typeof AppRoute
+    '/employee': {
+      id: '/employee'
+      path: '/employee'
+      fullPath: '/employee'
+      preLoaderRoute: typeof EmployeeRouteImport
+      parentRoute: typeof rootRouteImport
     }
-    '/_app/time-adjustments': {
-      id: '/_app/time-adjustments'
-      path: '/time-adjustments'
-      fullPath: '/time-adjustments'
-      preLoaderRoute: typeof AppTimeAdjustmentsRouteImport
-      parentRoute: typeof AppRoute
+    '/login': {
+      id: '/login'
+      path: '/login'
+      fullPath: '/login'
+      preLoaderRoute: typeof LoginRouteImport
+      parentRoute: typeof rootRouteImport
     }
-    '/_app/teams': {
-      id: '/_app/teams'
-      path: '/teams'
-      fullPath: '/teams'
-      preLoaderRoute: typeof AppTeamsRouteImport
-      parentRoute: typeof AppRoute
-    }
-    '/_app/shift-reschedules': {
-      id: '/_app/shift-reschedules'
-      path: '/shift-reschedules'
-      fullPath: '/shift-reschedules'
-      preLoaderRoute: typeof AppShiftReschedulesRouteImport
-      parentRoute: typeof AppRoute
-    }
-    '/_app/screenshots': {
-      id: '/_app/screenshots'
-      path: '/screenshots'
-      fullPath: '/screenshots'
-      preLoaderRoute: typeof AppScreenshotsRouteImport
-      parentRoute: typeof AppRoute
-    }
-    '/_app/reports': {
-      id: '/_app/reports'
-      path: '/reports'
-      fullPath: '/reports'
-      preLoaderRoute: typeof AppReportsRouteImport
-      parentRoute: typeof AppRoute
-    }
-    '/_app/projects': {
-      id: '/_app/projects'
-      path: '/projects'
-      fullPath: '/projects'
-      preLoaderRoute: typeof AppProjectsRouteImport
-      parentRoute: typeof AppRoute
-    }
-    '/_app/profile': {
-      id: '/_app/profile'
-      path: '/profile'
-      fullPath: '/profile'
-      preLoaderRoute: typeof AppProfileRouteImport
-      parentRoute: typeof AppRoute
-    }
-    '/_app/people': {
-      id: '/_app/people'
-      path: '/people'
-      fullPath: '/people'
-      preLoaderRoute: typeof AppPeopleRouteImport
-      parentRoute: typeof AppRoute
-    }
-    '/_app/payroll': {
-      id: '/_app/payroll'
-      path: '/payroll'
-      fullPath: '/payroll'
-      preLoaderRoute: typeof AppPayrollRouteImport
-      parentRoute: typeof AppRoute
-    }
-    '/_app/notifications': {
-      id: '/_app/notifications'
-      path: '/notifications'
-      fullPath: '/notifications'
-      preLoaderRoute: typeof AppNotificationsRouteImport
-      parentRoute: typeof AppRoute
-    }
-    '/_app/monitoring': {
-      id: '/_app/monitoring'
-      path: '/monitoring'
-      fullPath: '/monitoring'
-      preLoaderRoute: typeof AppMonitoringRouteImport
-      parentRoute: typeof AppRoute
-    }
-    '/_app/meetings': {
-      id: '/_app/meetings'
-      path: '/meetings'
-      fullPath: '/meetings'
-      preLoaderRoute: typeof AppMeetingsRouteImport
-      parentRoute: typeof AppRoute
-    }
-    '/_app/live-activity': {
-      id: '/_app/live-activity'
-      path: '/live-activity'
-      fullPath: '/live-activity'
-      preLoaderRoute: typeof AppLiveActivityRouteImport
-      parentRoute: typeof AppRoute
-    }
-    '/_app/holiday-requests': {
-      id: '/_app/holiday-requests'
-      path: '/holiday-requests'
-      fullPath: '/holiday-requests'
-      preLoaderRoute: typeof AppHolidayRequestsRouteImport
-      parentRoute: typeof AppRoute
-    }
-    '/_app/history': {
-      id: '/_app/history'
-      path: '/history'
-      fullPath: '/history'
-      preLoaderRoute: typeof AppHistoryRouteImport
-      parentRoute: typeof AppRoute
-    }
-    '/_app/employees': {
-      id: '/_app/employees'
-      path: '/employees'
-      fullPath: '/employees'
-      preLoaderRoute: typeof AppEmployeesRouteImport
-      parentRoute: typeof AppRoute
-    }
-    '/_app/devices': {
-      id: '/_app/devices'
-      path: '/devices'
-      fullPath: '/devices'
-      preLoaderRoute: typeof AppDevicesRouteImport
-      parentRoute: typeof AppRoute
-    }
-    '/_app/dashboard': {
-      id: '/_app/dashboard'
-      path: '/dashboard'
-      fullPath: '/dashboard'
-      preLoaderRoute: typeof AppDashboardRouteImport
-      parentRoute: typeof AppRoute
-    }
-    '/_app/breaks': {
-      id: '/_app/breaks'
-      path: '/breaks'
-      fullPath: '/breaks'
-      preLoaderRoute: typeof AppBreaksRouteImport
-      parentRoute: typeof AppRoute
-    }
-    '/_app/audit-log': {
-      id: '/_app/audit-log'
-      path: '/audit-log'
-      fullPath: '/audit-log'
-      preLoaderRoute: typeof AppAuditLogRouteImport
+    '/_app/archived-employees': {
+      id: '/_app/archived-employees'
+      path: '/archived-employees'
+      fullPath: '/archived-employees'
+      preLoaderRoute: typeof AppArchivedEmployeesRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/attendance': {
@@ -657,33 +510,166 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppAttendanceRouteImport
       parentRoute: typeof AppRoute
     }
-    '/_app/archived-employees': {
-      id: '/_app/archived-employees'
-      path: '/archived-employees'
-      fullPath: '/archived-employees'
-      preLoaderRoute: typeof AppArchivedEmployeesRouteImport
+    '/_app/audit-log': {
+      id: '/_app/audit-log'
+      path: '/audit-log'
+      fullPath: '/audit-log'
+      preLoaderRoute: typeof AppAuditLogRouteImport
       parentRoute: typeof AppRoute
     }
-    '/_app/teams/$teamId': {
-      id: '/_app/teams/$teamId'
-      path: '/$teamId'
-      fullPath: '/teams/$teamId'
-      preLoaderRoute: typeof AppTeamsTeamIdRouteImport
-      parentRoute: typeof AppTeamsRoute
-    }
-    '/_app/settings/tracking': {
-      id: '/_app/settings/tracking'
-      path: '/settings/tracking'
-      fullPath: '/settings/tracking'
-      preLoaderRoute: typeof AppSettingsTrackingRouteImport
+    '/_app/breaks': {
+      id: '/_app/breaks'
+      path: '/breaks'
+      fullPath: '/breaks'
+      preLoaderRoute: typeof AppBreaksRouteImport
       parentRoute: typeof AppRoute
     }
-    '/_app/projects/$projectId': {
-      id: '/_app/projects/$projectId'
-      path: '/$projectId'
-      fullPath: '/projects/$projectId'
-      preLoaderRoute: typeof AppProjectsProjectIdRouteImport
-      parentRoute: typeof AppProjectsRoute
+    '/_app/dashboard': {
+      id: '/_app/dashboard'
+      path: '/dashboard'
+      fullPath: '/dashboard'
+      preLoaderRoute: typeof AppDashboardRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/devices': {
+      id: '/_app/devices'
+      path: '/devices'
+      fullPath: '/devices'
+      preLoaderRoute: typeof AppDevicesRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/employees': {
+      id: '/_app/employees'
+      path: '/employees'
+      fullPath: '/employees'
+      preLoaderRoute: typeof AppEmployeesRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/history': {
+      id: '/_app/history'
+      path: '/history'
+      fullPath: '/history'
+      preLoaderRoute: typeof AppHistoryRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/holiday-requests': {
+      id: '/_app/holiday-requests'
+      path: '/holiday-requests'
+      fullPath: '/holiday-requests'
+      preLoaderRoute: typeof AppHolidayRequestsRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/live-activity': {
+      id: '/_app/live-activity'
+      path: '/live-activity'
+      fullPath: '/live-activity'
+      preLoaderRoute: typeof AppLiveActivityRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/meetings': {
+      id: '/_app/meetings'
+      path: '/meetings'
+      fullPath: '/meetings'
+      preLoaderRoute: typeof AppMeetingsRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/monitoring': {
+      id: '/_app/monitoring'
+      path: '/monitoring'
+      fullPath: '/monitoring'
+      preLoaderRoute: typeof AppMonitoringRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/notifications': {
+      id: '/_app/notifications'
+      path: '/notifications'
+      fullPath: '/notifications'
+      preLoaderRoute: typeof AppNotificationsRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/payroll': {
+      id: '/_app/payroll'
+      path: '/payroll'
+      fullPath: '/payroll'
+      preLoaderRoute: typeof AppPayrollRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/people': {
+      id: '/_app/people'
+      path: '/people'
+      fullPath: '/people'
+      preLoaderRoute: typeof AppPeopleRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/profile': {
+      id: '/_app/profile'
+      path: '/profile'
+      fullPath: '/profile'
+      preLoaderRoute: typeof AppProfileRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/projects': {
+      id: '/_app/projects'
+      path: '/projects'
+      fullPath: '/projects'
+      preLoaderRoute: typeof AppProjectsRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/reports': {
+      id: '/_app/reports'
+      path: '/reports'
+      fullPath: '/reports'
+      preLoaderRoute: typeof AppReportsRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/screenshots': {
+      id: '/_app/screenshots'
+      path: '/screenshots'
+      fullPath: '/screenshots'
+      preLoaderRoute: typeof AppScreenshotsRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/shift-reschedules': {
+      id: '/_app/shift-reschedules'
+      path: '/shift-reschedules'
+      fullPath: '/shift-reschedules'
+      preLoaderRoute: typeof AppShiftReschedulesRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/teams': {
+      id: '/_app/teams'
+      path: '/teams'
+      fullPath: '/teams'
+      preLoaderRoute: typeof AppTeamsRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/time-adjustments': {
+      id: '/_app/time-adjustments'
+      path: '/time-adjustments'
+      fullPath: '/time-adjustments'
+      preLoaderRoute: typeof AppTimeAdjustmentsRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/timesheets': {
+      id: '/_app/timesheets'
+      path: '/timesheets'
+      fullPath: '/timesheets'
+      preLoaderRoute: typeof AppTimesheetsRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/app/': {
+      id: '/app/'
+      path: '/app'
+      fullPath: '/app/'
+      preLoaderRoute: typeof AppIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/_app/devices/$deviceId': {
+      id: '/_app/devices/$deviceId'
+      path: '/$deviceId'
+      fullPath: '/devices/$deviceId'
+      preLoaderRoute: typeof AppDevicesDeviceIdRouteImport
+      parentRoute: typeof AppDevicesRoute
     }
     '/_app/employees/$employeeId': {
       id: '/_app/employees/$employeeId'
@@ -692,12 +678,26 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppEmployeesEmployeeIdRouteImport
       parentRoute: typeof AppEmployeesRoute
     }
-    '/_app/devices/$deviceId': {
-      id: '/_app/devices/$deviceId'
-      path: '/$deviceId'
-      fullPath: '/devices/$deviceId'
-      preLoaderRoute: typeof AppDevicesDeviceIdRouteImport
-      parentRoute: typeof AppDevicesRoute
+    '/_app/projects/$projectId': {
+      id: '/_app/projects/$projectId'
+      path: '/$projectId'
+      fullPath: '/projects/$projectId'
+      preLoaderRoute: typeof AppProjectsProjectIdRouteImport
+      parentRoute: typeof AppProjectsRoute
+    }
+    '/_app/settings/tracking': {
+      id: '/_app/settings/tracking'
+      path: '/settings/tracking'
+      fullPath: '/settings/tracking'
+      preLoaderRoute: typeof AppSettingsTrackingRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/teams/$teamId': {
+      id: '/_app/teams/$teamId'
+      path: '/$teamId'
+      fullPath: '/teams/$teamId'
+      preLoaderRoute: typeof AppTeamsTeamIdRouteImport
+      parentRoute: typeof AppTeamsRoute
     }
   }
 }
