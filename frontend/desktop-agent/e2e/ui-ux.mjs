@@ -35,7 +35,7 @@ const status = {
   ],
   requestPolicy: { timezone: 'Africa/Cairo', shift_start: '10:00', shift_end: '18:00', working_days: [0,1,2,3,4,5,6], weekly_early_leave_minutes: 120, weekly_early_leave_remaining_minutes: 90, weekly_early_leave_used_minutes: 30 },
 };
-const built = path.join(desktop, 'dist-khaliduo');
+const built = path.resolve(process.env.UI_QA_RENDERER_DIR || path.join(desktop, 'dist-khaliduo'));
 const server = http.createServer((req, res) => {
   const pathname = decodeURIComponent(new URL(req.url, 'http://localhost').pathname);
   const file = path.resolve(built, pathname === '/' ? 'index.html' : '.' + pathname);
@@ -193,6 +193,32 @@ app.on('window-all-closed',()=>app.quit());`);
   await page.reload();
   await expect(page.getByRole('button', { name: 'Timer style: Split-flap', exact: true })).toBeVisible();
   console.log('PASS UI-004: six faces, both wraps, menu/dot/keyboard synchronization, persistence and unchanged counters');
+
+  // A menu can exist in the DOM and still be hidden behind a timer face.
+  // Exercise the screenshot's Ember/Split-flap combination as well as every
+  // other palette/face, and hit-test every option before clicking it.
+  for (const skin of ['Orbit', 'Ember', 'Forest']) {
+    await page.getByRole('button', { name: /^Change theme/ }).click();
+    await page.getByRole('group', { name: 'Light or dark' }).getByRole('button', { name: 'Dark', exact: true }).click();
+    await page.getByRole('menuitemradio', { name: new RegExp(skin) }).click();
+    await page.keyboard.press('Escape');
+    await page.setViewportSize({ width: 1440, height: 820 });
+    await page.locator('.app-page').evaluate(el => { el.scrollTop = 0; });
+    for (const label of labels) {
+      await page.getByRole('button', { name: /^Timer style:/ }).click();
+      await page.getByRole('menuitemradio', { name: new RegExp(label) }).click();
+      await page.getByRole('button', { name: /^Timer style:/ }).click();
+      const menu = page.getByRole('menu', { name: 'Timer style', exact: true });
+      const occluded = await menu.getByRole('menuitemradio').evaluateAll(options => options.filter(option => {
+        const bounds = option.getBoundingClientRect();
+        return [0.25, 0.5, 0.75].some(fraction => !option.contains(document.elementFromPoint(bounds.left + bounds.width * fraction, bounds.top + bounds.height / 2)));
+      }).map(option => option.textContent));
+      assert.deepEqual(occluded, [], `${skin}/${label}: every menu option must be above the timer`);
+      if (skin === 'Ember' && label === 'Split-flap') await capture(`${engine}-ember-split-flap-menu.png`);
+      await page.keyboard.press('Escape');
+    }
+  }
+  console.log('PASS UI-004 layering: all six faces in Orbit/Ember/Forest; every option receives pointer input');
 
   for (const width of [1440, 980]) {
     await page.setViewportSize({ width, height: 820 });
