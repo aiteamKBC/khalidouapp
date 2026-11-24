@@ -42,6 +42,7 @@ from app.services.activity_timeline import (
 )
 from app.services.audit import record_audit_log
 from app.services.attendance import (
+    attendance_with_new_tracking,
     cached_daily_attendance,
     calculate_daily_attendance,
     calculate_daily_attendance_bulk,
@@ -1091,6 +1092,10 @@ def employee_attendance_range(
             ).all()
         )
 
+    stale_tracking_ids = attendance_with_new_tracking(
+        db,
+        [row for row in existing_by_day.values() if row.work_date < employee_today],
+    )
     rows: list[dict] = []
     cursor = start_date
     while cursor <= ledger_end_date:
@@ -1105,10 +1110,13 @@ def employee_attendance_range(
         if (
             attendance is not None
             and cursor != employee_today
+            and attendance.id not in stale_tracking_ids
             and (not schedule_history_applied or attendance_has_schedule_history)
         ):
             item = serialize_daily_attendance(attendance)
-        elif attendance is not None and schedule_history_applied:
+        elif attendance is not None and (
+            schedule_history_applied or attendance.id in stale_tracking_ids
+        ):
             attendance, _ = calculate_daily_attendance(
                 db,
                 employee=employee,

@@ -23,6 +23,8 @@ from app.models import (
     WorkSession,
 )
 from app.services.attendance import (
+    attendance_with_new_tracking,
+    cached_daily_attendance,
     calculate_daily_attendance,
     current_idle_context,
     serialize_daily_attendance,
@@ -115,6 +117,97 @@ def _session(db, employee, device, started_at, ended_at):
     db.add(row)
     db.flush()
     return row
+
+
+def test_historical_cache_refreshes_when_offline_session_arrives(attendance_context):
+    db, employee, device, _ = attendance_context
+    work_date = date(2026, 7, 21)
+    first = _session(
+        db, employee, device,
+        datetime(2026, 7, 21, 9, tzinfo=UTC),
+        datetime(2026, 7, 21, 12, tzinfo=UTC),
+    )
+    first.updated_at = datetime(2026, 7, 21, 12, tzinfo=UTC)
+    row, _ = calculate_daily_attendance(db, employee=employee, work_date=work_date)
+    row.calculated_at = datetime(2026, 7, 22, tzinfo=UTC)
+    db.commit()
+    assert row.actual_sign_out_at.hour == 12
+    partial_seconds = row.normal_worked_seconds
+
+    later = _session(
+        db, employee, device,
+        datetime(2026, 7, 21, 12, 30, tzinfo=UTC),
+        datetime(2026, 7, 21, 17, tzinfo=UTC),
+    )
+    later.updated_at = datetime(2026, 7, 22, 8, tzinfo=UTC)
+    db.commit()
+    refreshed, timeline = cached_daily_attendance(
+        db, employee=employee, work_date=work_date,
+        now=datetime(2026, 7, 22, 9, tzinfo=UTC),
+    )
+    assert timeline is not None
+    assert refreshed.id == row.id
+    assert refreshed.actual_sign_out_at.hour == 17
+    assert refreshed.normal_worked_seconds > partial_seconds
+    assert first.ended_at.hour == 12
+    assert later.ended_at.hour == 17
+
+    _, unchanged_timeline = cached_daily_attendance(
+        db, employee=employee, work_date=work_date,
+        now=datetime(2026, 7, 22, 9, tzinfo=UTC),
+    )
+    assert unchanged_timeline is None
+
+
+@pytest.mark.parametrize("inside_session", [True, False])
+def test_historical_cache_checks_event_receipt_and_session_bounds(
+    attendance_context, inside_session,
+):
+    db, employee, device, _ = attendance_context
+    work_date = date(2026, 7, 21)
+    session = _session(
+        db, employee, device,
+        datetime(2026, 7, 21, 9, tzinfo=UTC),
+        datetime(2026, 7, 21, 17, tzinfo=UTC),
+    )
+    session.updated_at = datetime(2026, 7, 21, 17, tzinfo=UTC)
+    row, _ = calculate_daily_attendance(db, employee=employee, work_date=work_date)
+    row.calculated_at = datetime(2026, 7, 22, tzinfo=UTC)
+    db.commit()
+    # Historical imported events can arrive without changing a session's
+    # counters. Out-of-bounds corrupt evidence must still be ignored.
+    db.add(ActivityEvent(
+        company_id=employee.company_id, employee_id=employee.id, device_id=device.id,
+        session_id=session.id, event_type="idle_started",
+        event_timestamp=datetime(2026, 7, 21, 15 if inside_session else 18, tzinfo=UTC),
+        created_at=datetime(2026, 7, 22, 8, tzinfo=UTC),
+        idempotency_key=f"late-event-{inside_session}",
+    ))
+    db.commit()
+    assert attendance_with_new_tracking(db, [row]) == ({row.id} if inside_session else set())
+
+
+def test_tracking_freshness_uses_each_snapshots_local_day_and_device(attendance_context):
+    db, employee, device, _ = attendance_context
+    employee.timezone = "Africa/Cairo"
+    rows = [
+        calculate_daily_attendance(db, employee=employee, work_date=date(2026, 7, day))[0]
+        for day in (21, 22)
+    ]
+    for row in rows:
+        row.calculated_at = datetime(2026, 7, 23, tzinfo=UTC)
+    db.commit()
+    # This UTC evening belongs to July 22 in Cairo, not July 21.
+    session = _session(
+        db, employee, device,
+        datetime(2026, 7, 21, 22, tzinfo=UTC),
+        datetime(2026, 7, 21, 23, tzinfo=UTC),
+    )
+    session.updated_at = datetime(2026, 7, 23, 8, tzinfo=UTC)
+    db.commit()
+    assert attendance_with_new_tracking(db, rows) == {rows[1].id}
+    assert attendance_with_new_tracking(db, rows, device_id=device.id) == {rows[1].id}
+    assert attendance_with_new_tracking(db, rows, device_id=uuid4()) == set()
 
 
 def test_multiple_sessions_keep_raw_lateness_and_unapproved_overtime_separate(

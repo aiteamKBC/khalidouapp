@@ -1045,6 +1045,46 @@ def test_attendance_range_does_not_rebuild_empty_historical_days(team_client, mo
     assert historical_weekday["issues"][0]["code"] == "missing_check_in"
 
 
+def test_attendance_range_refreshes_partial_historical_snapshot(team_client):
+    client, data = team_client
+    work_date = date(2026, 7, 21)
+    with data["session_factory"]() as db:
+        employee = db.get(Employee, data["employee_a"].id)
+        device_id = data["session_a"].device_id
+        first = WorkSession(
+            company_id=employee.company_id, employee_id=employee.id, device_id=device_id,
+            started_at=datetime(2026, 7, 21, 10, tzinfo=UTC),
+            ended_at=datetime(2026, 7, 21, 12, tzinfo=UTC),
+            status="ended", active_seconds=7200,
+            updated_at=datetime(2026, 7, 21, 12, tzinfo=UTC),
+        )
+        db.add(first)
+        db.flush()
+        row, _ = attendance_api.calculate_daily_attendance(
+            db, employee=employee, work_date=work_date,
+        )
+        row.calculated_at = datetime(2026, 7, 22, tzinfo=UTC)
+        partial_seconds = row.normal_worked_seconds
+        db.commit()
+        db.add(WorkSession(
+            company_id=employee.company_id, employee_id=employee.id, device_id=device_id,
+            started_at=datetime(2026, 7, 21, 13, tzinfo=UTC),
+            ended_at=datetime(2026, 7, 21, 18, tzinfo=UTC),
+            status="ended", active_seconds=18000,
+            updated_at=datetime(2026, 7, 22, 8, tzinfo=UTC),
+        ))
+        db.commit()
+    response = client.get(
+        f"/api/v1/attendance/employee/{data['employee_a'].id}",
+        params={"start_date": work_date.isoformat(), "end_date": work_date.isoformat()},
+        headers=data["general_headers"],
+    )
+    assert response.status_code == 200
+    row = response.json()["data"]["rows"][0]
+    assert datetime.fromisoformat(row["actual_sign_out_at"]).hour == 18
+    assert row["normal_worked_seconds"] > partial_seconds
+
+
 def test_team_lead_manages_owned_team_schedule_without_salary_access(team_client):
     client, data = team_client
 

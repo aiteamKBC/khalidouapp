@@ -6,10 +6,11 @@ from datetime import UTC, date, datetime, time, timedelta
 from typing import Literal
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
-from sqlalchemy import select
+from sqlalchemy import exists, literal, or_, select, union_all
 from sqlalchemy.orm import Session, load_only
 
 from app.models import (
+    ActivityEvent,
     AttendanceCorrection,
     DailyAttendance,
     Employee,
@@ -454,6 +455,61 @@ def calculate_daily_attendance_bulk(
     return results
 
 
+def attendance_with_new_tracking(
+    db: Session,
+    rows: list[DailyAttendance],
+    *,
+    device_id: UUID | None = None,
+) -> set[UUID]:
+    """Find snapshots overtaken by accepted tracking evidence in one query.
+
+    Yesterday's snapshot may have been calculated during the shift, or before
+    offline data arrived. A calendar-day boundary does not finalize its inputs.
+    EXISTS checks keep range reads bounded without fetching the event ledger.
+    """
+    checks = []
+    for row in rows:
+        try:
+            zone = ZoneInfo(row.timezone or "UTC")
+        except ZoneInfoNotFoundError:
+            zone = ZoneInfo("UTC")
+        start = datetime.combine(row.work_date, time.min, tzinfo=zone).astimezone(UTC)
+        end = datetime.combine(
+            row.work_date + timedelta(days=1), time.min, tzinfo=zone
+        ).astimezone(UTC)
+        calculated_at = _utc(row.calculated_at)
+        sessions = select(WorkSession.id).where(
+            WorkSession.company_id == row.company_id,
+            WorkSession.employee_id == row.employee_id,
+            WorkSession.started_at < end,
+            or_(WorkSession.ended_at.is_(None), WorkSession.ended_at > start),
+            WorkSession.updated_at > calculated_at,
+        )
+        events = (
+            select(ActivityEvent.id)
+            .join(WorkSession, WorkSession.id == ActivityEvent.session_id)
+            .where(
+                ActivityEvent.company_id == row.company_id,
+                ActivityEvent.employee_id == row.employee_id,
+                ActivityEvent.created_at > calculated_at,
+                ActivityEvent.event_timestamp >= start,
+                ActivityEvent.event_timestamp < end,
+                ActivityEvent.event_timestamp >= WorkSession.started_at,
+                or_(
+                    WorkSession.ended_at.is_(None),
+                    ActivityEvent.event_timestamp <= WorkSession.ended_at,
+                ),
+            )
+        )
+        if device_id is not None:
+            sessions = sessions.where(WorkSession.device_id == device_id)
+            events = events.where(ActivityEvent.device_id == device_id)
+        checks.append(select(literal(row.id)).where(or_(exists(sessions), exists(events))))
+    if not checks:
+        return set()
+    return set(db.scalars(union_all(*checks) if len(checks) > 1 else checks[0]).all())
+
+
 def cached_daily_attendance(
     db: Session,
     *,
@@ -468,10 +524,9 @@ def cached_daily_attendance(
 ) -> tuple[DailyAttendance, dict | None]:
     """Return a recent materialized day, recalculating only when needed.
 
-    Closed days are immutable unless another workflow explicitly recalculates
-    them after an approval or schedule change. The current day is refreshed at
-    a short, bounded interval so dashboard polling does not rebuild every
-    employee timeline on every request.
+    Historical snapshots are reused while their tracking inputs are unchanged.
+    The current day is refreshed at a short, bounded interval so dashboard
+    polling does not rebuild every employee timeline on every request.
     """
     at = _utc(now or datetime.now(UTC))
     row = (
@@ -496,8 +551,9 @@ def cached_daily_attendance(
         at,
     )
     if row is not None and work_date < cached_employee_today:
-        return row, None
-    if row is not None and row.calculated_at is not None:
+        if row.id not in attendance_with_new_tracking(db, [row], device_id=device_id):
+            return row, None
+    elif row is not None and row.calculated_at is not None:
         age = max(0, int((at - _utc(row.calculated_at)).total_seconds()))
         if age < max_age_seconds:
             return row, None
