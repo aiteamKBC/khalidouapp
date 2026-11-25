@@ -1,0 +1,98 @@
+name: Deploy production API and dashboard
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: khaliduo-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - name: Deploy the selected main commit
+        shell: bash
+        env:
+          DEPLOY_COMMIT: ${{ github.sha }}
+          SSH_PRIVATE_KEY: ${{ secrets.KHALIDUO_SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.KHALIDUO_SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          test -n "$SSH_PRIVATE_KEY"
+          test -n "$SSH_KNOWN_HOSTS"
+          umask 077
+          deploy_key="$RUNNER_TEMP/khaliduo-deploy-key"
+          known_hosts="$RUNNER_TEMP/khaliduo-known-hosts"
+          trap 'rm -f -- "$deploy_key" "$known_hosts"' EXIT
+          printf '%s\n' "$SSH_PRIVATE_KEY" > "$deploy_key"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > "$known_hosts"
+          ssh -i "$deploy_key" \
+            -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=15 \
+            -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known_hosts" \
+            -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
+            root@72.62.133.105 python3 - "$DEPLOY_COMMIT" <<'PY'
+          import re
+          import subprocess
+          import sys
+
+          root = "/var/www/khalidouapp"
+          expected = sys.argv[1]
+          if not re.fullmatch(r"[0-9a-f]{40}", expected):
+              raise SystemExit("Invalid deployment commit")
+
+          def git(*args):
+              return subprocess.check_output(["git", "-C", root, *args], text=True).strip()
+
+          subprocess.run(["git", "-C", root, "fetch", "origin", "main"], check=True)
+          if git("rev-parse", "origin/main") != expected:
+              raise SystemExit("main advanced; rerun the workflow for the latest commit")
+          # Reuse the existing deployment procedure, including its database
+          # backup, schema check, output staging, health recovery, and audit.
+          source = git("show", f"{expected}:frontend/scripts/deploy-production.ps1")
+          marker = "$appDeployScript = @'\n"
+          start = source.index(marker) + len(marker)
+          end = source.index("\n'@", start)
+          script = source[start:end].replace("__APP_ROOT__", root).replace(
+              "__EXPECTED_COMMIT__", expected
+          )
+          subprocess.run(["bash"], input=script, text=True, check=True)
+          PY
+
+      - name: Verify the public deployment
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          import urllib.error
+          import urllib.request
+
+          api = "https://api.khaliduoapp.kentbusinesscollege.net/api/v1"
+          with urllib.request.urlopen(api + "/health/db", timeout=20) as response:
+              health = json.load(response)["data"]
+          if health["database"] != "reachable" or health["schema"] != "ready":
+              raise SystemExit("Production database/schema is not ready")
+          with urllib.request.urlopen(
+              "https://khaliduoapp.kentbusinesscollege.net/dashboard", timeout=20
+          ) as response:
+              if response.status != 200:
+                  raise SystemExit("Dashboard is unhealthy")
+          # An unauthenticated probe proves the new route is present without
+          # creating a session or changing any employee's attendance.
+          request = urllib.request.Request(
+              api + "/agent/sessions/recover-closed", data=b"{}",
+              headers={"Content-Type": "application/json"}, method="POST",
+          )
+          try:
+              urllib.request.urlopen(request, timeout=20)
+          except urllib.error.HTTPError as error:
+              if error.code != 401:
+                  raise SystemExit(f"Recovery route returned HTTP {error.code}, expected 401")
+          else:
+              raise SystemExit("Recovery route did not require device authentication")
+          print("API/schema ready; dashboard HTTP 200; recovery route requires authentication")
+          PY

@@ -154,6 +154,7 @@ systemctl stop khaliduo-healthcheck.timer khaliduo-healthcheck.service 2>/dev/nu
 
 cd "$APP_ROOT"
 git fetch origin main
+test "$(git rev-parse origin/main)" = "$EXPECTED_COMMIT"
 git merge --ff-only origin/main
 test "$(git rev-parse HEAD)" = "$EXPECTED_COMMIT"
 
