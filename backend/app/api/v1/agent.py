@@ -62,6 +62,7 @@ from app.services.meetings import (
 from app.models import MeetingRecord
 from app.schemas.session import (
     ActivityEventRequest,
+    ClosedSessionRecoveryRequest,
     HeartbeatRequest,
     PauseStartRequest,
     SessionEndRequest,
@@ -89,6 +90,7 @@ from app.services.session_tracking import (
     start_or_get_session,
     update_session_task,
 )
+from app.services.closed_session_recovery import recover_closed_session
 from app.services.screenshots import (
     available_screenshot_preview_path,
     complete_screenshot,
@@ -1063,6 +1065,15 @@ def start_session(
     db: Annotated[Session, Depends(get_db)],
 ):
     return success_response(data=start_or_get_session(db, context.device, payload))
+
+
+@router.post("/sessions/recover-closed")
+def recover_closed_work_session(
+    payload: ClosedSessionRecoveryRequest,
+    context: Annotated[DeviceAuthContext, Depends(get_current_device)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    return success_response(data=recover_closed_session(db, context.device, payload))
 
 
 @router.get("/sessions/current")

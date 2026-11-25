@@ -41,6 +41,16 @@ class ActivityEventRequest(BaseModel):
     payload: dict[str, Any] | None = None
 
 
+class ClosedSessionRecoveryRequest(BaseModel):
+    offline_recovery_id: UUID
+    started_at: datetime
+    ended_at: datetime
+    active_seconds: int = Field(ge=0)
+    idle_seconds: int = Field(ge=0)
+    agent_version: str = Field(min_length=1, max_length=50)
+    events: list[ActivityEventRequest] = Field(default_factory=list, max_length=5000)
+
+
 class SessionEndRequest(BaseModel):
     event_id: UUID | None = None
     ended_at: datetime | None = None

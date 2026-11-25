@@ -1,7 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { csvCell, formatDurationSeconds, formatSessionStatus } from "./format.ts";
+import { csvCell, formatAttendanceStart, formatDurationSeconds, formatSessionStatus } from "./format.ts";
+
+test("a historical recovery never replaces today's attendance start", () => {
+  assert.equal(formatAttendanceStart(
+    "2026-11-25T07:32:27.126Z", "Africa/Cairo", true, "2026-08-04T08:40:22.692Z",
+  ), "9:32 AM");
+  assert.equal(formatAttendanceStart(
+    "2026-11-22T08:26:06.898Z", "Africa/Cairo", true, "2026-08-04T07:35:14.694Z",
+  ), "10:26 AM");
+});
 
 test("short recorded intervals remain visible instead of rounding to zero minutes", () => {
   assert.equal(formatDurationSeconds(0), "0m");

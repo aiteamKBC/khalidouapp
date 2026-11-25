@@ -1557,6 +1557,7 @@ function App() {
     shownIdleAlertId.current = alert.id;
     window.khaliduo?.setIdleAlertAttention(true);
     const isTrackingStart = alert.kind === "tracking_start";
+    const isPauseReminder = alert.kind === "manual_pause_reminder";
     // Shown the moment idle is detected (at the threshold), before any input
     // returns. Distinguishes "Continue working" (mistaken detection, resume now)
     // from "I was working during this idle period" (an explanation request that
@@ -1564,20 +1565,22 @@ function App() {
     const isIdleStarted = alert.kind === "idle_started";
     const canRequestManualTime = isIdleStarted
       ? !alert.outsideScheduledShift
-      : !isTrackingStart &&
+      : !isTrackingStart && !isPauseReminder &&
         !alert.outsideScheduledShift &&
         alert.eligibleLostSeconds > 0;
     let result: SweetAlertResult;
     try {
       result = await Swal.fire({
-        title: isTrackingStart
+        title: isPauseReminder ? "Tracking is still paused" : isTrackingStart
           ? alert.outsideScheduledShift
             ? "Start extra time?"
             : "Start work tracking?"
           : isIdleStarted
             ? "Are you still working?"
             : "Confirm you are back",
-        text: isTrackingStart
+        text: isPauseReminder
+          ? "You are using this computer while Khaliduo is paused. Work time and screenshots are not being recorded. Resume tracking if you are working, or choose Stay paused."
+          : isTrackingStart
           ? alert.outsideScheduledShift
             ? "You are outside your scheduled shift. A device being on or mouse and keyboard movement alone will not start time. Confirm only if you are actually working."
             : "Khaliduo will not count time just because this device is on. Confirm that you are present and actually starting work."
@@ -1589,14 +1592,14 @@ function App() {
         icon: "warning",
         showDenyButton: true,
         showCancelButton: canRequestManualTime,
-        confirmButtonText: isTrackingStart
+        confirmButtonText: isPauseReminder ? "Resume tracking" : isTrackingStart
           ? alert.outsideScheduledShift
             ? "Start extra time"
             : "Start work"
           : isIdleStarted
             ? "Continue working"
             : "Continue tracking",
-        denyButtonText: isTrackingStart ? "Not working" : "Stop tracking",
+        denyButtonText: isPauseReminder ? "Stay paused" : isTrackingStart ? "Not working" : "Stop tracking",
         cancelButtonText: isIdleStarted
           ? "I was working during this idle period"
           : "Request manual time",
@@ -1635,7 +1638,7 @@ function App() {
     try {
       if (result.isConfirmed) {
         const resumeResult = await runThenRelease(() =>
-          isTrackingStart
+          isPauseReminder ? window.khaliduo?.resumeTracking() : isTrackingStart
             ? window.khaliduo?.confirmTrackingStart()
             : window.khaliduo?.resumeAutomaticIdle(),
         );
@@ -1647,7 +1650,7 @@ function App() {
         const pauseResult = await runThenRelease(() =>
           isTrackingStart
             ? window.khaliduo?.declineTrackingStart()
-            : window.khaliduo?.pauseTracking(),
+            : window.khaliduo?.pauseTracking({ source: "idle_alert" }),
         );
         if (pauseResult?.message) setTrackingControlMessage(pauseResult.message);
         const nextStatus = await window.khaliduo?.getAgentStatus();

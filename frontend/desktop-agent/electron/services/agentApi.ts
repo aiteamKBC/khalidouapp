@@ -732,6 +732,35 @@ export async function deleteAgentTaskChecklistItem(
   return response.data.data;
 }
 
+export async function recoverClosedSession(options: {
+  offlineRecoveryId: string;
+  startedAt: string;
+  endedAt: string;
+  activeSeconds: number;
+  idleSeconds: number;
+  agentVersion: string;
+  events: Array<{
+    event_id: string;
+    event_type: string;
+    event_timestamp: string;
+  }>;
+}) {
+  const response = await axios.post<ApiSuccess<{ session_id: string; duplicate: boolean }>>(
+    `${getApiBaseUrl()}/agent/sessions/recover-closed`,
+    {
+      offline_recovery_id: options.offlineRecoveryId,
+      started_at: options.startedAt,
+      ended_at: options.endedAt,
+      active_seconds: options.activeSeconds,
+      idle_seconds: options.idleSeconds,
+      agent_version: options.agentVersion,
+      events: options.events,
+    },
+    { headers: getAuthHeaders() },
+  );
+  return response.data.data;
+}
+
 export async function startSession(options: {
   startedAt?: string;
   offlineRecovery?: boolean;

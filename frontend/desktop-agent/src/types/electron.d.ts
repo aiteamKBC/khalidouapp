@@ -395,7 +395,7 @@ export type IdleAlert = {
   // "idle_started" is shown the moment idle is detected (at the threshold),
   // without waiting for input to return, so a mistaken detection can be
   // corrected immediately. "idle_return" is the legacy on-return review.
-  kind: "idle_return" | "tracking_start" | "idle_started";
+  kind: "idle_return" | "tracking_start" | "idle_started" | "manual_pause_reminder";
   lostSeconds: number;
   eligibleLostSeconds: number;
   outsideScheduledShift: boolean;
@@ -450,6 +450,7 @@ declare global {
       pauseTracking: (options?: {
         requestedMinutes?: number;
         reason?: string;
+        source?: "tracker_control" | "tray" | "window_close" | "idle_alert";
       }) => Promise<{ success: boolean; message?: string }>;
       resumeTracking: () => Promise<{ success: boolean; message?: string }>;
       resumeAutomaticIdle: () => Promise<{

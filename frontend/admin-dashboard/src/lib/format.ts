@@ -53,6 +53,11 @@ export function formatAttendanceStart(
   continuedFromPreviousDay = false,
   continuedSessionStartedAt?: string | null,
 ): string {
+  // This column describes today's attendance. A recovered session's historical
+  // origin must never replace the first activity recorded for this day.
+  if (actualFirstActivityAt) {
+    return formatClock(actualFirstActivityAt, timezone);
+  }
   if (!continuedFromPreviousDay) {
     return formatClock(actualFirstActivityAt, timezone);
   }

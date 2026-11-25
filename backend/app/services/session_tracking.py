@@ -16,6 +16,7 @@ from app.models import (
     OvertimeRecord,
     PauseBalance,
     PauseSession,
+    TrackingSettings,
     WorkScheduleOverride,
     WorkSession,
 )
@@ -107,6 +108,7 @@ def session_chain_started_at(db: Session, session: WorkSession) -> datetime:
         .where(
             ActivityEvent.session_id == session.id,
             ActivityEvent.event_type == "session_started",
+            ActivityEvent.event_timestamp >= session.started_at,
         )
         .order_by(ActivityEvent.event_timestamp, ActivityEvent.created_at)
     )
@@ -800,11 +802,23 @@ def start_or_get_session(
             # End yesterday's session where the employee actually stopped, not at
             # midnight. A machine left switched on overnight otherwise banked
             # every unattended hour as work.
+            midnight = next_local_midnight(current.started_at, current_zone)
             last_worked_at = max(
-                last_worked_activity_at(db, current),
+                last_worked_activity_at(db, current, not_after=midnight),
                 utc(current.started_at),
             )
-            if last_worked_at > utc(current.started_at):
+            offline_minutes = db.scalar(select(TrackingSettings.offline_threshold_minutes).where(
+                TrackingSettings.company_id == device.company_id,
+            )) or settings.default_offline_threshold_minutes
+            # Continuation requires work immediately across midnight. Replaying
+            # one second from months ago is historical recovery, not today's
+            # arrival and not an uninterrupted shift.
+            if (
+                current.status == "active"
+                and utc(current.started_at) < midnight <= now
+                and last_worked_at > utc(current.started_at)
+                and now - last_worked_at <= timedelta(minutes=max(1, offline_minutes))
+            ):
                 continued_session_started_at = session_chain_started_at(db, current)
             close_open_session(
                 db,
@@ -812,7 +826,7 @@ def start_or_get_session(
                 session=current,
                 ended_at=min(
                     now,
-                    next_local_midnight(current.started_at, current_zone),
+                    midnight,
                     last_worked_at,
                 ),
                 reason="New local workday started",

@@ -179,6 +179,7 @@ export function context(overrides: Record<string, unknown> = {}) {
     inputIntegrityObservation: () => undefined,
     scheduleAutomaticTrackingRestart: noop,
     waitForInputAfterIdleSessionClose: noop,
+    syncClosedLocalSessions: async () => {},
     ...overrides,
   });
   return c;

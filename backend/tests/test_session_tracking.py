@@ -1,4 +1,4 @@
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from uuid import UUID, uuid4
 
 import pytest
@@ -11,6 +11,7 @@ from app.core.exceptions import ApiError
 from app.models import (
     ActivityEvent,
     Company,
+    DailyAttendance,
     Device,
     Employee,
     EmployeeWorkProfile,
@@ -21,6 +22,7 @@ from app.models import (
 )
 from app.schemas.session import (
     ActivityEventRequest,
+    ClosedSessionRecoveryRequest,
     HeartbeatRequest,
     PauseStartRequest,
     SessionEndRequest,
@@ -37,6 +39,7 @@ from app.services.session_tracking import (
     sync_session_time_buckets,
 )
 from app.services.activity_timeline import build_workday_timeline, session_observation_bounds
+from app.services.closed_session_recovery import recover_closed_session
 
 
 @pytest.fixture()
@@ -86,6 +89,191 @@ def tracking_context():
         db.close()
         Base.metadata.drop_all(engine)
         engine.dispose()
+
+
+@pytest.mark.parametrize("last_worked, arrival, continued", [
+    ("2026-08-04T08:40:23+00:00", "2026-11-25T07:32:27+00:00", False),
+    ("2026-11-24T15:04:45+00:00", "2026-11-25T07:32:27+00:00", False),
+    ("2026-11-24T21:59:30+00:00", "2026-11-24T22:00:30+00:00", True),
+])
+def test_continuation_requires_fresh_work_across_cairo_midnight(
+    tracking_context, last_worked, arrival, continued,
+):
+    db, device = tracking_context
+    employee = db.get(Employee, device.employee_id)
+    employee.timezone = "Africa/Cairo"
+    last, now = datetime.fromisoformat(last_worked), datetime.fromisoformat(arrival)
+    old = WorkSession(
+        company_id=device.company_id, employee_id=device.employee_id, device_id=device.id,
+        timezone="Africa/Cairo", started_at=last - timedelta(seconds=1),
+        status="active", active_seconds=1, idle_seconds=0,
+    )
+    db.add(old)
+    db.flush()
+    db.add(ActivityEvent(
+        company_id=device.company_id, employee_id=device.employee_id, device_id=device.id,
+        session_id=old.id, event_type="heartbeat", event_timestamp=last,
+        payload={"status": "active", "active_seconds": 1}, idempotency_key=str(uuid4()),
+    ))
+    db.commit()
+    result = start_or_get_session(db, device, SessionStartRequest(started_at=now))
+    assert result["session"]["active_seconds"] == 0
+    assert result["session"]["started_at"] == now.isoformat()
+    event = db.scalar(select(ActivityEvent).where(
+        ActivityEvent.session_id == UUID(result["session"]["id"]),
+        ActivityEvent.event_type == "session_started",
+    ))
+    assert bool(event.payload.get("continued_from_previous_day")) is continued
+    assert old.status == "ended"
+    assert old.ended_at.replace(tzinfo=UTC) == last
+
+
+def recovery_payload(**overrides):
+    start = datetime(2026, 8, 4, 8, 40, tzinfo=UTC)
+    return ClosedSessionRecoveryRequest(**{
+        "offline_recovery_id": uuid4(), "started_at": start,
+        "ended_at": start + timedelta(minutes=10), "active_seconds": 600,
+        "idle_seconds": 0, "agent_version": "2.0.2", **overrides,
+    })
+
+
+def test_closed_archive_import_is_idempotent_and_cannot_take_over_today(tracking_context):
+    db, device = tracking_context
+    today = datetime(2026, 11, 25, 7, 32, tzinfo=UTC)
+    live = start_or_get_session(db, device, SessionStartRequest(started_at=today))
+    live_id = UUID(live["session"]["id"])
+    payload = recovery_payload()
+    recovered = recover_closed_session(db, device, payload)
+    duplicate = recover_closed_session(db, device, payload)
+    assert duplicate == {**recovered, "duplicate": True}
+    assert get_current_session(db, device).id == live_id
+    current = db.get(WorkSession, live_id)
+    assert current.started_at.replace(tzinfo=UTC) == today
+    assert current.active_seconds == 0
+    assert current.ended_at is None
+    archived = db.get(WorkSession, UUID(recovered["session_id"]))
+    assert archived.status == "ended"
+    assert archived.active_seconds == 600
+    assert db.scalar(select(func.count()).select_from(WorkSession)) == 2
+    timeline = build_workday_timeline(
+        db, company_id=device.company_id, employee_id=device.employee_id,
+        timezone_name="UTC", target_date=payload.started_at.date(),
+    )
+    assert timeline["worked_seconds"] == 600
+    assert timeline["continued_from_previous_day"] is False
+    assert timeline["is_running"] is False
+
+
+def test_closed_recovery_preserves_idle_boundaries_and_clamps_counters(tracking_context):
+    db, device = tracking_context
+    payload = recovery_payload(active_seconds=300, idle_seconds=9999)
+    payload.events = [ActivityEventRequest(
+        event_id=uuid4(), event_type="idle_started",
+        event_timestamp=payload.started_at + timedelta(minutes=5),
+        payload={"continued_session_started_at": "2020-01-01T00:00:00Z"},
+    )]
+    result = recover_closed_session(db, device, payload)
+    session = db.get(WorkSession, UUID(result["session_id"]))
+    assert (session.active_seconds, session.idle_seconds) == (300, 300)
+    timeline = build_workday_timeline(
+        db, company_id=device.company_id, employee_id=device.employee_id,
+        timezone_name="UTC", target_date=payload.started_at.date(),
+    )
+    assert timeline["worked_seconds"] == 300
+    assert timeline["idle_seconds"] == 300
+    assert timeline["continued_from_previous_day"] is False
+
+
+def test_archive_import_keeps_later_work_on_the_same_day_classified(tracking_context):
+    db, device = tracking_context
+    payload = recovery_payload()
+    later = WorkSession(
+        company_id=device.company_id, employee_id=device.employee_id, device_id=device.id,
+        timezone="UTC", started_at=payload.ended_at + timedelta(hours=1),
+        ended_at=payload.ended_at + timedelta(hours=2), status="ended",
+        active_seconds=3600, idle_seconds=0,
+    )
+    db.add(later)
+    db.commit()
+    recover_closed_session(db, device, payload)
+    db.refresh(later)
+    assert later.normal_seconds + later.extra_seconds == 3600
+    assert later.active_seconds == 3600
+
+
+def test_idle_only_archive_with_state_evidence_cannot_create_attendance(tracking_context):
+    db, device = tracking_context
+    payload = recovery_payload(active_seconds=0, idle_seconds=600)
+    payload.events = [ActivityEventRequest(
+        event_id=uuid4(), event_type="idle_started", event_timestamp=payload.started_at,
+    )]
+    recover_closed_session(db, device, payload)
+    timeline = build_workday_timeline(
+        db, company_id=device.company_id, employee_id=device.employee_id,
+        timezone_name="UTC", target_date=payload.started_at.date(),
+    )
+    assert timeline["worked_seconds"] == 0
+    attendance = db.scalar(select(DailyAttendance).where(
+        DailyAttendance.employee_id == device.employee_id,
+        DailyAttendance.work_date == payload.started_at.date(),
+    ))
+    assert attendance.actual_first_activity_at is None
+    assert attendance.total_payable_seconds == 0
+
+
+def test_cairo_midnight_archive_remains_entirely_in_its_own_day(tracking_context):
+    db, device = tracking_context
+    db.get(Employee, device.employee_id).timezone = "Africa/Cairo"
+    db.commit()
+    # Cairo is UTC+3 in August. 21:00Z is midnight, an inclusive session end.
+    payload = recovery_payload(
+        started_at=datetime(2026, 8, 4, 20, 0, tzinfo=UTC),
+        ended_at=datetime(2026, 8, 4, 21, 0, tzinfo=UTC), active_seconds=3600,
+    )
+    recover_closed_session(db, device, payload)
+    for day, expected in [(date(2026, 8, 4), 3600), (date(2026, 8, 5), 0)]:
+        timeline = build_workday_timeline(
+            db, company_id=device.company_id, employee_id=device.employee_id,
+            timezone_name="Africa/Cairo", target_date=day,
+        )
+        assert timeline["worked_seconds"] == expected
+
+
+@pytest.mark.parametrize("invalid", ["cross_day", "future", "out_of_bounds", "duplicate", "idle_only", "gap"])
+def test_invalid_closed_recovery_never_writes_attendance(tracking_context, invalid):
+    db, device = tracking_context
+    payload = recovery_payload()
+    if invalid == "cross_day":
+        payload.ended_at += timedelta(days=1)
+    elif invalid == "future":
+        payload.started_at = datetime.now(UTC) + timedelta(days=1)
+        payload.ended_at = payload.started_at + timedelta(minutes=10)
+    elif invalid in {"out_of_bounds", "duplicate"}:
+        event = ActivityEventRequest(
+            event_id=uuid4(), event_type="idle_started",
+            event_timestamp=payload.ended_at + (timedelta(seconds=1) if invalid == "out_of_bounds" else timedelta()),
+        )
+        payload.events = [event] if invalid == "out_of_bounds" else [event, event]
+    elif invalid == "idle_only":
+        payload.active_seconds, payload.idle_seconds = 0, 600
+    else:
+        payload.active_seconds = 1
+    with pytest.raises(ApiError):
+        recover_closed_session(db, device, payload)
+    assert db.scalar(select(func.count()).select_from(WorkSession)) == 0
+
+
+def test_closed_recovery_never_closes_a_partial_legacy_live_session(tracking_context):
+    db, device = tracking_context
+    payload = recovery_payload()
+    legacy = start_or_get_session(db, device, SessionStartRequest(
+        started_at=payload.started_at, offline_recovery=True,
+        offline_recovery_id=payload.offline_recovery_id,
+    ))
+    with pytest.raises(ApiError, match="Legacy recovery is still open"):
+        recover_closed_session(db, device, payload)
+    assert get_current_session(db, device).id == UUID(legacy["session"]["id"])
+    assert get_current_session(db, device).ended_at is None
 
 
 def test_foreground_activity_is_reduced_to_safe_usage_metadata(tracking_context):

@@ -383,6 +383,30 @@ def team_client():
         Base.metadata.drop_all(engine)
 
 
+def test_closed_recovery_route_requires_device_auth_and_preserves_current_session(team_client):
+    client, data = team_client
+    started = datetime(2026, 8, 4, 8, 40, tzinfo=UTC)
+    payload = {
+        "offline_recovery_id": str(uuid4()), "started_at": started.isoformat(),
+        "ended_at": (started + timedelta(seconds=1)).isoformat(),
+        "active_seconds": 1, "idle_seconds": 0, "agent_version": "2.0.2",
+    }
+    endpoint = "/api/v1/agent/sessions/recover-closed"
+    assert client.post(endpoint, json=payload).status_code == 401
+    response = client.post(endpoint, json=payload, headers=data["device_headers"])
+    assert response.status_code == 200, response.text
+    recovered_id = response.json()["data"]["session_id"]
+    duplicate = client.post(endpoint, json=payload, headers=data["device_headers"])
+    assert duplicate.json()["data"] == {"session_id": recovered_id, "duplicate": True}
+    with data["session_factory"]() as db:
+        live = db.get(WorkSession, data["session_a"].id)
+        assert live.ended_at is None
+        recovered = db.get(WorkSession, UUID(recovered_id))
+        assert recovered.employee_id == live.employee_id
+        assert recovered.device_id == live.device_id
+        assert recovered.status == "ended"
+
+
 def test_attendance_detail_enforces_team_and_company_isolation(team_client):
     client, data = team_client
     today = local_today("UTC").isoformat()

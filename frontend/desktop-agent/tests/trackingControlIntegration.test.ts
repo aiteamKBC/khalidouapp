@@ -84,18 +84,18 @@ test("offline promotion checks ownership before clearing the live local session"
   );
 });
 
-test("startup promotes a bounded local session before uploading queues or starting fresh", () => {
+test("startup promotes only current local work and never waits for historical queues", () => {
   const source = sourceBetween(
     "async function startTrackingAutomatically()",
     "function clearPaidPauseTimer()",
   );
   const preflightAt = source.indexOf(
-    "const currentBeforeRecovery = await getCurrentSession()",
+    "await getCurrentSession()",
   );
   const promoteAt = source.indexOf(
     "await promotePendingLocalTrackingSessions({",
   );
-  const queuesAt = source.indexOf("await syncPendingQueues(true)");
+  const queuesAt = source.indexOf("void syncPendingQueues(true)");
   const freshStartAt = source.indexOf("const started = await startSession()");
   assert.ok(preflightAt >= 0, "server-session preflight is missing");
   assert.ok(
@@ -104,12 +104,11 @@ test("startup promotes a bounded local session before uploading queues or starti
   );
   assert.ok(
     queuesAt > promoteAt,
-    "local work must recover before screenshot/event queues upload",
+    "current local work must bind before background queues upload",
   );
-  assert.ok(
-    freshStartAt > queuesAt,
-    "recovered time must exist before a fresh session starts",
-  );
+  assert.ok(freshStartAt > promoteAt);
+  assert.match(source, /activeLocalOnly: true/);
+  assert.doesNotMatch(source, /await syncPendingQueues\(true\)/);
 });
 
 test("the fresh-session prompt requires an explicit renderer action", () => {

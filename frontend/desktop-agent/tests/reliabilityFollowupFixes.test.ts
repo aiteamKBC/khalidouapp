@@ -176,10 +176,11 @@ test("F1: Quit orders End behind its in-flight foreground-activity upload", asyn
   assert.deepEqual(sent, ["foreground_activity pending", "end"]);
 });
 
-test("F2: startup does not start timers when logout lands during the summary await", async () => {
+test("F2: timers start before a slow summary and logout prevents their revival", async () => {
   const summary = deferred();
   let waiting = false;
   let timerStarts = 0;
+  let timersRunning = false;
   const c = base({
     isStartingTrackingAutomatically: false,
     automaticTrackingRetryTimer: null,
@@ -196,7 +197,9 @@ test("F2: startup does not start timers when logout lands during the summary awa
     refreshLeaveRequests: async () => {},
     startTimers: () => {
       timerStarts++;
+      timersRunning = true;
     },
+    clearRuntimeTimers: () => { timersRunning = false; },
     endSession: async () => {
       throw new Error("synthetic connection failure during sign-out");
     },
@@ -208,11 +211,13 @@ test("F2: startup does not start timers when logout lands during the summary awa
     .startTrackingAutomatically();
   for (let i = 0; i < 20 && !waiting; i++) await Promise.resolve();
   assert.ok(waiting, "startup is holding the summary refresh");
+  assert.equal(timersRunning, true, "a slow summary must not postpone tracking");
   await (c as { logoutDevice: () => Promise<unknown> }).logoutDevice();
   summary.resolve();
   await start;
   const runtime = c as { runtimeStatus: Record<string, unknown> };
-  assert.equal(timerStarts, 0, "no timers after logout during the summary await");
+  assert.equal(timerStarts, 1, "summary completion must not restart timers after logout");
+  assert.equal(timersRunning, false, "logout stops the tracking timers");
   assert.equal(runtime.runtimeStatus.enrolled, false);
   assert.notEqual(
     runtime.runtimeStatus.connectionStatus,

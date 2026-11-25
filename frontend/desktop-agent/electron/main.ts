@@ -48,6 +48,7 @@ import {
   sendActivityEvent,
   sendHeartbeat,
   resumePaidPause,
+  recoverClosedSession,
   startSession,
   type ScreenshotMetadata,
   type AgentTask as ApiAgentTask,
@@ -145,6 +146,11 @@ import { sessionGroupForEndpoint } from "./services/pendingEventOrdering.js";
 import { createCoalescedRefresh } from "./services/coalescedRefresh.js";
 import { getUserFacingError } from "./services/userFacingError.js";
 import { trackingTick } from "./services/trackingTick.js";
+import {
+  ManualPauseReminder,
+  manualPauseEventDetails,
+  type ManualPauseSource,
+} from "./services/manualPausePolicy.js";
 import { reconcileTrackingStatusAfterSync } from "./services/trackingStatusReconcile.js";
 import {
   physicalResumeShouldResumeWork,
@@ -386,7 +392,7 @@ type RuntimeTask = {
 
 type IdleLossAlert = {
   id: string;
-  kind: "idle_return" | "tracking_start" | "idle_started";
+  kind: "idle_return" | "tracking_start" | "idle_started" | "manual_pause_reminder";
   lostSeconds: number;
   eligibleLostSeconds: number;
   outsideScheduledShift: boolean;
@@ -466,6 +472,7 @@ let screenshotWindowEndsAt: number | null = null;
 let screenshotCaptureGeneration = 0;
 let syncTimer: ReturnType<typeof setInterval> | null = null;
 let pendingQueueSyncPromise: Promise<void> | null = null;
+const closedSessionRecoveryRetryAt = new Map<string, number>();
 let automaticTrackingRetryTimer: ReturnType<typeof setTimeout> | null = null;
 let trackingWatchdogTimer: ReturnType<typeof setInterval> | null = null;
 let isStartingTrackingAutomatically = false;
@@ -493,6 +500,7 @@ let workedTodayBaseSeconds = 0;
 let activeCounterDate: string | null = null;
 let trackingPausedByUser = false;
 let unpaidPauseActive = false;
+const manualPauseReminder = new ManualPauseReminder();
 let isHandlingWindowClose = false;
 let hasShownMinimizeBalloon = false;
 let updateCheckTimer: ReturnType<typeof setInterval> | null = null;
@@ -1140,7 +1148,7 @@ function rebuildTrayMenu() {
       ? trackingActive
         ? {
             label: "Pause",
-            click: () => void pauseTracking("Paused from system tray"),
+            click: () => void pauseTracking({ source: "tray", reason: "Paused from system tray" }),
           }
         : { label: "Resume Tracking", click: () => void resumeTracking() }
       : { label: "Open to Enroll", click: () => showMainWindow() },
@@ -1553,7 +1561,7 @@ async function replayLocalTrackingEvents(
 }
 
 async function promotePendingLocalTrackingSessions(
-  options: { hasOpenServerSession?: boolean } = {},
+  options: { hasOpenServerSession?: boolean; activeLocalOnly?: boolean } = {},
 ) {
   if (
     !runtimeStatus.enrolled ||
@@ -1574,7 +1582,7 @@ async function promotePendingLocalTrackingSessions(
       pendingSessions: allPendingSessions,
       activeLocalSessionId: localTrackingSessionId,
       hasOpenServerSession:
-        options.hasOpenServerSession ?? Boolean(currentSessionId),
+        options.activeLocalOnly || (options.hasOpenServerSession ?? Boolean(currentSessionId)),
     }),
   );
   const pendingSessions = allPendingSessions.filter((session) =>
@@ -2862,11 +2870,12 @@ function automaticIdleDurationSnapshot(
 function dispatchManualPauseTransition(
   eventType: "manual_pause_started" | "manual_pause_ended",
   status: "idle" | "active",
+  details: Record<string, unknown> = {},
 ) {
   const delivery = sendStateEvent(
     eventType,
     status,
-    {},
+    details,
     {
       waitForDelivery: manualPauseTransitionPromise,
     },
@@ -3681,6 +3690,41 @@ async function retryMeetingSync() {
   return { success: true };
 }
 
+function maybeShowManualPauseReminder() {
+  if (!unpaidPauseActive) {
+    manualPauseReminder.reset();
+    return;
+  }
+  const now = Date.now();
+  const latestInputAt = inputIntegrityMonitor.sensorAvailable(now)
+    ? inputIntegrityMonitor.latestRealInputAt(now)
+    : now - powerMonitor.getSystemIdleTime() * 1_000;
+  if (
+    !manualPauseReminder.shouldRemind({
+      paused: unpaidPauseActive,
+      canPrompt:
+        runtimeStatus.enrolled && hasTrackingSession()
+        && !isQuitting && !isSigningOut && !trackingPausedByUser
+        && !["locked", "sleeping"].includes(runtimeStatus.trackingStatus)
+        && !runtimeStatus.lastIdleAlert,
+      latestInputAt,
+      now,
+    })
+  ) return;
+  runtimeStatus.lastIdleAlert = {
+    id: randomUUID(),
+    kind: "manual_pause_reminder",
+    lostSeconds: 0,
+    eligibleLostSeconds: 0,
+    outsideScheduledShift: !scheduledIdleIsCountable(new Date(now)),
+    endedAt: new Date(now).toISOString(),
+  };
+  setIdleAlertAttention(true);
+  showMainWindow({ forceForeground: true, centerOnPointerDisplay: true });
+  mainWindow?.webContents.send("agent:idle-alert", runtimeStatus.lastIdleAlert);
+  notifyRendererStatus();
+}
+
 function startIdleMonitor() {
   if (idleTimer) {
     return;
@@ -3690,6 +3734,7 @@ function startIdleMonitor() {
     // Auto-end a meeting at its expected end (which already respects the shift
     // end), so a forgotten Meeting Mode never runs indefinitely.
     maybeAutoEndMeeting();
+    maybeShowManualPauseReminder();
     if (waitingForInputAfterIdleSessionClose) {
       if (
         !runtimeStatus.enrolled ||
@@ -4831,7 +4876,46 @@ function showScreenshotCapturedNotification(uploaded: number, queued: number) {
   }
 }
 
+async function syncClosedLocalSessions() {
+  if (!runtimeStatus.enrolled || !runtimeStatus.deviceId) return;
+  const generation = enrollmentGeneration;
+  const closed = getPendingLocalTrackingSessions(runtimeStatus.deviceId)
+    .filter(row => row.endedAt && row.sessionId !== localTrackingSessionId
+      && Date.now() >= (closedSessionRecoveryRetryAt.get(row.sessionId) ?? 0))
+    .slice(0, 2);
+  for (const row of closed) {
+    try {
+      const recovered = await recoverClosedSession({
+        offlineRecoveryId: row.sessionId,
+        startedAt: row.startedAt,
+        endedAt: recoveryEndTimestampIso(row.endedAt!, currentTimezone()),
+        activeSeconds: row.activeSeconds,
+        idleSeconds: row.idleSeconds,
+        agentVersion: runtimeStatus.agentVersion,
+        events: getLocalTrackingEvents(row.sessionId).map(event => ({
+          event_id: event.id,
+          event_type: event.eventType,
+          event_timestamp: event.eventTimestamp,
+        })),
+      });
+      if (generation !== enrollmentGeneration || !runtimeStatus.enrolled) return;
+      markLocalTrackingSessionSynced(row.sessionId, undefined, recovered.session_id);
+      closedSessionRecoveryRetryAt.delete(row.sessionId);
+    } catch (error) {
+      // In particular, an older API's 404 leaves the evidence on disk. Never
+      // fall back to opening an historical session in the live start channel.
+      log.warn("Closed offline work retained for a later background retry", safeErrorForLog(error));
+      if (generation !== enrollmentGeneration || !runtimeStatus.enrolled) return;
+      // Incomplete legacy evidence must not starve the rest of the archive.
+      closedSessionRecoveryRetryAt.set(row.sessionId, Date.now() + 5 * 60_000);
+    }
+  }
+}
+
 async function syncPendingQueuesOnce(forcePendingQueues: boolean) {
+  const generation = enrollmentGeneration;
+  await syncClosedLocalSessions();
+  if (generation !== enrollmentGeneration || !runtimeStatus.enrolled) return;
   const failedGroups = new Set<string>();
   for (const event of getDuePendingEvents(25, { force: forcePendingQueues })) {
     const eventGroup = sessionGroupForEndpoint(event.endpoint);
@@ -5112,24 +5196,16 @@ async function startTrackingAutomatically() {
       // it must continue even when the shift boundary has passed.
       beginLocalTrackingSession(attemptedAt);
     }
-    const currentBeforeRecovery = await getCurrentSession();
+    await getCurrentSession();
     if (startupLostOwnership()) {
       return;
     }
-    const hasOpenServerSession = Boolean(
-      currentBeforeRecovery.session &&
-        !currentBeforeRecovery.session.ended_at &&
-        currentBeforeRecovery.session.status !== "ended" &&
-        currentBeforeRecovery.session.status !== "offline",
-    );
-    // A graceful quit closes a local-only row so time is bounded precisely.
-    // Recover those closed rows before creating the next server session. If a
-    // server session is already live, only its matching open local row may be
-    // promoted; historical rows wait for a safe startup instead of ending it.
+    // Only the local row already recording today's work may join the live
+    // session. Closed history has its own atomic background import channel;
+    // never wait for months of old work before starting today's timer.
     const recoveredLocalSessions = await promotePendingLocalTrackingSessions({
-      hasOpenServerSession,
+      activeLocalOnly: true,
     });
-    await syncPendingQueues(true);
     const rawConfig = await getAgentConfig();
     if (startupLostOwnership()) {
       return;
@@ -5163,15 +5239,16 @@ async function startTrackingAutomatically() {
       freshSessionStartPromptActive = false;
       applyWorkdayState(current.workday);
       applyPauseState(current.pause);
+      startTimers();
+      void syncPendingQueues(true);
       await refreshWorkedTodayTotal();
-      // A sign-out / Stop / Quit during the summary await must not start the
-      // background timers or mark the signed-out runtime online (F2).
+      // Teardown stops the timers if ownership changes during the summary
+      // await. This continuation must not revive the signed-out runtime (F2).
       if (startupLostOwnership()) {
         return;
       }
       runtimeStatus.connectionStatus = "online";
       runtimeStatus.lastSuccessfulSyncAt = new Date().toISOString();
-      startTimers();
       void heartbeatTick();
       void refreshTimeAdjustmentRequests();
       void refreshLeaveRequests();
@@ -5227,15 +5304,16 @@ async function startTrackingAutomatically() {
     waitingForInputAfterIdleSessionClose = false;
     syncRuntimeFromSession(started.session);
     applyWorkdayState(started.workday);
+    startTimers();
+    void syncPendingQueues(true);
     await refreshWorkedTodayTotal();
-    // As in the open-session branch: a sign-out / Stop / Quit during the summary
-    // await must not start timers or mark the signed-out runtime online (F2).
+    // Teardown owns timers after sign-out / Stop / Quit during the summary
+    // await; this continuation must not revive that runtime (F2).
     if (startupLostOwnership()) {
       return;
     }
     runtimeStatus.connectionStatus = "online";
     runtimeStatus.lastSuccessfulSyncAt = new Date().toISOString();
-    startTimers();
     if (unpaidPauseActive) {
       runtimeStatus.trackingPaused = true;
       idleSecondsBeforeCurrentIdle = runtimeStatus.idleSeconds;
@@ -5543,7 +5621,7 @@ async function stopTrackingSession(reason = "Stopped by employee") {
 }
 
 async function pauseTracking(
-  _options?: string | { requestedMinutes?: number; reason?: string },
+  options?: string | { requestedMinutes?: number; reason?: string; source?: ManualPauseSource },
 ) {
   if (!runtimeStatus.enrolled || !hasTrackingSession()) {
     return {
@@ -5557,6 +5635,7 @@ async function pauseTracking(
 
   recalculateWorkedTime();
   unpaidPauseActive = true;
+  manualPauseReminder.reset();
   runtimeStatus.trackingPaused = true;
   invalidateInFlightScreenshotCaptures();
   idleSecondsBeforeCurrentIdle = runtimeStatus.idleSeconds;
@@ -5565,7 +5644,9 @@ async function pauseTracking(
   saveTrackingPreferences();
   // Pause is local-first. The employee must never wait for API latency before
   // the timer stops; sendStateEvent persists failed delivery in the local queue.
-  void dispatchManualPauseTransition("manual_pause_started", "idle");
+  void dispatchManualPauseTransition(
+    "manual_pause_started", "idle", manualPauseEventDetails(options),
+  );
   rebuildTrayMenu();
   return {
     success: true,
@@ -5620,6 +5701,10 @@ async function resumeTracking() {
   if (unpaidPauseActive && hasTrackingSession()) {
     recalculateWorkedTime();
     unpaidPauseActive = false;
+    manualPauseReminder.reset();
+    if (runtimeStatus.lastIdleAlert?.kind === "manual_pause_reminder") {
+      setIdleAlertAttention(false);
+    }
     runtimeStatus.trackingPaused = false;
     idleSecondsBeforeCurrentIdle = runtimeStatus.idleSeconds;
     eligibleIdleSecondsBeforeCurrentIdle = runtimeStatus.eligibleIdleSeconds;
@@ -5627,7 +5712,9 @@ async function resumeTracking() {
     saveTrackingPreferences();
     // Resume counting locally immediately. Delivery remains ordered behind a
     // still-in-flight/queued pause transition and syncs in the background.
-    void dispatchManualPauseTransition("manual_pause_ended", "active");
+    void dispatchManualPauseTransition("manual_pause_ended", "active", {
+      source: "employee_resume",
+    });
     rebuildTrayMenu();
     return {
       success: true,
@@ -5740,7 +5827,7 @@ async function logoutDevice() {
 
 async function syncNow() {
   await refreshTrackingConfig();
-  await promotePendingLocalTrackingSessions();
+  await promotePendingLocalTrackingSessions({ activeLocalOnly: true });
   await syncPendingQueues();
   await syncMeetings();
   await refreshMeetingsList();
@@ -5837,7 +5924,9 @@ async function createMainWindow() {
           if (trackingPausedByUser || runtimeStatus.trackingPaused) {
             await resumeTracking();
           } else {
-            await pauseTracking("Paused while closing the status window");
+            await pauseTracking({
+              source: "window_close", reason: "Paused while closing the status window",
+            });
           }
           mainWindow?.hide();
         } else if (response === 2) {
