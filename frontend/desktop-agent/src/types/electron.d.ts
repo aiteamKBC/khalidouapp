@@ -1,4 +1,7 @@
+import type { TrackingHealth } from "../../electron/services/trackingHealth";
+
 export type AgentStatus = {
+  trackingHealth?: TrackingHealth;
   serverTime?: string;
   enrolled: boolean;
   employeeName: string;

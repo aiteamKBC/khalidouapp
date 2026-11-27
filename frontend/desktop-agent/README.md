@@ -31,6 +31,20 @@ If you are developing a production application, we recommend enabling type-aware
 
 See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
 
+## Recording and sync status
+
+The desktop shell shows recording and upload status separately. A reachable
+server is not labelled up to date while activity, screenshots, or local work
+sessions remain in the durable queue. Local-save confirmation uses the actual
+checkpoint and a successful disk write.
+
+Unexpected recording interruptions have a 30-second startup grace period;
+uploads waiting for five minutes raise a sync warning. Background Windows
+notifications appear once per issue until recovery. Manual pause, idle, lock,
+sleep, another active device, and update installation retain their existing
+tracking rules. A stale desktop response also removes green status indicators.
+The Sync now button retries uploads without starting or stopping the timer.
+
 ## Credential-based first-run enrollment
 
 The desktop app uses the employee's email and password for first-run enrollment.

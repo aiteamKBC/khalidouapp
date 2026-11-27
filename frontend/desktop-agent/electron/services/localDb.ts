@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { orderedDuePendingEvents } from './pendingEventOrdering.js';
+import type { TrackingSyncSnapshot } from './trackingHealth.js';
 
 const { app } = electronMain;
 
@@ -46,6 +47,7 @@ export type LocalTrackingEvent = {
 };
 
 let database: Database | null = null;
+let persistenceHealthy = false;
 
 function dbPath() {
   return path.join(app.getPath('userData'), 'offline.sqlite');
@@ -63,6 +65,9 @@ function persist() {
   if (!database) {
     return;
   }
+  // A row in the in-memory database is not proof of a successful disk save.
+  // Only the final atomic rename restores this read-only health signal.
+  persistenceHealthy = false;
   fs.mkdirSync(app.getPath('userData'), { recursive: true });
   // Write to a temp file, flush it to disk, then atomically rename over the
   // real database. fs.writeFileSync truncates the target first, so an
@@ -81,6 +86,7 @@ function persist() {
     fs.closeSync(handle);
   }
   fs.renameSync(temporary, target);
+  persistenceHealthy = true;
 }
 
 function rows<T>(sql: string, params: SqlValue[] = []): T[] {
@@ -765,6 +771,59 @@ export function countUnsyncedWork(): {
     ),
     openSessions: n(`select count(*) as n from local_sessions where ended_at is null`),
   };
+}
+
+/** Queue and checkpoint evidence for the employee-facing recording status. */
+export function trackingSyncSnapshot(
+  deviceId: string | null,
+  localSessionId: string | null,
+): TrackingSyncSnapshot {
+  const empty: TrackingSyncSnapshot = {
+    databaseReady: false,
+    pendingEvents: 0,
+    pendingScreenshots: 0,
+    pendingSessions: 0,
+    oldestPendingAt: null,
+    localCheckpointAt: null,
+  };
+  if (!database) return empty;
+  try {
+    const events = rows<{ count: number; oldest: string | null }>(
+      `select count(*) as count, min(created_at) as oldest from pending_events
+       where status in ('pending', 'failed')`,
+    )[0];
+    const screenshots = rows<{ count: number; oldest: string | null }>(
+      `select count(*) as count, min(created_at) as oldest from pending_screenshots
+       where status in ('pending', 'failed')`,
+    )[0];
+    // Include CLOSED sessions awaiting recovery, not just the running session.
+    const sessions = rows<{ count: number; oldest: string | null }>(
+      `select count(*) as count, min(started_at) as oldest from local_sessions
+       where device_id = ? and synced_at is null`,
+      [deviceId],
+    )[0];
+    const checkpoint = localSessionId
+      ? rows<{ savedAt: string | null }>(
+          `select last_checkpoint_at as savedAt from local_sessions
+           where session_id = ? and device_id = ? and synced_at is null limit 1`,
+          [localSessionId, deviceId],
+        )[0]?.savedAt ?? null
+      : null;
+    const oldest = [events?.oldest, screenshots?.oldest, sessions?.oldest]
+      .filter((value): value is string => Boolean(value) && Number.isFinite(Date.parse(value!)))
+      .sort((left, right) => Date.parse(left) - Date.parse(right));
+    return {
+      databaseReady: persistenceHealthy,
+      pendingEvents: events?.count ?? 0,
+      pendingScreenshots: screenshots?.count ?? 0,
+      pendingSessions: sessions?.count ?? 0,
+      oldestPendingAt: oldest[0] ?? null,
+      localCheckpointAt: persistenceHealthy ? checkpoint : null,
+    };
+  } catch {
+    // Health reporting must not interrupt tracking if the database is unreadable.
+    return empty;
+  }
 }
 
 export function purgeTerminalPendingEvents() {

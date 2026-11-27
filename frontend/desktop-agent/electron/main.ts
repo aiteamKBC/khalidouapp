@@ -80,6 +80,7 @@ import {
   checkpointLocalTrackingSession,
   closeLocalTrackingSession,
   countUnsyncedWork,
+  trackingSyncSnapshot,
   createLocalTrackingSession,
   enqueuePendingEvent,
   enqueuePendingScreenshot,
@@ -147,6 +148,7 @@ import { sessionGroupForEndpoint } from "./services/pendingEventOrdering.js";
 import { createCoalescedRefresh } from "./services/coalescedRefresh.js";
 import { getUserFacingError } from "./services/userFacingError.js";
 import { trackingTick } from "./services/trackingTick.js";
+import { TrackingHealthMonitor } from "./services/trackingHealth.js";
 import {
   ManualPauseReminder,
   manualPauseEventDetails,
@@ -6056,6 +6058,55 @@ function setUpdateAttention(active: boolean) {
   }
 }
 
+const trackingHealthMonitor = new TrackingHealthMonitor();
+
+function currentTrackingHealth() {
+  return trackingHealthMonitor.sample({
+    identityKey: `${enrollmentGeneration}:${runtimeStatus.deviceId ?? ""}`,
+    enrolled: runtimeStatus.enrolled,
+    trackingExpected: automaticTrackingIsExpected() && !isSigningOut && !isInstallingUpdate,
+    trackingPaused: runtimeStatus.trackingPaused,
+    trackingStatus: runtimeStatus.trackingStatus,
+    trackingMovedToDevice: runtimeStatus.trackingMovedToDevice,
+    hasTrackingSession: hasTrackingSession(),
+    lastTrackingTickAgeMs: lastDurationTickAt === null
+      ? null
+      : Math.max(0, trackingElapsedMs() - lastDurationTickAt),
+    connectionStatus: runtimeStatus.connectionStatus,
+    lastSuccessfulSyncAt: runtimeStatus.lastSuccessfulSyncAt,
+    sync: trackingSyncSnapshot(runtimeStatus.deviceId, localTrackingSessionId),
+  }, trackingNowMs(), trackingElapsedMs());
+}
+
+function startTrackingHealthMonitoring() {
+  // Independent of tracking timers: notices must still work when the timer is
+  // stopped, and while the window is hidden in the tray. One notice per issue
+  // until it recovers; opening the window never changes tracking intent.
+  const timer = setInterval(() => {
+    if (isQuitting || isSigningOut) return;
+    const health = currentTrackingHealth();
+    const alert = trackingHealthMonitor.takeNotification(health);
+    if (!alert) return;
+    try {
+      if (Notification.isSupported()) {
+        const notification = new Notification({
+          title: alert.title,
+          body: alert.body,
+          icon: getAppIconPath(),
+          silent: true,
+        });
+        notification.on("click", () => showMainWindow());
+        notification.show();
+      } else if (process.platform === "win32") {
+        tray?.displayBalloon({ title: alert.title, content: alert.body, iconType: "warning" });
+      }
+    } catch (error) {
+      log.warn("Could not show recording health notification", safeErrorForLog(error));
+    }
+  }, 15_000);
+  app.once("will-quit", () => clearInterval(timer));
+}
+
 function runtimeStatusPayload() {
   const screenshotBlockReason = screenshotCaptureBlockReason();
   const nowMs = trackingNowMs();
@@ -6083,6 +6134,7 @@ function runtimeStatusPayload() {
       : 0;
   return {
     ...runtimeStatus,
+    trackingHealth: currentTrackingHealth(),
     serverTime: trackingClockSynchronized() ? trackingNowDate().toISOString() : undefined,
     currentIdleSeconds,
     scheduledBreak: runningBreak
@@ -7256,6 +7308,7 @@ app.whenReady().then(async () => {
     // restored meeting's expected end has passed, close it at that bound.
     loadMeetings();
     maybeAutoEndMeeting();
+    startTrackingHealthMonitoring();
     // Meeting auto-end and delivery run for the whole app lifetime, even while
     // tracking is stopped (clearRuntimeTimers never touches this timer).
     setInterval(() => void meetingMaintenanceTick(), 15_000);

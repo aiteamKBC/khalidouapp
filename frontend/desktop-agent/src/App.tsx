@@ -23,6 +23,7 @@ import type {
 import { Backdrop } from "./ui/shell/Backdrop";
 import { DiagnosticsPanel } from "./ui/shell/DiagnosticsPanel";
 import { StatusBar } from "./ui/shell/StatusBar";
+import { TrackingHealthPanel } from "./ui/shell/TrackingHealthPanel";
 import { ToastStack } from "./ui/shell/ToastStack";
 import { useToasts } from "./ui/shell/toastQueue";
 import { TopBar, type ShellTone } from "./ui/shell/TopBar";
@@ -53,6 +54,7 @@ import {
   totalRequestableIdleMinutes,
 } from "./idleRequests";
 import { OperationTimeoutError, withOperationTimeout } from "./promiseTimeout";
+import { STATUS_CONFIRMATION_TIMEOUT_MS, unconfirmedTrackingHealth } from "./trackingHealthPresentation";
 import { toValidDate } from "./safeDate";
 import { ShiftRescheduleCard } from "./ShiftRescheduleCard";
 import { breakStatusAt, todaysBreaks } from "./breakSchedule";
@@ -536,7 +538,11 @@ function initials(name: string) {
 }
 
 function App() {
-  const [status, setStatus] = useState<AgentStatus>(fallbackStatus);
+  const [statusSnapshot, setStatus] = useState<AgentStatus>(fallbackStatus);
+  const [runtimeUnresponsive, setRuntimeUnresponsive] = useState(false);
+  const status = runtimeUnresponsive && statusSnapshot.enrolled && statusSnapshot.trackingHealth
+    ? { ...statusSnapshot, trackingHealth: unconfirmedTrackingHealth(statusSnapshot.trackingHealth) }
+    : statusSnapshot;
   const [employeeEmail, setEmployeeEmail] = useState("");
   const [employeePassword, setEmployeePassword] = useState("");
   const [enrollmentError, setEnrollmentError] = useState<string | null>(null);
@@ -588,6 +594,8 @@ function App() {
   const [isOpeningDashboard, setIsOpeningDashboard] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [syncError, setSyncError] = useState<string | null>(null);
   const [recentScreenshots, setRecentScreenshots] = useState<
     RecentScreenshot[] | null
   >(null);
@@ -631,15 +639,28 @@ function App() {
 
   useEffect(() => {
     let mounted = true;
+    let requestInFlight = false;
+    let lastConfirmationAt = performance.now();
 
     async function loadStatus() {
-      const nextStatus = await window.khaliduo?.getAgentStatus();
-      if (mounted && nextStatus) {
-        observeAgentStatus(nextStatus);
-        setStatus(nextStatus);
-        if (nextStatus.lastIdleAlert) {
-          void showIdleAlert(nextStatus.lastIdleAlert);
+      if (!window.khaliduo || requestInFlight) return;
+      requestInFlight = true;
+      try {
+        const nextStatus = await withOperationTimeout(window.khaliduo.getAgentStatus(), 5_000);
+        if (mounted && nextStatus) {
+          lastConfirmationAt = performance.now();
+          setRuntimeUnresponsive(false);
+          observeAgentStatus(nextStatus);
+          setStatus(nextStatus);
+          if (nextStatus.lastIdleAlert) {
+            void showIdleAlert(nextStatus.lastIdleAlert);
+          }
         }
+      } catch {
+        // The watchdog below reports an unresponsive runtime without pretending
+        // that the last successful (possibly green) snapshot is still current.
+      } finally {
+        requestInFlight = false;
       }
     }
 
@@ -656,6 +677,8 @@ function App() {
     const removeStatusChangedListener =
       window.khaliduo.onStatusChanged?.((nextStatus) => {
         if (!mounted) return;
+        lastConfirmationAt = performance.now();
+        setRuntimeUnresponsive(false);
         observeAgentStatus(nextStatus);
         setStatus(nextStatus);
         // The native event and the status snapshot can race when the mouse
@@ -665,7 +688,10 @@ function App() {
           void showIdleAlert(nextStatus.lastIdleAlert);
         }
       }) ?? (() => undefined);
-    const interval = window.setInterval(() => void loadStatus(), 1000);
+    const interval = window.setInterval(() => {
+      setRuntimeUnresponsive(performance.now() - lastConfirmationAt >= STATUS_CONFIRMATION_TIMEOUT_MS);
+      void loadStatus();
+    }, 1000);
 
     return () => {
       mounted = false;
@@ -995,11 +1021,22 @@ function App() {
   });
 
   async function refreshStatusAfterEnrollment() {
-    if (status.enrolled) {
-      await window.khaliduo?.syncNow();
+    if (!status.enrolled || !window.khaliduo || isSyncing) return;
+    const deviceId = status.deviceId;
+    setIsSyncing(true);
+    setSyncError(null);
+    try {
+      const nextStatus = await withOperationTimeout((async () => {
+        await window.khaliduo!.syncNow();
+        return window.khaliduo!.getAgentStatus();
+      })(), TRACKING_CONTROL_TIMEOUT_MS);
+      setStatus((current) => current.enrolled && current.deviceId === deviceId && nextStatus.deviceId === deviceId
+        ? nextStatus : current);
+    } catch {
+      setSyncError("Sync could not finish. Automatic retries continue; check your connection and try again.");
+    } finally {
+      setIsSyncing(false);
     }
-    const nextStatus = await window.khaliduo?.getAgentStatus();
-    if (nextStatus) setStatus(nextStatus);
   }
 
   async function handleCredentialEnrollment(event: FormEvent<HTMLFormElement>) {
@@ -1811,9 +1848,9 @@ function App() {
         onViewChange={setActiveView}
         onOpenDashboard={() => void handleOpenDashboard()}
         isOpeningDashboard={isOpeningDashboard}
-        statusText={statusText}
+        statusText={status.trackingHealth?.tracking.state === "interrupted" ? status.trackingHealth.tracking.label : statusText}
         timerLabel={formatDuration(displayedTimerSeconds)}
-        tone={timerTone}
+        tone={status.trackingHealth?.tracking.state === "interrupted" ? "stopped" : timerTone}
         updateLabel={updateButtonLabel}
         updateTitle={
           status.updateStatus === "ready"
@@ -1844,6 +1881,7 @@ function App() {
         presenceOk={status.connectionStatus === "online" || isTracking}
       />
 
+      <div className="app-notices">
       {(status.updateRequired ||
         ["available", "downloading", "ready", "installing"].includes(
           status.updateStatus,
@@ -1880,6 +1918,15 @@ function App() {
             )}
         </section>
       )}
+      {status.enrolled && status.trackingHealth ? (
+        <TrackingHealthPanel
+          health={status.trackingHealth}
+          syncing={isSyncing}
+          error={syncError}
+          onSync={() => void refreshStatusAfterEnrollment()}
+        />
+      ) : null}
+      </div>
 
       {!status.enrolled ? (
         <EnrollmentView
@@ -2062,22 +2109,17 @@ function App() {
       )}
 
       <StatusBar
-        tone={timerTone}
+        tone={status.trackingHealth?.tracking.state === "interrupted" ? "stopped" : timerTone}
         timerStateLabel={
-          isPaused ? "Timer paused" : isRunning ? "Timer running" : "Idle"
+          status.trackingHealth?.tracking.label ?? (isPaused ? "Timer paused" : isRunning ? "Timer running" : "Idle")
         }
-        syncOk={status.connectionStatus === "online"}
+        syncTone={status.trackingHealth?.sync.tone ?? "muted"}
+        syncDisabled={isSyncing || !status.enrolled}
         syncLabel={
-          status.connectionStatus === "online"
-            ? "Synced"
-            : isTracking
-              ? "Sync pending - time saved locally"
-              : "Offline"
+          status.trackingHealth?.sync.label ?? (status.connectionStatus === "online" ? "Connected" : "Offline")
         }
         syncTitle={
-          status.connectionStatus === "online"
-            ? "API connection is healthy"
-            : "API sync is offline; click to retry. Local tracking and queued screenshots are preserved."
+          status.trackingHealth?.sync.detail ?? "Click to retry syncing with the server."
         }
         onSync={() => void refreshStatusAfterEnrollment()}
         capture={
@@ -2457,9 +2499,11 @@ function HomeView({
     breaksToday,
     localMinutesAt(trackingNowDate().toISOString(), workdayTimezone),
   );
-  // Card face from App's existing flags: a break wins, then the idle counter,
-  // otherwise the same tone the top bar uses.
-  const heroMode: HeroMode = onBreak
+  // An interruption removes the running face; otherwise keep break/idle modes
+  // and the same timer tone as the top bar.
+  const heroMode: HeroMode = status.trackingHealth?.tracking.state === "interrupted"
+    ? "stopped"
+    : onBreak
     ? "break"
     : timerShowsIdle
       ? "idle"
@@ -2486,7 +2530,7 @@ function HomeView({
           <div className="flex min-w-0 flex-col gap-3.5">
             <HeroCard
               mode={heroMode}
-              statusText={statusText}
+              statusText={status.trackingHealth?.tracking.state === "interrupted" ? status.trackingHealth.tracking.label : statusText}
               shiftLabel={paidShiftLabel}
               breaks={breaksToday.map((item) => ({
                 key: `${item.name}-${item.start}`,
@@ -2575,17 +2619,10 @@ function HomeView({
                 onRequestIdleTime={onRequestManualTime}
                 loggedLabel={`${Math.floor(trackedTodaySeconds / 3600)}h logged`}
                 syncFooter={
-                  status.connectionStatus === "online"
-                    ? {
-                        label: status.lastSuccessfulSyncAt
-                          ? `Synced with the server · last sync ${formatTimestamp(status.lastSuccessfulSyncAt)}`
-                          : "Connected to the server",
-                        ok: true,
-                      }
-                    : {
-                        label: "Offline · activity is saved and syncs when the connection returns",
-                        ok: false,
-                      }
+                  {
+                    label: status.trackingHealth?.sync.detail ?? (status.connectionStatus === "online" ? "Connected to the server" : "Waiting for a server connection"),
+                    ok: status.trackingHealth?.sync.state === "synced",
+                  }
                 }
               />
             )}

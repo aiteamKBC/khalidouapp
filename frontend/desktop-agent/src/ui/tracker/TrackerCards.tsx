@@ -193,7 +193,7 @@ export function HeroCard({
       data-mode={mode}
       style={{ "--tp-deg": `${targetProgress * 3.6}deg` } as CSSProperties}
     >
-      <div className="flex w-full items-center justify-between gap-2">
+      <div className="flex w-full flex-wrap items-center justify-between gap-2">
         <span className="tp-shift" title={shiftTitle}>
           <i className="ri-briefcase-4-line text-[12px]" aria-hidden="true" />
           {shiftLabel}

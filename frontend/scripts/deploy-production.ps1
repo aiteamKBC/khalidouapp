@@ -5,6 +5,7 @@ param(
     [string]$ApiBaseUrl = "https://api.khaliduoapp.kentbusinesscollege.net/api/v1",
     [string]$DashboardUrl = "https://khaliduoapp.kentbusinesscollege.net/dashboard",
     [switch]$SkipDesktop,
+    [switch]$DesktopOnly,
     [switch]$ValidateOnly,
     [switch]$ResumeDesktopPublish,
     [string]$QualityReport = '',
@@ -72,6 +73,9 @@ function Get-YamlValue {
 
 if ($ResumeDesktopPublish -and $SkipDesktop) {
     throw "ResumeDesktopPublish cannot be combined with SkipDesktop."
+}
+if ($DesktopOnly -and $SkipDesktop) {
+    throw "DesktopOnly cannot be combined with SkipDesktop."
 }
 
 $commit = (& git -C $repoRoot rev-parse HEAD).Trim()
@@ -302,6 +306,8 @@ $appDeployScript = $appDeployScript.
 
 if ($ResumeDesktopPublish) {
     Write-Host "Resuming the uploaded Desktop publication; application deployment is skipped."
+} elseif ($DesktopOnly) {
+    Write-Host "Publishing the signed Desktop release without restarting the API or dashboard."
 } else {
     Write-Host "Deploying backend, dashboard, health recovery, and production audit..."
     # Keep SSH stdin attached to the console so password authentication cannot

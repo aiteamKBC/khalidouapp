@@ -157,6 +157,16 @@ machine, deploy a tested and pushed `main` commit with:
 .\frontend\scripts\deploy-production.ps1
 ```
 
+For a desktop-only release, run the complete quality gate and pass its report:
+
+```powershell
+.\scripts\test-khaliduo.ps1 -Suite all -Profile quick
+.\frontend\scripts\deploy-production.ps1 -DesktopOnly -QualityReport test-reports/<run>/summary.json
+```
+
+This mode retains the clean pushed-commit, quality-report, signature and artifact
+checks, then publishes the desktop files without redeploying the API/dashboard.
+
 The command intentionally prompts for SSH authentication and never stores the
 password. It verifies the pushed commit and signed desktop artifacts before it
 changes the server, then:

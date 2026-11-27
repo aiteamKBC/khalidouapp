@@ -19,10 +19,15 @@
   cursor: pointer;
 }
 
-/* The shell rows: top bar, update banner (empty row when hidden), page,
-   status bar. Beats the old .k-app[data-theme] grid (specificity 0,3,0). */
+/* The shell rows: top bar, recording/update notices, page and status bar.
+   Beats the old .k-app[data-theme] grid (specificity 0,3,0). */
 .k-app.app-shell[data-theme] {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto auto minmax(0, 1fr) auto;
+  height: 100vh;
+  height: 100dvh;
+  min-height: 0;
 }
 
 .k-app.app-shell[data-theme] > .k-home,
@@ -32,7 +37,7 @@
   grid-row: 3;
 }
 
-.k-app.app-shell[data-theme] > .k-update {
+.k-app.app-shell[data-theme] .k-update {
   grid-row: 2;
   grid-column: 1 / -1;
   display: flex;
@@ -49,17 +54,17 @@
   box-shadow: none;
 }
 
-.k-app.app-shell[data-theme] > .k-update strong {
+.k-app.app-shell[data-theme] .k-update strong {
   flex: none;
   color: var(--k-ink);
 }
 
-.k-app.app-shell[data-theme] > .k-update span {
+.k-app.app-shell[data-theme] .k-update span {
   min-width: 0;
   flex: 1;
 }
 
-.k-app.app-shell[data-theme] > .k-update button {
+.k-app.app-shell[data-theme] .k-update button {
   flex: none;
   margin-left: auto;
   border-radius: 999px;
@@ -443,6 +448,34 @@
 
 .app-status-btn:hover {
   background: color-mix(in srgb, var(--k-plum-2) 9%, transparent);
+}
+
+.app-statusbar-timer,
+.app-statusbar-states,
+.app-status-btn {
+  min-width: 0;
+}
+
+.app-statusbar-timer > span:last-child,
+.app-status-btn > span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.app-statusbar-timer .app-tone-dot,
+.app-status-btn > i {
+  flex: none;
+}
+
+@media (max-width: 1000px) {
+  .app-statusbar-activity { display: none; }
+}
+
+@media (max-width: 760px) {
+  .app-statusbar-capture,
+  .app-statusbar-worked { display: none; }
+  .app-statusbar-states { flex: 1; gap: 10px; }
 }
 
 /* ---------- canvas: colour wash, dot grid, brand marks (Readdy design) ---------- */
