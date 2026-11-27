@@ -1,4 +1,4 @@
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
@@ -1997,3 +1997,40 @@ def test_session_end_cannot_replace_newer_server_totals_with_stale_client_values
 
     assert ended["active_seconds"] == 600
     assert ended["idle_seconds"] == 90
+
+
+def test_adjacent_work_sessions_keep_their_own_overtime_attribution(tracking_context):
+    db, device = tracking_context
+    # Friday is a scheduled day off. A manually restored interval next to
+    # another session must remain attributable to its own immutable ledger row.
+    db.add(EmployeeWorkProfile(
+        company_id=device.company_id, employee_id=device.employee_id,
+        shift_start=time(10), shift_end=time(18), required_daily_minutes=480,
+        working_days=[0, 1, 2, 3, 5, 6], weekly_off_days=[4], break_rules=[],
+    ))
+    start = datetime(2026, 11, 27, 11, tzinfo=UTC)
+    sessions = []
+    for index in range(2):
+        row = WorkSession(
+            company_id=device.company_id, employee_id=device.employee_id,
+            device_id=device.id, timezone="UTC", status="ended",
+            started_at=start + timedelta(hours=index),
+            ended_at=start + timedelta(hours=index + 1),
+            active_seconds=3600, idle_seconds=0,
+        )
+        db.add(row)
+        sessions.append(row)
+    db.commit()
+    timeline = build_workday_timeline(
+        db, company_id=device.company_id, employee_id=device.employee_id,
+        timezone_name="UTC", target_date=start.date(), now=start + timedelta(hours=2),
+    )
+    assert [(item["session_id"], item["duration_seconds"]) for item in timeline["intervals"]] == [
+        (str(row.id), 3600) for row in sessions
+    ]
+    assert timeline["worked_seconds"] == 7200
+    sync_session_time_buckets(db, sessions[-1], at=start + timedelta(hours=2))
+    db.flush()
+    records = {row.work_session_id: row.recorded_extra_seconds for row in db.scalars(select(OvertimeRecord))}
+    assert records == {row.id: 3600 for row in sessions}
+    assert [row.extra_seconds for row in sessions] == [3600, 3600]

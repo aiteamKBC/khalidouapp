@@ -1028,6 +1028,7 @@ def _assemble_workday_timeline(
             and previous["type"] == interval["type"]
             and previous["source"] == interval["source"]
             and previous["ended_at"] == interval["started_at"]
+            and previous.get("session_id") == interval.get("session_id")
             and previous.get("task_id") == interval.get("task_id")
             and previous.get("project_id") == interval.get("project_id")
             and previous["task_name"] == interval["task_name"]
