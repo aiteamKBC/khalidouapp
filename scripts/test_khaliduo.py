@@ -84,6 +84,9 @@ def main():
             if args.install_tools:
                 step("tools", [sys.executable, str(ROOT / "e2e/tools/setup.py")])
                 step("browser", [npx, "playwright", "install", "chromium"], ROOT / "e2e")
+            # Electron 43 downloads its native runtime on first CLI use. The
+            # Playwright executablePath bypasses that CLI, so install explicitly.
+            step("electron-runtime", [node, str(ROOT / "frontend/desktop-agent/node_modules/electron/install.js")])
             step("desktop-build", [npm, "run", "build"], ROOT / "frontend/desktop-agent", {
                 "VITE_API_BASE_URL": "http://127.0.0.1:8011/api/v1",
                 "KHALIDUO_EMPLOYEE_PORTAL_URL": "http://127.0.0.1:5175/employee",

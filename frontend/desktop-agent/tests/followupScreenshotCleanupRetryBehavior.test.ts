@@ -5,10 +5,12 @@
 // real removeOwnedScreenshotFile + cleanupTerminalScreenshotFiles.
 import assert from "node:assert/strict";
 import test from "node:test";
+import path from "node:path";
 import { context, functions } from "./support/mainHarness.ts";
 
 function cleanupContext(overrides: Record<string, unknown> = {}) {
-  const c = context(overrides);
+  // These cases intentionally use Windows paths, including on Linux CI.
+  const c = context({ path: path.win32, ...overrides });
   functions(c, "removeOwnedScreenshotFile", "cleanupTerminalScreenshotFiles");
   return c as Record<string, unknown> & {
     cleanupTerminalScreenshotFiles: () => void;

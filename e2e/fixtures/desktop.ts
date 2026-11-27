@@ -29,6 +29,7 @@ export function desktopLaunchOptions(profile: DesktopProfile, extraEnv: Record<s
   if (!fs.existsSync(MAIN_JS)) {
     throw new Error("Desktop app is not built. Run `npm run build:desktop` in e2e/ first.");
   }
+  if (!fs.existsSync(ELECTRON_EXE)) throw new Error("Electron runtime is missing. Run the unified runner or node frontend/desktop-agent/node_modules/electron/install.js.");
   const env: Record<string, string> = {
     SYSTEMROOT: process.env.SYSTEMROOT ?? "C:\\Windows",
     SystemDrive: process.env.SystemDrive ?? "C:",
