@@ -167,11 +167,23 @@ async function installSeams(app: ElectronApplication, background: boolean) {
       // Keep local test windows behind the developer's real app. The dedicated
       // CI VM sets E2E_FOREGROUND=1 to exercise the actual activation behavior.
       const showInactive = BrowserWindow.prototype.showInactive;
-      BrowserWindow.prototype.show = function () { showInactive.call(this); };
+      BrowserWindow.prototype.show = function () {
+        this.setFocusable(false);
+        this.setIgnoreMouseEvents(true);
+        showInactive.call(this);
+      };
       BrowserWindow.prototype.focus = () => {};
       BrowserWindow.prototype.moveTop = () => {};
       BrowserWindow.prototype.setAlwaysOnTop = () => {};
       electronApp.focus = () => {};
+      // Showing inactive alone does not prevent a renderer click or Windows
+      // activation from delivering the developer's Enter key to an idle alert.
+      // CDP input still drives the tests; physical input stays with the real app.
+      for (const win of BrowserWindow.getAllWindows()) {
+        win.setFocusable(false);
+        win.setIgnoreMouseEvents(true);
+        win.blur();
+      }
     }
     // OS idle clock (used when the native input probe is absent, as in a dev build).
     g.__e2eIdleSince = null;

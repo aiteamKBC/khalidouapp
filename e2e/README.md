@@ -94,7 +94,9 @@ An unavailable native VM is reported as blocked, never as a passed native test.
 
 Local Electron test windows carry a yellow **TEST ONLY / Local database** badge
 and suppress focus/topmost behavior so the employee's installed app can stay in
-front. CI sets `E2E_FOREGROUND=1` for actual window activation behavior. The native
+front. Background test windows also refuse native keyboard/mouse input; Playwright
+uses CDP input, so a developer's Enter key cannot answer a test idle alert.
+CI sets `E2E_FOREGROUND=1` for actual window activation behavior. The native
 input probe is replaced only in unpackaged runs with an explicit isolated test
 profile; packaged apps always retain their real probe.
 Electron's process-local `TZ` explicitly matches the seeded company timezone,
