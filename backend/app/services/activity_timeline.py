@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import UTC, date, datetime, time, timedelta
-from typing import TypedDict
+from typing import Any, TypedDict
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -10,7 +10,9 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.models import ActivityEvent, LeaveRequest, Project, Task, TrackingSettings, WorkSession
+from app.models import (
+    ActivityEvent, AttendanceCorrection, LeaveRequest, Project, Task, TrackingSettings, WorkSession,
+)
 from app.services.agent_versions import (
     DEFAULT_REQUIRED_AGENT_VERSION,
     agent_version_counters_trusted,
@@ -805,7 +807,13 @@ def build_workday_timeline(
         sessions=sessions,
         now=now_utc,
     )
-    return _assemble_workday_timeline(
+    correction = db.scalar(select(AttendanceCorrection).where(
+        AttendanceCorrection.company_id == company_id,
+        AttendanceCorrection.employee_id == employee_id,
+        AttendanceCorrection.work_date == selected_date,
+    ))
+    return _assemble_corrected_workday_timeline(
+        correction=correction,
         sessions=sessions,
         session_context=session_context,
         events_by_session=events_by_session,
@@ -821,6 +829,34 @@ def build_workday_timeline(
         idle_threshold_seconds=company_idle_threshold_seconds(db, company_id),
         trusted_counter_min_version=_required_agent_version(),
     )
+
+
+def _assemble_corrected_workday_timeline(
+    *, correction: AttendanceCorrection | None, **assembly_inputs: Any,
+) -> dict:
+    raw = _assemble_workday_timeline(**assembly_inputs)
+    if correction is None or not (
+        correction.corrected_start_at or correction.corrected_end_at
+    ):
+        return raw
+    # Correct the projection, never the immutable session/event ledger. Bounds
+    # can remove unsupported time but cannot manufacture missing work evidence.
+    corrected = _assemble_workday_timeline(
+        **assembly_inputs,
+        corrected_start_at=correction.corrected_start_at,
+        corrected_end_at=correction.corrected_end_at,
+    )
+    raw_work = [item for item in raw["intervals"] if item["type"] == "worked"]
+    corrected["uncorrected_first_started_at"] = raw["first_started_at"] if raw_work else None
+    corrected["uncorrected_last_activity_at"] = max(
+        (item["ended_at"] or assembly_inputs["now_utc"].isoformat() for item in raw_work),
+        default=None,
+    )
+    # An attendance end correction must not administratively close a live session.
+    corrected["is_running"] = raw["is_running"]
+    if raw["is_running"]:
+        corrected["last_ended_at"] = None
+    return corrected
 
 
 def _assemble_workday_timeline(
@@ -839,6 +875,8 @@ def _assemble_workday_timeline(
     approved_leave: bool,
     idle_threshold_seconds: int,
     trusted_counter_min_version: str = DEFAULT_REQUIRED_AGENT_VERSION,
+    corrected_start_at: datetime | None = None,
+    corrected_end_at: datetime | None = None,
 ) -> dict:
     """Pure timeline assembly shared by the single- and batch-fetch paths.
 
@@ -950,6 +988,14 @@ def _assemble_workday_timeline(
             offline_gaps_by_session.get(item["session_id"], []),
         )
     ]
+    if corrected_start_at is not None or corrected_end_at is not None:
+        lower = _utc(corrected_start_at) if corrected_start_at is not None else day_start
+        upper = _utc(corrected_end_at) if corrected_end_at is not None else day_end
+        connected_intervals = [
+            {**item, "started_at": max(item["started_at"], lower),
+             "ended_at": min(item["ended_at"], upper)}
+            for item in connected_intervals
+        ]
     valid_intervals = [
         item for item in connected_intervals if item["ended_at"] > item["started_at"]
     ]
@@ -1120,6 +1166,15 @@ def build_workday_timelines(
     window_start = min(day_start for day_start, _, _ in bounds.values())
     window_end = max(day_end for _, day_end, _ in bounds.values())
 
+    corrections = {
+        (row.employee_id, row.work_date): row
+        for row in db.scalars(select(AttendanceCorrection).where(
+            AttendanceCorrection.company_id == company_id,
+            AttendanceCorrection.employee_id.in_(employee_ids),
+            AttendanceCorrection.work_date.in_({target_date for _, target_date in bounds}),
+        )).all()
+    }
+
     # Approved leave rows overlapping the window; membership resolved per request.
     leave_rows = db.execute(
         select(
@@ -1261,7 +1316,8 @@ def build_workday_timelines(
             for session_id, observation in observations.items()
             if session_id in day_session_ids
         }
-        results[(employee_id, target_date)] = _assemble_workday_timeline(
+        results[(employee_id, target_date)] = _assemble_corrected_workday_timeline(
+            correction=corrections.get((employee_id, target_date)),
             sessions=day_sessions,
             session_context=session_context,
             events_by_session=day_events_map,

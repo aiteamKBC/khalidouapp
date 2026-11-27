@@ -29,7 +29,7 @@ from app.services.attendance import (
     current_idle_context,
     serialize_daily_attendance,
 )
-from app.services.activity_timeline import build_workday_timeline
+from app.services.activity_timeline import build_workday_timeline, build_workday_timelines
 from app.services.payroll import calculate_employee_metrics
 
 
@@ -1649,6 +1649,103 @@ def test_attendance_correction_preserves_raw_evidence_and_adjusts_payable_time(
     assert row.calculation_sources["raw_first_activity_at"].startswith("2026-07-21T09:30:00")
     assert row.calculation_sources["raw_last_activity_at"].startswith("2026-07-21T16:30:00")
     assert row.calculation_sources["attendance_adjustment_seconds"] == 3600
+
+
+@pytest.mark.parametrize("overtime_status", ["recorded_not_counted", "pending", "approved"])
+def test_corrected_arrival_excludes_false_overnight_work_from_every_projection(
+    attendance_context, overtime_status,
+):
+    from app.services.session_tracking import sync_session_time_buckets, workday_state_payload
+
+    db, employee, device, admin = attendance_context
+    work_date = date(2026, 11, 27)
+    profile = employee.work_profile
+    profile.working_days = [0, 1, 2, 3, 5, 6]
+    profile.weekly_off_days = [4]
+    profile.overtime_enabled = overtime_status != "recorded_not_counted"
+    start = datetime(2026, 11, 27, tzinfo=UTC)
+    end = start + timedelta(hours=14)
+    session = _session(db, employee, device, start, end)
+    overtime = OvertimeRecord(
+        company_id=employee.company_id, employee_id=employee.id,
+        work_session_id=session.id, work_date=work_date,
+        recorded_extra_seconds=14 * 3600,
+        approved_seconds=14 * 3600 if overtime_status == "approved" else 0,
+        overtime_enabled_snapshot=profile.overtime_enabled, status=overtime_status,
+    )
+    db.add_all([overtime, AttendanceCorrection(
+        company_id=employee.company_id, employee_id=employee.id, work_date=work_date,
+        corrected_start_at=start + timedelta(hours=13),
+        payable_seconds_delta=0, reason="Confirmed 13:00 arrival after blind-probe incident",
+        updated_by_admin_user_id=admin.id,
+    )])
+    db.commit()
+
+    row, timeline = calculate_daily_attendance(db, employee=employee, work_date=work_date, now=end)
+    single = build_workday_timeline(
+        db, company_id=employee.company_id, employee_id=employee.id,
+        timezone_name="UTC", target_date=work_date, now=end,
+    )
+    batch = build_workday_timelines(
+        db, company_id=employee.company_id, requests=[(employee.id, "UTC", work_date)], now=end,
+    )[(employee.id, work_date)]
+    assert single == batch
+    assert timeline["worked_seconds"] == single["worked_seconds"] == 3600
+    assert row.recorded_overtime_seconds == 3600
+    assert row.approved_overtime_seconds == (3600 if overtime_status == "approved" else 0)
+    assert row.total_payable_seconds == (3600 if overtime_status == "approved" else 0)
+    assert timeline["first_started_at"].startswith("2026-11-27T13:00:00")
+    assert row.calculation_sources["raw_first_activity_at"].startswith("2026-11-27T00:00:00")
+    assert all(item["seconds"] <= 3600 for item in row.issues if "seconds" in item)
+
+    sync_session_time_buckets(db, session, at=end)
+    assert workday_state_payload(db, session)["extra_seconds"] == 3600
+    db.refresh(session)
+    assert session.started_at.replace(tzinfo=UTC) == start
+    assert session.ended_at.replace(tzinfo=UTC) == end
+    assert session.active_seconds == 14 * 3600
+
+    correction = db.scalar(select(AttendanceCorrection).where(
+        AttendanceCorrection.employee_id == employee.id,
+        AttendanceCorrection.work_date == work_date,
+    ))
+    db.delete(correction)
+    db.flush()
+    restored = build_workday_timeline(
+        db, company_id=employee.company_id, employee_id=employee.id,
+        timezone_name="UTC", target_date=work_date, now=end,
+    )
+    assert restored["worked_seconds"] == 14 * 3600, "the raw ledger remains recoverable"
+
+
+def test_corrected_end_bounds_work_without_closing_a_live_session(attendance_context):
+    db, employee, device, admin = attendance_context
+    start = datetime(2026, 11, 27, 9, tzinfo=UTC)
+    now = start + timedelta(hours=5)
+    session = WorkSession(
+        company_id=employee.company_id, employee_id=employee.id, device_id=device.id,
+        started_at=start, status="active", active_seconds=5 * 3600, idle_seconds=0,
+        updated_at=now,
+    )
+    db.add(session)
+    db.add(AttendanceCorrection(
+        company_id=employee.company_id, employee_id=employee.id, work_date=start.date(),
+        corrected_end_at=start + timedelta(hours=3), payable_seconds_delta=0,
+        reason="Verified work ended at noon; device still running",
+        updated_by_admin_user_id=admin.id,
+    ))
+    db.commit()
+    timeline = build_workday_timeline(
+        db, company_id=employee.company_id, employee_id=employee.id,
+        timezone_name="UTC", target_date=start.date(), now=now,
+    )
+    assert timeline["worked_seconds"] == 3 * 3600
+    assert timeline["is_running"] is True
+    assert timeline["last_ended_at"] is None
+    assert not any(item["is_current"] for item in timeline["intervals"])
+    db.refresh(session)
+    assert session.ended_at is None
+    assert session.active_seconds == 5 * 3600
 
 
 def test_one_day_employee_override_changes_only_selected_date(attendance_context):

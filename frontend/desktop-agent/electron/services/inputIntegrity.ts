@@ -66,7 +66,8 @@ export function effectiveTrustedIdleSeconds(options: {
  * The probe sees injected input too, so a stretch where Windows registered input
  * but the probe saw no event of any kind means its hooks stopped delivering
  * (not that the input was fake). The caller restarts the probe, which
- * re-installs the hooks and re-seeds idle time from the Windows idle clock.
+ * re-installs the hooks without changing the last trusted input time. Windows
+ * reporting recent input is a recovery hint, not evidence of physical presence.
  */
 export function probeMissedInput(options: {
   sensorAvailable: boolean;
@@ -90,8 +91,9 @@ export function hasRealInput(
 export class InputIntegrityMonitor {
   private child: ChildProcessByStdio<null, Readable, Readable> | null = null;
   private stdoutBuffer = "";
-  private lastReportAt = 0;
-  private lastTrustedInputAt = Date.now();
+  private lastReportAt: number | null = null;
+  private lastTrustedInputAt: number | null = null;
+  private hasReceivedReport = false;
   private observationStartedAt = Date.now();
   private realMouseEvents = 0;
   private realKeyboardEvents = 0;
@@ -108,9 +110,13 @@ export class InputIntegrityMonitor {
   start(executablePath: string, initialSystemIdleSeconds: number) {
     if (this.running) return true;
     const now = Date.now();
-    this.lastTrustedInputAt =
+    // Seed from Windows only once. Repeated blind-hook recovery used to reset
+    // inactivity every minute and count an unattended machine as working all
+    // night. Only a physical report or explicit confirmation can advance this
+    // timestamp after monitoring has begun.
+    this.lastTrustedInputAt ??=
       now - Math.max(0, Math.floor(initialSystemIdleSeconds)) * 1_000;
-    this.lastReportAt = 0;
+    this.lastReportAt = null;
     this.stdoutBuffer = "";
     this.lastRealInputAt = 0;
     this.lastProbeEventAt = 0;
@@ -122,7 +128,9 @@ export class InputIntegrityMonitor {
       });
       this.child = child;
       child.stdout.setEncoding("utf8");
-      child.stdout.on("data", (chunk: string) => this.consumeOutput(chunk));
+      child.stdout.on("data", (chunk: string) => {
+        if (this.child === child) this.consumeOutput(chunk);
+      });
       child.stderr.resume();
       child.once("error", () => {
         if (this.child === child) this.child = null;
@@ -145,13 +153,17 @@ export class InputIntegrityMonitor {
   }
 
   sensorAvailable(now = Date.now()) {
-    return this.running && now - this.lastReportAt <= SENSOR_STALE_AFTER_MS;
+    return this.running && this.lastReportAt !== null &&
+      now - this.lastReportAt <= SENSOR_STALE_AFTER_MS;
   }
 
   idleSeconds(systemIdleSeconds: number, now = Date.now()) {
     return effectiveTrustedIdleSeconds({
-      sensorAvailable: this.sensorAvailable(now),
-      lastTrustedInputAt: this.lastTrustedInputAt,
+      // Once the probe has reported, keep its clock through recovery, warmup,
+      // or missing reports. Falling back to an OS clock stuck at zero in those
+      // windows would erase the inactivity we are trying to preserve.
+      sensorAvailable: this.sensorAvailable(now) || this.hasReceivedReport,
+      lastTrustedInputAt: this.lastTrustedInputAt ?? now,
       systemIdleSeconds,
       now,
     });
@@ -174,7 +186,7 @@ export class InputIntegrityMonitor {
    * the next probe report.
    */
   confirmPresence(now = Date.now()) {
-    this.lastTrustedInputAt = Math.max(this.lastTrustedInputAt, now);
+    this.lastTrustedInputAt = Math.max(this.lastTrustedInputAt ?? now, now);
   }
 
   latestRealInputAt(now = Date.now()) {
@@ -216,6 +228,7 @@ export class InputIntegrityMonitor {
       if (!report) continue;
       const now = Date.now();
       this.lastReportAt = now;
+      this.hasReceivedReport = true;
       this.realMouseEvents += report.real_mouse;
       this.realKeyboardEvents += report.real_keyboard;
       this.injectedMouseEvents += report.injected_mouse;

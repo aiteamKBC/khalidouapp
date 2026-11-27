@@ -39,6 +39,10 @@ violates any rule below, even when its screen appears correct.
     duration, and idle cannot exceed duration minus accepted active time.
 12. Client timestamps are work timestamps only. Server receipt time is used for
     device online/offline health.
+13. Approved attendance start/end corrections bound projected work and overtime
+    across the timeline, attendance, and desktop workday totals. They never add
+    activity, rewrite session/event evidence, or close a running session. Raw
+    first/last activity remains available in attendance calculation sources.
 
 ## Enforcement
 

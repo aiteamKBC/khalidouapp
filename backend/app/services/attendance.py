@@ -694,6 +694,9 @@ def calculate_daily_attendance(
 
     raw_first_at = first_activity_at(activity_intervals)
     raw_last_at = max((item[2] for item in worked_intervals), default=None)
+    if "uncorrected_first_started_at" in timeline:
+        raw_first_at = _parsed(timeline["uncorrected_first_started_at"])
+        raw_last_at = _parsed(timeline["uncorrected_last_activity_at"])
     scheduled_first_at = first_activity_at(scheduled_activity_intervals)
     scheduled_last_at = max((item[2] for item in scheduled_worked_intervals), default=None)
     if prefetched is not None:
@@ -1039,13 +1042,33 @@ def calculate_daily_attendance(
                 OvertimeRecord.work_date == work_date,
             )
         ).all()
+    bounded_extra_by_session: dict[str, int] | None = None
+    if correction and (correction.corrected_start_at or correction.corrected_end_at):
+        bounded_extra_by_session = defaultdict(int)
+        for item, interval_start, interval_end in worked_intervals:
+            normal = (
+                overlap_seconds(interval_start, interval_end, start_at, end_at)
+                if start_at and end_at and item.get("work_category") != "extra"
+                else 0
+            )
+            bounded_extra_by_session[str(item.get("session_id"))] += max(
+                0, int((interval_end - interval_start).total_seconds()) - normal,
+            )
+
+    def bounded_recorded_seconds(overtime_row: OvertimeRecord) -> int:
+        recorded = max(0, int(overtime_row.recorded_extra_seconds))
+        if bounded_extra_by_session is not None:
+            return min(recorded, bounded_extra_by_session.get(str(overtime_row.work_session_id), 0))
+        return recorded
+
     recorded_overtime = max(
         pre_shift_extra + post_shift_extra,
-        sum(int(row.recorded_extra_seconds) for row in overtime_rows),
+        sum(bounded_recorded_seconds(row) for row in overtime_rows),
     )
     approved_overtime = min(
         recorded_overtime,
-        sum(int(row.approved_seconds) for row in overtime_rows if row.status == "approved"),
+        sum(min(int(row.approved_seconds), bounded_recorded_seconds(row))
+            for row in overtime_rows if row.status == "approved"),
     )
     unapproved_overtime = max(0, recorded_overtime - approved_overtime)
     pending_overtime = 0
@@ -1053,7 +1076,7 @@ def calculate_daily_attendance(
     recorded_only_overtime = 0
     overtime_rows_total = 0
     for overtime_row in overtime_rows:
-        row_recorded = max(0, int(overtime_row.recorded_extra_seconds))
+        row_recorded = bounded_recorded_seconds(overtime_row)
         row_approved = (
             min(row_recorded, max(0, int(overtime_row.approved_seconds)))
             if overtime_row.status == "approved"

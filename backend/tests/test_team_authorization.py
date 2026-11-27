@@ -2207,6 +2207,7 @@ def test_agent_task_list_includes_employee_time_per_task(team_client):
         profile.shift_start = datetime.min.time().replace(hour=9)
         profile.shift_end = datetime.min.time().replace(hour=17)
         profile.working_days = [work_day.weekday()]
+        profile.weekly_off_days = []
         session = WorkSession(
             company_id=data["employee_a"].company_id,
             employee_id=data["employee_a"].id,
@@ -3706,6 +3707,14 @@ def test_workday_timeline_splits_work_idle_and_locked_periods(team_client):
 
     db: Session = data["session_factory"]()
     try:
+        # This scenario asserts in-shift idle/lock intervals, including when
+        # the suite happens to run on the company's normal Friday off day.
+        employee = db.get(Employee, data["employee_a"].id)
+        profile = get_or_create_work_profile(db, employee)
+        profile.shift_start = datetime.min.time().replace(hour=9)
+        profile.shift_end = datetime.min.time().replace(hour=17)
+        profile.working_days = [work_day.weekday()]
+        profile.weekly_off_days = []
         session = db.get(WorkSession, data["session_a"].id)
         session.started_at = started_at
         session.ended_at = started_at + timedelta(hours=3)
@@ -5192,8 +5201,6 @@ def test_capable_admins_still_read_roster(team_client):
 def test_custom_range_sheet_does_not_mutate_saved_run(team_client):
     # W4: a custom viewing range is a read-only preview; it must reflect the
     # range in the response but never rewrite the shared persisted run.
-    from datetime import date as _date
-
     from app.models import PayrollRun
 
     client, data = team_client
@@ -5247,7 +5254,7 @@ def test_approved_run_freezes_numbers_when_salary_changes(team_client):
     # salary change must not alter its figures until it is moved back to draft.
     from decimal import Decimal
 
-    from app.models import EmployeeWorkProfile, PayrollEntry, PayrollRun
+    from app.models import PayrollEntry
     from app.services.payroll import (
         get_or_create_payroll_settings,
         get_or_create_run,
