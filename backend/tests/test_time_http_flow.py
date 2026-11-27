@@ -38,7 +38,7 @@ def time_http():
     previous = app.dependency_overrides.copy()
     app.dependency_overrides[get_db] = override_db
     with factory() as db:
-        company = Company(name="Isolated time HTTP test", status="active")
+        company = Company(name=f"Isolated time HTTP test {uuid4().hex}", status="active")
         db.add(company)
         db.flush()
         employee = Employee(
