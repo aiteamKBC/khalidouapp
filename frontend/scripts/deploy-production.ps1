@@ -7,7 +7,8 @@ param(
     [switch]$SkipDesktop,
     [switch]$ValidateOnly,
     [switch]$ResumeDesktopPublish,
-    [string]$QualityReport = ''
+    [string]$QualityReport = '',
+    [string]$IdentityFile = ''
 )
 
 $ErrorActionPreference = "Stop"
@@ -19,6 +20,15 @@ $releaseRoot = Join-Path $desktopRoot "release-khaliduo"
 $installer = Join-Path $releaseRoot "KhaliduoSetup.exe"
 $blockmap = Join-Path $releaseRoot "KhaliduoSetup.exe.blockmap"
 $latestYml = Join-Path $releaseRoot "latest.yml"
+$sshArguments = @('-o', 'BatchMode=yes', '-o', 'ConnectTimeout=15')
+if (-not $IdentityFile) {
+    $projectIdentity = Join-Path $env:USERPROFILE '.ssh/khaliduo_deploy'
+    if (Test-Path -LiteralPath $projectIdentity -PathType Leaf) { $IdentityFile = $projectIdentity }
+}
+if ($IdentityFile) {
+    if (-not (Test-Path -LiteralPath $IdentityFile -PathType Leaf)) { throw 'The selected SSH identity file does not exist.' }
+    $sshArguments += @('-i', $IdentityFile, '-o', 'IdentitiesOnly=yes')
+}
 
 if (-not $ValidateOnly) {
     if (-not $QualityReport) {
@@ -301,7 +311,7 @@ if ($ResumeDesktopPublish) {
     $appDeployPayload = [Convert]::ToBase64String(
         [Text.Encoding]::UTF8.GetBytes($appDeployScript.Replace("`r`n", "`n").Replace("`r", "`n"))
     )
-    & ssh -o ServerAliveInterval=15 -o ServerAliveCountMax=3 $Server (
+    & ssh @sshArguments -o ServerAliveInterval=15 -o ServerAliveCountMax=3 $Server (
         "printf '%s' '$appDeployPayload' | base64 -d | bash"
     )
     if ($LASTEXITCODE -ne 0) {
@@ -315,10 +325,10 @@ if (-not $SkipDesktop) {
         Write-Host "Using the existing uploaded Desktop staging directory: $remoteStage"
     } else {
         Invoke-CheckedNative -FailureMessage "Unable to create the desktop staging directory" -Command {
-            & ssh $Server "mkdir -p -- '$remoteStage' && chmod 700 -- '$remoteStage'"
+            & ssh @sshArguments $Server "mkdir -p -- '$remoteStage' && chmod 700 -- '$remoteStage'"
         }
         Invoke-CheckedNative -FailureMessage "Desktop upload failed" -Command {
-            & scp -- $installer $blockmap $latestYml "${Server}:$remoteStage/"
+            & scp @sshArguments -- $installer $blockmap $latestYml "${Server}:$remoteStage/"
         }
     }
 
@@ -392,7 +402,7 @@ echo "DESKTOP_BACKUP=$BACKUP"
     $desktopPublishPayload = [Convert]::ToBase64String(
         [Text.Encoding]::UTF8.GetBytes($desktopPublishScript.Replace("`r`n", "`n").Replace("`r", "`n"))
     )
-    & ssh -o ServerAliveInterval=15 -o ServerAliveCountMax=3 $Server (
+    & ssh @sshArguments -o ServerAliveInterval=15 -o ServerAliveCountMax=3 $Server (
         "printf '%s' '$desktopPublishPayload' | base64 -d | bash"
     )
     if ($LASTEXITCODE -ne 0) {

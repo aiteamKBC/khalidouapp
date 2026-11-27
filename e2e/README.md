@@ -27,7 +27,8 @@ From the repository root:
 ./scripts/test-khaliduo.ps1 -Suite load
 ```
 
-The cross-platform equivalent is `backend/.venv/bin/python scripts/test_khaliduo.py`.
+On Linux the unit suite is `backend/.venv/bin/python scripts/test_khaliduo.py --suite unit`.
+The Electron integration/native workflows target Windows.
 Quick runs include desktop smoke/edge cases and network chaos; nightly integration
 also includes the web permission/workflow tests and the complete employee workday.
 Each run writes `test-reports/<run>/summary.json`, per-step logs, pytest JUnit and
@@ -40,6 +41,8 @@ The regular quality workflow runs on pull requests/pushes; a larger profile runs
 nightly. Production deployment depends on those jobs. The local deployment script
 requires `-QualityReport test-reports/<run>/summary.json` from a passing `-Suite all`
 run matching the current source, so a stale report cannot authorize changed code.
+Local deployment accepts `-IdentityFile` and otherwise uses the project-specific
+`~/.ssh/khaliduo_deploy` key when present; it never prompts for or stores a password.
 
 ## Generated sequences and replay
 
@@ -122,7 +125,7 @@ Note that reusing a stack keeps earlier data. The journey expects a fresh databa
 
 | Piece | Where | Notes |
 |---|---|---|
-| Postgres 16 | Docker `khaliduo-e2e-postgres`, `127.0.0.1:55432` | tmpfs, so each run starts empty |
+| Postgres 16 | Portable Windows cluster or Docker `khaliduo-e2e-postgres`, `127.0.0.1:55432` | fresh disposable data per run |
 | Backend | `127.0.0.1:8010` | started with cwd `e2e/.runtime`, so `backend/.env` (production) is never read |
 | Desktop proxy | `127.0.0.1:8011` | sits between the app and the backend; tests switch it offline or make it return a fixed status |
 | Toxiproxy | API `127.0.0.1:8477`, proxy `127.0.0.1:8012` | loopback-only network fault injection |
