@@ -1291,6 +1291,9 @@ def calculate_daily_attendance(
             "break_bank_seconds": int(schedule.get("break_bank_seconds") or 0),
             "profile_history_applied": bool(schedule.get("profile_history_applied", False)),
             "attendance_correction_id": str(correction.id) if correction else None,
+            "attendance_bounds_corrected": bool(
+                correction and (correction.corrected_start_at or correction.corrected_end_at)
+            ),
             "attendance_adjustment_seconds": attendance_adjustment_seconds,
             "attendance_correction_reason": correction.reason if correction else None,
             "raw_idle_seconds": raw_eligible_idle,

@@ -145,6 +145,8 @@ def reconcile_today_summary_with_timeline(summary: dict, timeline: dict) -> dict
         int(reconciled.get("tracked_active_seconds", 0)),
         int(timeline.get("worked_seconds", 0)),
     )
+    if "uncorrected_first_started_at" in timeline:
+        tracked_active_seconds = max(0, int(timeline.get("worked_seconds", 0)))
     approved_manual_seconds = int(reconciled.get("manual_approved_seconds", 0))
     reconciled["tracked_active_seconds"] = tracked_active_seconds
     reconciled["active_seconds"] = tracked_active_seconds + approved_manual_seconds

@@ -566,7 +566,13 @@ def timesheet_rows(
                 if timeline is not None
                 else int(calculation_sources.get("worked_seconds", 0))
             )
-            if worked_evidence_seconds > 0:
+            if calculation_sources.get("attendance_bounds_corrected", False):
+                # A confirmed correction may reduce work all the way to zero.
+                # Raw cumulative counters must not restore the excluded hours.
+                item["active_seconds"] = max(
+                    0, worked_evidence_seconds - int(item["deducted_seconds"]),
+                )
+            elif worked_evidence_seconds > 0:
                 item["active_seconds"] = max(
                     int(item["active_seconds"]),
                     max(

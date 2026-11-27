@@ -1652,19 +1652,23 @@ def test_attendance_correction_preserves_raw_evidence_and_adjusts_payable_time(
 
 
 @pytest.mark.parametrize("overtime_status", ["recorded_not_counted", "pending", "approved"])
+@pytest.mark.parametrize("corrected_hour", [13, 14])
 def test_corrected_arrival_excludes_false_overnight_work_from_every_projection(
-    attendance_context, overtime_status,
+    attendance_context, overtime_status, corrected_hour,
 ):
+    from app.api.v1.employee_portal import reconcile_today_summary_with_timeline
+    from app.api.v1.timesheets import timesheet_rows
     from app.services.session_tracking import sync_session_time_buckets, workday_state_payload
 
     db, employee, device, admin = attendance_context
-    work_date = date(2026, 11, 27)
+    work_date = date(2026, 7, 24)
     profile = employee.work_profile
     profile.working_days = [0, 1, 2, 3, 5, 6]
     profile.weekly_off_days = [4]
     profile.overtime_enabled = overtime_status != "recorded_not_counted"
-    start = datetime(2026, 11, 27, tzinfo=UTC)
+    start = datetime(2026, 7, 24, tzinfo=UTC)
     end = start + timedelta(hours=14)
+    expected_worked = (14 - corrected_hour) * 3600
     session = _session(db, employee, device, start, end)
     overtime = OvertimeRecord(
         company_id=employee.company_id, employee_id=employee.id,
@@ -1675,7 +1679,7 @@ def test_corrected_arrival_excludes_false_overnight_work_from_every_projection(
     )
     db.add_all([overtime, AttendanceCorrection(
         company_id=employee.company_id, employee_id=employee.id, work_date=work_date,
-        corrected_start_at=start + timedelta(hours=13),
+        corrected_start_at=start + timedelta(hours=corrected_hour),
         payable_seconds_delta=0, reason="Confirmed 13:00 arrival after blind-probe incident",
         updated_by_admin_user_id=admin.id,
     )])
@@ -1690,16 +1694,27 @@ def test_corrected_arrival_excludes_false_overnight_work_from_every_projection(
         db, company_id=employee.company_id, requests=[(employee.id, "UTC", work_date)], now=end,
     )[(employee.id, work_date)]
     assert single == batch
-    assert timeline["worked_seconds"] == single["worked_seconds"] == 3600
-    assert row.recorded_overtime_seconds == 3600
-    assert row.approved_overtime_seconds == (3600 if overtime_status == "approved" else 0)
-    assert row.total_payable_seconds == (3600 if overtime_status == "approved" else 0)
-    assert timeline["first_started_at"].startswith("2026-11-27T13:00:00")
-    assert row.calculation_sources["raw_first_activity_at"].startswith("2026-11-27T00:00:00")
-    assert all(item["seconds"] <= 3600 for item in row.issues if "seconds" in item)
+    assert timeline["worked_seconds"] == single["worked_seconds"] == expected_worked
+    assert row.recorded_overtime_seconds == expected_worked
+    assert row.approved_overtime_seconds == (expected_worked if overtime_status == "approved" else 0)
+    assert row.total_payable_seconds == (expected_worked if overtime_status == "approved" else 0)
+    if expected_worked:
+        assert timeline["first_started_at"].startswith("2026-07-24T13:00:00")
+    else:
+        assert timeline["first_started_at"] is None
+    assert row.calculation_sources["raw_first_activity_at"].startswith("2026-07-24T00:00:00")
+    assert all(item["seconds"] <= expected_worked for item in row.issues if "seconds" in item)
+    rows = timesheet_rows(
+        db, employee.company_id, work_date, work_date, employee.id, device_id=device.id,
+    )
+    assert rows[0]["active_seconds"] == expected_worked
+    summary = reconcile_today_summary_with_timeline(
+        {"tracked_active_seconds": 14 * 3600}, timeline,
+    )
+    assert summary["tracked_active_seconds"] == expected_worked
 
     sync_session_time_buckets(db, session, at=end)
-    assert workday_state_payload(db, session)["extra_seconds"] == 3600
+    assert workday_state_payload(db, session)["extra_seconds"] == expected_worked
     db.refresh(session)
     assert session.started_at.replace(tzinfo=UTC) == start
     assert session.ended_at.replace(tzinfo=UTC) == end
