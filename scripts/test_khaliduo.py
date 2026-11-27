@@ -109,6 +109,8 @@ def main():
         if stack_up:
             try:
                 step("stack-stop", [node, str(ROOT / "e2e/lib/down.ts")], extra={"E2E_REUSE_STACK": "0"}, timeout=60)
+                if WINDOWS:
+                    step("process-lifecycle", [node, str(ROOT / "e2e/tools/process_lifecycle.ts")], timeout=60)
             except Exception as error:
                 result["status"] = "failed"
                 result["cleanup_error"] = str(error)

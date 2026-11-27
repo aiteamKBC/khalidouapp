@@ -14,6 +14,9 @@ Install backend test dependencies with `backend/.venv/Scripts/python -m pip inst
 The setup script downloads pinned PostgreSQL, Toxiproxy and k6 binaries from the
 upstream projects, checks their SHA256, and stores them under ignored `.tools/`.
 Repeated setup preserves identical running binaries. It never installs a system service.
+Windows process cleanup checks the recorded PID plus its immutable creation time,
+so recycled PIDs cannot stop another app. Bounded native process/port checks avoid
+WMI stalls; failed cleanup retains its manifest and fails the quality report.
 
 ## Unified quality gate
 

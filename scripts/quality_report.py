@@ -26,7 +26,7 @@ def fingerprint():
 
 def validate(path):
     report = json.loads(path.read_text(encoding="utf-8"))
-    required = {"backend", "desktop", "desktop-lint", "dashboard", "postgres-contract", "playwright", "load", "stack-stop"}
+    required = {"backend", "desktop", "desktop-lint", "dashboard", "postgres-contract", "playwright", "load", "stack-stop", "process-lifecycle"}
     passed = {step["name"] for step in report.get("steps", []) if step.get("status") == "passed"}
     if report.get("status") != "passed" or report.get("suite") != "all" or not required <= passed:
         raise ValueError("A complete passing all-suite report is required before deployment")

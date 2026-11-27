@@ -28,6 +28,16 @@ import {
 
 const COMPOSE_FILE = path.join(E2E_DIR, "docker-compose.e2e.yml");
 const LOG_DIR = path.join(RUNTIME_DIR, "logs");
+type RecordedProcess = number | { pid: number; startedAt: string | null };
+
+export function windowsProcessStartTime(pid: number): string {
+  if (!Number.isSafeInteger(pid) || pid <= 0) throw new Error("Invalid recorded PID");
+  // Get-Process uses the process handle, not the WMI provider that can stall on
+  // Windows CI. The immutable creation time also detects reuse of a stale PID.
+  return execFileSync("powershell", ["-NoProfile", "-NonInteractive", "-Command",
+    `$ErrorActionPreference='Stop'; $p=Get-Process -Id ${pid} -ErrorAction SilentlyContinue; if ($p) { $p.StartTime.ToUniversalTime().Ticks }; exit 0`],
+    { encoding: "utf8", windowsHide: true, timeout: 10_000, stdio: ["ignore", "pipe", "pipe"] }).trim();
+}
 
 function log(message: string) {
   console.log(`[e2e] ${message}`);
@@ -138,8 +148,11 @@ function spawnLogged(name: string, command: string, args: string[], options: { c
   // stopped explicitly by pid in killRecorded().
   const child = spawn(command, args, { ...options, stdio: ["ignore", out, out], windowsHide: true, detached: true });
   child.unref();
-  const pids = fs.existsSync(PIDS_FILE) ? readJson<Record<string, number>>(PIDS_FILE) : {};
-  pids[name] = child.pid!;
+  fs.closeSync(out);
+  const pids = fs.existsSync(PIDS_FILE) ? readJson<Record<string, RecordedProcess>>(PIDS_FILE) : {};
+  const startedAt = process.platform === "win32" ? windowsProcessStartTime(child.pid!) : null;
+  if (process.platform === "win32" && !startedAt) throw new Error(`${name} exited before its process identity was recorded`);
+  pids[name] = { pid: child.pid!, startedAt };
   fs.writeFileSync(PIDS_FILE, JSON.stringify(pids));
   return child;
 }
@@ -221,39 +234,65 @@ export async function startWebsite() {
 export function killStrayServers() {
   if (process.platform !== "win32") return;
   const rootLiteral = `'${REPO_DIR.replaceAll("'", "''")}'`;
-  const script = `
-    foreach ($port in ${API_PORT}, ${PROXY_PORT}, ${WEB_PORT}, ${TOXIPROXY_API_PORT}, ${TOXIPROXY_PORT}) {
-      Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | ForEach-Object {
-        $proc = Get-CimInstance Win32_Process -Filter "ProcessId = $($_.OwningProcess)"
-        if ($proc.CommandLine -and $proc.CommandLine.IndexOf(${rootLiteral}, [StringComparison]::OrdinalIgnoreCase) -ge 0) { taskkill /PID $_.OwningProcess /T /F | Out-Null; "stopped stray $port ($($_.OwningProcess))" }
-      }
-    }`;
-  try {
-    const out = execFileSync("powershell", ["-NoProfile", "-Command", script], { encoding: "utf-8" }).trim();
-    if (out) log(out);
-  } catch {
-    /* nothing to stop */
+  // Native netstat avoids another WMI call for every port after the recorded
+  // processes have already stopped. Query command lines only for actual strays.
+  const ports = new Set([API_PORT, PROXY_PORT, WEB_PORT, TOXIPROXY_API_PORT, TOXIPROXY_PORT]);
+  const listing = execFileSync("netstat", ["-ano", "-p", "tcp"],
+    { encoding: "utf8", windowsHide: true, timeout: 10_000 });
+  const found = new Set<number>();
+  for (const line of listing.split(/\r?\n/)) {
+    const fields = line.trim().split(/\s+/);
+    if (fields[0] === "TCP" && fields[3] === "LISTENING" && ports.has(Number(fields[1].split(":").at(-1)))) {
+      found.add(Number(fields[4]));
+    }
+  }
+  for (const pid of found) {
+    if (!Number.isSafeInteger(pid) || pid <= 0) throw new Error("Invalid listening PID");
+    const script = `$proc=Get-CimInstance Win32_Process -Filter 'ProcessId = ${pid}'; if ($proc.CommandLine -and $proc.CommandLine.IndexOf(${rootLiteral}, [StringComparison]::OrdinalIgnoreCase) -ge 0) { 'owned' }`;
+    const owned = execFileSync("powershell", ["-NoProfile", "-NonInteractive", "-Command", script],
+      { encoding: "utf8", windowsHide: true, timeout: 10_000, stdio: ["ignore", "pipe", "pipe"] }).trim();
+    if (owned !== "owned") throw new Error(`Test port is held by a process outside this workspace (PID ${pid}); it was left untouched`);
+    execFileSync("taskkill", ["/PID", String(pid), "/T", "/F"], { stdio: "ignore", windowsHide: true, timeout: 10_000 });
+    log(`stopped stray pid ${pid}`);
   }
 }
 
 export function killRecorded() {
   if (!fs.existsSync(PIDS_FILE)) return;
-  const pids = readJson<Record<string, number>>(PIDS_FILE);
-  for (const [name, pid] of Object.entries(pids)) {
+  const pids = readJson<Record<string, RecordedProcess>>(PIDS_FILE);
+  const failures: string[] = [];
+  for (const [name, recorded] of Object.entries(pids)) {
+    const pid = typeof recorded === "number" ? recorded : recorded.pid;
     try {
       if (!Number.isSafeInteger(pid) || pid <= 0) throw new Error("Invalid recorded PID");
       // A crashed run's PID can be reused by an unrelated app. Verify ownership
       // from the OS command line before stopping anything recorded on disk.
-      const command = process.platform === "win32"
-        ? execFileSync("powershell", ["-NoProfile", "-Command", `(Get-CimInstance Win32_Process -Filter 'ProcessId = ${pid}').CommandLine`], { encoding: "utf8", windowsHide: true })
-        : fs.readFileSync(`/proc/${pid}/cmdline`, "utf8");
-      if (!command.toLowerCase().includes(REPO_DIR.toLowerCase())) throw new Error("Recorded PID is no longer owned by this test stack");
-      if (process.platform === "win32") execFileSync("taskkill", ["/PID", String(pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
-      else process.kill(-pid, "SIGTERM");
+      if (process.platform === "win32") {
+        const currentStart = windowsProcessStartTime(pid);
+        if (!currentStart) continue;
+        if (typeof recorded !== "number" && recorded.startedAt) {
+          if (currentStart !== recorded.startedAt) { log(`left reused PID ${pid} untouched`); continue; }
+        } else {
+          // Compatibility with an old interrupted run's numeric PID file.
+          const command = execFileSync("powershell", ["-NoProfile", "-NonInteractive", "-Command", `(Get-CimInstance Win32_Process -Filter 'ProcessId = ${pid}').CommandLine`],
+            { encoding: "utf8", windowsHide: true, timeout: 10_000, stdio: ["ignore", "pipe", "pipe"] });
+          if (!command.toLowerCase().includes(REPO_DIR.toLowerCase())) { log(`left unowned PID ${pid} untouched`); continue; }
+        }
+        execFileSync("taskkill", ["/PID", String(pid), "/T", "/F"], { stdio: "ignore", windowsHide: true, timeout: 10_000 });
+      } else {
+        let command: string;
+        try { command = fs.readFileSync(`/proc/${pid}/cmdline`, "utf8"); }
+        catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") continue; throw error; }
+        if (!command.includes(REPO_DIR)) { log(`left unowned PID ${pid} untouched`); continue; }
+        process.kill(-pid, "SIGTERM");
+      }
       log(`stopped ${name} (pid ${pid})`);
-    } catch {
-      /* already exited */
+    } catch (error) {
+      failures.push(`${name}: ${String(error)}`);
     }
   }
+  // Keep the evidence for another cleanup attempt instead of silently retiring
+  // a PID record after a timeout or permission failure.
+  if (failures.length) throw new Error(`Test process cleanup failed: ${failures.join("; ")}`);
   fs.rmSync(PIDS_FILE, { force: true });
 }

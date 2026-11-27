@@ -20,7 +20,7 @@ def gate(tmp_path):
     report = tmp_path.parent / f"{tmp_path.name}.json"
     data = {"status": "passed", "suite": "all", "source_fingerprint": module.fingerprint(),
             "steps": [{"name": name, "status": "passed"} for name in
-                      ["backend", "desktop", "desktop-lint", "dashboard", "postgres-contract", "playwright", "load", "stack-stop"]]}
+                      ["backend", "desktop", "desktop-lint", "dashboard", "postgres-contract", "playwright", "load", "stack-stop", "process-lifecycle"]]}
     report.write_text(json.dumps(data), encoding="utf-8")
     return module, tmp_path, report, data
 
@@ -38,7 +38,7 @@ def test_deployment_rejects_source_changed_since_test(gate):
         module.validate(report)
 
 
-@pytest.mark.parametrize("missing", ["load", "playwright", "backend", "postgres-contract"])
+@pytest.mark.parametrize("missing", ["load", "playwright", "backend", "postgres-contract", "process-lifecycle"])
 def test_deployment_rejects_partial_quality_reports(gate, missing):
     module, _, report, data = gate
     data["steps"] = [step for step in data["steps"] if step["name"] != missing]
