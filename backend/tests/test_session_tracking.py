@@ -1,5 +1,6 @@
 from datetime import UTC, date, datetime, timedelta
 from uuid import UUID, uuid4
+from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy import create_engine, func, select
@@ -135,6 +136,78 @@ def recovery_payload(**overrides):
         "ended_at": start + timedelta(minutes=10), "active_seconds": 600,
         "idle_seconds": 0, "agent_version": "2.0.2", **overrides,
     })
+
+
+@pytest.mark.parametrize("zone,boundary", [
+    ("Africa/Cairo", "2026-04-23T22:00:00+00:00"),
+    ("Africa/Cairo", "2026-10-29T22:00:00+00:00"),
+    ("Europe/London", "2026-03-30T00:00:00+01:00"),
+    ("Europe/London", "2026-10-26T00:00:00+00:00"),
+    ("America/New_York", "2026-03-09T00:00:00-04:00"),
+    ("America/New_York", "2026-11-02T00:00:00-05:00"),
+    ("Asia/Kolkata", "2026-11-26T00:00:00+05:30"),
+    ("Asia/Kathmandu", "2026-11-26T00:00:00+05:45"),
+    ("Pacific/Kiritimati", "2026-01-01T00:00:00+14:00"),
+    ("Pacific/Pago_Pago", "2026-01-01T00:00:00-11:00"),
+])
+@pytest.mark.parametrize("status", ["idle", "locked", "sleeping", "offline"])
+def test_country_midnight_non_working_return_duplicate_and_late_replay(
+    tracking_context, zone, boundary, status,
+):
+    db, device = tracking_context
+    employee = db.get(Employee, device.employee_id)
+    employee.timezone = device.timezone = zone
+    midnight = datetime.fromisoformat(boundary).astimezone(UTC)
+    started_at = midnight - timedelta(hours=1)
+    last_work = midnight - timedelta(minutes=10)
+    arrival = midnight + timedelta(hours=2)
+    started = start_or_get_session(db, device, SessionStartRequest(started_at=started_at))
+    session_id = UUID(started["session"]["id"])
+    record_heartbeat(db, device=device, session_id=session_id, payload=HeartbeatRequest(
+        event_id=uuid4(), timestamp=last_work, status="active",
+        active_seconds=3000, idle_seconds=0, agent_version="2.0.6",
+    ))
+    heartbeat = HeartbeatRequest(
+        event_id=uuid4(), timestamp=arrival, status=status,
+        active_seconds=999999, idle_seconds=999999, agent_version="2.0.6",
+    )
+    result = record_heartbeat(db, device=device, session_id=session_id, payload=heartbeat)
+    assert result["ignored"] is True
+    assert result.get("restarted") is not True
+    old = db.get(WorkSession, session_id)
+    assert old.status == "ended"
+    assert old.ended_at.replace(tzinfo=UTC) == last_work
+    snapshot = (old.started_at, old.ended_at, old.active_seconds, old.idle_seconds)
+    timeline = build_workday_timeline(
+        db, company_id=device.company_id, employee_id=device.employee_id,
+        timezone_name=zone, target_date=arrival.astimezone(ZoneInfo(zone)).date(),
+        now=arrival, device_id=device.id,
+    )
+    assert timeline["intervals"] == []
+    assert timeline["is_running"] is False
+    # A replayed overnight signal and late event cannot rewrite the closed day.
+    record_heartbeat(db, device=device, session_id=session_id, payload=heartbeat)
+    late = record_agent_event(db, device=device, session_id=session_id, payload=ActivityEventRequest(
+        event_id=uuid4(), event_type="idle_ended", event_timestamp=arrival, payload={},
+    ))
+    assert late["ignored"] is True
+    returned_at = arrival + timedelta(seconds=1)
+    returned = record_heartbeat(db, device=device, session_id=session_id, payload=HeartbeatRequest(
+        event_id=uuid4(), timestamp=returned_at, status="active",
+        active_seconds=999999, idle_seconds=999999, agent_version="2.0.6",
+    ))
+    assert returned["restarted"] is True
+    assert datetime.fromisoformat(returned["session"]["started_at"]) == returned_at
+    assert returned["session"]["active_seconds"] == 0
+    db.refresh(old)
+    assert (old.started_at, old.ended_at, old.active_seconds, old.idle_seconds) == snapshot
+    for session in db.scalars(select(WorkSession)).all():
+        end = session.ended_at or returned_at
+        duration = max(0, int((end.replace(tzinfo=UTC) - session.started_at.replace(tzinfo=UTC)).total_seconds()))
+        assert session.active_seconds + session.idle_seconds <= duration
+        for event in db.scalars(select(ActivityEvent).where(ActivityEvent.session_id == session.id)).all():
+            assert session.started_at.replace(tzinfo=UTC) <= event.event_timestamp.replace(tzinfo=UTC) <= end.replace(tzinfo=UTC)
+    assert db.scalar(select(func.count()).select_from(WorkSession).where(WorkSession.ended_at.is_(None))) == 1
 
 
 def test_closed_archive_import_is_idempotent_and_cannot_take_over_today(tracking_context):

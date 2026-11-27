@@ -11,28 +11,26 @@
 // Clamping to exactly midnight is NOT enough: the midnight instant already
 // belongs to the new day, so it still trips the next-day branch.
 
-function localTimeParts(atMs: number, timezone: string) {
-  const parts = new Intl.DateTimeFormat("en-GB", {
-    timeZone: timezone || "UTC",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hourCycle: "h23",
-  }).formatToParts(new Date(atMs));
-  const value = (type: Intl.DateTimeFormatPartTypes) =>
-    Number(parts.find((part) => part.type === type)?.value ?? "0");
-  return { hour: value("hour"), minute: value("minute"), second: value("second") };
+function dayFormatter(timezone: string) {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: timezone || "UTC", year: "numeric", month: "2-digit", day: "2-digit",
+  });
 }
 
 export function endOfPreviousLocalDayIso(now: Date, timezone: string): string {
-  const { hour, minute, second } = localTimeParts(now.getTime(), timezone);
-  // Milliseconds are timezone-independent, so the runtime ms component is exact.
-  const millisecondsIntoLocalDay =
-    ((hour * 60 + minute) * 60 + second) * 1000 + now.getMilliseconds();
-  const startOfLocalDay = now.getTime() - millisecondsIntoLocalDay;
-  // One millisecond before the new local day begins is the last instant that
-  // still belongs to the previous local day.
-  return new Date(startOfLocalDay - 1).toISOString();
+  const formatter = dayFormatter(timezone);
+  const currentDate = formatter.format(now);
+  // Subtracting the displayed hour assumes the UTC offset was constant since
+  // midnight. DST days can have 23/25 hours, and Cairo can skip midnight itself.
+  // Locate the first instant of this calendar date using the timezone rules.
+  let lower = now.getTime() - 48 * 3600_000;
+  let upper = now.getTime();
+  while (upper - lower > 1) {
+    const middle = Math.floor((lower + upper) / 2);
+    if (formatter.format(new Date(middle)) === currentDate) upper = middle;
+    else lower = middle;
+  }
+  return new Date(upper - 1).toISOString();
 }
 
 export function recoveryEndTimestampIso(
@@ -57,11 +55,7 @@ export function recoveryEndTimestampIso(
     return endedAtIso;
   }
   const boundaryMs = parsed + 1;
-  const { hour, minute, second } = localTimeParts(boundaryMs, timezone);
-  const atLocalMidnight =
-    hour === 0 &&
-    minute === 0 &&
-    second === 0 &&
-    new Date(boundaryMs).getMilliseconds() === 0;
-  return atLocalMidnight ? new Date(boundaryMs).toISOString() : endedAtIso;
+  const formatter = dayFormatter(timezone);
+  const crossesDay = formatter.format(new Date(parsed)) !== formatter.format(new Date(boundaryMs));
+  return crossesDay ? new Date(boundaryMs).toISOString() : endedAtIso;
 }

@@ -11,6 +11,42 @@ import {
 import { recoveryResponseCredited } from "../electron/services/offlineTracking.ts";
 import { context, functions, moduleSource } from "./support/mainHarness.ts";
 
+test("day boundaries remain exact across IANA timezones and DST seasons", () => {
+  for (const zone of Intl.supportedValuesOf("timeZone")) {
+    const formatter = new Intl.DateTimeFormat("en-CA", { timeZone: zone, dateStyle: "short" });
+    for (const now of ["2026-03-29T12:00Z", "2026-04-24T12:00Z", "2026-10-25T12:00Z", "2026-10-29T21:30Z", "2026-11-01T12:00Z"]) {
+      const end = endOfPreviousLocalDayIso(new Date(now), zone);
+      const boundary = new Date(Date.parse(end) + 1);
+      const label = `${zone} at ${now}`;
+      assert.notEqual(formatter.format(new Date(end)), formatter.format(new Date(now)), label);
+      assert.equal(formatter.format(boundary), formatter.format(new Date(now)), label);
+      assert.equal(recoveryEndTimestampIso(end, zone), boundary.toISOString(), label);
+      assert.equal(recoveryEndTimestampIso(new Date(boundary.getTime() + 12345).toISOString(), zone), new Date(boundary.getTime() + 12345).toISOString(), label);
+    }
+  }
+});
+
+for (const [zone, now, boundary] of [
+  ["Africa/Cairo", "2026-04-24T10:00:00Z", "2026-04-23T22:00:00Z"],
+  ["Africa/Cairo", "2026-10-29T21:30:00Z", "2026-10-28T21:00:00Z"],
+  ["Africa/Cairo", "2026-10-30T10:00:00Z", "2026-10-29T22:00:00Z"],
+  ["Europe/London", "2026-03-29T12:00:00Z", "2026-03-29T00:00:00Z"],
+  ["Europe/London", "2026-10-25T12:00:00Z", "2026-10-24T23:00:00Z"],
+  ["America/New_York", "2026-03-08T12:00:00Z", "2026-03-08T05:00:00Z"],
+  ["America/New_York", "2026-11-01T12:00:00Z", "2026-11-01T04:00:00Z"],
+  ["Asia/Kolkata", "2026-11-27T12:00:00Z", "2026-11-26T18:30:00Z"],
+  ["Asia/Kathmandu", "2026-11-27T12:00:00Z", "2026-11-26T18:15:00Z"],
+  ["Pacific/Kiritimati", "2026-12-31T12:00:00Z", "2026-12-31T10:00:00Z"],
+  ["Pacific/Pago_Pago", "2027-01-01T08:00:00Z", "2026-12-31T11:00:00Z"],
+  ["UTC", "2028-02-29T12:00:00Z", "2028-02-29T00:00:00Z"],
+]) {
+  test(`offline rollover uses the true day boundary in ${zone} at ${now}`, () => {
+    const end = new Date(Date.parse(boundary) - 1).toISOString();
+    assert.equal(endOfPreviousLocalDayIso(new Date(now), zone), end);
+    assert.equal(recoveryEndTimestampIso(end, zone), new Date(boundary).toISOString());
+  });
+}
+
 test("endOfPreviousLocalDayIso returns the last instant of the prior local day (UTC)", () => {
   assert.equal(
     endOfPreviousLocalDayIso(new Date("2026-09-10T00:00:00.250Z"), "UTC"),

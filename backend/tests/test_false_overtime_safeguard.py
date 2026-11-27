@@ -331,7 +331,8 @@ def _admin(db, company, *, role="general_admin", data_scope="company"):
     return admin
 
 
-def test_admin_close_ends_live_session_once_and_is_idempotent(ctx):
+@pytest.mark.parametrize("reason", ["Verified boundary", "x" * 2000, "\u0642" * 2000])
+def test_admin_close_ends_live_session_once_and_is_idempotent(ctx, reason):
     from app.api.v1.attendance import AdminSessionCloseRequest, admin_close_session
 
     db, company, employee, device = ctx
@@ -346,7 +347,7 @@ def test_admin_close_ends_live_session_once_and_is_idempotent(ctx):
     result = admin_close_session(
         employee_id=employee.id,
         payload=AdminSessionCloseRequest(
-            ended_at=_at("2026-09-10T09:30:00"), reason="Verified boundary — 1.1.95 incident"
+            ended_at=_at("2026-09-10T09:30:00"), reason=reason
         ),
         request=None,
         current_admin=admin,
@@ -356,6 +357,14 @@ def test_admin_close_ends_live_session_once_and_is_idempotent(ctx):
     closed = db.get(WorkSession, session_id)
     assert closed.ended_at is not None
     first_end = closed.ended_at
+    from sqlalchemy import select
+
+    end_event = db.scalar(select(ActivityEvent).where(
+        ActivityEvent.session_id == session_id, ActivityEvent.event_type == "session_ended",
+    ))
+    assert end_event is not None
+    assert len(end_event.idempotency_key) <= ActivityEvent.__table__.c.idempotency_key.type.length
+    assert end_event.payload["reason"] == f"Administrative close: {reason}"
 
     # Idempotent: a second close finds no live session and does not move the end.
     again = admin_close_session(

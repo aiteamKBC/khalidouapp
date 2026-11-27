@@ -5,6 +5,7 @@ export class TrackingClock {
   private wallNow: () => number;
   private monotonicNow: () => number;
   private anchor: { utcMs: number; monotonicMs: number } | null = null;
+  private elapsedAnchor: { utcMs: number; monotonicMs: number };
 
   constructor(
     wallNow: () => number = () => Date.now(),
@@ -12,6 +13,13 @@ export class TrackingClock {
   ) {
     this.wallNow = wallNow;
     this.monotonicNow = monotonicNow;
+    this.elapsedAnchor = { utcMs: wallNow(), monotonicMs: monotonicNow() };
+  }
+
+  // Durations must never use calibrated UTC: the first server response can
+  // correct a wrong PC clock by seconds or days while a timer is running.
+  elapsedMs(): number {
+    return this.elapsedAnchor.utcMs + Math.max(0, this.monotonicNow() - this.elapsedAnchor.monotonicMs);
   }
 
   nowMs(): number {
@@ -42,6 +50,7 @@ export class TrackingClock {
 
 const trackingClock = new TrackingClock();
 export const trackingNowMs = () => trackingClock.nowMs();
+export const trackingElapsedMs = () => trackingClock.elapsedMs();
 export const trackingNowDate = () => new Date(trackingNowMs());
 export const observeServerTime = (value: unknown) => trackingClock.observeServerTime(value);
 export const trackingClockSynchronized = () => trackingClock.synchronized;

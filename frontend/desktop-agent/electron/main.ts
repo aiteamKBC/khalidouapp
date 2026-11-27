@@ -1,4 +1,4 @@
-import { trackingNowMs, trackingNowDate, trackingClockSynchronized } from "./services/trackingClock.js";
+import { trackingNowMs, trackingNowDate, trackingElapsedMs, trackingClockSynchronized } from "./services/trackingClock.js";
 import electronCommon from "electron/common";
 import electronMain from "electron/main";
 import log from "electron-log/main";
@@ -1320,7 +1320,7 @@ function startInputIntegrityMonitoring() {
   if (process.platform !== "win32" || inputIntegrityMonitor.running) {
     return;
   }
-  const now = trackingNowMs();
+  const now = trackingElapsedMs();
   if (now - lastInputProbeStartAttemptAt < 30_000) {
     return;
   }
@@ -1360,7 +1360,7 @@ function restartBlindInputProbe(systemIdleSeconds: number) {
   if (!inputIntegrityMonitor.missedInput(systemIdleSeconds)) {
     return;
   }
-  const now = trackingNowMs();
+  const now = trackingElapsedMs();
   if (now - lastInputProbeRestartAt < 60_000) {
     return;
   }
@@ -1483,7 +1483,7 @@ function beginLocalTrackingSession(startedAt = trackingNowDate()) {
       );
       runtimeStatus.trackingStatus = restored.status;
       runtimeStatus.trackingPaused = false;
-      lastDurationTickAt = startedAt.getTime();
+      lastDurationTickAt = trackingElapsedMs();
       startTimers();
       startScreenshotMonitoring();
       notifyRendererStatus();
@@ -1519,7 +1519,7 @@ function beginLocalTrackingSession(startedAt = trackingNowDate()) {
   runtimeStatus.eligibleIdleSeconds = 0;
   runtimeStatus.trackingStatus = "active";
   runtimeStatus.trackingPaused = false;
-  lastDurationTickAt = startedAt.getTime();
+  lastDurationTickAt = trackingElapsedMs();
   startTimers();
   startScreenshotMonitoring();
   notifyRendererStatus();
@@ -1835,7 +1835,7 @@ async function promotePendingLocalTrackingSessions(
   }
 }
 
-function resetDailyRuntimeCounters(nextCounterDate: string, now = trackingNowDate()) {
+function resetDailyRuntimeCounters(nextCounterDate: string, _now = trackingNowDate()) {
   activeCounterDate = nextCounterDate;
   workedTodayBaseSeconds = 0;
   runtimeStatus.activeSeconds = 0;
@@ -1854,10 +1854,10 @@ function resetDailyRuntimeCounters(nextCounterDate: string, now = trackingNowDat
   runtimeStatus.attendanceWeek = null;
   runtimeStatus.locallyEndedIdleAt = null;
   clearIdleReturnVerification();
-  lastHandledIdleReturnInputAt = now.getTime();
+  lastHandledIdleReturnInputAt = trackingElapsedMs();
   idleSecondsBeforeCurrentIdle = 0;
   eligibleIdleSecondsBeforeCurrentIdle = 0;
-  lastDurationTickAt = now.getTime();
+  lastDurationTickAt = trackingElapsedMs();
 }
 
 function ensureCurrentCounterDate(now = trackingNowDate()) {
@@ -2025,7 +2025,7 @@ function syncRuntimeFromSession(session: WorkSession) {
   runtimeStatus.workedTodaySeconds =
     workedTodayBaseSeconds + runtimeStatus.activeSeconds;
   if (changedSession) {
-    lastDurationTickAt = trackingNowMs();
+    lastDurationTickAt = trackingElapsedMs();
     idleSecondsBeforeCurrentIdle = session.idle_seconds;
   }
   selectRuntimeTask(session.task_id);
@@ -2390,8 +2390,9 @@ function recalculateWorkedTime(options?: { finalCheckpoint?: boolean }) {
   }
 
   const now = trackingNowMs();
+  const elapsedNow = trackingElapsedMs();
   if (lastDurationTickAt === null) {
-    lastDurationTickAt = now;
+    lastDurationTickAt = elapsedNow;
     return;
   }
 
@@ -2400,7 +2401,7 @@ function recalculateWorkedTime(options?: { finalCheckpoint?: boolean }) {
   // makes correctness independent of whether powerMonitor "suspend"/"resume"
   // fire — hibernate often does not deliver "resume", which previously let the
   // whole frozen span be banked as active time.
-  const { elapsedSeconds, nextTickMs } = trackingTick(lastDurationTickAt, now);
+  const { elapsedSeconds, nextTickMs } = trackingTick(lastDurationTickAt, elapsedNow);
   lastDurationTickAt = nextTickMs;
   if (elapsedSeconds === 0) {
     return;
@@ -3696,7 +3697,7 @@ function maybeShowManualPauseReminder() {
     manualPauseReminder.reset();
     return;
   }
-  const now = trackingNowMs();
+  const now = trackingElapsedMs();
   const latestInputAt = inputIntegrityMonitor.sensorAvailable(now)
     ? inputIntegrityMonitor.latestRealInputAt(now)
     : now - powerMonitor.getSystemIdleTime() * 1_000;
@@ -3717,8 +3718,8 @@ function maybeShowManualPauseReminder() {
     kind: "manual_pause_reminder",
     lostSeconds: 0,
     eligibleLostSeconds: 0,
-    outsideScheduledShift: !scheduledIdleIsCountable(new Date(now)),
-    endedAt: new Date(now).toISOString(),
+    outsideScheduledShift: !scheduledIdleIsCountable(trackingNowDate()),
+    endedAt: trackingNowDate().toISOString(),
   };
   setIdleAlertAttention(true);
   showMainWindow({ forceForeground: true, centerOnPointerDisplay: true });
@@ -3811,7 +3812,7 @@ function startIdleMonitor() {
       idleWallClockStartedAt = trackingNowMs();
       clearIdleReturnVerification();
       lastHandledIdleReturnInputAt =
-        inputIntegrityMonitor.latestRealInputAt() ?? trackingNowMs();
+        inputIntegrityMonitor.latestRealInputAt() ?? trackingElapsedMs();
       automaticIdleStartedDuringBreak = insideScheduledBreak;
       runtimeStatus.locallyEndedIdleAt = null;
       const startPromise = sendStateEvent("idle_started", "idle");
@@ -4425,7 +4426,7 @@ function startTrackingWatchdog() {
 
 function startTimers() {
   if (lastDurationTickAt === null) {
-    lastDurationTickAt = trackingNowMs();
+    lastDurationTickAt = trackingElapsedMs();
   }
   if (!durationTimer) {
     durationTimer = setInterval(recalculateWorkedTime, 1000);
@@ -6953,7 +6954,7 @@ function wireSystemEvents() {
     // so screenshot eligibility and displayed state stop reporting "locked" after
     // the machine is physically unlocked (D5).
     screenLocked = false;
-    lastDurationTickAt = trackingNowMs();
+    lastDurationTickAt = trackingElapsedMs();
     idleSecondsBeforeCurrentIdle = runtimeStatus.idleSeconds;
     if (
       !physicalResumeShouldResumeWork({
@@ -6994,7 +6995,7 @@ function wireSystemEvents() {
     // Always clear the physical sleep flag first, even when work stays stopped, so
     // eligibility and displayed state recover after the machine wakes (D5).
     systemSleeping = false;
-    lastDurationTickAt = trackingNowMs();
+    lastDurationTickAt = trackingElapsedMs();
     idleSecondsBeforeCurrentIdle = runtimeStatus.idleSeconds;
     if (
       !physicalResumeShouldResumeWork({

@@ -209,7 +209,10 @@ def close_open_session(
         session=session,
         event_type="session_ended",
         event_timestamp=ended_at,
-        idempotency_key=f"session-auto-ended:{session.id}:{reason}",
+        # A session can end only once. Keep the key bounded independently of
+        # the administrator's reason (up to 2000 characters); the full reason
+        # belongs in the payload, not the varchar(120) idempotency key.
+        idempotency_key=f"session-auto-ended:{session.id}",
         payload={"reason": reason, **(details or {})},
     )
 
