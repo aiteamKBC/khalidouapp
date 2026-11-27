@@ -73,6 +73,11 @@ Quick load is 3 users for 12 seconds; nightly load is 20 users for 90 seconds.
 It tests authenticated writes and replay, with zero failed business checks or
 unexpected HTTP failures, p95 under 2 seconds and p99 under 5 seconds. HTTP 429 is
 bounded/retried as normal backpressure; exhausting retries fails the business check.
+Retries honor `Retry-After` with capped exponential backoff and jitter (at most
+eight attempts). Backpressure and retry counts remain visible in the metrics.
+The logical request latency includes backoff (p95 below 15s, p99 below 60s), in
+addition to the per-attempt HTTP thresholds. Up to 120s of graceful stopping lets
+already-started iterations finish their replay checks instead of hiding them.
 These workloads measure this fixture; they do not establish maximum production capacity.
 
 ## Windows native checks
