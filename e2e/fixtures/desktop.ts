@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { _electron, expect, type ElectronApplication, type Page } from "@playwright/test";
-import { DEAD_PORT, DESKTOP_API_URL, DESKTOP_DIR, PROXY_PORT, WEB_URL, assertIsolated } from "../lib/env.ts";
+import { DEAD_PORT, DESKTOP_API_URL, DESKTOP_DIR, PROXY_PORT, SEED_FILE, WEB_URL, assertIsolated, readJson } from "../lib/env.ts";
 
 const ELECTRON_EXE = path.join(DESKTOP_DIR, "node_modules", "electron", "dist", "electron.exe");
 const MAIN_JS = path.join(DESKTOP_DIR, "dist-electron-khaliduo", "main.js");
@@ -45,6 +45,10 @@ export function desktopLaunchOptions(profile: DesktopProfile, extraEnv: Record<s
     LOCALAPPDATA: profile.localAppData,
     KHALIDUO_E2E_USER_DATA_DIR: profile.userData,
     KHALIDUO_E2E_DISABLE_INPUT_PROBE: "1",
+    // The localhost geolocation service cannot verify a country. Match the
+    // seeded shift zone explicitly instead of inheriting the CI VM's UTC zone.
+    // TZ affects this Electron process only; Windows settings stay unchanged.
+    TZ: readJson<{ timezone: string }>(SEED_FILE).timezone,
     // Every key in frontend/desktop-agent/.env is set here: dotenv never
     // overrides a variable that already exists, so the dev .env cannot leak in.
     VITE_API_BASE_URL: DESKTOP_API_URL,
@@ -65,7 +69,10 @@ export function desktopLaunchOptions(profile: DesktopProfile, extraEnv: Record<s
 }
 
 export async function launchDesktop(profile: DesktopProfile, extraEnv: Record<string, string> = {}) {
-  const app = await _electron.launch(desktopLaunchOptions(profile, extraEnv));
+  const options = desktopLaunchOptions(profile, extraEnv);
+  const app = await _electron.launch(options);
+  expect(await app.evaluate(() => Intl.DateTimeFormat().resolvedOptions().timeZone),
+    "Electron timezone must match the explicit test fixture").toBe(options.env.TZ);
   // Install the native seams before the app's first idle poll (250 ms).
   await installSeams(app, process.env.E2E_FOREGROUND !== "1");
   const window = await app.firstWindow({ timeout: 30_000 });
@@ -214,7 +221,18 @@ export function swal(window: Page) {
   return {
     popup,
     title: popup.locator(".swal2-title"),
-    click: (name: string | RegExp) => popup.getByRole("button", { name }).click(),
+    click: async (name: string | RegExp) => {
+      try {
+        await popup.getByRole("button", { name }).click();
+      } catch (error) {
+        // beforeAll failures otherwise lose the Electron DOM/status diagnostics.
+        console.error("[e2e] dialog failure", await window.evaluate(async () => ({
+          body: document.body.innerText,
+          status: await (window as any).khaliduo.getAgentStatus(),
+        })).catch(() => "renderer unavailable"));
+        throw error;
+      }
+    },
   };
 }
 

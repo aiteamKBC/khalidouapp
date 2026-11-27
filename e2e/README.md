@@ -97,6 +97,8 @@ and suppress focus/topmost behavior so the employee's installed app can stay in
 front. CI sets `E2E_FOREGROUND=1` for actual window activation behavior. The native
 input probe is replaced only in unpackaged runs with an explicit isolated test
 profile; packaged apps always retain their real probe.
+Electron's process-local `TZ` explicitly matches the seeded company timezone,
+including on UTC CI hosts; this never changes the developer's Windows settings.
 
 ## Run
 
