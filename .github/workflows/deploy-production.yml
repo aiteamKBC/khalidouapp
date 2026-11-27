@@ -3,14 +3,20 @@ name: Deploy production API and dashboard
 on:
   workflow_dispatch:
 
-permissions: {}
+permissions:
+  contents: read
 
 concurrency:
   group: khaliduo-production
   cancel-in-progress: false
 
 jobs:
+  quality:
+    uses: ./.github/workflows/quality.yml
+    with:
+      profile: quick
   deploy:
+    needs: quality
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 35

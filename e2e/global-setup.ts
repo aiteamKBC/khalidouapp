@@ -11,6 +11,8 @@ import {
   startDatabase,
   startProxy,
   startWebsite,
+  startToxiproxy,
+  stopDatabase,
 } from "./lib/stack.ts";
 
 export default async function globalSetup() {
@@ -22,12 +24,20 @@ export default async function globalSetup() {
   // A previous run that crashed can leave servers holding the test ports.
   killRecorded();
   killStrayServers();
+  stopDatabase();
   freshRuntimeDir();
   const secrets = createSecrets();
-  startDatabase();
-  migrate(secrets);
-  seed(secrets);
-  await startBackend(secrets);
-  await startProxy();
-  await startWebsite();
+  try {
+    startDatabase();
+    migrate(secrets);
+    seed(secrets);
+    await startBackend(secrets);
+    await startToxiproxy();
+    await startProxy();
+    await startWebsite();
+  } catch (error) {
+    killRecorded();
+    stopDatabase();
+    throw error;
+  }
 }

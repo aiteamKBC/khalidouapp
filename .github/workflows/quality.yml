@@ -1,0 +1,94 @@
+name: Khaliduo quality gate
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '15 1 * * *'
+  workflow_dispatch:
+    inputs:
+      profile:
+        type: choice
+        options: [quick, nightly]
+        default: quick
+  workflow_call:
+    inputs:
+      profile:
+        type: string
+        default: quick
+permissions:
+  contents: read
+concurrency:
+  group: quality-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  unit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: python -m venv backend/.venv
+      - run: backend/.venv/bin/python -m pip install -r backend/requirements-test.txt
+      - run: npm ci --prefix frontend/desktop-agent
+      - run: npm ci --prefix frontend/admin-dashboard
+      - name: Generated ledger/desktop scenarios and dashboard checks
+        run: backend/.venv/bin/python scripts/test_khaliduo.py --suite unit --profile ${{ inputs.profile || (github.event_name == 'schedule' && 'nightly') || 'quick' }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: unit-results
+          path: test-reports/
+  integration:
+    runs-on: windows-2025
+    timeout-minutes: 60
+    env:
+      E2E_FOREGROUND: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: python -m venv backend/.venv
+      - run: backend/.venv/Scripts/python -m pip install -r backend/requirements-test.txt
+      - run: npm ci --prefix frontend/desktop-agent
+      - run: npm ci --prefix frontend/admin-dashboard
+      - run: npm ci --prefix e2e
+      - name: Portable PostgreSQL, Playwright and Toxiproxy
+        run: ./scripts/test-khaliduo.ps1 -Suite integration -InstallTools -Profile ${{ inputs.profile || (github.event_name == 'schedule' && 'nightly') || 'quick' }}
+      - name: Authenticated multi-device load and duplicate delivery
+        run: ./scripts/test-khaliduo.ps1 -Suite load -Profile ${{ inputs.profile || (github.event_name == 'schedule' && 'nightly') || 'quick' }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: integration-results
+          path: |
+            test-reports/
+            e2e/playwright-report/
+            e2e/test-results/
+            e2e/.runtime/logs/
+  native-clock:
+    runs-on: windows-2025
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Actual Windows time and timezone changes inside the disposable runner VM
+        run: ./e2e/native/Test-WindowsTime.ps1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-clock-results
+          path: test-reports/

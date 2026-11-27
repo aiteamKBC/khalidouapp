@@ -29,7 +29,10 @@ violates any rule below, even when its screen appears correct.
 6. Explicit idempotent offline recovery may extend the same local workday
    backwards; it may never cross a local-day boundary.
 7. Local midnight is a hard session boundary. The first next-day signal closes
-   yesterday at the last proven work instant, no later than local midnight.
+   yesterday's work at the last proven work instant, no later than local midnight.
+   A terminal event records that work boundary. The row's storage end may include
+   later, already accepted idle/health evidence within that same day; projections
+   stop at the terminal event and never pay that non-working tail.
 8. A next-day idle/lock/sleep heartbeat closes yesterday but does not start
    today. Only fresh active evidence starts today's session.
 9. Idle-only device liveness is not attendance, sign-in, sign-out, or work.

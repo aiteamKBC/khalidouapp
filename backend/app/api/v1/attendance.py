@@ -712,6 +712,13 @@ def admin_close_session(
     if device is None:
         raise ApiError("DEVICE_NOT_FOUND", "The session's device was not found.", 404)
 
+    # Serialize administrative close with an in-flight agent write. Re-read
+    # after acquiring the device lock: another close may already have won.
+    db.execute(select(Device.id).where(Device.id == device.id).with_for_update())
+    db.refresh(session)
+    if session.ended_at is not None:
+        return success_response(data={"closed": False, "reason": "no_live_session", "session": None})
+
     now = datetime.now(UTC)
     requested_end = _session_utc(payload.ended_at) if payload.ended_at else now
     # Never before the session start, never in the future.

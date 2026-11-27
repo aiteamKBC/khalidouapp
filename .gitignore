@@ -64,3 +64,7 @@ HANDOVER.md
 /e2e/native-results/
 /e2e/playwright-report/
 /e2e/test-results/
+/e2e/.tools/
+/.hypothesis/
+/backend/.hypothesis/
+/test-reports/

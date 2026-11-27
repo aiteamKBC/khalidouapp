@@ -6,7 +6,8 @@ param(
     [string]$DashboardUrl = "https://khaliduoapp.kentbusinesscollege.net/dashboard",
     [switch]$SkipDesktop,
     [switch]$ValidateOnly,
-    [switch]$ResumeDesktopPublish
+    [switch]$ResumeDesktopPublish,
+    [string]$QualityReport = ''
 )
 
 $ErrorActionPreference = "Stop"
@@ -18,6 +19,15 @@ $releaseRoot = Join-Path $desktopRoot "release-khaliduo"
 $installer = Join-Path $releaseRoot "KhaliduoSetup.exe"
 $blockmap = Join-Path $releaseRoot "KhaliduoSetup.exe.blockmap"
 $latestYml = Join-Path $releaseRoot "latest.yml"
+
+if (-not $ValidateOnly) {
+    if (-not $QualityReport) {
+        throw 'Supply -QualityReport <test-reports/run/summary.json> from a passing all-suite run.'
+    }
+    $qualityPython = Join-Path $repoRoot 'backend/.venv/Scripts/python.exe'
+    & $qualityPython (Join-Path $repoRoot 'scripts/quality_report.py') $QualityReport
+    if ($LASTEXITCODE -ne 0) { throw 'Quality gate rejected deployment. See the test report validation above.' }
+}
 
 function Invoke-CheckedNative {
     param(

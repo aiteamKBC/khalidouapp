@@ -18,6 +18,12 @@ from app.main import app
 from app.models import ActivityEvent, AdminUser, Company, Device, DeviceToken, Employee, WorkSession
 
 
+def _utc(value):
+    # SQLite returns naive values; PostgreSQL returns aware values in its own
+    # configured zone. Relabelling an aware Cairo value as UTC adds two hours.
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+
+
 @pytest.fixture()
 def time_http():
     url = os.environ.get("KHALIDUO_TIME_TEST_DATABASE_URL")
@@ -151,3 +157,25 @@ def test_long_admin_reason_closes_and_late_replay_cannot_rewrite_ledger_over_htt
         ))
         assert event.payload["reason"] == f"Administrative close: {reason}"
         assert len(event.idempotency_key) <= 120
+
+
+def test_offline_duplicate_and_return_preserve_bounded_non_working_tail_over_http(time_http):
+    client, data = time_http
+    headers = data["device_headers"]
+    session_id = _post(client, "agent/sessions/start", headers, {"started_at": "2026-11-26T10:00:00Z"})["session"]["id"]
+    path = f"agent/sessions/{session_id}/heartbeat"
+    payload = {"event_id": str(uuid4()), "timestamp": "2026-11-26T10:00:01Z", "status": "offline",
+               "active_seconds": 0, "idle_seconds": 1, "agent_version": "9.9.9"}
+    _post(client, path, headers, payload)
+    duplicate = _post(client, path, headers, payload)
+    assert duplicate["duplicate"] is True
+    assert duplicate["session"]["ended_at"] is None
+    returned = _post(client, path, headers, {**payload, "event_id": str(uuid4()), "status": "active"})
+    assert returned["restarted"] is True
+    with data["factory"]() as db:
+        from uuid import UUID
+        old = db.get(WorkSession, UUID(session_id))
+        assert old.active_seconds == 0
+        assert _utc(old.ended_at) == datetime(2026, 11, 26, 10, 0, 1, tzinfo=UTC)
+        for event in db.scalars(select(ActivityEvent).where(ActivityEvent.session_id == old.id)):
+            assert _utc(old.started_at) <= _utc(event.event_timestamp) <= _utc(old.ended_at)

@@ -1317,6 +1317,10 @@ function inputProbeExecutablePath() {
 }
 
 function startInputIntegrityMonitoring() {
+  // UI tests provide their own OS-idle source. A native hook from the developer's
+  // keyboard would otherwise override it. Packaged apps always keep the probe.
+  if (process.env.KHALIDUO_E2E_DISABLE_INPUT_PROBE === "1" &&
+      process.env.KHALIDUO_E2E_USER_DATA_DIR && !app.isPackaged) return;
   if (process.platform !== "win32" || inputIntegrityMonitor.running) {
     return;
   }

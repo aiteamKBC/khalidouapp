@@ -22,8 +22,8 @@ The database name must begin with `khaliduo_time_test_`; the fixture rejects any
 other name. Destroy that disposable database when finished. Never use employee
 records from production as test fixtures.
 
-The Playwright/Electron UI suite under `e2e/` additionally requires Docker,
-Playwright dependencies and an isolated local stack. Unit/HTTP checks do not
-substitute for that suite when changing UI interactions. Tests cover specified
-invariants and regressions; they cannot prove that every hardware, network or
-operating-system condition is error-free.
+The unified runner is `scripts/test-khaliduo.ps1 -Suite all`. See
+[the E2E guide](../../e2e/README.md) for quick/nightly profiles, portable PostgreSQL,
+Hypothesis/fast-check replay, network chaos, authenticated k6 load, the deployment
+gate and isolated Windows VM checks. Tests cover specified invariants and
+regressions; they cannot prove that every hardware, network or OS condition is error-free.

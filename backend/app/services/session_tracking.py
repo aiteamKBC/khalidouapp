@@ -201,8 +201,20 @@ def close_open_session(
     # The database must never contain an impossible interval. Delayed or
     # mis-clocked clients used to create rows whose end preceded their start.
     ended_at = max(utc(session.started_at), utc(ended_at))
-    session.ended_at = ended_at
+    latest_signal = db.scalar(select(ActivityEvent.event_timestamp).where(
+        ActivityEvent.session_id == session.id,
+    ).order_by(ActivityEvent.event_timestamp.desc()).limit(1))
+    # Keep already accepted idle/health evidence inside the ledger. The terminal
+    # event below still marks the last proven work instant, so extending these
+    # storage bounds cannot turn the non-working tail into payable work.
+    session.ended_at = max(ended_at, utc(latest_signal)) if latest_signal is not None else ended_at
     session.status = "ended"
+    work_duration = max(0, int((ended_at - utc(session.started_at)).total_seconds()))
+    duration = max(0, int((session.ended_at - utc(session.started_at)).total_seconds()))
+    session.active_seconds = min(session.active_seconds, work_duration)
+    session.idle_seconds = min(session.idle_seconds, max(0, duration - session.active_seconds))
+    session.normal_seconds = min(session.normal_seconds, session.active_seconds)
+    session.extra_seconds = min(session.extra_seconds, max(0, session.active_seconds - session.normal_seconds))
     create_activity_event(
         db,
         device=device,
@@ -1113,11 +1125,27 @@ def record_heartbeat(
     session_id: UUID,
     payload: HeartbeatRequest,
 ) -> dict[str, Any]:
+    # Match the device -> session lock order used by session start/task switch.
+    # Concurrent retries must not both pass the event-id lookup and insert it.
+    db.execute(select(Device.id).where(Device.id == device.id).with_for_update())
     session = get_owned_session(db, device, session_id)
     heartbeat_at = bounded_client_timestamp(payload.timestamp)
     received_at = utc()
     mark_device_seen(device, received_at=received_at)
     device.agent_version = payload.agent_version
+    # Idempotency must precede offline/day/timezone transitions. A replay of an
+    # accepted offline heartbeat used to close the session before we noticed
+    # its event id, shrinking its bounds around already accepted evidence.
+    existing = db.scalar(select(ActivityEvent).where(
+        ActivityEvent.company_id == device.company_id,
+        ActivityEvent.idempotency_key == str(payload.event_id),
+    ))
+    if existing is not None:
+        existing_session = get_owned_session(db, device, existing.session_id)
+        response = {"event_id": str(existing.id), "duplicate": True,
+                    **session_response(db, existing_session), "restarted": False}
+        db.commit()
+        return response
     # An unsupported agent must not silently continue payable tracking. The
     # timeline safeguard already refuses to trust its counters across long gaps;
     # this flag lets the desktop surface a clear update-required state. The floor
@@ -1181,6 +1209,12 @@ def record_heartbeat(
 
     if heartbeat_at < utc(session.started_at):
         return ignored("event_precedes_session")
+
+    latest_signal = db.scalar(select(ActivityEvent.event_timestamp).where(
+        ActivityEvent.session_id == session.id,
+    ).order_by(ActivityEvent.event_timestamp.desc()).limit(1))
+    if latest_signal is not None and heartbeat_at < utc(latest_signal):
+        return ignored("stale_session_signal")
 
     zone = session_zone(db, session)
     current_device_zone = employee_zone(db, device)
@@ -1264,10 +1298,7 @@ def record_heartbeat(
         # counter this used to take a max() of does not accumulate across idle
         # episodes, so a session with two hours away reported only its longest
         # single episode - roughly 18 minutes instead of 123.
-        session.idle_seconds = max(
-            session.idle_seconds,
-            max(0, elapsed_seconds - session.active_seconds),
-        )
+        session.idle_seconds = max(0, elapsed_seconds - session.active_seconds)
         finalize_due_pause(db, session, at=heartbeat_at)
         sync_session_time_buckets(db, session, at=heartbeat_at)
 
@@ -1460,6 +1491,7 @@ def record_agent_event(
     session_id: UUID,
     payload: ActivityEventRequest,
 ) -> dict[str, Any]:
+    db.execute(select(Device.id).where(Device.id == device.id).with_for_update())
     existing_event = db.scalar(
         select(ActivityEvent).where(
             ActivityEvent.company_id == device.company_id,
@@ -1676,6 +1708,7 @@ def end_session(
     session_id: UUID,
     payload: SessionEndRequest,
 ) -> dict[str, Any]:
+    db.execute(select(Device.id).where(Device.id == device.id).with_for_update())
     session = get_owned_session(db, device, session_id)
     if session.ended_at is not None:
         return {"session": serialize_session(session)}
@@ -1684,6 +1717,14 @@ def end_session(
         utc(session.started_at),
         bounded_client_timestamp(payload.ended_at),
     )
+    latest = db.scalar(select(ActivityEvent.event_timestamp).where(
+        ActivityEvent.session_id == session.id,
+    ).order_by(ActivityEvent.event_timestamp.desc()).limit(1))
+    if latest is not None and ended_at < utc(latest):
+        response = {**session_response(db, session), "ignored": True,
+                    "ignore_reason": "stale_session_end"}
+        db.commit()
+        return response
     elapsed_seconds = max(
         0, int((ended_at - utc(session.started_at)).total_seconds())
     )

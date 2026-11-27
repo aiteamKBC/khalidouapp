@@ -8,12 +8,14 @@ export const BACKEND_DIR = path.join(REPO_DIR, "backend");
 export const DASHBOARD_DIR = path.join(REPO_DIR, "frontend", "admin-dashboard");
 export const DESKTOP_DIR = path.join(REPO_DIR, "frontend", "desktop-agent");
 export const RUNTIME_DIR = path.join(E2E_DIR, ".runtime");
-export const PYTHON = path.join(BACKEND_DIR, ".venv", "Scripts", "python.exe");
+export const PYTHON = process.env.KHALIDUO_TEST_PYTHON || path.join(BACKEND_DIR, ".venv", process.platform === "win32" ? "Scripts/python.exe" : "bin/python");
 
 export const DB_PORT = 55432;
 export const API_PORT = 8010;
 export const PROXY_PORT = 8011;
 export const WEB_PORT = 5175;
+export const TOXIPROXY_API_PORT = 8477;
+export const TOXIPROXY_PORT = 8012;
 export const DEAD_PORT = 59999;
 
 export const DATABASE_URL = `postgresql+psycopg://khaliduo_e2e:khaliduo_e2e_password@127.0.0.1:${DB_PORT}/khaliduo_e2e`;
@@ -36,7 +38,7 @@ export function assertIsolated(values: Record<string, string | undefined>) {
     if (!value) continue;
     const lower = value.toLowerCase();
     if (lower.includes("neon.tech") || lower.includes("kentbusinesscollege")) {
-      throw new Error(`E2E safety guard: ${name} points at a real environment (${value}).`);
+      throw new Error(`E2E safety guard: ${name} points at a real environment.`);
     }
     if (/^(postgres|postgresql|https?)(\+\w+)?:\/\//.test(lower)) {
       const host = new URL(lower.replace(/^postgresql\+\w+:/, "postgresql:")).hostname;

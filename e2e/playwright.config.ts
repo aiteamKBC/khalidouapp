@@ -11,7 +11,7 @@ export default defineConfig({
   retries: 0,
   timeout: 120_000,
   expect: { timeout: 15_000 },
-  reporter: [["list"], ["html", { open: "never" }]],
+  reporter: [["list"], ["html", { open: "never" }], ["junit", { outputFile: "test-results/results.xml" }]],
   use: {
     baseURL: WEB_URL,
     trace: "retain-on-failure",
@@ -22,6 +22,7 @@ export default defineConfig({
   projects: [
     { name: "desktop", testDir: "./desktop" },
     { name: "web", testDir: "./web" },
+    { name: "chaos", testDir: "./chaos" },
     // The full workday runs as one ordered, serial file with a long budget.
     { name: "journey", testDir: "./journey", timeout: 30 * 60_000 },
   ],

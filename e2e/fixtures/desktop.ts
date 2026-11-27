@@ -38,6 +38,7 @@ export function desktopLaunchOptions(profile: DesktopProfile, extraEnv: Record<s
     APPDATA: profile.appData,
     LOCALAPPDATA: profile.localAppData,
     KHALIDUO_E2E_USER_DATA_DIR: profile.userData,
+    KHALIDUO_E2E_DISABLE_INPUT_PROBE: "1",
     // Every key in frontend/desktop-agent/.env is set here: dotenv never
     // overrides a variable that already exists, so the dev .env cannot leak in.
     VITE_API_BASE_URL: DESKTOP_API_URL,
@@ -56,7 +57,7 @@ export function desktopLaunchOptions(profile: DesktopProfile, extraEnv: Record<s
 export async function launchDesktop(profile: DesktopProfile, extraEnv: Record<string, string> = {}) {
   const app = await _electron.launch(desktopLaunchOptions(profile, extraEnv));
   // Install the native seams before the app's first idle poll (250 ms).
-  await installSeams(app);
+  await installSeams(app, process.env.E2E_FOREGROUND !== "1");
   const window = await app.firstWindow({ timeout: 30_000 });
   const pageErrors: string[] = [];
   const consoleLog: string[] = [];
@@ -64,6 +65,18 @@ export async function launchDesktop(profile: DesktopProfile, extraEnv: Record<st
   window.on("console", (message) => consoleLog.push(`${new Date().toISOString()} ${message.type()}: ${message.text()}`));
   await window.waitForLoadState("domcontentloaded");
   await expect(window.locator("#root")).not.toBeEmpty({ timeout: 20_000 });
+  const testBadge = () => window.evaluate(() => {
+    document.title = "KHALIDUO TEST — Local test account";
+    if (document.getElementById("khaliduo-test-badge")) return;
+    const badge = document.createElement("div");
+    badge.id = "khaliduo-test-badge";
+    badge.textContent = "TEST ONLY · Local database · حساب تجريبي منفصل عن حسابك الحقيقي";
+    Object.assign(badge.style, { position: "fixed", bottom: "0", left: "0", right: "0", zIndex: "2147483647", background: "#fbbf24", color: "#111827", textAlign: "center", font: "bold 14px sans-serif", padding: "7px", pointerEvents: "none" });
+    document.body.appendChild(badge);
+  });
+  window.on("load", () => void testBadge().catch(() => {}));
+  await testBadge();
+  await app.context().tracing.start({ screenshots: true, snapshots: true, sources: true });
   // Diagnostics: every idle/tracking alert the main process raises, with the
   // renderer clock, lands in consoleLog (attached to failing tests).
   // Re-registered on every load: the renderer reloads after sign-in.
@@ -104,6 +117,7 @@ export async function launchDesktop(profile: DesktopProfile, extraEnv: Record<st
       }, index),
     openedUrls: () => app.evaluate(() => [...(globalThis as any).__e2eOpenedUrls] as string[]),
     dialogLog: () => app.evaluate(() => [...(globalThis as any).__e2eDialogLog] as any[]),
+    saveTrace: (tracePath: string) => app.context().tracing.stop({ path: tracePath }),
     isWindowVisible: () => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().some((w: { isVisible(): boolean }) => w.isVisible())),
     showWindow: () =>
       app.evaluate(({ BrowserWindow }) => {
@@ -124,11 +138,21 @@ export async function launchDesktop(profile: DesktopProfile, extraEnv: Record<st
   return desktop;
 }
 
-async function installSeams(app: ElectronApplication) {
-  await app.evaluate(({ powerMonitor, dialog, shell }) => {
+async function installSeams(app: ElectronApplication, background: boolean) {
+  await app.evaluate(({ powerMonitor, dialog, shell, BrowserWindow, app: electronApp }, suppressFocus) => {
     const g = globalThis as any;
     if (g.__e2eSeams) return;
     g.__e2eSeams = true;
+    if (suppressFocus) {
+      // Keep local test windows behind the developer's real app. The dedicated
+      // CI VM sets E2E_FOREGROUND=1 to exercise the actual activation behavior.
+      const showInactive = BrowserWindow.prototype.showInactive;
+      BrowserWindow.prototype.show = function () { showInactive.call(this); };
+      BrowserWindow.prototype.focus = () => {};
+      BrowserWindow.prototype.moveTop = () => {};
+      BrowserWindow.prototype.setAlwaysOnTop = () => {};
+      electronApp.focus = () => {};
+    }
     // OS idle clock (used when the native input probe is absent, as in a dev build).
     g.__e2eIdleSince = null;
     powerMonitor.getSystemIdleTime = () =>
@@ -150,7 +174,7 @@ async function installSeams(app: ElectronApplication) {
     shell.openExternal = (async (url: string) => {
       g.__e2eOpenedUrls.push(url);
     }) as any;
-  });
+  }, background);
 }
 
 export function killTree(app: ElectronApplication) {
@@ -193,7 +217,7 @@ export async function nav(window: Page, view: "Tracker" | "Tasks" | "Requests" |
 
 // ---------------------------------------------------------------- network switch
 
-export async function setNetwork(mode: { kind: "online" } | { kind: "offline" } | { kind: "status"; status: number; pathPrefix: string }) {
+export async function setNetwork(mode: { kind: "online" } | { kind: "offline" } | { kind: "status"; status: number; pathPrefix: string } | { kind: "drop_response"; pathPrefix: string; remaining: number }) {
   const response = await fetch(`http://127.0.0.1:${PROXY_PORT}/__e2e/mode`, { method: "POST", body: JSON.stringify(mode) });
   return response.json();
 }

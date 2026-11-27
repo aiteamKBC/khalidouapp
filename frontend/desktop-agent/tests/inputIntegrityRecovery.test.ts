@@ -17,6 +17,17 @@ type Monitor = {
   latestRealInputAt: () => number | null;
 };
 
+test("only isolated unpackaged UI tests may replace the native input probe", () => {
+  for (const packaged of [false, true]) {
+    const { c, children } = recoveryContext(42, {
+      process: { platform: "win32", env: { KHALIDUO_E2E_DISABLE_INPUT_PROBE: "1", KHALIDUO_E2E_USER_DATA_DIR: "isolated-profile" } },
+      app: { isPackaged: packaged },
+    });
+    assert.equal(c.observedIdleSeconds(), 42);
+    assert.equal(children.length, packaged ? 1 : 0);
+  }
+});
+
 function recoveryContext(initialOsIdleSeconds = 0, overrides: Record<string, unknown> = {}) {
   const children: ProbeChild[] = [];
   let osIdleSeconds = initialOsIdleSeconds;

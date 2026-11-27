@@ -57,6 +57,9 @@ test.afterAll(() => desktop?.kill());
 test.afterEach(async ({}, testInfo) => {
   if (testInfo.status === testInfo.expectedStatus || !desktop) return;
   await testInfo.attach("desktop-renderer-console", { body: desktop.consoleLog.join("\n"), contentType: "text/plain" });
+  const trace = testInfo.outputPath("electron-trace.zip");
+  await desktop.saveTrace(trace).catch(() => {});
+  if (fs.existsSync(trace)) await testInfo.attach("electron-trace", { path: trace, contentType: "application/zip" });
   const mainLog = path.join(profile.userData, "logs", "main.log");
   if (fs.existsSync(mainLog)) await testInfo.attach("desktop-main-log", { path: mainLog, contentType: "text/plain" });
 });

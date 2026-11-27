@@ -10,9 +10,10 @@ import http from "node:http";
 const listenPort = Number(process.argv[2]);
 const targetPort = Number(process.argv[3]);
 
-type Mode = { kind: "online" } | { kind: "offline" } | { kind: "status"; status: number; pathPrefix: string };
+type Mode = { kind: "online" } | { kind: "offline" } | { kind: "status"; status: number; pathPrefix: string }
+  | { kind: "drop_response"; pathPrefix: string; remaining: number };
 let mode: Mode = { kind: "online" };
-const counters = { forwarded: 0, dropped: 0, faked: 0 };
+const counters = { forwarded: 0, dropped: 0, faked: 0, lostResponses: 0 };
 
 const server = http.createServer((req, res) => {
   const url = req.url ?? "/";
@@ -46,6 +47,15 @@ const server = http.createServer((req, res) => {
   const upstream = http.request(
     { host: "127.0.0.1", port: targetPort, method: req.method, path: url, headers: req.headers },
     (upstreamResponse) => {
+      // The server has already handled/committed the request. Lose only its
+      // reply, forcing the desktop to retry a transaction that already exists.
+      if (mode.kind === "drop_response" && mode.remaining > 0 && url.startsWith(mode.pathPrefix)) {
+        mode.remaining -= 1;
+        counters.lostResponses += 1;
+        upstreamResponse.resume();
+        req.socket.destroy();
+        return;
+      }
       res.writeHead(upstreamResponse.statusCode ?? 502, upstreamResponse.headers);
       upstreamResponse.pipe(res);
     },

@@ -1169,6 +1169,93 @@ def test_session_end_before_start_is_clamped_to_zero_duration(tracking_context):
     assert result["session"]["idle_seconds"] == 0
 
 
+def test_replayed_offline_heartbeat_cannot_end_or_change_its_open_session(tracking_context):
+    db, device = tracking_context
+    start = datetime(2026, 9, 10, 10, tzinfo=UTC)
+    started = start_or_get_session(db, device, SessionStartRequest(started_at=start))
+    session_id = UUID(started["session"]["id"])
+    payload = HeartbeatRequest(event_id=uuid4(), timestamp=start + timedelta(seconds=1),
+                               status="offline", active_seconds=0, idle_seconds=1,
+                               agent_version="9.9.9")
+    first = record_heartbeat(db, device=device, session_id=session_id, payload=payload)
+    replay = record_heartbeat(db, device=device, session_id=session_id, payload=payload)
+    assert replay["duplicate"] is True
+    assert replay["session"] == first["session"]
+    assert replay["session"]["ended_at"] is None
+
+
+def test_late_stop_cannot_backdate_an_end_before_accepted_activity(tracking_context):
+    db, device = tracking_context
+    start = datetime(2026, 9, 10, 10, tzinfo=UTC)
+    started = start_or_get_session(db, device, SessionStartRequest(started_at=start))
+    session_id = UUID(started["session"]["id"])
+    record_heartbeat(db, device=device, session_id=session_id, payload=HeartbeatRequest(
+        event_id=uuid4(), timestamp=start + timedelta(seconds=10), status="active",
+        active_seconds=10, idle_seconds=0, agent_version="9.9.9",
+    ))
+    late = end_session(db, device=device, session_id=session_id, payload=SessionEndRequest(
+        event_id=uuid4(), ended_at=start + timedelta(seconds=1), active_seconds=999,
+        idle_seconds=999, reason="Delayed stop",
+    ))
+    assert late["ignored"] is True
+    assert late["session"]["ended_at"] is None
+    assert late["session"]["active_seconds"] == 10
+
+
+def test_caught_up_active_counter_cannot_overlap_previously_inferred_idle(tracking_context):
+    db, device = tracking_context
+    start = datetime(2026, 9, 10, 10, tzinfo=UTC)
+    started = start_or_get_session(db, device, SessionStartRequest(started_at=start))
+    session_id = UUID(started["session"]["id"])
+    for active in [0, 1]:
+        response = record_heartbeat(db, device=device, session_id=session_id, payload=HeartbeatRequest(
+            event_id=uuid4(), timestamp=start + timedelta(seconds=1), status="active",
+            active_seconds=active, idle_seconds=0, agent_version="9.9.9",
+        ))
+    assert response["session"]["active_seconds"] == 1
+    assert response["session"]["idle_seconds"] == 0
+
+
+def test_offline_return_preserves_idle_evidence_without_paying_the_idle_tail(tracking_context):
+    db, device = tracking_context
+    start = datetime(2026, 9, 10, 10, tzinfo=UTC)
+    started = start_or_get_session(db, device, SessionStartRequest(started_at=start))
+    session_id = UUID(started["session"]["id"])
+    for status in ["offline", "active"]:
+        result = record_heartbeat(db, device=device, session_id=session_id, payload=HeartbeatRequest(
+            event_id=uuid4(), timestamp=start + timedelta(seconds=1), status=status,
+            active_seconds=0, idle_seconds=1, agent_version="9.9.9",
+        ))
+    assert result["restarted"] is True
+    old = db.get(WorkSession, session_id)
+    assert old.ended_at.replace(tzinfo=UTC) == start + timedelta(seconds=1)
+    assert old.active_seconds == 0
+    timeline = build_workday_timeline(db, company_id=device.company_id, employee_id=device.employee_id,
+                                     timezone_name="UTC", target_date=start.date(), now=start + timedelta(seconds=1))
+    assert timeline["worked_seconds"] == 0
+    for event in db.scalars(select(ActivityEvent).where(ActivityEvent.session_id == old.id)):
+        assert old.started_at.replace(tzinfo=UTC) <= event.event_timestamp.replace(tzinfo=UTC) <= old.ended_at.replace(tzinfo=UTC)
+
+
+def test_stale_active_heartbeat_cannot_rewind_an_offline_sessions_counters(tracking_context):
+    db, device = tracking_context
+    start = datetime(2026, 9, 10, 10, tzinfo=UTC)
+    started = start_or_get_session(db, device, SessionStartRequest(started_at=start))
+    session_id = UUID(started["session"]["id"])
+    for second, status, active in [(10, "active", 10), (20, "offline", 10)]:
+        record_heartbeat(db, device=device, session_id=session_id, payload=HeartbeatRequest(
+            event_id=uuid4(), timestamp=start + timedelta(seconds=second), status=status,
+            active_seconds=active, idle_seconds=0, agent_version="9.9.9",
+        ))
+    late = record_heartbeat(db, device=device, session_id=session_id, payload=HeartbeatRequest(
+        event_id=uuid4(), timestamp=start + timedelta(seconds=1), status="active",
+        active_seconds=0, idle_seconds=0, agent_version="9.9.9",
+    ))
+    assert late["ignored"] is True
+    assert late["session"]["ended_at"] is None
+    assert late["session"]["active_seconds"] == 10
+
+
 def test_overnight_session_ends_at_the_last_active_heartbeat(tracking_context):
     db, device = tracking_context
     started_at = datetime(2026, 7, 16, 9, 0, tzinfo=UTC)
