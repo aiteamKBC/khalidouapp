@@ -19,6 +19,10 @@ WINDOWS = os.name == "nt"
 
 
 def main():
+    # GitHub's Windows console may use a legacy code page even when subprocess
+    # logs are UTF-8. Preserve the original failure instead of failing to print it.
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--profile", choices=["quick", "nightly"], default="quick")
     parser.add_argument("--suite", choices=["all", "unit", "integration", "load", "native"], default="all")

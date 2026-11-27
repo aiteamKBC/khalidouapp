@@ -31,6 +31,11 @@ export function desktopLaunchOptions(profile: DesktopProfile, extraEnv: Record<s
   }
   const env: Record<string, string> = {
     SYSTEMROOT: process.env.SYSTEMROOT ?? "C:\\Windows",
+    SystemDrive: process.env.SystemDrive ?? "C:",
+    WINDIR: process.env.WINDIR ?? "C:\\Windows",
+    COMSPEC: process.env.COMSPEC ?? "C:\\Windows\\System32\\cmd.exe",
+    ProgramData: process.env.ProgramData ?? "C:\\ProgramData",
+    PATHEXT: process.env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD",
     PATH: process.env.PATH ?? "",
     TEMP: process.env.TEMP ?? os.tmpdir(),
     TMP: process.env.TMP ?? os.tmpdir(),
@@ -51,7 +56,11 @@ export function desktopLaunchOptions(profile: DesktopProfile, extraEnv: Record<s
     ...extraEnv,
   };
   assertIsolated({ VITE_API_BASE_URL: env.VITE_API_BASE_URL, KHALIDUO_EMPLOYEE_PORTAL_URL: env.KHALIDUO_EMPLOYEE_PORTAL_URL });
-  return { executablePath: ELECTRON_EXE, args: [DESKTOP_DIR], cwd: DESKTOP_DIR, env, timeout: 60_000 };
+  return {
+    executablePath: ELECTRON_EXE,
+    args: ["--disable-features=CalculateNativeWinOcclusion", "--disable-renderer-backgrounding", "--disable-background-timer-throttling", DESKTOP_DIR],
+    cwd: DESKTOP_DIR, env, timeout: 60_000,
+  };
 }
 
 export async function launchDesktop(profile: DesktopProfile, extraEnv: Record<string, string> = {}) {
@@ -59,6 +68,9 @@ export async function launchDesktop(profile: DesktopProfile, extraEnv: Record<st
   // Install the native seams before the app's first idle poll (250 ms).
   await installSeams(app, process.env.E2E_FOREGROUND !== "1");
   const window = await app.firstWindow({ timeout: 30_000 });
+  await app.evaluate(({ BrowserWindow }) => {
+    for (const win of BrowserWindow.getAllWindows()) win.webContents.setBackgroundThrottling(false);
+  });
   const pageErrors: string[] = [];
   const consoleLog: string[] = [];
   window.on("pageerror", (error) => pageErrors.push(error.message));

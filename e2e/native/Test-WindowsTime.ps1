@@ -4,7 +4,7 @@ $ErrorActionPreference = 'Stop'
 $repo = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 if (-not $Report) { $Report = Join-Path $repo 'test-reports/native-windows.json' }
 New-Item -ItemType Directory -Force (Split-Path $Report -Parent) | Out-Null
-$result = [ordered]@{ status = 'blocked'; clock = 'not_run'; timezone = 'not_run'; sleep = 'not_run'; reason = '' }
+$result = [ordered]@{ status = 'blocked'; clock = 'not_run'; timezone = 'not_run'; sleep = 'not_run'; reason = ''; samples = @() }
 $machine = Get-CimInstance Win32_ComputerSystem
 $isVm = ($machine.Manufacturer + ' ' + $machine.Model) -match 'Virtual Machine|VMware|VirtualBox|KVM|QEMU|Xen|HVM domU'
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
@@ -38,9 +38,14 @@ try {
     $before = Sample
     foreach ($hours in @(6, -12)) {
         Set-Date -Date (Get-Date).AddHours($hours) | Out-Null
+        $osUtc = [DateTime]::UtcNow
         $after = Sample
+        $result.samples += @{ requested_shift_hours = $hours; controller_utc = $osUtc.ToString('o'); observer_os = $after.os; tracking_utc = $after.utc }
         if ([Math]::Abs(($after.utc - $before.utc) - ($after.elapsed - $before.elapsed)) -gt 100) { throw 'UTC changed with the Windows clock' }
-        if ([Math]::Abs($after.os - $after.utc) -lt 3600000) { throw 'The test did not actually shift the OS clock' }
+        # V8 may cache its Windows wall-clock source briefly. Verify the OS
+        # change using the independent controller, not the observer's Date cache.
+        $actualOffset = ($osUtc - $originalUtc.Add($elapsed.Elapsed)).TotalMilliseconds
+        if ([Math]::Abs($actualOffset) -lt 3600000) { throw 'The controller could not verify an actual OS clock shift' }
     }
     $result.clock = 'passed'
     foreach ($zone in @('China Standard Time', 'GMT Standard Time', 'Nepal Standard Time')) {
