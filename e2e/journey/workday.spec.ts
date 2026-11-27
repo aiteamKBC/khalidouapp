@@ -151,7 +151,11 @@ test("06 · 'I was working' opens Requests on that idle period and files an expl
   await expect(popup.title).toHaveText("Are you still working?", { timeout: 20_000 });
   // The explainable period runs from the popup to the click; under a minute
   // the app (correctly) says there is nothing to explain. Stay away 70 s.
+  const idleAlertId = (await desktop.status()).lastIdleAlert?.id;
   await window.waitForTimeout(70_000);
+  const stillAway = await desktop.status();
+  expect(stillAway.trackingStatus, "idle must persist until an explicit return").toBe("idle");
+  expect(stillAway.lastIdleAlert?.id, "the same idle episode must remain pending").toBe(idleAlertId);
   await desktop.becomeActive();
   await popup.click("I was working during this idle period");
 
