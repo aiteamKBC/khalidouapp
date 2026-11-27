@@ -40,6 +40,11 @@ test("historical detail data is cached without polling", () => {
   });
 });
 
+test("an old running snapshot keeps refreshing until its sign-out is resolved", () => {
+  assert.equal(monitoringDetailPolicy("2026-11-23", "2026-11-27", true).refetchInterval, 60_000);
+  assert.equal(monitoringDetailPolicy("2026-11-23", "2026-11-27", false).refetchInterval, false);
+});
+
 test("monitoring query keys include stable user, team, tab, employee, day, and page inputs", () => {
   const scope = monitoringScopeKey("user-a", ["team-b", "team-a"]);
   assert.equal(scope, "user-a:team-a|team-b");

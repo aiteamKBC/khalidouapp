@@ -122,3 +122,32 @@ def test_transient_failure_does_not_replace_successful_location(monkeypatch):
     assert device.timezone == "Africa/Cairo"
     assert device.country_code == "EG"
     assert device.timezone_source == "ip_geolocation"
+
+
+def test_network_change_with_failed_lookup_keeps_verified_country_and_retries(monkeypatch):
+    from datetime import timedelta
+
+    now = datetime(2026, 11, 27, 10, tzinfo=UTC)
+    device = _device(
+        timezone="Africa/Cairo", reported_timezone="Europe/London", country_code="EG",
+        timezone_source="ip_geolocation", last_ip_address="8.8.8.8", timezone_checked_at=now,
+    )
+    calls = []
+    def lookup(ip):
+        calls.append(ip)
+        return None if len(calls) == 1 else ("GB", "Europe/London")
+    monkeypatch.setattr(device_location, "lookup_ip_location", lookup)
+    assert device_location.refresh_device_location(
+        device, client_ip="1.1.1.1", reported_timezone="Europe/London",
+        employee_timezone="Africa/Cairo", now=now,
+    ) is False
+    assert device.timezone == "Africa/Cairo"
+    assert device.country_code == "EG"
+    assert device.timezone_source == "ip_geolocation_cached"
+    assert device_location.refresh_device_location(
+        device, client_ip="1.1.1.1", reported_timezone="Europe/London",
+        employee_timezone="Africa/Cairo", now=now + timedelta(minutes=20),
+    ) is True
+    assert calls == ["1.1.1.1", "1.1.1.1"]
+    assert device.timezone == "Europe/London"
+    assert device.country_code == "GB"

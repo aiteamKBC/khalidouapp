@@ -1,3 +1,4 @@
+import { trackingNowMs } from "./trackingClock.js";
 import { spawn, type ChildProcessByStdio } from "node:child_process";
 import type { Readable } from "node:stream";
 
@@ -94,7 +95,7 @@ export class InputIntegrityMonitor {
   private lastReportAt: number | null = null;
   private lastTrustedInputAt: number | null = null;
   private hasReceivedReport = false;
-  private observationStartedAt = Date.now();
+  private observationStartedAt = trackingNowMs();
   private realMouseEvents = 0;
   private realKeyboardEvents = 0;
   private injectedMouseEvents = 0;
@@ -109,7 +110,7 @@ export class InputIntegrityMonitor {
 
   start(executablePath: string, initialSystemIdleSeconds: number) {
     if (this.running) return true;
-    const now = Date.now();
+    const now = trackingNowMs();
     // Seed from Windows only once. Repeated blind-hook recovery used to reset
     // inactivity every minute and count an unattended machine as working all
     // night. Only a physical report or explicit confirmation can advance this
@@ -152,12 +153,12 @@ export class InputIntegrityMonitor {
     if (child && !child.killed) child.kill();
   }
 
-  sensorAvailable(now = Date.now()) {
+  sensorAvailable(now = trackingNowMs()) {
     return this.running && this.lastReportAt !== null &&
       now - this.lastReportAt <= SENSOR_STALE_AFTER_MS;
   }
 
-  idleSeconds(systemIdleSeconds: number, now = Date.now()) {
+  idleSeconds(systemIdleSeconds: number, now = trackingNowMs()) {
     return effectiveTrustedIdleSeconds({
       // Once the probe has reported, keep its clock through recovery, warmup,
       // or missing reports. Falling back to an OS clock stuck at zero in those
@@ -170,7 +171,7 @@ export class InputIntegrityMonitor {
   }
 
   /** Whether the running probe has gone blind to input Windows still sees. */
-  missedInput(systemIdleSeconds: number, now = Date.now()) {
+  missedInput(systemIdleSeconds: number, now = trackingNowMs()) {
     return probeMissedInput({
       sensorAvailable: this.sensorAvailable(now),
       lastProbeEventAt: this.lastProbeEventAt,
@@ -185,17 +186,17 @@ export class InputIntegrityMonitor {
    * that is presence, so the idle clock restarts from now instead of waiting for
    * the next probe report.
    */
-  confirmPresence(now = Date.now()) {
+  confirmPresence(now = trackingNowMs()) {
     this.lastTrustedInputAt = Math.max(this.lastTrustedInputAt ?? now, now);
   }
 
-  latestRealInputAt(now = Date.now()) {
+  latestRealInputAt(now = trackingNowMs()) {
     return this.sensorAvailable(now) && this.lastRealInputAt > 0
       ? this.lastRealInputAt
       : null;
   }
 
-  takeObservation(now = Date.now()): InputIntegrityObservation {
+  takeObservation(now = trackingNowMs()): InputIntegrityObservation {
     const observation: InputIntegrityObservation = {
       sensor: "windows_low_level_input",
       sensor_available: this.sensorAvailable(now),
@@ -226,7 +227,7 @@ export class InputIntegrityMonitor {
       if (!line) continue;
       const report = parseProbeReport(line);
       if (!report) continue;
-      const now = Date.now();
+      const now = trackingNowMs();
       this.lastReportAt = now;
       this.hasReceivedReport = true;
       this.realMouseEvents += report.real_mouse;

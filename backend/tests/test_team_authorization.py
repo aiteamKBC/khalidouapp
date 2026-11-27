@@ -2259,6 +2259,41 @@ def test_agent_task_list_includes_employee_time_per_task(team_client):
     assert task["tracked_seconds"] == 85
 
 
+def test_live_hr_status_does_not_revive_old_work_from_screenshot_device_liveness(team_client):
+    client, data = team_client
+    now = datetime.now(UTC)
+    with data["session_factory"]() as db:
+        session = db.get(WorkSession, data["session_a"].id)
+        session.started_at = now - timedelta(days=3)
+        session.ended_at = None
+        session.status = "active"
+        session.updated_at = now
+        device = db.get(Device, session.device_id)
+        device.last_seen_at = now
+        db.add(ActivityEvent(
+            company_id=session.company_id, employee_id=session.employee_id,
+            device_id=device.id, session_id=session.id, event_type="heartbeat",
+            event_timestamp=now - timedelta(days=2), payload={"status": "active"},
+            idempotency_key=str(uuid4()),
+        ))
+        db.commit()
+    overview = client.get(
+        "/api/v1/employees-overview", params={"employee_id": str(data["employee_a"].id)},
+        headers=data["general_headers"],
+    )
+    detail = client.get(
+        f"/api/v1/employees/{data['employee_a'].id}/status", headers=data["general_headers"],
+    )
+    assert overview.status_code == detail.status_code == 200
+    for row in [overview.json()["data"][0], detail.json()["data"]]:
+        assert row["online_status"] == "online", "the device is reachable"
+        assert row["activity_status"] == "offline", "old work is not a live work session"
+        assert row["session_start_time"] is None
+        assert row["current_session"] is None
+    with data["session_factory"]() as db:
+        assert db.get(WorkSession, data["session_a"].id).ended_at is None
+
+
 def test_team_owner_cannot_retrieve_employees_from_another_team(team_client):
     client, data = team_client
 

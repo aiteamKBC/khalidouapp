@@ -1,3 +1,4 @@
+import { trackingNowMs, trackingNowDate } from "./trackingClock.js";
 import electronMain from 'electron/main';
 import initSqlJs, { type Database } from 'sql.js';
 import log from 'electron-log/main';
@@ -103,7 +104,7 @@ function rows<T>(sql: string, params: SqlValue[] = []): T[] {
 
 function nextAttemptAt(attempts: number) {
   const backoffMs = Math.min(5 * 60 * 1000, 10_000 * 2 ** attempts);
-  return new Date(Date.now() + backoffMs).toISOString();
+  return new Date(trackingNowMs() + backoffMs).toISOString();
 }
 
 function ensureColumn(table: string, column: string, definition: string) {
@@ -152,7 +153,7 @@ export async function initializeLocalDatabase() {
         // Nothing actionable if the corrupt handle cannot be closed.
       }
       database = null;
-      const quarantinePath = `${filePath}.corrupt-${Date.now()}`;
+      const quarantinePath = `${filePath}.corrupt-${trackingNowMs()}`;
       try {
         fs.renameSync(filePath, quarantinePath);
         log.error(
@@ -246,7 +247,7 @@ export async function initializeLocalDatabase() {
     [legacyEventRecoveryKey],
   )[0];
   if (!legacyEventRecovery) {
-    const recoveredAt = new Date().toISOString();
+    const recoveredAt = trackingNowDate().toISOString();
     // Older agents retired every event after ten failures, even when the API
     // was simply offline. Revive those rows once; definitive 4xx rejections
     // will be quarantined again by the current sync policy.
@@ -307,7 +308,7 @@ export function checkpointLocalTrackingSession(options: {
       options.status,
       Math.max(0, Math.floor(options.activeSeconds)),
       Math.max(0, Math.floor(options.idleSeconds)),
-      options.checkpointAt ?? new Date().toISOString(),
+      options.checkpointAt ?? trackingNowDate().toISOString(),
       options.sessionId,
     ],
   );
@@ -448,7 +449,7 @@ export function getServerSessionIdForLocalSession(
 
 export function markLocalTrackingSessionSynced(
   sessionId: string,
-  syncedAt = new Date().toISOString(),
+  syncedAt = trackingNowDate().toISOString(),
   serverSessionId: string | null = null,
 ) {
   if (!database) return;
@@ -485,7 +486,7 @@ export function appendLocalTrackingEvent(options: {
       options.eventType,
       options.eventTimestamp,
       JSON.stringify(options.payload),
-      new Date().toISOString(),
+      trackingNowDate().toISOString(),
     ],
   );
   persist();
@@ -522,7 +523,7 @@ export function enqueuePendingEvent(options: {
   if (!database) {
     return;
   }
-  const now = new Date().toISOString();
+  const now = trackingNowDate().toISOString();
   const createdAt = options.createdAt ?? now;
   database.run(
     `insert or ignore into pending_events
@@ -558,7 +559,7 @@ export function getDuePendingEvents(
      order by created_at asc, rowid asc`,
   );
   return orderedDuePendingEvents(ordered, {
-    now: Date.now(),
+    now: trackingNowMs(),
     force: options.force === true,
     limit,
   }).map(({ id, method, endpoint, payloadJson, attempts }) => ({
@@ -617,7 +618,7 @@ export function markPendingEventIgnored(id: string) {
     `update pending_events
      set status = 'ignored', updated_at = ?
      where id = ?`,
-    [new Date().toISOString(), id],
+    [trackingNowDate().toISOString(), id],
   );
   persist();
 }
@@ -661,7 +662,7 @@ export function markPendingEventFailed(id: string, attempts: number) {
     `update pending_events
      set status = 'failed', attempts = ?, next_attempt_at = ?, updated_at = ?
      where id = ?`,
-    [nextAttempts, nextAttemptAt(nextAttempts), new Date().toISOString(), id],
+    [nextAttempts, nextAttemptAt(nextAttempts), trackingNowDate().toISOString(), id],
   );
   persist();
 }
@@ -671,7 +672,7 @@ export function markPendingEventPermanentlyRejected(id: string, attempts: number
     `update pending_events
      set status = 'dead', attempts = ?, updated_at = ?
      where id = ?`,
-    [attempts + 1, new Date().toISOString(), id],
+    [attempts + 1, trackingNowDate().toISOString(), id],
   );
   persist();
 }
@@ -684,7 +685,7 @@ export function enqueuePendingScreenshot(options: {
   if (!database) {
     return;
   }
-  const now = new Date().toISOString();
+  const now = trackingNowDate().toISOString();
   database.run(
     `insert or replace into pending_screenshots
       (screenshot_id, metadata_json, file_path, status, attempts, next_attempt_at, created_at, updated_at)
@@ -705,7 +706,7 @@ export function getDuePendingScreenshots(
      where status in ('pending', 'failed')${ignoreNextAttempt ? '' : ' and next_attempt_at <= ?'}
      order by created_at asc
      limit ?`,
-    ignoreNextAttempt ? [limit] : [new Date().toISOString(), limit],
+    ignoreNextAttempt ? [limit] : [trackingNowDate().toISOString(), limit],
   );
 }
 
@@ -721,7 +722,7 @@ export function markPendingScreenshotUploaded(screenshotId: string) {
     `update pending_screenshots
      set status = 'uploaded', updated_at = ?
      where screenshot_id = ?`,
-    [new Date().toISOString(), screenshotId],
+    [trackingNowDate().toISOString(), screenshotId],
   );
   persist();
 }
@@ -810,7 +811,7 @@ export function markPendingScreenshotFailed(
     `update pending_screenshots
      set status = ?, attempts = ?, next_attempt_at = ?, updated_at = ?
      where screenshot_id = ?`,
-    [status, nextAttempts, nextAttemptAt(nextAttempts), new Date().toISOString(), screenshotId],
+    [status, nextAttempts, nextAttemptAt(nextAttempts), trackingNowDate().toISOString(), screenshotId],
   );
   persist();
 }

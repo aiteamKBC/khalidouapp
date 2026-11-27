@@ -1,4 +1,5 @@
 export type AgentStatus = {
+  serverTime?: string;
   enrolled: boolean;
   employeeName: string;
   employeeEmail: string | null;

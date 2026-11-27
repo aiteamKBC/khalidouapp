@@ -1,13 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import {
+import { context, moduleSource } from "./support/mainHarness.ts";
+
+const sandbox = context();
+moduleSource(sandbox, "electron/services/inputIntegrity.ts");
+const {
   PROBE_BLIND_AFTER_MS,
   effectiveTrustedIdleSeconds,
   hasRealInput,
   parseProbeReport,
   probeMissedInput,
-} from "../electron/services/inputIntegrity.ts";
+} = sandbox.exports as typeof import("../electron/services/inputIntegrity.ts");
 
 test("injected input cannot reset trusted idle time", () => {
   assert.equal(
@@ -41,9 +45,9 @@ test("one physical mouse or keyboard report counts as real input", () => {
 
 test("the probe parser keeps only bounded aggregate counters", () => {
   assert.deepEqual(
-    parseProbeReport(
+    { ...parseProbeReport(
       '{"real_mouse":7,"real_keyboard":3,"injected_mouse":9,"injected_keyboard":-4}',
-    ),
+    ) },
     {
       real_mouse: 7,
       real_keyboard: 3,

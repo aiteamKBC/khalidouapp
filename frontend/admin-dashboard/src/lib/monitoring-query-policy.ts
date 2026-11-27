@@ -30,8 +30,8 @@ export function monitoringDetailEnabled(sectionIsActive: boolean, employeeId: st
   return sectionIsActive && Boolean(employeeId && day);
 }
 
-export function monitoringDetailPolicy(day: string, today = localIsoDate()) {
-  const historical = day !== today;
+export function monitoringDetailPolicy(day: string, today = localIsoDate(), isRunning = false) {
+  const historical = day !== today && !isRunning;
   return {
     staleTime: historical ? 5 * 60_000 : 30_000,
     refetchInterval: historical ? false : 60_000,

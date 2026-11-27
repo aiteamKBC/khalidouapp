@@ -48,7 +48,7 @@ from app.schemas.admin import (
     EmployeeUpdate,
 )
 from app.services.audit import record_audit_log
-from app.services.activity_timeline import local_today
+from app.services.activity_timeline import local_today, open_session_liveness
 from app.services.attendance import (
     accountable_idle_seconds,
     current_idle_contexts,
@@ -292,6 +292,7 @@ def list_employee_overviews(
             Device.employee_id.label("employee_id"),
             Device.id.label("device_id"),
             Device.device_name.label("device_name"),
+            Device.timezone.label("device_timezone"),
             Device.status.label("device_status"),
             Device.last_seen_at.label("device_last_seen"),
             func.row_number()
@@ -387,6 +388,7 @@ def list_employee_overviews(
         today_totals.c.idle_seconds,
         today_totals.c.deducted_seconds,
         latest_screenshot.c.captured_at,
+        latest_device.c.device_timezone,
     ).outerjoin(
         latest_device,
         latest_device.c.employee_id == Employee.id,
@@ -412,6 +414,16 @@ def list_employee_overviews(
         statement = statement.where(current_employee_clause())
     statement = statement.order_by(Employee.name)
     rows = db.execute(statement).all()
+    open_ids = {row[5] for row in rows if row[5] is not None}
+    open_sessions = db.scalars(select(WorkSession).where(
+        WorkSession.company_id == current_admin.company_id,
+        WorkSession.id.in_(open_ids),
+    )).all() if open_ids else []
+    live_session_ids = {
+        session_id for session_id, state in open_session_liveness(
+            db, company_id=current_admin.company_id, sessions=list(open_sessions), now=now,
+        ).items() if state["is_fresh"]
+    }
     schedule_context_candidates = []
     for row in rows:
         employee = row[0]
@@ -423,6 +435,7 @@ def list_employee_overviews(
         if (
             session_status in {"active", "idle", "locked", "sleeping"}
             and session_id
+            and session_id in live_session_ids
             and device_id
             and device_status != "revoked"
             and normalized_last_seen
@@ -442,7 +455,7 @@ def list_employee_overviews(
         # those materialized rows in one query keeps employee/team polling fast
         # and avoids rebuilding every employee timeline on each page load.
         expected_day_by_employee = {
-            employee.id: local_today(employee.timezone) for employee, *_rest in rows
+            row[0].id: local_today(row[-1] or row[0].timezone) for row in rows
         }
         local_days = set(expected_day_by_employee.values())
         attendance_rows = db.scalars(
@@ -511,9 +524,11 @@ def list_employee_overviews(
             idle_seconds,
             deducted_seconds,
             screenshot_at,
+            device_timezone,
         ) = row
         invitation = invitations_by_employee.get(employee.id)
         employee_data = serialize_employee(employee, invitation)
+        employee_data["timezone"] = device_timezone or employee.timezone
         employee_data["onboarding_status"] = employee_onboarding_status(
             employee,
             invitation,
@@ -539,11 +554,18 @@ def list_employee_overviews(
             if attendance_today
             else 0
         )
-        active_seconds = max(raw_worked_seconds, materialized_worked_seconds)
+        active_seconds = (
+            materialized_worked_seconds
+            if attendance_today and (attendance_today.calculation_sources or {}).get(
+                "attendance_bounds_corrected", False,
+            )
+            else max(raw_worked_seconds, materialized_worked_seconds)
+        )
         idle_seconds = (
             accountable_idle_seconds(attendance_today) if attendance_today is not None else 0
         )
-        activity_status = session_status if session_id and online else "offline"
+        has_live_session = bool(session_id in live_session_ids and online)
+        activity_status = session_status if has_live_session else "offline"
         schedule_context = schedule_context_by_employee.get(employee.id)
         if schedule_context == "on_break":
             if activity_status == "active":
@@ -567,11 +589,11 @@ def list_employee_overviews(
                         "project_id": str(session_project_id) if session_project_id else None,
                         "task_id": str(session_task_id) if session_task_id else None,
                     }
-                    if session_id
+                    if has_live_session
                     else None
                 ),
                 "session_start_time": session_started_at.isoformat()
-                if session_started_at
+                if has_live_session and session_started_at
                 else None,
                 "worked_today_seconds": active_seconds,
                 "active_seconds": active_seconds,
@@ -1282,7 +1304,8 @@ def employee_status(
         )
         .order_by(WorkSession.started_at.desc())
     )
-    employee_today = local_today(employee.timezone)
+    effective_timezone = (device.timezone if device else None) or employee.timezone
+    employee_today = local_today(effective_timezone)
     from app.api.v1.timesheets import timesheet_rows
 
     canonical_rows = timesheet_rows(
@@ -1323,7 +1346,14 @@ def employee_status(
         else 0
     )
     idle_seconds = max(0, int(canonical_today["idle_seconds"])) if canonical_today else 0
+    liveness = open_session_liveness(
+        db, company_id=current_admin.company_id, sessions=[current] if current else [], now=now,
+    )
+    if current and (not online or not liveness.get(current.id, {}).get("is_fresh", False)):
+        current = None
     activity_status = current.status if current and online else "offline"
+    employee_data = serialize_employee(employee)
+    employee_data["timezone"] = effective_timezone
     schedule_context = None
     if activity_status in {"active", "idle", "locked", "sleeping"}:
         schedule_context = current_idle_contexts(
@@ -1343,7 +1373,7 @@ def employee_status(
         activity_status = "off_shift"
     return success_response(
         data={
-            "employee": serialize_employee(employee),
+            "employee": employee_data,
             "online_status": "online" if online else "offline",
             "activity_status": activity_status,
             "current_session": serialize_work_session(current) if current else None,

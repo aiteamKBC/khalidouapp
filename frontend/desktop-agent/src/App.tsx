@@ -1,3 +1,5 @@
+import { trackingNowMs, trackingNowDate } from "../electron/services/trackingClock";
+import { observeServerTime } from "../electron/services/trackingClock";
 import {
   useCallback,
   useEffect,
@@ -347,6 +349,13 @@ function ipcErrorMessage(error: unknown, fallback: string): string {
   return error instanceof Error && error.message ? error.message : fallback;
 }
 
+let displayTimezone = "UTC";
+
+function observeAgentStatus(status: AgentStatus) {
+  observeServerTime(status.serverTime);
+  displayTimezone = status.requestPolicy?.timezone || "UTC";
+}
+
 function formatTimestamp(value: string | null) {
   const date = toValidDate(value);
   if (!date) return "Not available";
@@ -357,6 +366,7 @@ function formatTimestamp(value: string | null) {
     hour: "numeric",
     minute: "2-digit",
     hour12: true,
+    timeZone: displayTimezone,
   }).format(date);
 }
 
@@ -372,7 +382,7 @@ function formatClock(value: string | null, timezone: string) {
 }
 
 function formatTimelineStart(timeline: WorkdayTimeline) {
-  if (!timeline.continued_from_previous_day) {
+  if (timeline.first_started_at || !timeline.continued_from_previous_day) {
     return formatClock(timeline.first_started_at, timeline.timezone);
   }
   const originalStart =
@@ -389,11 +399,13 @@ function formatTimelineStart(timeline: WorkdayTimeline) {
   return `Continued from ${day}, ${formatClock(originalStart, timeline.timezone)}`;
 }
 
-function localDateKey(value = new Date()) {
-  const year = value.getFullYear();
-  const month = String(value.getMonth() + 1).padStart(2, "0");
-  const day = String(value.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
+function localDateKey(value = trackingNowDate()) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: displayTimezone, year: "numeric", month: "2-digit", day: "2-digit",
+  }).formatToParts(value);
+  const part = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((item) => item.type === type)?.value ?? "";
+  return `${part("year")}-${part("month")}-${part("day")}`;
 }
 
 function timeToMinutes(value: string | null | undefined) {
@@ -452,7 +464,7 @@ function weekdayIndex(dateKey: string) {
 
 function currentScheduleBucket(
   policy: AgentStatus["requestPolicy"],
-  at = new Date(),
+  at = trackingNowDate(),
 ): "normal" | "extra" {
   if (!policy) return "normal";
   const shiftStart = timeToMinutes(policy.shift_start);
@@ -623,6 +635,7 @@ function App() {
     async function loadStatus() {
       const nextStatus = await window.khaliduo?.getAgentStatus();
       if (mounted && nextStatus) {
+        observeAgentStatus(nextStatus);
         setStatus(nextStatus);
         if (nextStatus.lastIdleAlert) {
           void showIdleAlert(nextStatus.lastIdleAlert);
@@ -643,6 +656,7 @@ function App() {
     const removeStatusChangedListener =
       window.khaliduo.onStatusChanged?.((nextStatus) => {
         if (!mounted) return;
+        observeAgentStatus(nextStatus);
         setStatus(nextStatus);
         // The native event and the status snapshot can race when the mouse
         // becomes active again. Re-open the mandatory idle review from either
@@ -932,7 +946,7 @@ function App() {
   const statusText = onScheduledBreak
     ? `On break · ${status.scheduledBreak?.name ?? "Break"}`
     : onSavedBreak && savedBreakEndsAtMs !== null
-    ? `Saved break · ${Math.max(0, Math.ceil((savedBreakEndsAtMs - Date.now()) / 60_000))} min left`
+    ? `Saved break · ${Math.max(0, Math.ceil((savedBreakEndsAtMs - trackingNowMs()) / 60_000))} min left`
     : isNotWorkingOutsideShift
     ? isFlexible
       ? flexibleDone
@@ -972,7 +986,7 @@ function App() {
     trackedTodaySeconds,
     paidBreakSeconds: paidBreakSecondsToday(
       status.todayTimeline?.intervals ?? [],
-      Date.now(),
+      trackingNowMs(),
       Number.isFinite(runningBreakEndsAtMs) ? runningBreakEndsAtMs : null,
       savedBreakEndsAtMs !== null && Number.isFinite(savedBreakEndsAtMs)
         ? savedBreakEndsAtMs
@@ -1667,7 +1681,7 @@ function App() {
           ? alertAt
           : alertAt - alert.lostSeconds * 1000;
         const idleSecondsInShift = isIdleStarted
-          ? Math.floor((Date.now() - alertAt) / 1000)
+          ? Math.floor((trackingNowMs() - alertAt) / 1000)
           : alert.eligibleLostSeconds;
         const resumeResult = await runThenRelease(() =>
           window.khaliduo?.resumeAutomaticIdle(),
@@ -2441,7 +2455,7 @@ function HomeView({
   const savedBreak = status.breakBank?.policy_active ? status.breakBank : null;
   const breakNow = breakStatusAt(
     breaksToday,
-    localMinutesAt(new Date().toISOString(), workdayTimezone),
+    localMinutesAt(trackingNowDate().toISOString(), workdayTimezone),
   );
   // Card face from App's existing flags: a break wins, then the idle counter,
   // otherwise the same tone the top bar uses.
@@ -2803,7 +2817,7 @@ function Timeline({
           ? Math.max(
               0,
               Math.floor(
-                (Date.now() - new Date(interval.started_at).getTime()) / 1000,
+                (trackingNowMs() - new Date(interval.started_at).getTime()) / 1000,
               ),
             )
           : presentation.durationSeconds,
@@ -4173,7 +4187,7 @@ function MeetingView({
   }
 
   const elapsedSeconds = active
-    ? Math.max(0, Math.floor((Date.now() - Date.parse(active.startedAt)) / 1000))
+    ? Math.max(0, Math.floor((trackingNowMs() - Date.parse(active.startedAt)) / 1000))
     : 0;
   const expectedEndClock = active
     ? new Date(active.expectedEndAt).toLocaleTimeString([], {
@@ -4308,7 +4322,7 @@ function MeetingView({
                 isActive && meeting.endedAt === null
                   ? Math.max(
                       0,
-                      Math.floor((Date.now() - Date.parse(meeting.startedAt)) / 1000),
+                      Math.floor((trackingNowMs() - Date.parse(meeting.startedAt)) / 1000),
                     )
                   : meeting.recordedSeconds;
               const failed =
@@ -4421,7 +4435,7 @@ function InsightsView({
     status.requestPolicy?.timezone ??
     Intl.DateTimeFormat().resolvedOptions().timeZone ??
     "UTC";
-  const now = new Date();
+  const now = trackingNowDate();
   const todayKey = localDateAt(now.toISOString(), timezone);
   const todayLabel = new Intl.DateTimeFormat("en-US", {
     weekday: "short",

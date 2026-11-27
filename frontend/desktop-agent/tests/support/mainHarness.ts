@@ -75,6 +75,8 @@ export function context(overrides: Record<string, unknown> = {}) {
       clock = n;
     },
     now: () => clock,
+    trackingNowMs: () => clock,
+    trackingNowDate: () => new Clock(),
     runtimeStatus: {
       enrolled: true,
       deviceId: "device",

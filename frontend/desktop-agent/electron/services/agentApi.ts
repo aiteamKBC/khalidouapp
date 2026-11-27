@@ -1,3 +1,5 @@
+import { trackingNowDate } from "./trackingClock.js";
+import { observeServerTime } from "./trackingClock.js";
 import axiosLibrary from "axios";
 import type { AxiosError, InternalAxiosRequestConfig } from "axios";
 import FormData from "form-data";
@@ -71,8 +73,11 @@ const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 axios.interceptors.response.use(
   (response) => {
+    if (String(response.headers["content-type"]).includes("application/json")) {
+      observeServerTime(response.headers.date);
+    }
     networkStats.requests += 1;
-    networkStats.lastSuccessAt = new Date().toISOString();
+    networkStats.lastSuccessAt = trackingNowDate().toISOString();
     const config = response.config as RetryableConfig;
     if (config.__retryCount) networkStats.recoveredByRetry += 1;
     return response;
@@ -95,7 +100,7 @@ axios.interceptors.response.use(
     }
     networkStats.requests += 1;
     networkStats.failures += 1;
-    networkStats.lastFailureAt = new Date().toISOString();
+    networkStats.lastFailureAt = trackingNowDate().toISOString();
     networkStats.lastErrorCode = error.code ?? error.message ?? "unknown";
     return Promise.reject(error);
   },
@@ -771,7 +776,7 @@ export async function startSession(options: {
   >(
     `${getApiBaseUrl()}/agent/sessions/start`,
     {
-      started_at: options.startedAt ?? new Date().toISOString(),
+      started_at: options.startedAt ?? trackingNowDate().toISOString(),
       offline_recovery: options.offlineRecovery ?? false,
       offline_recovery_id: options.offlineRecoveryId ?? null,
     },
@@ -802,7 +807,7 @@ export async function endSession(options: {
     `${getApiBaseUrl()}/agent/sessions/${options.sessionId}/end`,
     {
       event_id: options.eventId ?? randomUUID(),
-      ended_at: options.endedAt ?? new Date().toISOString(),
+      ended_at: options.endedAt ?? trackingNowDate().toISOString(),
       active_seconds: options.activeSeconds,
       idle_seconds: options.idleSeconds,
       reason: options.reason,
@@ -879,7 +884,7 @@ export async function sendHeartbeat(options: {
     `${getApiBaseUrl()}/agent/sessions/${options.sessionId}/heartbeat`,
     {
       event_id: options.eventId,
-      timestamp: options.timestamp ?? new Date().toISOString(),
+      timestamp: options.timestamp ?? trackingNowDate().toISOString(),
       status: options.status,
       idle_seconds: options.idleSeconds,
       active_seconds: options.activeSeconds,
@@ -908,7 +913,7 @@ export async function sendActivityEvent(options: {
     {
       event_id: options.eventId,
       event_type: options.eventType,
-      event_timestamp: options.eventTimestamp ?? new Date().toISOString(),
+      event_timestamp: options.eventTimestamp ?? trackingNowDate().toISOString(),
       payload: options.payload ?? {},
     },
     { headers: getAuthHeaders() },

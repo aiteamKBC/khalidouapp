@@ -121,21 +121,21 @@ def refresh_device_location(
 
     if location is not None:
         country_code, located_timezone = location
-        device.country_code = country_code
         if located_timezone:
+            device.country_code = country_code
             device.timezone = located_timezone
             device.timezone_source = "ip_geolocation"
             return previous_timezone != located_timezone
 
-    # Preserve a successful IP result while the public IP is unchanged.  A
-    # transient provider failure must not replace it with a misconfigured OS
-    # timezone.  When the network changed, however, stale country data is not
-    # safe and the normal fallbacks are used.
+    # A new Wi-Fi/mobile IP does not prove a country change. Keep the last
+    # verified country through provider failures instead of switching to the
+    # Windows timezone. Mark it cached so a later request retries the lookup.
     if (
-        not ip_changed
-        and device.timezone_source == "ip_geolocation"
+        device.timezone_source in {"ip_geolocation", "ip_geolocation_cached"}
         and previous_timezone
     ):
+        if needs_ip_lookup:
+            device.timezone_source = "ip_geolocation_cached"
         return False
 
     fallback_timezone = (

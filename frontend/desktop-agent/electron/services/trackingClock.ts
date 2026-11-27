@@ -1,0 +1,42 @@
+// Server UTC plus elapsed monotonic time keeps a Windows clock correction from
+// moving the employee into yesterday/tomorrow or inventing tracked hours. This
+// module also runs in the renderer, calibrated from main-process status updates.
+export class TrackingClock {
+  private wallNow: () => number;
+  private monotonicNow: () => number;
+  private anchor: { utcMs: number; monotonicMs: number } | null = null;
+
+  constructor(
+    wallNow: () => number = () => Date.now(),
+    monotonicNow: () => number = () => performance.now(),
+  ) {
+    this.wallNow = wallNow;
+    this.monotonicNow = monotonicNow;
+  }
+
+  nowMs(): number {
+    return this.anchor
+      ? this.anchor.utcMs + Math.max(0, this.monotonicNow() - this.anchor.monotonicMs)
+      : this.wallNow();
+  }
+
+  observeServerTime(value: unknown): boolean {
+    if (typeof value !== "string") return false;
+    const utcMs = Date.parse(value);
+    if (!Number.isFinite(utcMs)) return false;
+    // A slow response or an older IPC snapshot can arrive after a newer one.
+    // It must not rewind the day or the timer after the first calibration.
+    if (this.anchor && utcMs < this.nowMs() - 5_000) return false;
+    // HTTP Date has one-second precision. Keep the monotonic anchor through
+    // normal response jitter instead of repeatedly moving timers backwards.
+    if (!this.anchor || utcMs - this.nowMs() > 5_000) {
+      this.anchor = { utcMs, monotonicMs: this.monotonicNow() };
+    }
+    return true;
+  }
+}
+
+const trackingClock = new TrackingClock();
+export const trackingNowMs = () => trackingClock.nowMs();
+export const trackingNowDate = () => new Date(trackingNowMs());
+export const observeServerTime = (value: unknown) => trackingClock.observeServerTime(value);

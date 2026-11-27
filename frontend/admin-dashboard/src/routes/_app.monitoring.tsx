@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 
 import { getDailyAttendance, type DailyAttendance } from "@/api/attendance";
+import { monitoringDay, monitoringDaySearchValue } from "@/lib/monitoring-day";
 import { CorrectAttendanceButton } from "@/components/attendance/attendance-correction-dialog";
 import { retryTransientRequest } from "@/api/client";
 import { employeeDisplayStatus, listMonitoringEmployees } from "@/api/employees";
@@ -112,6 +113,11 @@ function EmployeeMonitoringPage() {
   const search = Route.useSearch();
   const navigate = Route.useNavigate();
   const { scopedTeamIds, can, user } = useAuth();
+  const [currentTime, setCurrentTime] = useState(() => new Date());
+  useEffect(() => {
+    const timer = window.setInterval(() => setCurrentTime(new Date()), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
   const scope = scopedTeamIds();
   const queryScopeKey = useMemo(() => monitoringScopeKey(user?.id, scope), [scope, user?.id]);
   const canViewScreenshots = can(permissions.screenshotsView);
@@ -145,7 +151,8 @@ function EmployeeMonitoringPage() {
       ? search.employeeId!
       : ""
     : (search.employeeId ?? "");
-  const day = search.day ?? todayIsoDate();
+  const selectedEmployee = employees.data?.find((employee) => employee.id === employeeId);
+  const day = monitoringDay(search.day, selectedEmployee?.timezone, currentTime);
   const tab =
     search.tab === "screenshots" && !canViewScreenshots
       ? "attendance"
@@ -154,7 +161,6 @@ function EmployeeMonitoringPage() {
   const deferredQuery = useDeferredValue(query);
   const team = search.team ?? "all";
   const status = search.status ?? "all";
-  const selectedEmployee = employees.data?.find((employee) => employee.id === employeeId);
   const teamNames = useMemo(
     () => new Map((teams.data ?? []).map((item) => [item.id, item.name])),
     [teams.data],
@@ -183,14 +189,11 @@ function EmployeeMonitoringPage() {
   }, [deferredQuery, status, teamEmployees]);
 
   useEffect(() => {
-    if (
-      employees.data &&
-      (search.employeeId !== employeeId || search.day !== day || search.tab !== tab)
-    ) {
+    if (employees.data && (search.employeeId !== employeeId || search.tab !== tab)) {
       void navigate({
         search: {
           employeeId: employeeId || undefined,
-          day,
+          day: search.day,
           tab,
           q: query || undefined,
           team: team === "all" ? undefined : team,
@@ -230,7 +233,10 @@ function EmployeeMonitoringPage() {
       void navigate({
         search: {
           employeeId: (next.employeeId ?? employeeId) || undefined,
-          day: next.day ?? day,
+          day:
+            "day" in next
+              ? monitoringDaySearchValue(next.day, selectedEmployee?.timezone, currentTime)
+              : search.day,
           tab: next.tab ?? tab,
           q: nextQuery || undefined,
           team: nextTeam === "all" ? undefined : nextTeam,
@@ -239,7 +245,17 @@ function EmployeeMonitoringPage() {
         replace: true,
       });
     },
-    [day, employeeId, navigate, query, status, tab, team],
+    [
+      currentTime,
+      employeeId,
+      navigate,
+      query,
+      search.day,
+      selectedEmployee?.timezone,
+      status,
+      tab,
+      team,
+    ],
   );
   const updateTeam = useCallback(
     (nextTeam: string) => {
@@ -341,7 +357,18 @@ function EmployeeMonitoringPage() {
               </Select>
             </div>
             <div className="space-y-1.5 md:col-span-2 xl:col-span-1">
-              <Label htmlFor="monitoring-day">Workday</Label>
+              <div className="flex items-center justify-between">
+                <Label htmlFor="monitoring-day">Workday</Label>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 px-2 text-xs"
+                  onClick={() => updateSearch({ day: undefined })}
+                  disabled={!search.day}
+                >
+                  Today
+                </Button>
+              </div>
               <DateInput
                 id="monitoring-day"
                 value={day}
@@ -801,9 +828,16 @@ function DailyAttendanceTab({
     enabled: monitoringDetailEnabled(enabled, employeeId, day),
     staleTime: policy.staleTime,
     gcTime: 30 * 60_000,
-    refetchInterval: enabled ? policy.refetchInterval : false,
+    refetchInterval: (query) =>
+      enabled
+        ? monitoringDetailPolicy(
+            day,
+            monitoringDay(undefined, query.state.data?.timezone),
+            query.state.data?.isRunning,
+          ).refetchInterval
+        : false,
     refetchIntervalInBackground: false,
-    refetchOnWindowFocus: false,
+    refetchOnWindowFocus: true,
     placeholderData: keepPreviousData,
     retry: retryTransientRequest,
   });
@@ -1089,12 +1123,6 @@ function isMonitoringEmployeeStatus(value: unknown): value is MonitoringEmployee
 
 function isIsoDay(value: unknown): value is string {
   return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value);
-}
-
-function todayIsoDate() {
-  const now = new Date();
-  const local = new Date(now.getTime() - now.getTimezoneOffset() * 60_000);
-  return local.toISOString().slice(0, 10);
 }
 
 function initials(name: string) {

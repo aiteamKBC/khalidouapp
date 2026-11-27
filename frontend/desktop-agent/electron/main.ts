@@ -1,3 +1,4 @@
+import { trackingNowMs, trackingNowDate } from "./services/trackingClock.js";
 import electronCommon from "electron/common";
 import electronMain from "electron/main";
 import log from "electron-log/main";
@@ -731,7 +732,7 @@ let diagnosticsUnlocked = false;
 function diagnosticsSnapshot() {
   const identity = loadIdentity();
   return {
-    capturedAt: new Date().toISOString(),
+    capturedAt: trackingNowDate().toISOString(),
     appVersion: app.getVersion(),
     environment: app.isPackaged ? "packaged" : "development",
     platform: platformLabel,
@@ -914,7 +915,7 @@ function resetForDeviceReenrollment() {
   recalculateWorkedTime();
   invalidateInFlightScreenshotCaptures();
   closeActiveLocalTrackingSession(
-    new Date().toISOString(),
+    trackingNowDate().toISOString(),
     "device_identity_mismatch",
   );
   clearRuntimeTimers();
@@ -1292,7 +1293,7 @@ function currentTimezone() {
   );
 }
 
-function localDateKey(at = new Date()) {
+function localDateKey(at = trackingNowDate()) {
   const timezone = currentTimezone();
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone: timezone,
@@ -1319,7 +1320,7 @@ function startInputIntegrityMonitoring() {
   if (process.platform !== "win32" || inputIntegrityMonitor.running) {
     return;
   }
-  const now = Date.now();
+  const now = trackingNowMs();
   if (now - lastInputProbeStartAttemptAt < 30_000) {
     return;
   }
@@ -1359,7 +1360,7 @@ function restartBlindInputProbe(systemIdleSeconds: number) {
   if (!inputIntegrityMonitor.missedInput(systemIdleSeconds)) {
     return;
   }
-  const now = Date.now();
+  const now = trackingNowMs();
   if (now - lastInputProbeRestartAt < 60_000) {
     return;
   }
@@ -1393,7 +1394,7 @@ function checkpointActiveLocalTrackingSession(force = false) {
   if (!localTrackingSessionId) {
     return;
   }
-  const now = Date.now();
+  const now = trackingNowMs();
   if (!force && now - lastLocalTrackingCheckpointAt < 5_000) {
     return;
   }
@@ -1408,7 +1409,7 @@ function checkpointActiveLocalTrackingSession(force = false) {
 }
 
 function closeActiveLocalTrackingSession(
-  endedAt = new Date().toISOString(),
+  endedAt = trackingNowDate().toISOString(),
   status = "ended",
 ) {
   const sessionId = localTrackingSessionId;
@@ -1427,7 +1428,7 @@ function closeActiveLocalTrackingSession(
   lastLocalTrackingCheckpointAt = 0;
 }
 
-function beginLocalTrackingSession(startedAt = new Date()) {
+function beginLocalTrackingSession(startedAt = trackingNowDate()) {
   if (
     currentSessionId ||
     localTrackingSessionId ||
@@ -1671,7 +1672,7 @@ async function promotePendingLocalTrackingSessions(
       const heartbeatAt =
         latestPendingSession.endedAt ??
         latestPendingSession.lastCheckpointAt ??
-        new Date().toISOString();
+        trackingNowDate().toISOString();
       const heartbeat = await sendHeartbeat({
         sessionId: serverSessionId,
         eventId: randomUUID(),
@@ -1824,7 +1825,7 @@ async function promotePendingLocalTrackingSessions(
       markLocalTrackingSessionSynced(pendingSession.sessionId, undefined, serverSessionId);
     }
     runtimeStatus.connectionStatus = "online";
-    runtimeStatus.lastSuccessfulSyncAt = new Date().toISOString();
+    runtimeStatus.lastSuccessfulSyncAt = trackingNowDate().toISOString();
     log.info("Local tracking sessions synchronized with the API", {
       count: pendingSessions.length,
     });
@@ -1834,7 +1835,7 @@ async function promotePendingLocalTrackingSessions(
   }
 }
 
-function resetDailyRuntimeCounters(nextCounterDate: string, now = new Date()) {
+function resetDailyRuntimeCounters(nextCounterDate: string, now = trackingNowDate()) {
   activeCounterDate = nextCounterDate;
   workedTodayBaseSeconds = 0;
   runtimeStatus.activeSeconds = 0;
@@ -1859,7 +1860,7 @@ function resetDailyRuntimeCounters(nextCounterDate: string, now = new Date()) {
   lastDurationTickAt = now.getTime();
 }
 
-function ensureCurrentCounterDate(now = new Date()) {
+function ensureCurrentCounterDate(now = trackingNowDate()) {
   const nextCounterDate = localDateKey(now);
   if (activeCounterDate === null) {
     activeCounterDate = nextCounterDate;
@@ -2005,7 +2006,7 @@ function syncRuntimeFromSession(session: WorkSession) {
   runtimeStatus.sessionStartedAt = session.started_at;
   runtimeStatus.trackingStatus = session.status;
   if (session.status === "idle" && (changedSession || !wasIdle)) {
-    automaticIdleStartedDuringBreak = isInsideScheduledBreak(new Date());
+    automaticIdleStartedDuringBreak = isInsideScheduledBreak(trackingNowDate());
     lastObservedSystemIdleSeconds = null;
     lastObservedOperatingSystemIdleSeconds = null;
   } else if (session.status !== "idle") {
@@ -2024,7 +2025,7 @@ function syncRuntimeFromSession(session: WorkSession) {
   runtimeStatus.workedTodaySeconds =
     workedTodayBaseSeconds + runtimeStatus.activeSeconds;
   if (changedSession) {
-    lastDurationTickAt = Date.now();
+    lastDurationTickAt = trackingNowMs();
     idleSecondsBeforeCurrentIdle = session.idle_seconds;
   }
   selectRuntimeTask(session.task_id);
@@ -2200,7 +2201,7 @@ function isInsideScheduledBreak(at: Date) {
 
 // Today's scheduled break windows as absolute times, for the idle counter and
 // the "On break" status. Mirrors isInsideScheduledBreak's eligibility rules.
-function todaysBreakWindows(nowMs = Date.now()): BreakWindow[] {
+function todaysBreakWindows(nowMs = trackingNowMs()): BreakWindow[] {
   const policy = runtimeStatus.requestPolicy;
   if (!policy || policy.approved_leave_today) return [];
   const now = new Date(nowMs);
@@ -2388,7 +2389,7 @@ function recalculateWorkedTime(options?: { finalCheckpoint?: boolean }) {
     return;
   }
 
-  const now = Date.now();
+  const now = trackingNowMs();
   if (lastDurationTickAt === null) {
     lastDurationTickAt = now;
     return;
@@ -2522,7 +2523,7 @@ function showIdleLossAlert(lostSeconds: number, eligibleLostSeconds: number) {
     lostSeconds,
     eligibleLostSeconds,
     outsideScheduledShift: eligibleLostSeconds <= 0,
-    endedAt: new Date().toISOString(),
+    endedAt: trackingNowDate().toISOString(),
   };
   setIdleAlertAttention(true);
   showMainWindow({ forceForeground: true, centerOnPointerDisplay: true });
@@ -2542,7 +2543,7 @@ function showFreshSessionStartConfirmation(outsideScheduledShift: boolean) {
     lostSeconds: 0,
     eligibleLostSeconds: 0,
     outsideScheduledShift,
-    endedAt: new Date().toISOString(),
+    endedAt: trackingNowDate().toISOString(),
   };
   setIdleAlertAttention(true);
   showMainWindow({ forceForeground: true, centerOnPointerDisplay: true });
@@ -2558,7 +2559,7 @@ async function confirmFreshSessionStart() {
       message: "Enroll this device before starting tracking.",
     };
   }
-  const outsideScheduledShift = activeTimeBucket(new Date()) === "extra";
+  const outsideScheduledShift = activeTimeBucket(trackingNowDate()) === "extra";
   inputIntegrityMonitor.confirmPresence();
   freshSessionStartPromptActive = false;
   freshSessionStartConfirmed = true;
@@ -2709,7 +2710,7 @@ async function sendStateEvent(
   }
 
   const eventId = randomUUID();
-  const eventTimestamp = options.eventTimestamp ?? new Date().toISOString();
+  const eventTimestamp = options.eventTimestamp ?? trackingNowDate().toISOString();
   const eventPayload = {
     status,
     idle_seconds: runtimeStatus.idleSeconds,
@@ -2793,7 +2794,7 @@ async function sendStateEvent(
       // this state event was in flight. Do not apply the stale snapshot over the
       // newer session; the event itself was still accepted for its own session.
       runtimeStatus.connectionStatus = "online";
-      runtimeStatus.lastSuccessfulSyncAt = new Date().toISOString();
+      runtimeStatus.lastSuccessfulSyncAt = trackingNowDate().toISOString();
       return true;
     }
     const latestLocalStatus = runtimeStatus.trackingStatus;
@@ -2815,7 +2816,7 @@ async function sendStateEvent(
     }
     await refreshWorkedTodayTotal();
     runtimeStatus.connectionStatus = "online";
-    runtimeStatus.lastSuccessfulSyncAt = new Date().toISOString();
+    runtimeStatus.lastSuccessfulSyncAt = trackingNowDate().toISOString();
     return true;
   } catch (error) {
     runtimeStatus.connectionStatus = connectionStatusAfterApiFailure(
@@ -2843,7 +2844,7 @@ function automaticIdleDurationSnapshot(
   } = {},
 ) {
   recalculateWorkedTime();
-  const endedAt = options.endedAt ?? Date.now();
+  const endedAt = options.endedAt ?? trackingNowMs();
   const idleSecondsAtEnd =
     options.idleSecondsAtEnd ?? runtimeStatus.idleSeconds;
   const eligibleIdleSecondsAtEnd =
@@ -3007,14 +3008,14 @@ function showIdleStartedReview() {
   ) {
     return;
   }
-  const outsideScheduledShift = activeTimeBucket(new Date()) === "extra";
+  const outsideScheduledShift = activeTimeBucket(trackingNowDate()) === "extra";
   runtimeStatus.lastIdleAlert = {
     id: randomUUID(),
     kind: "idle_started",
     lostSeconds: 0,
     eligibleLostSeconds: 0,
     outsideScheduledShift,
-    endedAt: new Date().toISOString(),
+    endedAt: trackingNowDate().toISOString(),
   };
   setIdleAlertAttention(true);
   showMainWindow({ forceForeground: true, centerOnPointerDisplay: true });
@@ -3032,7 +3033,7 @@ function finishAutomaticIdleAfterVerification(
   ) {
     return null;
   }
-  const now = Date.now();
+  const now = trackingNowMs();
   const canBackdateReturn = activeCounterDate === verification.counterDate;
   const automaticIdleEndedAt = canBackdateReturn
     ? verification.eventTimestamp
@@ -3121,7 +3122,7 @@ async function resumeAutomaticIdle() {
     return { success: false, message: "Return confirmation is required." };
   }
   recalculateWorkedTime();
-  const startedAt = Date.now();
+  const startedAt = trackingNowMs();
   const verification: IdleReturnVerification = {
     startedAt,
     eventTimestamp: new Date(startedAt).toISOString(),
@@ -3159,7 +3160,7 @@ function showSavedBreakNotification(seconds: number) {
 }
 
 function showIdleStartedNotification() {
-  const runningBreak = breakWindowAt(Date.now(), todaysBreakWindows());
+  const runningBreak = breakWindowAt(trackingNowMs(), todaysBreakWindows());
   const title = runningBreak ? `On break · ${runningBreak.name}` : "You are now idle";
   const body = runningBreak
     ? "You're away during your scheduled break. Break time is paid and is not counted as idle."
@@ -3288,7 +3289,7 @@ function applyServerMeetingToRecord(
   }
   record.recordedSeconds = server.recorded_seconds;
   record.approvedSeconds = server.approved_seconds;
-  record.updatedAt = new Date().toISOString();
+  record.updatedAt = trackingNowDate().toISOString();
 }
 
 // Deliver every remaining step (start, then end) for one meeting, so an End
@@ -3351,7 +3352,7 @@ async function syncMeetingRecord(record: LocalMeetingRecord): Promise<void> {
       record.syncState = "synced";
     }
     runtimeStatus.connectionStatus = "online";
-    runtimeStatus.lastSuccessfulSyncAt = new Date().toISOString();
+    runtimeStatus.lastSuccessfulSyncAt = trackingNowDate().toISOString();
   } catch (error) {
     const responseStatus = apiResponseStatus(error);
     const permanent = isPermanentPendingEventSyncFailure(responseStatus);
@@ -3374,7 +3375,7 @@ async function syncMeetingRecord(record: LocalMeetingRecord): Promise<void> {
     runtimeStatus.connectionStatus = connectionStatusAfterApiFailure(responseStatus);
     log.warn("Meeting sync failed", safeErrorForLog(error));
   }
-  record.updatedAt = new Date().toISOString();
+  record.updatedAt = trackingNowDate().toISOString();
   persistMeetingRecords();
   updateMeetingRuntime();
   rebuildTrayMenu();
@@ -3480,7 +3481,7 @@ async function startMeeting(options: {
     return { success: false, message: "Describe the meeting reason." };
   }
   const minutes = Math.max(1, Math.min(720, Math.floor(options.expectedEndMinutes || 0)));
-  const startedAt = new Date();
+  const startedAt = trackingNowDate();
   const expectedEndAt = new Date(startedAt.getTime() + minutes * 60_000);
   const nowIso = startedAt.toISOString();
   const record: LocalMeetingRecord = {
@@ -3543,13 +3544,13 @@ async function endMeeting() {
     activeRecord.endedAt = boundedMeetingEnd(
       activeRecord.startedAt,
       activeRecord.expectedEndAt,
-      Date.now(),
+      trackingNowMs(),
     );
     // Move to an ending state; keep the record durably (do NOT delete it) so it
     // stays visible in Recent meetings while it waits to sync.
     activeRecord.syncState =
       activeRecord.serverId !== null ? "end_pending" : activeRecord.syncState;
-    activeRecord.updatedAt = new Date().toISOString();
+    activeRecord.updatedAt = trackingNowDate().toISOString();
     persistMeetingRecords();
     updateMeetingRuntime();
     rebuildTrayMenu();
@@ -3559,7 +3560,7 @@ async function endMeeting() {
     // the meeting itself.
     if (
       runtimeStatus.trackingStatus === "idle" &&
-      !isInsideScheduledBreak(new Date())
+      !isInsideScheduledBreak(trackingNowDate())
     ) {
       showIdleStartedReview();
     }
@@ -3587,7 +3588,7 @@ function maybeAutoEndMeeting() {
     return;
   }
   const expectedEndMs = Date.parse(activeRecord.expectedEndAt);
-  if (Number.isFinite(expectedEndMs) && Date.now() >= expectedEndMs) {
+  if (Number.isFinite(expectedEndMs) && trackingNowMs() >= expectedEndMs) {
     // Same durable end path as a manual end; works whether or not the Meeting
     // page is open.
     void endMeeting();
@@ -3615,7 +3616,7 @@ function migrateStrandedMeetingEvents() {
     const existing = meetingRecords.get(key);
     if (event.endpoint === "/agent/meetings") {
       if (!existing) {
-        const nowIso = new Date().toISOString();
+        const nowIso = trackingNowDate().toISOString();
         meetingRecords.set(key, {
           deviceId: typeof payload.device_id === "string" ? payload.device_id : "",
           idempotencyKey: key,
@@ -3644,7 +3645,7 @@ function migrateStrandedMeetingEvents() {
       const target = meetingRecords.get(key);
       if (target && target.endedAt === null) {
         target.endedAt =
-          typeof payload.ended_at === "string" ? payload.ended_at : new Date().toISOString();
+          typeof payload.ended_at === "string" ? payload.ended_at : trackingNowDate().toISOString();
         imported = true;
       }
     }
@@ -3695,7 +3696,7 @@ function maybeShowManualPauseReminder() {
     manualPauseReminder.reset();
     return;
   }
-  const now = Date.now();
+  const now = trackingNowMs();
   const latestInputAt = inputIntegrityMonitor.sensorAvailable(now)
     ? inputIntegrityMonitor.latestRealInputAt(now)
     : now - powerMonitor.getSystemIdleTime() * 1_000;
@@ -3789,12 +3790,12 @@ function startIdleMonitor() {
     if (savedBreakCover && runtimeStatus.trackingStatus !== "idle") {
       savedBreakCover = null;
     }
-    if (savedBreakCover && Date.now() >= savedBreakCover.endsAtMs) {
+    if (savedBreakCover && trackingNowMs() >= savedBreakCover.endsAtMs) {
       // The saved minutes are used up; from here it is ordinary idle.
       savedBreakCover = null;
       if (!activeMeeting) showIdleStartedReview();
     }
-    const insideScheduledBreak = isInsideScheduledBreak(new Date());
+    const insideScheduledBreak = isInsideScheduledBreak(trackingNowDate());
     if (
       hasReachedIdleThreshold(
         idleSeconds,
@@ -3802,15 +3803,15 @@ function startIdleMonitor() {
         trackingConfig.idle_threshold_minutes,
       ) &&
       runtimeStatus.trackingStatus !== "idle" &&
-      !withinIdleResumeGrace(idleResumedAt, Date.now())
+      !withinIdleResumeGrace(idleResumedAt, trackingNowMs())
     ) {
       recalculateWorkedTime();
       idleSecondsBeforeCurrentIdle = runtimeStatus.idleSeconds;
       eligibleIdleSecondsBeforeCurrentIdle = runtimeStatus.eligibleIdleSeconds;
-      idleWallClockStartedAt = Date.now();
+      idleWallClockStartedAt = trackingNowMs();
       clearIdleReturnVerification();
       lastHandledIdleReturnInputAt =
-        inputIntegrityMonitor.latestRealInputAt() ?? Date.now();
+        inputIntegrityMonitor.latestRealInputAt() ?? trackingNowMs();
       automaticIdleStartedDuringBreak = insideScheduledBreak;
       runtimeStatus.locallyEndedIdleAt = null;
       const startPromise = sendStateEvent("idle_started", "idle");
@@ -3832,7 +3833,7 @@ function startIdleMonitor() {
         // Saved break minutes pay for this idle (the server spends them in time
         // order), so there is nothing to review until they run out.
         const seconds = savedBreakSecondsLeft();
-        const startedAtMs = idleWallClockStartedAt ?? Date.now();
+        const startedAtMs = idleWallClockStartedAt ?? trackingNowMs();
         savedBreakCover = { startedAtMs, endsAtMs: startedAtMs + seconds * 1000 };
         showSavedBreakNotification(seconds);
       } else {
@@ -4039,7 +4040,7 @@ async function uploadForegroundActivitySegment(
   }
 }
 
-async function flushForegroundActivitySegment(endedAtMs = Date.now()) {
+async function flushForegroundActivitySegment(endedAtMs = trackingNowMs()) {
   const segment = foregroundActivitySegment;
   foregroundActivitySegment = null;
   if (!segment) {
@@ -4105,7 +4106,7 @@ async function foregroundActivityTick() {
     }
 
     const activity = await readForegroundActivity();
-    const observedAt = Date.now();
+    const observedAt = trackingNowMs();
     if (
       !foregroundActivityTimer ||
       currentSessionId !== sessionId ||
@@ -4186,7 +4187,7 @@ async function heartbeatTick(options: { refreshMetadata?: boolean } = {}) {
   const integrityObservation = inputIntegrityObservation();
   const payload = {
     event_id: eventId,
-    timestamp: new Date().toISOString(),
+    timestamp: trackingNowDate().toISOString(),
     status,
     idle_seconds: runtimeStatus.idleSeconds,
     active_seconds: runtimeStatus.activeSeconds,
@@ -4218,7 +4219,7 @@ async function heartbeatTick(options: { refreshMetadata?: boolean } = {}) {
       // cannot revert the newer session's id, counters, start time, task, or
       // pause state. Connectivity is still proven by the response.
       runtimeStatus.connectionStatus = "online";
-      runtimeStatus.lastSuccessfulSyncAt = new Date().toISOString();
+      runtimeStatus.lastSuccessfulSyncAt = trackingNowDate().toISOString();
       log.info("Discarded a heartbeat response for a superseded session", {
         requestSessionId: sessionId,
       });
@@ -4226,7 +4227,7 @@ async function heartbeatTick(options: { refreshMetadata?: boolean } = {}) {
     }
     if (result.ignore_reason === "tracking_moved_to_another_device") {
       runtimeStatus.connectionStatus = "online";
-      runtimeStatus.lastSuccessfulSyncAt = new Date().toISOString();
+      runtimeStatus.lastSuccessfulSyncAt = trackingNowDate().toISOString();
       handleTrackingMovedToAnotherDevice(
         result.moved_to_device_name ?? "another device",
       );
@@ -4263,13 +4264,13 @@ async function heartbeatTick(options: { refreshMetadata?: boolean } = {}) {
     applyUpdateRequired(result.update_required === true);
     if (
       options.refreshMetadata !== false &&
-      Date.now() - lastFullSummaryRefreshAt > 60 * 1000
+      trackingNowMs() - lastFullSummaryRefreshAt > 60 * 1000
     ) {
-      lastFullSummaryRefreshAt = Date.now();
+      lastFullSummaryRefreshAt = trackingNowMs();
       await refreshWorkedTodayTotal();
     }
     runtimeStatus.connectionStatus = "online";
-    runtimeStatus.lastSuccessfulSyncAt = new Date().toISOString();
+    runtimeStatus.lastSuccessfulSyncAt = trackingNowDate().toISOString();
     if (!currentSessionId) {
       if (serverClosedDuringNonWorking) {
         log.info(
@@ -4337,9 +4338,9 @@ async function heartbeatTick(options: { refreshMetadata?: boolean } = {}) {
   } finally {
     if (
       options.refreshMetadata !== false &&
-      Date.now() - lastMetadataRefreshAt > 60 * 1000
+      trackingNowMs() - lastMetadataRefreshAt > 60 * 1000
     ) {
-      lastMetadataRefreshAt = Date.now();
+      lastMetadataRefreshAt = trackingNowMs();
       void refreshTrackingConfig();
       void refreshTasks();
     }
@@ -4358,7 +4359,7 @@ function handleTrackingMovedToAnotherDevice(deviceName: string) {
     deviceName,
   });
   recalculateWorkedTime();
-  closeActiveLocalTrackingSession(new Date().toISOString(), "moved_to_other_device");
+  closeActiveLocalTrackingSession(trackingNowDate().toISOString(), "moved_to_other_device");
   currentSessionId = null;
   runtimeStatus.sessionStartedAt = null;
   waitingForInputAfterIdleSessionClose = false;
@@ -4424,7 +4425,7 @@ function startTrackingWatchdog() {
 
 function startTimers() {
   if (lastDurationTickAt === null) {
-    lastDurationTickAt = Date.now();
+    lastDurationTickAt = trackingNowMs();
   }
   if (!durationTimer) {
     durationTimer = setInterval(recalculateWorkedTime, 1000);
@@ -4575,7 +4576,7 @@ async function refreshTrackingConfig() {
         trackingConfig.screenshots_per_interval;
 
     trackingConfig = nextConfig;
-    lastMetadataRefreshAt = Date.now();
+    lastMetadataRefreshAt = trackingNowMs();
 
     if (screenshotScheduleChanged) {
       if (screenshotTimer) {
@@ -4609,7 +4610,7 @@ async function captureAndUploadScreenshot() {
         await reportScreenshotSkip({
           eventId: randomUUID(),
           sessionId: currentSessionId,
-          occurredAt: new Date().toISOString(),
+          occurredAt: trackingNowDate().toISOString(),
           reason: blockReason,
           powerSource: onAcPower ? "ac" : "battery",
           trackingStatus: runtimeStatus.trackingStatus,
@@ -4652,7 +4653,7 @@ async function captureAndUploadScreenshot() {
   }
   const recentActivity =
     foregroundActivitySegment &&
-    Date.now() - foregroundActivitySegment.lastObservedAt <= 15_000
+    trackingNowMs() - foregroundActivitySegment.lastObservedAt <= 15_000
       ? foregroundActivitySegment
       : null;
   const protectWhatsApp = isWhatsAppScreenshotActivity(
@@ -4687,7 +4688,7 @@ async function captureAndUploadScreenshot() {
     return;
   }
 
-  const capturedAt = new Date().toISOString();
+  const capturedAt = trackingNowDate().toISOString();
   let uploaded = 0;
   let queued = 0;
   let rejected = 0;
@@ -4820,7 +4821,7 @@ async function captureAndUploadScreenshot() {
 
   runtimeStatus.lastScreenshotAt = capturedAt;
   if (uploaded > 0)
-    runtimeStatus.lastSuccessfulSyncAt = new Date().toISOString();
+    runtimeStatus.lastSuccessfulSyncAt = trackingNowDate().toISOString();
   if (uploaded > 0) {
     runtimeStatus.connectionStatus = "online";
   } else if (
@@ -4881,7 +4882,7 @@ async function syncClosedLocalSessions() {
   const generation = enrollmentGeneration;
   const closed = getPendingLocalTrackingSessions(runtimeStatus.deviceId)
     .filter(row => row.endedAt && row.sessionId !== localTrackingSessionId
-      && Date.now() >= (closedSessionRecoveryRetryAt.get(row.sessionId) ?? 0))
+      && trackingNowMs() >= (closedSessionRecoveryRetryAt.get(row.sessionId) ?? 0))
     .slice(0, 2);
   for (const row of closed) {
     try {
@@ -4907,7 +4908,7 @@ async function syncClosedLocalSessions() {
       log.warn("Closed offline work retained for a later background retry", safeErrorForLog(error));
       if (generation !== enrollmentGeneration || !runtimeStatus.enrolled) return;
       // Incomplete legacy evidence must not starve the rest of the archive.
-      closedSessionRecoveryRetryAt.set(row.sessionId, Date.now() + 5 * 60_000);
+      closedSessionRecoveryRetryAt.set(row.sessionId, trackingNowMs() + 5 * 60_000);
     }
   }
 }
@@ -4945,7 +4946,7 @@ async function syncPendingQueuesOnce(forcePendingQueues: boolean) {
         markPendingEventUploaded(event.id);
       }
       runtimeStatus.connectionStatus = "online";
-      runtimeStatus.lastSuccessfulSyncAt = new Date().toISOString();
+      runtimeStatus.lastSuccessfulSyncAt = trackingNowDate().toISOString();
     } catch (error) {
       const responseStatus = apiResponseStatus(error);
       if (isAuthPendingEventSyncFailure(responseStatus)) {
@@ -5047,7 +5048,7 @@ async function syncPendingQueuesOnce(forcePendingQueues: boolean) {
       // retires the row, so a failed file delete never orphans the JPEG.
       markPendingScreenshotUploaded(screenshot.screenshotId);
       runtimeStatus.connectionStatus = "online";
-      runtimeStatus.lastSuccessfulSyncAt = new Date().toISOString();
+      runtimeStatus.lastSuccessfulSyncAt = trackingNowDate().toISOString();
     } catch (error) {
       const responseStatus = apiResponseStatus(error);
       const permanentlyRejected = isPermanentScreenshotSyncFailure({
@@ -5114,7 +5115,7 @@ function scheduleNextScreenshot() {
     1,
     Math.min(2, trackingConfig.screenshots_per_interval ?? 1),
   );
-  const now = Date.now();
+  const now = trackingNowMs();
 
   if (!screenshotWindowEndsAt || now >= screenshotWindowEndsAt) {
     screenshotWindowEndsAt = now + intervalMs;
@@ -5168,7 +5169,7 @@ async function startTrackingAutomatically() {
     return;
   }
 
-  const attemptedAt = new Date();
+  const attemptedAt = trackingNowDate();
   isStartingTrackingAutomatically = true;
   // Bind this startup to the enrollment identity that launched it. A logout or
   // re-enrollment during any await below invalidates the continuation: applying
@@ -5248,7 +5249,7 @@ async function startTrackingAutomatically() {
         return;
       }
       runtimeStatus.connectionStatus = "online";
-      runtimeStatus.lastSuccessfulSyncAt = new Date().toISOString();
+      runtimeStatus.lastSuccessfulSyncAt = trackingNowDate().toISOString();
       void heartbeatTick();
       void refreshTimeAdjustmentRequests();
       void refreshLeaveRequests();
@@ -5258,7 +5259,7 @@ async function startTrackingAutomatically() {
     if (
       hasReachedIdleThreshold(
         systemIdleSeconds,
-        isInsideScheduledBreak(new Date()),
+        isInsideScheduledBreak(trackingNowDate()),
         trackingConfig.idle_threshold_minutes,
       )
     ) {
@@ -5313,12 +5314,12 @@ async function startTrackingAutomatically() {
       return;
     }
     runtimeStatus.connectionStatus = "online";
-    runtimeStatus.lastSuccessfulSyncAt = new Date().toISOString();
+    runtimeStatus.lastSuccessfulSyncAt = trackingNowDate().toISOString();
     if (unpaidPauseActive) {
       runtimeStatus.trackingPaused = true;
       idleSecondsBeforeCurrentIdle = runtimeStatus.idleSeconds;
       eligibleIdleSecondsBeforeCurrentIdle = runtimeStatus.eligibleIdleSeconds;
-      idleWallClockStartedAt = Date.now();
+      idleWallClockStartedAt = trackingNowMs();
       await sendStateEvent("idle_started", "idle");
     }
     void heartbeatTick();
@@ -5338,7 +5339,7 @@ async function startTrackingAutomatically() {
       !hasTrackingSession() &&
       hasReachedIdleThreshold(
         observedIdleSeconds(),
-        isInsideScheduledBreak(new Date()),
+        isInsideScheduledBreak(trackingNowDate()),
         trackingConfig.idle_threshold_minutes,
       )
     ) {
@@ -5394,7 +5395,7 @@ function schedulePaidPauseAutoResume(endsAt: string) {
   clearPaidPauseTimer();
   runtimeStatus.paidPauseEndsAt = endsAt;
   runtimeStatus.trackingPaused = true;
-  const delayMs = Math.max(0, new Date(endsAt).getTime() - Date.now());
+  const delayMs = Math.max(0, new Date(endsAt).getTime() - trackingNowMs());
   runtimeStatus.paidPauseRemainingSeconds = Math.ceil(delayMs / 1000);
   paidPauseTimer = setTimeout(() => {
     runtimeStatus.trackingPaused = false;
@@ -5442,7 +5443,7 @@ async function endOrphanedStartupSession(
       activeSeconds: 0,
       idleSeconds: 0,
       reason: "Orphaned startup session cancelled",
-      endedAt: new Date().toISOString(),
+      endedAt: trackingNowDate().toISOString(),
       eventId: randomUUID(),
       authToken: operationToken,
     });
@@ -5473,7 +5474,7 @@ async function stopTrackingSession(reason = "Stopped by employee") {
   runtimeStatus.trackingPaused = true;
   invalidateInFlightScreenshotCaptures();
   saveTrackingPreferences();
-  closeActiveLocalTrackingSession(new Date().toISOString(), "paused");
+  closeActiveLocalTrackingSession(trackingNowDate().toISOString(), "paused");
   clearRuntimeTimers();
   // clearRuntimeTimers initiates the buffered foreground-activity flush (and
   // leaves any tick-started upload tracked). Capture it so Stop/sign-out orders
@@ -5488,7 +5489,7 @@ async function stopTrackingSession(reason = "Stopped by employee") {
 
   const sessionId = currentSessionId;
   const eventId = randomUUID();
-  const endedAt = new Date().toISOString();
+  const endedAt = trackingNowDate().toISOString();
   const activeSeconds = runtimeStatus.activeSeconds;
   const idleSeconds = runtimeStatus.idleSeconds;
   currentSessionId = null;
@@ -5572,14 +5573,14 @@ async function stopTrackingSession(reason = "Stopped by employee") {
         enrollmentGeneration !== requestEnrollmentGeneration
       ) {
         runtimeStatus.connectionStatus = "online";
-        runtimeStatus.lastSuccessfulSyncAt = new Date().toISOString();
+        runtimeStatus.lastSuccessfulSyncAt = trackingNowDate().toISOString();
         return;
       }
       syncRuntimeFromSession(result.session);
       applyWorkdayState(result.workday);
       await refreshWorkedTodayTotal();
       runtimeStatus.connectionStatus = "online";
-      runtimeStatus.lastSuccessfulSyncAt = new Date().toISOString();
+      runtimeStatus.lastSuccessfulSyncAt = trackingNowDate().toISOString();
     } catch (error) {
       // End is already durably queued (above); leave it for ordered retry.
       if (!syncTimer) {
@@ -5640,7 +5641,7 @@ async function pauseTracking(
   invalidateInFlightScreenshotCaptures();
   idleSecondsBeforeCurrentIdle = runtimeStatus.idleSeconds;
   eligibleIdleSecondsBeforeCurrentIdle = runtimeStatus.eligibleIdleSeconds;
-  idleWallClockStartedAt = Date.now();
+  idleWallClockStartedAt = trackingNowMs();
   saveTrackingPreferences();
   // Pause is local-first. The employee must never wait for API latency before
   // the timer stops; sendStateEvent persists failed delivery in the local queue.
@@ -5682,7 +5683,7 @@ async function resumeTracking() {
       applyWorkdayState(result.workday);
       applyPauseState(result.pause);
       runtimeStatus.connectionStatus = "online";
-      runtimeStatus.lastSuccessfulSyncAt = new Date().toISOString();
+      runtimeStatus.lastSuccessfulSyncAt = trackingNowDate().toISOString();
     } catch (error) {
       const message = axios.isAxiosError(error)
         ? (error.response?.data as { message?: string } | undefined)?.message
@@ -5731,7 +5732,7 @@ async function resumeTracking() {
     freshSessionStartConfirmed = true;
   }
   runtimeStatus.lastIdleAlert = null;
-  idleResumedAt = Date.now();
+  idleResumedAt = trackingNowMs();
   runtimeStatus.trackingPaused = false;
   runtimeStatus.paidPauseEndsAt = null;
   runtimeStatus.paidPauseRemainingSeconds = 0;
@@ -6052,7 +6053,7 @@ function setUpdateAttention(active: boolean) {
 
 function runtimeStatusPayload() {
   const screenshotBlockReason = screenshotCaptureBlockReason();
-  const nowMs = Date.now();
+  const nowMs = trackingNowMs();
   const breakWindows = todaysBreakWindows(nowMs);
   const runningBreak = breakWindowAt(nowMs, breakWindows);
   const idleDurationSeconds =
@@ -6077,6 +6078,7 @@ function runtimeStatusPayload() {
       : 0;
   return {
     ...runtimeStatus,
+    serverTime: trackingNowDate().toISOString(),
     currentIdleSeconds,
     scheduledBreak: runningBreak
       ? { name: runningBreak.name, endsAt: new Date(runningBreak.endMs).toISOString() }
@@ -6292,10 +6294,10 @@ async function maybeOfferLegacyCleanup() {
     directory: legacy.directory,
   });
   const state = readLegacyCleanupState();
-  if (Date.now() - Number(state.lastPromptedAt ?? 0) < LEGACY_CLEANUP_PROMPT_INTERVAL_MS) {
+  if (trackingNowMs() - Number(state.lastPromptedAt ?? 0) < LEGACY_CLEANUP_PROMPT_INTERVAL_MS) {
     return;
   }
-  writeLegacyCleanupState({ ...state, lastPromptedAt: Date.now() });
+  writeLegacyCleanupState({ ...state, lastPromptedAt: trackingNowMs() });
   const choice = await showUpdateMessage({
     type: "warning",
     title: "Khaliduo",
@@ -6328,7 +6330,7 @@ async function maybeOfferLegacyCleanup() {
       { detached: true, stdio: "ignore", windowsHide: true },
     );
     child.unref();
-    writeLegacyCleanupState({ ...readLegacyCleanupState(), cleanupStartedAt: Date.now() });
+    writeLegacyCleanupState({ ...readLegacyCleanupState(), cleanupStartedAt: trackingNowMs() });
     log.info("Started removal of the old all-users Khaliduo", {
       directory: legacy.directory,
     });
@@ -6740,7 +6742,7 @@ async function installDownloadedUpdate(): Promise<UpdateActionResult> {
         previousAttempt?.version === installVersion
           ? previousAttempt.failedAttempts
           : 0,
-      attemptedAt: new Date().toISOString(),
+      attemptedAt: trackingNowDate().toISOString(),
     });
   }
   if (!silent) {
@@ -6797,7 +6799,7 @@ function runScheduledUpdatePass() {
     updateDownloadStalled({
       status: runtimeStatus.updateStatus,
       lastProgressAt: lastUpdateProgressAt,
-      now: Date.now(),
+      now: trackingNowMs(),
     })
   ) {
     log.warn(
@@ -6833,7 +6835,7 @@ function configureAutoUpdater() {
     setUpdateStatus("checking", { percent: null });
   });
   autoUpdater.on("update-available", (info) => {
-    lastUpdateProgressAt = Date.now();
+    lastUpdateProgressAt = trackingNowMs();
     setUpdateStatus("available", { version: info.version, percent: 0 });
     notifyUpdateDownloading(info.version);
     log.info(
@@ -6841,7 +6843,7 @@ function configureAutoUpdater() {
     );
   });
   autoUpdater.on("download-progress", (progress) => {
-    lastUpdateProgressAt = Date.now();
+    lastUpdateProgressAt = trackingNowMs();
     setUpdateStatus("downloading", {
       version: runtimeStatus.updateVersion,
       percent: progress.percent,
@@ -6951,7 +6953,7 @@ function wireSystemEvents() {
     // so screenshot eligibility and displayed state stop reporting "locked" after
     // the machine is physically unlocked (D5).
     screenLocked = false;
-    lastDurationTickAt = Date.now();
+    lastDurationTickAt = trackingNowMs();
     idleSecondsBeforeCurrentIdle = runtimeStatus.idleSeconds;
     if (
       !physicalResumeShouldResumeWork({
@@ -6992,7 +6994,7 @@ function wireSystemEvents() {
     // Always clear the physical sleep flag first, even when work stays stopped, so
     // eligibility and displayed state recover after the machine wakes (D5).
     systemSleeping = false;
-    lastDurationTickAt = Date.now();
+    lastDurationTickAt = trackingNowMs();
     idleSecondsBeforeCurrentIdle = runtimeStatus.idleSeconds;
     if (
       !physicalResumeShouldResumeWork({
@@ -7069,7 +7071,7 @@ app.on("before-quit", (event) => {
   recalculateWorkedTime({ finalCheckpoint: true });
   const sessionId = currentSessionId;
   const eventId = randomUUID();
-  const endedAt = new Date().toISOString();
+  const endedAt = trackingNowDate().toISOString();
   closeActiveLocalTrackingSession(endedAt, "app_quit");
   inputIntegrityMonitor.stop();
   const activeSeconds = runtimeStatus.activeSeconds;
@@ -7696,7 +7698,7 @@ ipcMain.handle("agent:get-recent-screenshots", async () => {
       }
     }
     runtimeStatus.connectionStatus = "online";
-    runtimeStatus.lastSuccessfulSyncAt = new Date().toISOString();
+    runtimeStatus.lastSuccessfulSyncAt = trackingNowDate().toISOString();
     notifyRendererStatus();
     rebuildTrayMenu();
     return { success: true, screenshots: data };
@@ -7730,7 +7732,7 @@ ipcMain.handle("agent:set-current-task", async (_, taskId: string | null) => {
     syncRuntimeFromSession(result.session);
     applyWorkdayState(result.workday);
     runtimeStatus.connectionStatus = "online";
-    runtimeStatus.lastSuccessfulSyncAt = new Date().toISOString();
+    runtimeStatus.lastSuccessfulSyncAt = trackingNowDate().toISOString();
     rebuildTrayMenu();
     return { success: true, status: runtimeStatusPayload() };
   } catch (error) {
@@ -7939,7 +7941,7 @@ ipcMain.handle(
           .filter((period) => period.available_seconds >= 60);
       }
       runtimeStatus.connectionStatus = "online";
-      runtimeStatus.lastSuccessfulSyncAt = new Date().toISOString();
+      runtimeStatus.lastSuccessfulSyncAt = trackingNowDate().toISOString();
       rebuildTrayMenu();
       const status = runtimeStatusPayload();
       void Promise.all([
@@ -8018,7 +8020,7 @@ ipcMain.handle(
         reason: input.reason,
       });
       runtimeStatus.connectionStatus = "online";
-      runtimeStatus.lastSuccessfulSyncAt = new Date().toISOString();
+      runtimeStatus.lastSuccessfulSyncAt = trackingNowDate().toISOString();
       return { success: true, request };
     } catch (error) {
       runtimeStatus.connectionStatus = connectionStatusAfterApiFailure(
@@ -8070,7 +8072,7 @@ ipcMain.handle(
       });
       await refreshLeaveRequests();
       runtimeStatus.connectionStatus = "online";
-      runtimeStatus.lastSuccessfulSyncAt = new Date().toISOString();
+      runtimeStatus.lastSuccessfulSyncAt = trackingNowDate().toISOString();
       rebuildTrayMenu();
       return { success: true, request, status: runtimeStatusPayload() };
     } catch (error) {
