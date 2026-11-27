@@ -20,6 +20,10 @@ export class TrackingClock {
       : this.wallNow();
   }
 
+  get synchronized(): boolean {
+    return this.anchor !== null;
+  }
+
   observeServerTime(value: unknown): boolean {
     if (typeof value !== "string") return false;
     const utcMs = Date.parse(value);
@@ -40,3 +44,4 @@ const trackingClock = new TrackingClock();
 export const trackingNowMs = () => trackingClock.nowMs();
 export const trackingNowDate = () => new Date(trackingNowMs());
 export const observeServerTime = (value: unknown) => trackingClock.observeServerTime(value);
+export const trackingClockSynchronized = () => trackingClock.synchronized;

@@ -1,4 +1,4 @@
-import { trackingNowMs, trackingNowDate } from "./services/trackingClock.js";
+import { trackingNowMs, trackingNowDate, trackingClockSynchronized } from "./services/trackingClock.js";
 import electronCommon from "electron/common";
 import electronMain from "electron/main";
 import log from "electron-log/main";
@@ -6078,7 +6078,7 @@ function runtimeStatusPayload() {
       : 0;
   return {
     ...runtimeStatus,
-    serverTime: trackingNowDate().toISOString(),
+    serverTime: trackingClockSynchronized() ? trackingNowDate().toISOString() : undefined,
     currentIdleSeconds,
     scheduledBreak: runningBreak
       ? { name: runningBreak.name, endsAt: new Date(runningBreak.endMs).toISOString() }

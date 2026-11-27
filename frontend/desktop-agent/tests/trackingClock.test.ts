@@ -4,9 +4,13 @@ import { TrackingClock } from "../electron/services/trackingClock.ts";
 
 test("server calibration corrects a PC reporting the wrong date", () => {
   const server = Date.parse("2026-11-27T10:00:00Z");
-  const clock = new TrackingClock(() => server - 3 * 86400_000, () => 1000);
-  clock.observeServerTime("Fri, 27 Nov 2026 10:00:00 GMT");
-  assert.equal(clock.nowMs(), server);
+  for (const offset of [-3, 3]) {
+    const clock = new TrackingClock(() => server + offset * 86400_000, () => 1000);
+    assert.equal(clock.synchronized, false, "an unsynchronized PC clock is never server time");
+    clock.observeServerTime("Fri, 27 Nov 2026 10:00:00 GMT");
+    assert.equal(clock.synchronized, true);
+    assert.equal(clock.nowMs(), server);
+  }
 });
 
 test("changing Windows time forwards or backwards cannot change tracked UTC", () => {
