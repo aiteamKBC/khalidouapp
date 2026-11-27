@@ -45,7 +45,9 @@ test("losing a reply after server commit cannot duplicate a pause", async () => 
     return Array.isArray(value) ? value : value.items ?? value.events;
   };
   const count = (rows: any[]) => rows.filter(e => e.event_type === "manual_pause_started").length;
-  const before = count(await events());
+  const beforeRows = await events();
+  const before = count(beforeRows);
+  const endsBefore = beforeRows.filter(e => e.event_type === "manual_pause_ended").length;
   await setNetwork({ kind: "drop_response", pathPrefix: `/api/v1/agent/sessions/${session.id}/events`, remaining: 1 });
   await desktop.window.getByRole("button", { name: "Pause", exact: true }).click();
   await poll("pause committed despite lost reply", events, rows => count(rows) === before + 1);
@@ -54,6 +56,13 @@ test("losing a reply after server commit cannot duplicate a pause", async () => 
   expect(count(await events())).toBe(before + 1);
   await desktop.window.getByRole("button", { name: "Resume", exact: true }).click();
   await poll("resumed", () => desktop.status(), s => s.trackingPaused === false);
+  // Resume updates the UI immediately and delivers in the background. Wait for
+  // that delivery before the next scenario snapshots its baseline and resets
+  // TCP; otherwise its delta also includes this previous test's resume.
+  await poll("resume committed once after the lost reply", events, rows =>
+    rows.filter(e => e.event_type === "manual_pause_ended").length === endsBefore + 1,
+    { timeoutMs: 60_000 },
+  );
 });
 
 test("connection resets during pause/resume replay once in order after recovery", async () => {
